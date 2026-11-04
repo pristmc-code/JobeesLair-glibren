@@ -6,6 +6,13 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **Simultaneous downloads.** Settings > Downloads has "Simultaneous downloads": 1 (as before), 2, 3 or 4 games at
+  once. Raising it starts the next ones at once; lowering it stops none, it only starts no other until fewer run.
+  Downloads from the same site share its connections (at least 2 each); what the other downloads on a drive still
+  need counts as taken, and one that only fits once they are done waits for them ("Waiting for the other downloads
+  on this drive to finish, to have room."). Only one RAR set at a time extracts while it downloads; the others
+  extract after their download, in the extraction lane. The number reaches the download engine's lanes and the
+  background payload, which then runs that many jobs at once with the app closed too.
 - **Downloads with mirrors carry on with the app closed too.** With "keep downloading when I close the app" on,
   a download that has mirrors is handed to the background payload from its main link only (one site at a time);
   taken back by the app ("Download in the app", or the payload gone), it uses the mirrors again. With the option

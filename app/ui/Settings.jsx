@@ -28,6 +28,7 @@ import { HOMEBREW_ONLY } from '../edition.js';
 import { LIMITS as SPEED_LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
 import { setBackgroundDownloads, useBackgroundDownloads } from '../state/background-downloads.js';
+import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
 import { setScreenSaver, showScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
 import { setTypingChoice, useTypingChoice } from '../state/system-keyboard.js';
 import { useNavActions } from '../state/nav.jsx';
@@ -319,6 +320,24 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       }, value)) })
     ] });
   }
+  // glibren: how many downloads run at once (state/simultaneous-downloads.js), as the speed limit's row.
+  function SimultaneousRow() {
+    const t2 = useT();
+    const count = useSimultaneousDownloads();
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10 }, children: [
+      /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.simultaneous") }),
+        /* @__PURE__ */ (0, jsx)(Text, { style: text(20, colors.muted), children: t2("settings.simultaneousDetail") })
+      ] }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 12 }, children: SIMULTANEOUS_CHOICES.map((value) => /* @__PURE__ */ (0, jsx)(View, {
+        focusKey: `settings:simultaneous:${value}`,
+        focusable: true,
+        onPress: () => setSimultaneousDownloads(value),
+        style: { position: "relative", flex: 1, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: value === count ? colors.accent : colors.surface2 },
+        children: /* @__PURE__ */ (0, jsx)(SpeedFace, { label: String(value), chosen: value === count })
+      }, value)) })
+    ] });
+  }
   // Drives, the speed limit and whether a download in parts opens the browser for its next part by itself.
   function DownloadsCard() {
     const t2 = useT();
@@ -330,6 +349,8 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:autoParts", name: t2("settings.autoParts"), hint: t2("settings.autoPartsDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: autoParts }), onPress: () => setAutoContinueParts(!autoParts) }),
       // glibren-bg: downloads em segundo plano (state/background-downloads.js).
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:background", name: t2("settings.background"), hint: t2("settings.backgroundDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: background }), onPress: () => setBackgroundDownloads(!background) }),
+      /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
+      /* @__PURE__ */ (0, jsx)(SimultaneousRow, {}),
       /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
       /* @__PURE__ */ (0, jsx)(SpeedLimitRow, {}),
       /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),

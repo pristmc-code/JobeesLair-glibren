@@ -28,6 +28,7 @@ import { readJSON } from './read-json.js';
 import { STAGING_SUFFIXES } from './extraction-staging.js';
 import { busyWhileOpen, mountedImages, shadowRequest, within2 } from './shadowmount.js';
 import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
+import { hostOf } from './download-tuning.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 import { mirrorsFor } from './download-mirrors.js';
 
@@ -193,6 +194,8 @@ import { mirrorsFor } from './download-mirrors.js';
     // itself (state/auto-continue.js, Settings), after AUTO_OPEN_MS with a countdown on its card.
     autoContinue = () => false,
     autoOpenMs = 10e3,
+    // glibren: how many downloads run at once, 1 to 4 (state/simultaneous-downloads.js, Settings).
+    concurrency = () => 1,
     // 0.5.4: told each launch learned from ShadowMount's log, (title, {outcome, verdict, format, fixed, backport}),
     // for the players' numbers (state/online.js launched).
     onLaunch = () => {},
@@ -205,7 +208,22 @@ import { mirrorsFor } from './download-mirrors.js';
     const listeners4 = /* @__PURE__ */ new Set();
     sources ?? (sources = createSourceResolver({ http }));
     let jobs = [];
-    let active2 = null;
+    // glibren: the downloads running now, up to concurrency() at once: job -> its lane { job, task, cancel,
+    // transferring, renewDue, streamed, host }. With one, this is the one active download the queue always had.
+    const lanes = /* @__PURE__ */ new Map();
+    const limit = () => {
+      const count = concurrency();
+      return Number.isInteger(count) && count >= 1 && count <= 4 ? count : 1;
+    };
+    // The engine's lanes and the background payload hear the number (background-downloads.js setConcurrency).
+    function applyConcurrency() {
+      try {
+        if (typeof downloads.setConcurrency === "function") downloads.setConcurrency(limit());
+      } catch (error2) {
+        console.log(`[download-queue] simultaneous downloads not applied: ${error2.message}`);
+      }
+    }
+    if (limit() > 1) applyConcurrency();
     // Extraction runs beside the downloads, in a lane of its own: one archive at a time (the engine's archive task is
     // one), while the next download already runs. { job, task } of the job being extracted, or null. A job waiting
     // for its turn reads "extracting" with phase "queued"; one that was extracting when the app closed downloads its
@@ -294,8 +312,9 @@ import { mirrorsFor } from './download-mirrors.js';
     // While a file downloads: a debrid link about to expire stops the transfer to be renewed (execute's catch, through
     // renewLink), the partial kept, rather than the engine's ranges being refused one after another once it has.
     function renewIfStale(job2, holder, task) {
-      if (!active2 || active2.job !== job2 || active2.renewDue || !linkStale(holder) || !throughDebrid(job2)) return;
-      active2.renewDue = true;
+      const lane = lanes.get(job2);
+      if (!lane || lane.renewDue || !linkStale(holder) || !throughDebrid(job2)) return;
+      lane.renewDue = true;
       task.cancel();
     }
     /**
@@ -357,7 +376,7 @@ import { mirrorsFor } from './download-mirrors.js';
     const { stopCapture, captureVikingfile, captureBrowserLink } = createCaptureFlow({
       captures,
       jobs: () => jobs,
-      active: () => active2,
+      active: (job2) => lanes.get(job2) ?? null,
       change: () => change(),
       pump: (...args) => pump(...args),
       continueJob: (...args) => continueJob(...args),
@@ -486,7 +505,7 @@ import { mirrorsFor } from './download-mirrors.js';
       platform,
       COMPLETE,
       jobs: () => jobs,
-      active: () => active2,
+      active: (job2) => lanes.get(job2) ?? null,
       deletions: () => deletions,
       find: (id) => find(id),
       change: () => change(),
@@ -505,7 +524,8 @@ import { mirrorsFor } from './download-mirrors.js';
     let borrower = null;
     // Whether a download holds the runtime's one network task now (ps5-react docs/NETWORKING.md).
     // A job reads "resolving" from when its file is handed to the engine until the engine's first report.
-    const jobTransferring = () => Boolean(active2?.task && active2.transferring && ["resolving", "connecting", "downloading"].includes(active2.job.state));
+    const transferringLanes = () => [...lanes.values()].filter((lane) => lane.task && lane.transferring && ["resolving", "connecting", "downloading"].includes(lane.job.state));
+    const jobTransferring = () => transferringLanes().length > 0;
     const transferring = () => jobTransferring() || Boolean(borrower);
     let ticks = 0;
     let awake2 = false;
@@ -786,7 +806,7 @@ import { mirrorsFor } from './download-mirrors.js';
       job2.state = "queued";
       return true;
     }
-    async function install(job2, lane = active2) {
+    async function install(job2, lane = lanes.get(job2)) {
       const paths = job2.packages ?? [job2.downloadDestination || job2.artifact.destination];
       const backport = (path) => /backport/i.test(path);
       try {
@@ -853,8 +873,19 @@ import { mirrorsFor } from './download-mirrors.js';
     // The engine's connections and range size for one file, from the host its bytes come from (state/download-tuning.js,
     // the one table). A file that already has a partial keeps the range size it started with (`legacy` for one an
     // earlier build started), since its resume checkpoint is tied to it.
-    function transferTuning(holder, url, destination, legacy) {
+    // glibren: with downloads running side by side, the host's connections are shared among those on the same host
+    // (at least 2 each), worked out as each one starts, so two from archive.org open 4 + 4, not 8 + 8.
+    function transferTuning(holder, url, destination, legacy, job2) {
       const tuned = tuningFor(url);
+      const lane = job2 ? lanes.get(job2) : null;
+      const host = hostOf(url);
+      if (lane) lane.host = host;
+      const sharing = 1 + [...lanes.values()].filter((other) => other !== lane && other.transferring && other.host === host).length;
+      if (sharing > 1) {
+        const shared = Math.max(2, Math.floor(tuned.connections / sharing));
+        console.log(`[download-queue] ${job2.id}: ${host} is shared by ${sharing} downloads; ${shared} connections of ${tuned.connections}`);
+        tuned.connections = shared;
+      }
       const started = [".part", ".resume"].some((suffix) => {
         try {
           return fs.exists(destination + suffix);
@@ -878,22 +909,23 @@ import { mirrorsFor } from './download-mirrors.js';
       let unsubscribe;
       // Set when the download is stopped for want of room (see the size check in the progress handler).
       let noRoom = null;
+      const lane = lanes.get(job2);
       if (job2.install) {
         try {
           await install(job2);
         } finally {
-          active2 = null;
+          lanes.delete(job2);
           pump();
         }
         return;
       }
       try {
-        active2.cancel = cancellation();
-        const signal = active2.cancel.signal;
+        lane.cancel = cancellation();
+        const signal = lane.cancel.signal;
         job2.state = "resolving";
         job2.error = "";
         delete job2.roomWait;
-        if (job2.message === t("downloads.waitingForExtraction")) job2.message = "";
+        if ([t("downloads.waitingForExtraction"), t("downloads.waitingForDownloads")].includes(job2.message)) job2.message = "";
         change();
         if (job2.release.parts) {
           await executeSet(job2, signal);
@@ -961,11 +993,11 @@ import { mirrorsFor } from './download-mirrors.js';
         }
         fs.mkdir(job2.artifact.directory, { recursive: true });
         fs.mkdir(job2.downloadDestination.slice(0, job2.downloadDestination.lastIndexOf("/")), { recursive: true });
-        active2.transferring = true;
+        lane.transferring = true;
         // glibren-bg: `background` diz ao payload de segundo plano o nome, onde a imagem pronta mora e a fonte (background-downloads.js);
         // com mirrors o download fica no motor do app (background-downloads.js eligible).
-        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: job2.release } });
-        active2.task = task;
+        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes, job2), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: job2.release } });
+        lane.task = task;
         // Most catalog releases do not say their size, so the check above had nothing to go on: once the
         // server does, the rest is checked against the drive once, before it fills (the partial file counts
         // what is written out of order, as above).
@@ -1062,13 +1094,13 @@ import { mirrorsFor } from './download-mirrors.js';
         if (noRoom) error2 = noRoom;
         console.log("[download-queue] transfer stopped:", error2.message);
         // Whether it failed before its file was handed to the engine: while its link was being resolved.
-        const resolving = !active2.transferring;
+        const resolving = !lane.transferring;
         const stopping = job2.state === "pausing" || job2.cancelling;
         // A debrid link refused by the engine (expired: 401/403) or stopped before it expires is asked for again,
         // with no limit but the loop guard (renewLink); never the browser, which has nothing to pass for it.
         const debrid = throughDebrid(job2);
         const linkRefused = !resolving && /browser verification required|link expired|HTTP 40[13]\b/i.test(cause(error2.message));
-        const renewed = debrid && !stopping && (active2.renewDue || linkRefused) && renewLink(job2, active2.renewDue ? "it was about to expire" : "the engine was refused");
+        const renewed = debrid && !stopping && (lane.renewDue || linkRefused) && renewLink(job2, lane.renewDue ? "it was about to expire" : "the engine was refused");
         // The network or the service's pace while resolving: tried again by itself, before any other source.
         const waiting = !renewed && resolving && !(error2 instanceof BrowserRequired) && waitAndRetry(job2, error2);
         // The engine words every 401/403 as a possible browser check; from Archive.org it is a
@@ -1092,7 +1124,7 @@ import { mirrorsFor } from './download-mirrors.js';
         if (gone) reportOutcome(gone, false);
         if (expired) console.log("[download-queue] the captured link expired while queued; asking for the check again");
         const browser = !refused && !debrid && (expired || error2 instanceof BrowserRequired || /browser verification required/i.test(cause(error2.message)));
-        const retried = renewed || waiting || job2.state !== "pausing" && !job2.cancelling && browser && active2.transferring && reresolve(job2);
+        const retried = renewed || waiting || job2.state !== "pausing" && !job2.cancelling && browser && lane.transferring && reresolve(job2);
         // A debrid link that kept expiring (renewLink gave up) is not the source's fault: no other source for it.
         const switched = !retried && !expired && !(debrid && linkRefused) && job2.state !== "pausing" && !job2.cancelling && failOver(job2, error2);
         if (!retried && !switched && job2.state !== "pausing") {
@@ -1119,7 +1151,7 @@ import { mirrorsFor } from './download-mirrors.js';
             job2.error = error2.message;
           }
         }
-        active2 = null;
+        lanes.delete(job2);
         try {
           change();
         } catch (error2) {
@@ -1371,7 +1403,7 @@ import { mirrorsFor } from './download-mirrors.js';
       delete part.options;
       return true;
     }
-    async function extract(job2, files, streamed, lane = active2) {
+    async function extract(job2, files, streamed, lane = lanes.get(job2)) {
       // 0.5.4: the app closed while this extraction's images moved into homebrew/ (imageTargets): they go back, so
       // the extraction is found whole, checked and placed again.
       if (job2.placing) {
@@ -1424,7 +1456,7 @@ import { mirrorsFor } from './download-mirrors.js';
         }
         // A download running beside it on the same drive still needs the rest of its file (only its file: its own
         // extraction comes after this one, and this one's archive is deleted by then).
-        const beside = active2?.job && active2.job !== job2 && active2.job.root === job2.root ? [{ title: active2.job.title, state: "extracting", total: active2.job.total ?? active2.job.release?.sizeBytes ?? 0, written: active2.job.written || 0 }] : [];
+        const beside = [...lanes.keys()].filter((other) => other !== job2 && other.root === job2.root).map((other) => ({ title: other.title, state: "extracting", total: other.total ?? other.release?.sizeBytes ?? 0, written: other.written || 0 }));
         noRoom = spaceShortfall(job2.root, Math.max(0, total - written), free, beside);
         if (!noRoom) return;
         console.log(`[download-queue] ${job2.id}: ${noRoom}; the extraction stops before it fills the drive`);
@@ -1617,6 +1649,9 @@ import { mirrorsFor } from './download-mirrors.js';
       if (!archives?.streams || job2.parts.length < 2 || archives.inspect([first]).kind !== "rar") return null;
       // The archive task is one: not while the extraction lane works or has a job waiting (it goes first).
       if (extractor2 || jobs.some((other) => other !== job2 && other.state === "extracting")) return null;
+      // glibren: nor while another set downloading beside it extracts this way (simultaneous downloads); it extracts
+      // in the extraction lane after its download instead.
+      if ([...lanes.values()].some((lane) => lane.job !== job2 && lane.streamed)) return null;
       let task;
       try {
         const options = extraction(job2, job2.parts.map((part) => part.destination));
@@ -1713,9 +1748,10 @@ import { mirrorsFor } from './download-mirrors.js';
         completed: false
       })));
       let streamed = null;
+      const lane = lanes.get(job2);
       try {
         for (let index = 0; index < job2.parts.length; index++) {
-          if (!streamed && index > 0 && job2.parts[0].completed && fs.exists(job2.parts[0].destination)) streamed = active2.streamed = streamSet(job2);
+          if (!streamed && index > 0 && job2.parts[0].completed && fs.exists(job2.parts[0].destination)) streamed = lane.streamed = streamSet(job2);
           job2.partIndex = index;
           const part = job2.parts[index];
           if (job2.state === "pausing") return;
@@ -1727,7 +1763,7 @@ import { mirrorsFor } from './download-mirrors.js';
           }
           job2.state = "resolving";
           job2.message = t("downloads.part", { part: index + 1, parts: job2.parts.length });
-          active2.transferring = false;
+          lane.transferring = false;
           change();
           const source2 = job2.release.parts[index].sources[part.sourceIndex || 0];
           job2.currentSource = source2;
@@ -1770,20 +1806,20 @@ import { mirrorsFor } from './download-mirrors.js';
             waitForRoom(job2);
             return;
           }
-          active2.transferring = true;
+          lane.transferring = true;
           const task = downloads.enqueue({
             ...part.options,
             rejectHtml: true,
             // The part's other sources that are the same file, as mirrors.
             mirrors: mirrorLinks(job2, source2, part.options, job2.release.parts[index].sources.filter((other) => other !== source2)),
             // A part an earlier build started kept the engine's default range size (none was given).
-            ...transferTuning(part, part.options.url, part.destination, null),
+            ...transferTuning(part, part.options.url, part.destination, null, job2),
             adaptive: true,
             destination: part.destination,
             storageRoot: job2.root,
             recoverCompleted: true
           });
-          active2.task = task;
+          lane.task = task;
           if (index + 1 < job2.parts.length) scheduleAhead(job2, index + 1);
           const off = task.subscribe((progress) => {
             if (job2.state === "pausing") return;
@@ -1840,7 +1876,7 @@ import { mirrorsFor } from './download-mirrors.js';
           }
         }
       } finally {
-        delete active2.streamed;
+        delete lane.streamed;
         if (streamed && (job2.state === "pausing" || job2.parts.some((part) => !part.completed))) {
           streamed.task.cancel();
           await streamed.done;
@@ -1921,9 +1957,11 @@ import { mirrorsFor } from './download-mirrors.js';
     // What the extractions on `job2`'s drive will still write (waiting or running), other than its own.
     const extractionReserve = (job2) => jobs.filter((other) => other !== job2 && other.root === job2.root && other.state === "extracting").reduce((sum, other) => sum + stillNeeded(other), 0);
     // Whether `need` bytes fit on the job's drive: "fits", "later" (only once the extractions there are done), or "no".
+    // glibren: what the other downloads running on `job2`'s drive will still write (simultaneous downloads).
+    const downloadReserve = (job2) => [...lanes.keys()].filter((other) => other !== job2 && other.root === job2.root).reduce((sum, other) => sum + stillNeeded(other), 0);
     function room(job2, need) {
       const free = fs.diskUsage(job2.root).free;
-      if (free >= need + MARGIN2 + extractionReserve(job2)) return "fits";
+      if (free >= need + MARGIN2 + extractionReserve(job2) + downloadReserve(job2)) return "fits";
       return free >= need + MARGIN2 ? "later" : "no";
     }
     // A download that only fits once the extractions on its drive are done goes back to the queue, its partial kept, and
@@ -1933,7 +1971,7 @@ import { mirrorsFor } from './download-mirrors.js';
       job2.state = "queued";
       job2.roomWait = true;
       job2.bytesPerSecond = 0;
-      job2.message = t("downloads.waitingForExtraction");
+      job2.message = extractionReserve(job2) || !downloadReserve(job2) ? t("downloads.waitingForExtraction") : t("downloads.waitingForDownloads");
     }
     function lostPartial(job2) {
       const kept = (path) => fs.exists(path) || fs.exists(`${path}.part`);
@@ -1950,19 +1988,23 @@ import { mirrorsFor } from './download-mirrors.js';
     function pump(first) {
       pumpExtract();
       // `holds`: ShadowMount is being asked something that cannot wait for a download (quietNetwork).
-      if (active2 || holds) return;
-      // One waiting for an extraction's room is passed over while any extraction is left to run.
-      const extracting = Boolean(extractor2) || jobs.some((item) => item.state === "extracting");
-      const ready = (item) => item?.state === "queued" && (!item.roomWait || !extracting);
-      const job2 = ready(first) ? first : jobs.find(ready);
-      if (!job2) return;
-      // The gamer's download goes first: the borrower stops, and this runs again once it gave the network back.
-      if (borrower) {
-        borrower.yield();
-        return;
+      if (holds) return;
+      // glibren: up to limit() downloads at once; one lowered below those running stops none, it starts no other.
+      while (lanes.size < limit()) {
+        // One waiting for room is passed over while any extraction is left to run, or another download on its drive.
+        const extracting = Boolean(extractor2) || jobs.some((item) => item.state === "extracting");
+        const ready = (item) => item?.state === "queued" && !lanes.has(item) && (!item.roomWait || !extracting && ![...lanes.keys()].some((other) => other.root === item.root));
+        const job2 = ready(first) ? first : jobs.find(ready);
+        if (!job2) return;
+        // The gamer's download goes first: the borrower stops, and this runs again once it gave the network back.
+        if (borrower) {
+          borrower.yield();
+          return;
+        }
+        first = null;
+        lanes.set(job2, { job: job2, task: null });
+        void execute(job2);
       }
-      active2 = { job: job2, task: null };
-      void execute(job2);
     }
     function storageIdentity(job2) {
       const info = fs.stat(job2.root);
@@ -2210,10 +2252,11 @@ import { mirrorsFor } from './download-mirrors.js';
     // queue so no other starts, and resumes it after, whatever the work did.
     function pauseJob(job2) {
       if (job2.state === "queued") job2.state = "paused";
-      else if (active2?.job === job2 && ACTIVE.includes(job2.state)) {
+      else if (lanes.has(job2) && ACTIVE.includes(job2.state)) {
+        const lane = lanes.get(job2);
         job2.state = "pausing";
-        active2.cancel?.cancel();
-        active2.task?.cancel();
+        lane.cancel?.cancel();
+        lane.task?.cancel();
       } else if (extractor2?.job === job2 && ACTIVE.includes(job2.state)) {
         // Its extraction stops (it starts over on resume: the engine keeps no partial extraction).
         job2.state = "pausing";
@@ -2226,13 +2269,13 @@ import { mirrorsFor } from './download-mirrors.js';
     }
     async function quietNetwork(reason, work) {
       holds++;
-      const held = jobTransferring() ? active2.job : null;
+      const held = transferringLanes().map((lane) => lane.job);
       try {
-        if (held) {
-          console.log(`[download-queue] ${held.id}: paused while ShadowMount is asked (${reason}); it resumes after`);
-          pauseJob(held);
-          for (let tries = 0; tries < 100 && active2?.job === held; tries++) await wait(100);
+        for (const job2 of held) {
+          console.log(`[download-queue] ${job2.id}: paused while ShadowMount is asked (${reason}); it resumes after`);
+          pauseJob(job2);
         }
+        for (let tries = 0; tries < 100 && held.some((job2) => lanes.has(job2)); tries++) await wait(100);
         if (borrower) {
           console.log(`[download-queue] the network's borrower stops while ShadowMount is asked (${reason})`);
           borrower.yield();
@@ -2241,10 +2284,13 @@ import { mirrorsFor } from './download-mirrors.js';
         return await work();
       } finally {
         holds--;
-        if (held && held.state === "paused" && jobs.includes(held)) {
-          console.log(`[download-queue] ${held.id}: resumed`);
-          held.state = "queued";
-          held.error = "";
+        const resumed = held.filter((job2) => job2.state === "paused" && jobs.includes(job2));
+        for (const job2 of resumed) {
+          console.log(`[download-queue] ${job2.id}: resumed`);
+          job2.state = "queued";
+          job2.error = "";
+        }
+        if (resumed.length) {
           try {
             change();
           } catch {
@@ -2500,7 +2546,7 @@ import { mirrorsFor } from './download-mirrors.js';
       if (job2.state === "failed" && job2.pending?.tries && job2.pending.tries < PENDING_TRIES) retryIn(job2, 6e4, "the debrid service was still preparing the file when the app closed");
     }
     function continueJob(job2, url, verifiedOptions) {
-      if (job2.state !== "awaiting-browser" || active2?.job === job2) return;
+      if (job2.state !== "awaiting-browser" || lanes.has(job2)) return;
       webURL(url);
       if (!(job2.parts?.[job2.partIndex]?.written ?? job2.written) && job2.rootIdentity && !job2.adopted) {
         for (const path of partialFiles(job2)) if (fs.exists(path)) fs.remove(path);
@@ -2627,7 +2673,7 @@ import { mirrorsFor } from './download-mirrors.js';
       },
       async restart(id) {
         const job2 = find(id);
-        if (!["paused", "failed", "awaiting-browser"].includes(job2.state) || active2?.job === job2) return;
+        if (!["paused", "failed", "awaiting-browser"].includes(job2.state) || lanes.has(job2)) return;
         if (job2.adopted) throw new Error(ADOPTED);
         const paths = !job2.parts?.[job2.partIndex]?.completed && (job2.options || job2.rootIdentity || job2.written || fs.exists(job2.artifact.destination + ".part") || fs.exists(job2.artifact.destination + ".resume")) ? partialFiles(job2) : [];
         stopCapture(job2);
@@ -2653,7 +2699,7 @@ import { mirrorsFor } from './download-mirrors.js';
       },
       remove(id) {
         const job2 = find(id);
-        if (!["paused", "failed", "awaiting-browser", ...COMPLETE].includes(job2.state) || active2?.job === job2) return;
+        if (!["paused", "failed", "awaiting-browser", ...COMPLETE].includes(job2.state) || lanes.has(job2)) return;
         stopNextPart(job2);
         endAhead(job2, null);
         stopCapture(job2);
@@ -2692,9 +2738,9 @@ import { mirrorsFor } from './download-mirrors.js';
       // failure is thrown once the rest are done. Returns how many were cancelled.
       async cancelAll() {
         const unfinished = jobs.filter((job2) => !COMPLETE.includes(job2.state) && job2.state !== "removing");
-        // The queued ones first, the running one last: forgetting a queued job pumps the queue, which would
-        // start the next one while the running download was still being stopped, only to cancel it in turn.
-        const ids = [...unfinished.filter((job2) => active2?.job !== job2), ...unfinished.filter((job2) => active2?.job === job2)].map((job2) => job2.id);
+        // The queued ones first, the running ones last: forgetting a queued job pumps the queue, which would
+        // start the next one while a running download was still being stopped, only to cancel it in turn.
+        const ids = [...unfinished.filter((job2) => !lanes.has(job2)), ...unfinished.filter((job2) => lanes.has(job2))].map((job2) => job2.id);
         let failure = null;
         for (const id of ids) {
           try {
@@ -2716,7 +2762,7 @@ import { mirrorsFor } from './download-mirrors.js';
         if (deletions.has(job2)) return deletions.get(job2);
         // A finished job, or one stopped part-way (paused, failed, waiting on a browser) whose partial and
         // extracted files would otherwise stay behind; one that is running is cancelled instead.
-        if (active2?.job === job2 || extractor2?.job === job2) throw new Error(t("downloads.deleteRunning"));
+        if (lanes.has(job2) || extractor2?.job === job2) throw new Error(t("downloads.deleteRunning"));
         if (!DELETABLE.includes(job2.state)) throw new Error(t("downloads.deleteBusy"));
         if (moves.has(job2)) throw new Error(t("move.busy"));
         // Resolves with { note } (what the gamer should know, or null) once the files are gone and the task
@@ -2755,7 +2801,7 @@ import { mirrorsFor } from './download-mirrors.js';
        */
       lendNetwork(onYield) {
         // A download waiting for an extraction's room does not need the network until that ends (pump asks it back).
-        if (borrower || active2 || holds || jobs.some((job2) => job2.state === "queued" && !job2.roomWait)) return null;
+        if (borrower || lanes.size || holds || jobs.some((job2) => job2.state === "queued" && !job2.roomWait)) return null;
         const lease = { yield: () => {
           try {
             onYield();
@@ -2843,11 +2889,21 @@ import { mirrorsFor } from './download-mirrors.js';
       refreshLaunches,
       /** Frees the engine's one archive task, for the updater: a set extracting while it downloads extracts after its download instead. */
       async yieldArchives() {
-        const streamed = active2?.streamed;
+        const streamed = [...lanes.values()].find((lane) => lane.streamed)?.streamed;
         if (streamed) {
           streamed.task.cancel();
           await streamed.done;
         }
+      },
+      /** glibren: the number of simultaneous downloads changed (Settings): the engine and the payload hear it, and
+       * the queue starts more at once if it may; fewer stops none. */
+      concurrencyChanged() {
+        applyConcurrency();
+        pump();
+      },
+      /** glibren: how many downloads run now. */
+      get running() {
+        return lanes.size;
       },
       /** Whether the queue keeps the console awake: some download is queued or running. */
       get awake() {
@@ -2857,7 +2913,7 @@ import { mirrorsFor } from './download-mirrors.js';
       async cancel(id) {
         const job2 = find(id);
         if (COMPLETE.includes(job2.state) || job2.state === "removing") return;
-        if (active2?.job === job2) {
+        if (lanes.has(job2)) {
           job2.cancelling = true;
           this.pause(id);
           return;

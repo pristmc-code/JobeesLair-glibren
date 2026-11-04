@@ -115,8 +115,9 @@ function engine(fs, plan = () => null) {
   };
 }
 
-function queueWith({ fs, downloads, archives = null, sources, platform = 'desktop', notices = [], wait }) {
+function queueWith({ fs, downloads, archives = null, sources, platform = 'desktop', notices = [], wait, concurrency }) {
   return createDownloadQueue({
+    ...(concurrency ? { concurrency } : {}),
     fs, downloads, http: { request: async () => ({ ok: false, status: 404, json: async () => ({}) }) }, formats: DownloadFormats,
     dataDir: '/data/app', platform, notifications: { show: (title) => notices.push(title) }, power: { keepAwake() {} }, linking: null,
     sources: sources ?? { resolve: async (release) => ({ url: release.url }) }, archives, packages: null, wait: wait ?? (async () => {}),
@@ -643,4 +644,138 @@ test('debrid link: one about to expire is renewed during the download, and befor
   assert.equal(resumed.state, 'downloaded', resumed.error);
   assert.equal(links2, 2);
   assert.equal(downloads2.requests[1].url, 'https://store.torbox.example/x/2');
+});
+
+
+// ---- glibren: simultaneous downloads (Settings, state/simultaneous-downloads.js) ----
+
+const other = (n) => ({ ...game, id: `PPSA0${n}000`, titleId: `PPSA0${n}000` });
+const requested = (downloads, name) => downloads.requests.some((options) => options.destination.endsWith(name));
+
+test('simultaneous: with 2, two download at once and the third waits; one ending starts it', async () => {
+  const fs = memoryFs();
+  const gates = [gated(), gated(), gated()];
+  const downloads = engine(fs, (options, index) => ({ gate: gates[index].gate }));
+  const queue = queueWith({ fs, downloads, concurrency: () => 2 });
+  const ids = ['Alpha', 'Beta', 'Gamma'].map((name, i) => queue.enqueue(other(i + 1), image(`${name}.exfat`), '/data'));
+  await until(queue, ids[1], () => downloads.requests.length === 2);
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(downloads.requests.length, 2, 'the third waits for a free lane');
+  assert.equal(queue.running, 2);
+  assert.equal(queue.snapshot().find((job) => job.id === ids[2]).state, 'queued');
+  gates[1].open();
+  await until(queue, ids[2], () => downloads.requests.length === 3);
+  assert.ok(requested(downloads, 'Gamma.exfat'));
+  gates[0].open(); gates[2].open();
+  for (const id of ids) assert.equal((await settle(queue, id)).state, 'downloaded');
+});
+
+test('simultaneous: the default is one at a time, as the queue always was', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  const queue = queueWith({ fs, downloads });
+  const a = queue.enqueue(other(1), image('Alpha.exfat'), '/data');
+  const b = queue.enqueue(other(2), image('Beta.exfat'), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(downloads.requests.length, 1);
+  first.open();
+  assert.equal((await settle(queue, b)).state, 'downloaded');
+});
+
+test('simultaneous: pausing one of those running starts the next', async () => {
+  const fs = memoryFs();
+  const gates = [gated(), gated(), gated()];
+  const downloads = engine(fs, (options, index) => ({ gate: gates[index].gate }));
+  const queue = queueWith({ fs, downloads, concurrency: () => 2 });
+  const ids = ['Alpha', 'Beta', 'Gamma'].map((name, i) => queue.enqueue(other(i + 1), image(`${name}.exfat`), '/data'));
+  await until(queue, ids[1], () => downloads.requests.length === 2);
+  queue.pause(ids[0]);
+  await until(queue, ids[0], (job) => job.state === 'paused');
+  await until(queue, ids[2], () => downloads.requests.length === 3);
+  assert.equal(queue.snapshot().find((job) => job.id === ids[1]).state !== 'paused', true, 'the other keeps going');
+  gates[1].open(); gates[2].open();
+  for (const id of ids.slice(1)) assert.equal((await settle(queue, id)).state, 'downloaded');
+});
+
+test('simultaneous: lowering the number stops none; raising it starts more at once; the engine hears each', async () => {
+  const fs = memoryFs();
+  const gates = [gated(), gated(), gated(), gated()];
+  const downloads = engine(fs, (options, index) => ({ gate: gates[index].gate }));
+  const told = [];
+  downloads.setConcurrency = (n) => { told.push(n); return n; };
+  let count = 2;
+  const queue = queueWith({ fs, downloads, concurrency: () => count });
+  assert.deepEqual(told, [2], 'the engine hears it when the queue starts');
+  const ids = ['Alpha', 'Beta', 'Gamma', 'Delta'].map((name, i) => queue.enqueue(other(i + 1), image(`${name}.exfat`), '/data'));
+  await until(queue, ids[1], () => downloads.requests.length === 2);
+  count = 1;
+  queue.concurrencyChanged();
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(queue.running, 2, 'both keep running');
+  assert.ok(!downloads.tasks.some((task) => task.cancelled), 'none was cancelled');
+  gates[0].open();
+  await settle(queue, ids[0]);
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(downloads.requests.length, 2, 'one still runs, so none starts while it is over the new number');
+  count = 3;
+  queue.concurrencyChanged();
+  await until(queue, ids[3], () => downloads.requests.length === 4);
+  assert.deepEqual(told, [2, 1, 3]);
+  gates[1].open(); gates[2].open(); gates[3].open();
+  for (const id of ids) assert.equal((await settle(queue, id)).state, 'downloaded');
+});
+
+test('simultaneous: what the other downloads on the drive still need counts as taken; one that fits only after them waits', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  let count = 1;
+  const queue = queueWith({ fs, downloads, concurrency: () => count });
+  const a = queue.enqueue(other(1), image('Alpha.exfat', 'https://example.com/Alpha.exfat', 100 * MiB), '/data');
+  const b = queue.enqueue(other(2), image('Beta.exfat', 'https://example.com/Beta.exfat', 100 * MiB), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  // Alone, Beta (100 MiB) would fit in 150 MiB; beside Alpha's 100 MiB still to come, it does not yet.
+  fs.free = 16 * MiB + 150 * MiB;
+  count = 2;
+  queue.concurrencyChanged();
+  let beta = await until(queue, b, (job) => job.roomWait);
+  assert.equal(beta.state, 'queued');
+  assert.equal(beta.message, en['downloads.waitingForDownloads']);
+  assert.equal(downloads.requests.length, 1, 'Beta was not handed to the engine');
+  first.open();
+  beta = await settle(queue, b);
+  assert.equal(beta.state, 'downloaded', beta.error);
+  assert.equal(downloads.requests.length, 2);
+});
+
+test('simultaneous: downloads from the same host share its connections (at least 2 each)', async () => {
+  const fs = memoryFs();
+  const gates = [gated(), gated(), gated()];
+  const downloads = engine(fs, (options, index) => ({ gate: gates[index].gate, written: 1 }));
+  const queue = queueWith({ fs, downloads, concurrency: () => 3 });
+  const ids = ['Alpha', 'Beta', 'Gamma'].map((name, i) => queue.enqueue(other(i + 1), image(`${name}.exfat`, i < 2 ? `https://archive.org/download/item/${name}.exfat` : `https://example.com/${name}.exfat`), '/data'));
+  await until(queue, ids[2], () => downloads.requests.length === 3);
+  const byName = (name) => downloads.requests.find((options) => options.destination.endsWith(name));
+  assert.equal(byName('Alpha.exfat').connections, 8, 'the first from archive.org: its whole table entry');
+  assert.equal(byName('Beta.exfat').connections, 4, 'the second shares it: 8 / 2');
+  assert.equal(byName('Gamma.exfat').connections, 64, 'another host keeps its own');
+  for (const gate of gates) gate.open();
+  for (const id of ids) assert.equal((await settle(queue, id)).state, 'downloaded');
+});
+
+test('simultaneous: the setting is 1 to 4 and heard by those listening', async () => {
+  const settings = await load('app/state/simultaneous-downloads.js');
+  const heard = [];
+  const stop = settings.onSimultaneousDownloads((n) => heard.push(n));
+  assert.equal(settings.simultaneousDownloads(), 1);
+  settings.setSimultaneousDownloads(3);
+  settings.setSimultaneousDownloads(7);
+  assert.equal(settings.simultaneousDownloads(), 3, 'anything but 1 to 4 is ignored');
+  settings.setSimultaneousDownloads(1);
+  stop();
+  settings.setSimultaneousDownloads(2);
+  assert.deepEqual(heard, [3, 1]);
+  settings.setSimultaneousDownloads(1);
 });

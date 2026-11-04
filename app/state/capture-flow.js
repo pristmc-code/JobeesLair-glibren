@@ -124,7 +124,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         if (job2.parts) refuseOtherPart(job2.partIndex + 1, metadata.filename);
         handOff(job2, source2, { ...validated, filename: metadata.filename });
       } catch (error2) {
-        if (!current() && !(handingOff && jobs().includes(job2) && job2.state === "queued" && active()?.job !== job2)) return;
+        if (!current() && !(handingOff && jobs().includes(job2) && job2.state === "queued" && active(job2)?.job !== job2)) return;
         captureFailed(job2, source2, session, error2);
       }
     }
@@ -213,7 +213,7 @@ import { VIKING_PAGE_PREFIX, VIKING_PREFIX, describeVikingCapture, linkPageMetad
         handingOff = true;
         handOff(job2, source2, validated);
       } catch (error2) {
-        if (!current() && !(handingOff && jobs().includes(job2) && job2.state === "queued" && active()?.job !== job2)) return;
+        if (!current() && !(handingOff && jobs().includes(job2) && job2.state === "queued" && active(job2)?.job !== job2)) return;
         captureFailed(job2, source2, session, error2);
       }
     }

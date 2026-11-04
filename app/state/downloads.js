@@ -12,6 +12,7 @@ import { createDownloadQueue } from './download-queue.js';
 import { createSourceResolver } from './download-sources.js';
 import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
 import { createBackgroundDownloads } from './background-downloads.js';
+import { onSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { recordCapture } from './capture-hosts.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
 import { freeBytes, storageRoots } from './drives.js';
@@ -51,7 +52,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
     fs: FileSystem,
     archives: Archives,
     // glibren-bg: com a opcao ligada, o download da fila e do payload de segundo plano (background-downloads.js).
-    downloads: createBackgroundDownloads({ downloads: Downloads, http: Http, fs: FileSystem, payloads: Payloads, platform: Platform.OS, handoff: debridHandoff, secret: debridSecret, text: t }),
+    downloads: createBackgroundDownloads({ downloads: Downloads, http: Http, fs: FileSystem, payloads: Payloads, platform: Platform.OS, handoff: debridHandoff, secret: debridSecret, text: t, concurrency: simultaneousDownloads }),
+    // glibren: quantos downloads rodam ao mesmo tempo (Configuracoes).
+    concurrency: simultaneousDownloads,
     http: Http,
     formats: DownloadFormats,
     dataDir: FileSystem.dataDir,
@@ -71,6 +74,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
     // 0.5.4: each launch learned goes to the players' numbers (state/online.js; only with stats on).
     onLaunch: (title, report) => !OWN_TITLES.includes(title) && online().launched({ title, ...report })
   }));
+  // glibren: a change of simultaneous downloads (Settings) reaches the queue, its engine lanes and the payload at once.
+  onSimultaneousDownloads(() => instance?.concurrencyChanged?.());
   // 0.5.4: the first time with stats on, the launches known from before go to the players' numbers too.
   function reportPastLaunches() {
     try {

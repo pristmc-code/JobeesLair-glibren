@@ -11,7 +11,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Um payload falso: guarda os jobs e responde a API (GET /health, GET /jobs, POST /jobs, /secret, acoes).
 function fakePayload({ up = true, pid = 7 } = {}) {
-  const state = { up, pid, jobs: [], calls: [], secrets: [], next: 0 };
+  const state = { up, pid, jobs: [], calls: [], secrets: [], configs: [], next: 0 };
   const respond = (status, data) => ({ status, ok: status < 300, json: async () => data });
   state.http = {
     async request(url, { method = 'GET', headers = {}, body } = {}) {
@@ -22,6 +22,7 @@ function fakePayload({ up = true, pid = 7 } = {}) {
       if (method === 'GET' && path === '/health') return respond(200, { ok: true, version: '1.0.0', pid: state.pid });
       if (method === 'GET' && path === '/jobs') return respond(200, { jobs: state.jobs.map((job) => ({ ...job })) });
       if (method === 'POST' && path === '/secret') { state.secrets.push(JSON.parse(body)); return respond(200, { ok: true }); }
+      if (method === 'POST' && path === '/config') { state.configs.push(JSON.parse(body)); return respond(200, { ok: true }); }
       if (method === 'POST' && path === '/jobs') {
         const job = { ...JSON.parse(body), id: `b${++state.next}`, state: 'queued', written: 0, total: 0, published: '' };
         state.jobs.push(job);
@@ -197,4 +198,26 @@ test('o payload que para de responder: o app continua sozinho do ultimo checkpoi
   payload.up = false;
   await wait(250);
   assert.equal(engine.started.length, 1);
+});
+
+test('downloads simultaneos: o payload recebe o numero ao comecar um job e a cada mudanca; o motor nativo tambem', async () => {
+  const payload = fakePayload();
+  const engine = fakeEngine();
+  const told = [];
+  engine.downloads.setConcurrency = (n) => { told.push(n); return n; };
+  let count = 2;
+  const wrapper = make(payload, engine, { concurrency: () => count });
+  wrapper.enqueue(queueOptions());
+  await wait(30);
+  assert.deepEqual(payload.configs, [{ concurrency: 2 }], 'vai junto com o primeiro job');
+  wrapper.enqueue(queueOptions({ destination: '/mnt/ext0/downloads/images/Other.exfat' }));
+  await wait(30);
+  assert.equal(payload.configs.length, 1, 'o mesmo numero para o mesmo payload nao e mandado de novo');
+  count = 3;
+  assert.equal(wrapper.setConcurrency(3), 3);
+  await wait(30);
+  assert.deepEqual(told, [3]);
+  assert.deepEqual(payload.configs.at(-1), { concurrency: 3 });
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
 });

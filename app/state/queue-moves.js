@@ -88,7 +88,7 @@ import { MARGIN2 } from './space.js';
       const log2 = (message) => console.log(`[download-queue] move ${job2.id}: ${message}`);
       const control = { task: null, cancelled: false };
       const done = (async () => {
-        if (!COMPLETE.includes(job2.state) || deletions().has(job2) || active()?.job === job2) throw new Error(t("move.notReady"));
+        if (!COMPLETE.includes(job2.state) || deletions().has(job2) || active(job2)?.job === job2) throw new Error(t("move.notReady"));
         if (job2.root === to) throw new Error(t("move.sameDrive"));
         const from = job2.root;
         storageIdentity(job2);

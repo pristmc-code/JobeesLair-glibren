@@ -31,6 +31,8 @@
 //   - debrid.js: debridHandoff(source) (servico + pedido + arquivo do TorBox) e debridSecret(service) (a chave,
 //     entregue ao payload so por POST /secret em 127.0.0.1, nunca gravada nem registrada);
 //   - Settings.jsx (a opcao) e DownloadCard.jsx (o selo "segundo plano" e o botao "Baixar pelo app").
+//   - downloads simultaneos (state/simultaneous-downloads.js): setConcurrency(n) passa o numero ao motor nativo
+//     (Downloads.setConcurrency) e ao payload (POST /config), que entao baixa ate n jobs ao mesmo tempo.
 
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
@@ -118,10 +120,12 @@ import { loadList, saveList } from './saved.js';
     pollMs = 1e3,
     startWaitMs = 8e3,
     port = PORT,
-    stateDir = STATE_DIR
+    stateDir = STATE_DIR,
+    concurrency = () => 1
   }) {
     const base = `http://127.0.0.1:${port}`;
     let secretsFor = null; // pid do payload que ja recebeu a chave
+    let configFor = null; // pid:n do payload que ja recebeu o numero de downloads simultaneos
     const readToken = () => {
       try {
         const value = String(fs.readFile(`${stateDir}/token`) ?? "").trim();
@@ -183,6 +187,16 @@ import { loadList, saveList } from './saved.js';
       if (!key) return;
       const answer = await call(token, "POST", "/secret", { service: provider, key });
       if (answer.status === 200) secretsFor = `${state.pid}:${provider}`;
+    }
+    // O payload baixa ate `concurrency()` jobs ao mesmo tempo: o numero vai a cada payload novo (pid) e a cada mudanca.
+    async function syncConcurrency(token) {
+      if (!token) return;
+      const count = concurrency();
+      const state = await health(token);
+      if (!state || configFor === `${state.pid}:${count}`) return;
+      const answer = await call(token, "POST", "/config", { concurrency: count });
+      if (answer.status === 200) configFor = `${state.pid}:${count}`;
+      else log(`payload did not take ${count} simultaneous downloads (HTTP ${answer.status})`);
     }
     const eligible = (options) => platform === "ps5" && on() && options.background && typeof options.url === "string" &&
       /^https?:\/\//.test(options.url) && options.destination && !options.pieces && !options.unlimited;
@@ -313,6 +327,7 @@ import { loadList, saveList } from './saved.js';
           if (!token) return runNative();
           const source = handoff(meta.source) || { provider: "direct" };
           await handSecret(token, source.provider).catch(() => {});
+          await syncConcurrency(token).catch(() => {});
           const list = await call(token, "GET", "/jobs");
           const existing = list.data?.jobs?.find((job) => job.destination === destination || job.published && job.published === destination);
           if (existing) {
@@ -408,6 +423,17 @@ import { loadList, saveList } from './saved.js';
       return hybridTask(options, background);
     };
     wrapper.setRateLimit = (bytesPerSecond) => downloads.setRateLimit(bytesPerSecond);
+    // Downloads simultaneos: as faixas do motor nativo agora, e o payload se estiver no ar (senao, ao subir).
+    wrapper.setConcurrency = (count) => {
+      let lanes = 1;
+      try {
+        if (typeof downloads.setConcurrency === "function") lanes = downloads.setConcurrency(count);
+      } catch (error) {
+        log(`engine lanes not set: ${error?.message ?? error}`);
+      }
+      syncConcurrency(readToken()).catch(() => {});
+      return lanes;
+    };
     return wrapper;
   }
 
