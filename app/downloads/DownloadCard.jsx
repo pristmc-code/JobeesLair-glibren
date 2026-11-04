@@ -22,6 +22,7 @@ import { isCdnProvider } from '../game/sources.js';
 import { SPAN_MAX, fitBytes } from '../i18n/fit.js';
 import { useT } from '../i18n/index.js';
 import { BUSY, COMPLETE } from '../state/download-queue.js';
+import { takeOverDownload, useBackgroundOwner } from '../state/background-downloads.js';
 import { readinessOf, readinessText, stageLabel } from '../state/readiness.js';
 import { formatBytes } from '../state/size.js';
 import { Button2 } from '../ui/Button.jsx';
@@ -175,6 +176,8 @@ import { Text, View, motion } from '@ps5-react/core';
     // whichever order a move's blur and focus arrive in.
     const [within, setWithin] = (0, useState)(null);
     const { state, release } = job2;
+    // glibren-bg: o payload de segundo plano baixa este (continua com o app fechado); o jogador pode trazer para o app.
+    const background = useBackgroundOwner(job2.downloadDestination) && BUSY.includes(state);
     const shown = shownState(job2);
     const complete = COMPLETE.includes(state);
     const moving = BUSY.includes(state) && state !== "pausing";
@@ -195,7 +198,7 @@ import { Text, View, motion } from '@ps5-react/core';
     const problem = explained && job2.retryAt ? { ...explained, action: t2("downloads.retryingSoon") } : explained;
     // The file's own title id is another game's (a PKG's header, download-queue.js noteTitle): said after any problem.
     const mismatch = job2.titleMismatch ? t2("downloads.titleMismatch", { found: job2.titleMismatch, expected: job2.titleId }) : "";
-    const note = problem ? problem.action ? t2("downloads.problem", { title: problem.title, action: problem.action }) : problem.title : mismatch || (ready.action === "seeWhy" ? t2("ready.seeWhyHint") : state === "downloaded" ? job2.message || t2("downloads.installHint") : state === "installer-required" ? job2.message || "" : "");
+    const note = !problem && !mismatch && background ? t2("downloads.background.hint") : problem ? problem.action ? t2("downloads.problem", { title: problem.title, action: problem.action }) : problem.title : mismatch || (ready.action === "seeWhy" ? t2("ready.seeWhyHint") : state === "downloaded" ? job2.message || t2("downloads.installHint") : state === "installer-required" ? job2.message || "" : "");
     const cdn = isCdnProvider(release.provider);
     return /* @__PURE__ */ (0, jsxs)(View, { style: { width: CARD_WIDTH, flexDirection: "row", borderRadius: radius.lg, roundedClip: true, borderWidth: 1, borderColor: within ? colors.glow : colors.line, backgroundColor: within ? colors.surface2 : colors.surface }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, gap: 18, padding: 28 }, children: [
@@ -208,6 +211,7 @@ import { Text, View, motion } from '@ps5-react/core';
                 /* @__PURE__ */ (0, jsx)(Text, { style: mono(16, tone, { letterSpacing: 1.5 }), children: fitBytes(stageLabel(ready.stage).toUpperCase(), 96) })
               ] }),
               cdn ? /* @__PURE__ */ (0, jsx)(CdnSpark, { size: 13 }) : null,
+              background ? /* @__PURE__ */ (0, jsx)(View, { style: { borderRadius: radius.sm, backgroundColor: colors.canvas2, paddingHorizontal: 12, paddingVertical: 2 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: mono(16, colors.accentHi, { letterSpacing: 1.5 }), children: fitBytes(t2("downloads.background.chip").toUpperCase(), 96) }) }) : null,
               /* @__PURE__ */ (0, jsx)(Text, { style: mono(17, colors.subtle, { flex: 1, numberOfLines: 1, ellipsizeMode: "tail" }), children: meta })
             ] }),
             /* @__PURE__ */ (0, jsx)(Text, { style: font(27, colors.fg, { fontWeight: 600, numberOfLines: 1, ellipsizeMode: "tail", letterSpacing: 0.4 }), children: job2.title }),
@@ -228,6 +232,7 @@ import { Text, View, motion } from '@ps5-react/core';
             // 0.5.4: at least 230 wide, wider for a longer label ("Choose another source"), never cut.
             main ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", icon: main.icon, label: t2(main.label), style: { minWidth: 230 }, autoFocus, focusKey: primaryKey(job2.id), ...focusOf("main"), onPress: main.onPress }) : null,
             /* @__PURE__ */ (0, jsx)(Button2, { variant: main ? "secondary" : "primary", icon: "chevronRight", label: t2("downloads.action.gamePage"), style: { width: 210 }, autoFocus: main ? false : autoFocus, focusKey: main ? `downloads-page:${job2.id}` : primaryKey(job2.id), ...focusOf("page"), onPress: openGame }),
+            background ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", size: "icon", icon: "download", focusKey: `downloads-takeover:${job2.id}`, ...focusOf("takeover"), onPress: () => void takeOverDownload(job2.downloadDestination) }) : null,
             /* @__PURE__ */ (0, jsx)(CancelButton, { id: job2.id, action: clearAction(state), run: (name) => run(job2, name), ...focusOf("cancel") })
           ] }),
           state === "downloading" ? /* @__PURE__ */ (0, jsx)(CardSpeed, { id: job2.id, tone }) : null

@@ -271,9 +271,12 @@ def main():
         env=env, log=BUILD / "browser-capture.log")
     # The app's own loader payloads (app.json "payloads"), built the same way.
     own_payloads = []
-    for source, name, flags in app_payloads(app_dir, config):
+    for source, name, flags, network in app_payloads(app_dir, config):
         out = BUILD / name
-        run([sdk / "bin/prospero-clang", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", "-o", out, source, *flags],
+        # glibren-bg: a payload with "network": true gets the same pinned libcurl + OpenSSL ports as the engine.
+        includes_net = ["-I", archive_ports / "include"] if network else []
+        libs_net = [archive_ports / "lib" / lib for lib in ("libcurl.a", "libssl.a", "libcrypto.a", "libz.a", "libzstd.a", "libpsl.a")] if network else []
+        run([sdk / "bin/prospero-clang", "-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", *includes_net, "-o", out, source, *libs_net, *flags],
             env=env, log=BUILD / f"{name}.log")
         own_payloads.append(out)
     if args.compile_only:

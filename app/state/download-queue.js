@@ -791,7 +791,8 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         fs.mkdir(job2.artifact.directory, { recursive: true });
         fs.mkdir(job2.downloadDestination.slice(0, job2.downloadDestination.lastIndexOf("/")), { recursive: true });
         active2.transferring = true;
-        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: void 0, connections: 64, adaptive: true, rangeBytes: 16 * 1024 * 1024, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true });
+        // glibren-bg: `background` diz ao payload de segundo plano o nome, onde a imagem pronta mora e a fonte (background-downloads.js).
+        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: void 0, connections: 64, adaptive: true, rangeBytes: 16 * 1024 * 1024, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: job2.release } });
         active2.task = task;
         // Most catalog releases do not say their size, so the check above had nothing to go on: once the
         // server does, the rest is checked against the drive once, before it fills (the partial file counts

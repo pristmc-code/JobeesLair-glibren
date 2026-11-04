@@ -127,8 +127,8 @@ def app_payloads(app, config):
         raise ValueError("payloads must be an array of at most 8 entries")
     built = []
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) - {"source", "name", "libs"}:
-            raise ValueError("each payload needs source and name, and may list libs")
+        if not isinstance(entry, dict) or set(entry) - {"source", "name", "libs", "network"}:
+            raise ValueError("each payload needs source and name, and may list libs and network")
         source, name, libs = entry.get("source"), entry.get("name"), entry.get("libs", [])
         if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,40}\.elf", name):
             raise ValueError("a payload name is a lowercase file name ending in .elf")
@@ -138,7 +138,11 @@ def app_payloads(app, config):
             raise ValueError("payload libs are -l<name> flags")
         if not (app / source).is_file():
             raise ValueError(f"payload source {source} is missing")
-        built.append((app / source, name, libs))
+        # glibren-bg: "network": true links the pinned libcurl/OpenSSL ports into the payload (HTTPS of its own).
+        network = entry.get("network", False)
+        if not isinstance(network, bool):
+            raise ValueError("payload network is true or false")
+        built.append((app / source, name, libs, network))
     return built
 
 

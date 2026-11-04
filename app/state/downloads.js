@@ -10,7 +10,8 @@ import { getGame } from './catalog.js';
 import { DATA_DIR } from './data-dir.js';
 import { createDownloadQueue } from './download-queue.js';
 import { createSourceResolver } from './download-sources.js';
-import { debridResolver } from './debrid.js';
+import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
+import { createBackgroundDownloads } from './background-downloads.js';
 import { recordCapture } from './capture-hosts.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
 import { freeBytes, storageRoots } from './drives.js';
@@ -23,7 +24,7 @@ import { OLD_TITLE_ID } from './title-migration.js';
 import { TITLE_ID } from '../version.js';
 import { autoContinueParts } from './auto-continue.js';
 import { online } from './online.js';
-import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileSystem, Http, Linking, Notifications, Packages, Platform, Power } from '@ps5-react/core';
+import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileSystem, Http, Linking, Notifications, Packages, Payloads, Platform, Power } from '@ps5-react/core';
 
   var instance;
   // Jobee'sLair's own launches (this version's title ID, and the one 0.4.0 and Overdrive use) are not games played.
@@ -49,7 +50,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   var downloadQueue = () => instance ?? (instance = mocked() ? createMockDownloadQueue() : createDownloadQueue({
     fs: FileSystem,
     archives: Archives,
-    downloads: Downloads,
+    // glibren-bg: com a opcao ligada, o download da fila e do payload de segundo plano (background-downloads.js).
+    downloads: createBackgroundDownloads({ downloads: Downloads, http: Http, fs: FileSystem, payloads: Payloads, platform: Platform.OS, handoff: debridHandoff, secret: debridSecret, text: t }),
     http: Http,
     formats: DownloadFormats,
     dataDir: FileSystem.dataDir,
