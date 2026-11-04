@@ -379,3 +379,42 @@ test('TorBox only: kept only when on; the links the service fetches stay, the se
   const none = sectionsOf(sections, on, { selected: 0, debrid: () => false });
   assert.equal(none.viaDebrid, 0, 'a game with none says so');
 });
+
+test('TorBox Instant links: asked of TorBox by themselves, once a session, only the wanted ones', async () => {
+  const asked = [];
+  const { probe } = world({ torbox: async (links) => { asked.push(...links); return new Map([[VIKING.url, ['Black Myth Wukong.exfat']], [FICHIER.url, ['x.rar']]]); } });
+  const wanted = (key) => key === VIKING.url;
+  assert.equal(await probe.askTorBox([VIKING, FICHIER], wanted), 1);
+  assert.deepEqual(asked, [VIKING.url], 'only the Instant link, in one call');
+  assert.deepEqual(effectiveFormat(VIKING, probe.recordOf), { format: 'exfat', how: 'found' });
+  assert.equal(probe.recordOf(FICHIER.url), null);
+  assert.equal(await probe.askTorBox([VIKING, FICHIER], () => true), 1, 'the other one now');
+  assert.equal(await probe.askTorBox([VIKING, FICHIER], () => true), 0, 'nothing asked twice');
+  assert.equal(asked.length, 2);
+});
+
+test('Find via TorBox: a request added only to read the names, then removed (JSON delete); removed on a failure too', async () => {
+  const calls = [];
+  let state = 'downloading';
+  const http = { async request(url, options = {}) {
+    calls.push({ url: url.replace(/token=[^&]+/, 'token=…'), method: options.method || 'GET', body: options.body, type: options.headers?.['Content-Type'] });
+    let data = null;
+    if (url.includes('/webdl/createwebdownload')) data = { webdownload_id: 77, hash: 'h' };
+    else if (url.includes('/webdl/mylist')) data = state === 'named' ? { id: 77, name: 'Game', download_state: 'downloading', files: [{ id: 1, name: 'Game/readme.txt', size: 10 }, { id: 2, name: 'Game/Game.exfat', size: 9e9 }] } : state === 'failed' ? { id: 77, download_state: 'failed' } : { id: 77, download_state: 'downloading', progress: 0.1 };
+    else if (url.includes('/webdl/controlwebdownload')) data = {};
+    state = state === 'downloading' ? 'named' : state;
+    return { status: 200, json: async () => ({ success: true, data }) };
+  } };
+  const api = createTorBox({ key: () => '0123abcd-4567-89ef-0123-456789abcdef', http, wait: async () => {} });
+  const { names, removed } = await api.inspect('https://vikingfile.com/f/abc');
+  assert.equal(names[0], 'Game/Game.exfat', 'the largest first');
+  assert.equal(removed, true);
+  const del = calls.find((call) => call.url.includes('controlwebdownload'));
+  assert.equal(del.method, 'POST');
+  assert.equal(del.type, 'application/json');
+  assert.deepEqual(JSON.parse(del.body), { webdl_id: 77, operation: 'delete' });
+  calls.length = 0;
+  state = 'failed';
+  await assert.rejects(api.inspect('https://vikingfile.com/f/def'), (error) => error.code === 'FAILED');
+  assert.ok(calls.some((call) => call.url.includes('controlwebdownload')), 'removed after a failure too');
+});

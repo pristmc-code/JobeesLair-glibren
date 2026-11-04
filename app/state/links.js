@@ -10,8 +10,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createLinkHealth, onLinkReport, onOutcome } from './link-health.js';
 import { createFormatProbe } from './format-probe.js';
-import { formatKeyOf, onFormatReport } from './link-formats.js';
-import { activeService, torBoxFileNames } from './debrid.js';
+import { formatFromName, formatKeyOf, onFormatReport } from './link-formats.js';
+import { activeService, heldByTorBox, torBoxFileNames, torBoxFormatNames } from './debrid.js';
 import { refreshShared, reportShared, sharedDead, subscribeShared } from './shared-links.js';
 import { downloadQueue } from './downloads.js';
 import { savedList } from './saved.js';
@@ -156,7 +156,50 @@ import { Http } from '@ps5-react/core';
       return null;
     }
   }
+  // glibren: when a source list opens, the links TorBox holds already ("Instant") with no format are asked of it at
+  // once (checkcached list_files: nothing added to the account), so their rows say "exFAT image" without a press.
+  function askTorBoxFormats(releases) {
+    if (activeService() !== "torbox") return Promise.resolve(0);
+    const held = new Set((releases || []).filter((release) => heldByTorBox(release) === true).map(formatKeyOf).filter(Boolean));
+    return held.size ? linkFormats().askTorBox(releases, (key) => held.has(key)) : Promise.resolve(0);
+  }
+  // glibren: "Find via TorBox": a link TorBox takes but does not hold, added to the account only to read its files'
+  // names and removed right after (debrid.js torBoxFormatNames). Nothing is downloaded. One at a time, cancellable.
+  var torBoxStop = null;
+  async function findViaTorBox(release) {
+    const key = formatKeyOf(release);
+    if (!key || findingViaBrowser()) return null;
+    const aborts = /* @__PURE__ */ new Set();
+    const signal = { aborted: false, addEventListener: (type, fn) => type === "abort" && aborts.add(fn), removeEventListener: (type, fn) => aborts.delete(fn) };
+    torBoxStop = () => {
+      signal.aborted = true;
+      for (const fn of [...aborts]) fn();
+    };
+    setBrowserFind(key, { state: "capturing", via: "torbox" });
+    try {
+      const { names, removed } = await torBoxFormatNames(release, { signal });
+      let format = null;
+      for (const name of names || []) {
+        if (!formatFromName(name)) continue;
+        format = await linkFormats().learn(release, { name });
+        if (format) break;
+      }
+      if (!removed) console.log(`[formats] TorBox: the request for ${key.slice(0, 60)} stayed in the account (it was there before, or TorBox did not remove it)`);
+      setBrowserFind(key, format ? null : { state: "failed", reason: "unread" });
+      return format;
+    } catch (error) {
+      const stopped = signal.aborted || error?.name === "AbortError";
+      setBrowserFind(key, stopped ? null : { state: "failed", reason: error?.message || "" });
+      return null;
+    } finally {
+      torBoxStop = null;
+    }
+  }
   function cancelFindViaBrowser() {
+    if (torBoxStop) {
+      torBoxStop();
+      return;
+    }
     try {
       downloadQueue().cancelFileLinkCapture?.();
     } catch {
@@ -164,4 +207,4 @@ import { Http } from '@ps5-react/core';
   }
   var cancelFindFormats = (key) => linkFormats().cancel(key);
 
-export { cancelFindFormats, cancelFindViaBrowser, checkLinksNow, findFormatsNow, findViaBrowser, findingViaBrowser, linkFormats, useBrowserFinds, useFormatSummary, linkHealth, startSharedLinks, useFormatSearch, useHealthyReleases, useLinkCheck, useLinkFormats, useLinkWatch, watchLinks };
+export { askTorBoxFormats, cancelFindFormats, cancelFindViaBrowser, checkLinksNow, findFormatsNow, findViaBrowser, findViaTorBox, findingViaBrowser, linkFormats, useBrowserFinds, useFormatSummary, linkHealth, startSharedLinks, useFormatSearch, useHealthyReleases, useLinkCheck, useLinkFormats, useLinkWatch, watchLinks };

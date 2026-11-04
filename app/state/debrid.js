@@ -27,7 +27,7 @@
 // lendNetwork); a check the gamer asks for pauses the download meanwhile (`quiet`, its quietNetwork).
 
 import { useEffect, useState } from 'react';
-import { createTorBox, hostSupported, isMagnet, md5, validKey } from '../services/torbox.js';
+import { createTorBox, fileNamesOf, hostSupported, isMagnet, md5, validKey } from '../services/torbox.js';
 import { createAllDebrid, hostSupported as allDebridHost, validKey as validAllDebridKey } from '../services/alldebrid.js';
 import { cancellation, sourceKind } from './download-sources.js';
 import { savedList } from './saved.js';
@@ -410,10 +410,29 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
    * glibren: the file names of the `links` TorBox holds already (services/torbox.js cachedFiles), for "Find
    * formats" (state/format-probe.js); null without a TorBox key or with a test client that cannot list them.
    */
+  /**
+   * glibren: "Find via TorBox" for `release` (its first link): the files' names, from the item this app already
+   * has for it (nothing added, nothing removed), else from a request added only to read them and removed right
+   * after (services/torbox.js inspect). -> { names, removed, existing }.
+   */
+  async function torBoxFormatNames(release, { signal, onProgress } = {}) {
+    if (activeService() !== "torbox") throw Object.assign(new Error("A TorBox key is needed."), { code: "NO_AUTH" });
+    const source = sourcesOf(release)[0];
+    const link = source && linkOf(source);
+    if (!link || isMagnet(link)) throw Object.assign(new Error("No link to ask TorBox about."), { code: "NO_LINK" });
+    const api = torbox();
+    const kept = record().items?.[md5(link)];
+    if (kept?.id !== void 0 && kept?.id !== null) {
+      const item = await api.item(kept.kind || "webdl", kept.id, { signal });
+      if (item) return { names: fileNamesOf(item), removed: false, existing: true };
+    }
+    const { names, removed } = await api.inspect(link, { password: source.archivePassword, signal, onProgress });
+    return { names, removed, existing: false };
+  }
   function torBoxFileNames(links) {
     if (!keyOf()) return null;
     const api = torbox();
     return typeof api.cachedFiles === "function" ? api.cachedFiles(links) : null;
   }
 
-export { activeService, askInstant as askTorBoxInstant, torBoxFileNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };
+export { activeService, askInstant as askTorBoxInstant, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };

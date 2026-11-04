@@ -10,6 +10,8 @@
 //   POST /webdl/createwebdownload    link=… (form)             -> { webdownload_id, hash }
 //   POST /torrents/createtorrent     magnet=… (multipart form) -> { torrent_id, hash }
 //   GET  /webdl/mylist?id=, /torrents/mylist?id=   an item's state: progress, download_finished, files
+//   POST /webdl/controlwebdownload  {webdl_id, operation: "delete"} (JSON)  removes an item (glibren: after
+//   POST /torrents/controltorrent   {torrent_id, operation: "delete"} (JSON)  "Find via TorBox" read its names)
 //   GET  /webdl/requestdl, /torrents/requestdl     a direct link to one of its files, open for 3 hours
 //                                                  (zip_link=true: a torrent's files as one zip)
 // Every call answers { success, error, detail, data }. The key goes in an Authorization header, except
@@ -126,6 +128,12 @@ import { parseStamp } from '../state/clock.js';
     }, ms);
     signal?.addEventListener?.("abort", stop);
   });
+  /** glibren: an item's (or checkcached entry's) file names, the largest first, then its own name. */
+  function fileNamesOf(entry) {
+    if (!entry || typeof entry !== "object") return [];
+    const files = Array.isArray(entry.files) ? [...entry.files].sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0)).map((file) => file?.short_name || file?.name) : [];
+    return [...files, entry.name].filter((name) => typeof name === "string" && name);
+  }
   // The file of an item to download: the one named like the release's file, else the largest.
   function pickFile(files, wanted) {
     const list = (files || []).filter((file) => file && file.id !== void 0);
@@ -165,7 +173,7 @@ import { parseStamp } from '../state/clock.js';
     };
     // Whatever a failure says, never the key (a transport error can quote the URL it was asked for).
     const scrub = (message, value) => value ? String(message).split(value).join("…") : String(message);
-    async function call(path, { method = "GET", params, form, multipart, signal, token = false, auth = true } = {}) {
+    async function call(path, { method = "GET", params, form, multipart, json, signal, token = false, auth = true } = {}) {
       const value = auth || token ? secret() : null;
       const url = `${BASE}${path}${params || token ? `?${query({ ...token ? { token: value } : {}, ...params })}` : ""}`;
       const headers = {};
@@ -174,6 +182,9 @@ import { parseStamp } from '../state/clock.js';
       if (form) {
         headers["Content-Type"] = "application/x-www-form-urlencoded";
         body = query(form);
+      } else if (json) {
+        headers["Content-Type"] = "application/json";
+        body = JSON.stringify(json);
       } else if (multipart) {
         const boundary = `----JobeesLair${now().toString(16)}`;
         headers["Content-Type"] = `multipart/form-data; boundary=${boundary}`;
@@ -263,11 +274,7 @@ import { parseStamp } from '../state/clock.js';
        */
       async cachedFiles(links, { signal } = {}) {
         const found = /* @__PURE__ */ new Map();
-        const namesOf = (entry) => {
-          if (!entry || typeof entry !== "object") return [];
-          const files = Array.isArray(entry.files) ? [...entry.files].sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0)).map((file) => file?.short_name || file?.name) : [];
-          return [...files, entry.name].filter((name) => typeof name === "string" && name);
-        };
+        const namesOf = fileNamesOf;
         const ask = async (path, byHash) => {
           const hashes = [...byHash.keys()];
           for (let i = 0; i < hashes.length; i += 100) {
@@ -293,6 +300,41 @@ import { parseStamp } from '../state/clock.js';
         }
         const data = await call("/webdl/createwebdownload", { method: "POST", form: { link, password }, signal });
         return { kind: "webdl", id: data?.webdownload_id, hash: data?.hash ?? md5(link) };
+      },
+      /** glibren: removes an item from the account (control…, operation delete); true when TorBox said so. */
+      async remove(kind, id, { signal } = {}) {
+        try {
+          await call(kind === "torrent" ? "/torrents/controltorrent" : "/webdl/controlwebdownload", { method: "POST", json: kind === "torrent" ? { torrent_id: Number(id) || id, operation: "delete" } : { webdl_id: Number(id) || id, operation: "delete" }, signal });
+          return true;
+        } catch (error) {
+          if (error?.name === "AbortError") throw error;
+          log(`could not remove ${kind} ${id}: ${error?.code || error?.message}`);
+          return false;
+        }
+      },
+      /**
+       * glibren: "Find via TorBox": `link` added to the account only to read its files' names (largest first),
+       * waited for as a resolve waits (up to `maxWaitMs`), then removed again. Nothing is downloaded. ->
+       * { names, removed }. The request counts on the account's plan while it lasts.
+       */
+      async inspect(link, { password, signal, onProgress, maxWaitMs = WAIT_MS, pollMs = POLL_MS } = {}) {
+        const entry = await api.createDownload(link, { password, signal });
+        if (entry.id === void 0 || entry.id === null) throw new TorBoxError("NO_ITEM", "TorBox didn't say where it put the file. Try again in a moment.");
+        try {
+          const started = now();
+          let item = await api.item(entry.kind, entry.id, { signal });
+          while (!(item && (fileNamesOf(item).some((name) => /\.[a-z0-9]{2,6}$/i.test(name)) || finished(item)))) {
+            if (item && failed(item)) throw new TorBoxError("FAILED", `TorBox couldn't fetch the file${item.download_state ? ` (${item.download_state})` : ""}.`);
+            onProgress?.(Math.max(0, Math.min(1, Number(item?.progress) || 0)));
+            if (now() - started >= maxWaitMs) throw new TorBoxError("PENDING", "TorBox is still fetching this file. Try again in a while.");
+            await wait(pollMs, signal);
+            item = await api.item(entry.kind, entry.id, { signal });
+          }
+          return { names: fileNamesOf(item), removed: await api.remove(entry.kind, entry.id) };
+        } catch (error) {
+          await api.remove(entry.kind, entry.id).catch(() => false);
+          throw error;
+        }
       },
       /** One item of the account (mylist?id=), or null when it is not there (any more). */
       async item(kind, id, { signal } = {}) {
@@ -377,4 +419,4 @@ import { parseStamp } from '../state/clock.js';
     });
   }
 
-export { MESSAGES, PLANS, TorBoxError, chooseFiles, createTorBox, hostSupported, isMagnet, linkHashes, magnetHash, md5, pickFile, validKey };
+export { fileNamesOf, MESSAGES, PLANS, TorBoxError, chooseFiles, createTorBox, hostSupported, isMagnet, linkHashes, magnetHash, md5, pickFile, validKey };

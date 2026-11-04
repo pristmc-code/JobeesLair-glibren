@@ -8,7 +8,7 @@
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { VersionFace } from './VersionSheet.jsx';
 import { captureStanding, describeSource, isCdnProvider, preferredRelease, sourceSections } from './sources.js';
 import { useT } from '../i18n/index.js';
@@ -17,7 +17,7 @@ import { activeService, debridSupports, heldByTorBox, serviceName, useTorBoxInst
 import { downloadQueue } from '../state/downloads.js';
 import { deviceFacts } from '../state/device.js';
 import { backportAdvice, ps5FakePackagesLaunch } from '../state/firmware.js';
-import { cancelFindFormats, cancelFindViaBrowser, findFormatsNow, findViaBrowser, linkFormats, useBrowserFinds, useFormatSearch, useFormatSummary, useHealthyReleases, useLinkCheck, useLinkFormats } from '../state/links.js';
+import { askTorBoxFormats, cancelFindFormats, cancelFindViaBrowser, findFormatsNow, findViaBrowser, findViaTorBox, linkFormats, useBrowserFinds, useFormatSearch, useFormatSummary, useHealthyReleases, useLinkCheck, useLinkFormats } from '../state/links.js';
 import { FORMAT_GROUP, effectiveFormat, imageTypeOf } from '../state/link-formats.js';
 import { filterSections, imagesShown, isFiltering, setFormatFilter, showAllKinds, toggleDebridOnly, toggleImageType, toggleKind, toggleUnknown, useFormatFilter } from '../state/format-filter.js';
 import { debridOnlyOn } from '../state/debrid-choice.js';
@@ -101,7 +101,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
   var findStyle = (_state) => [{ position: "relative", width: 104, alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, paddingVertical: 10 }, _state.focused ? { backgroundColor: colors.surface2, borderColor: colors.accent } : null];
   // A row's second line while "Find" works on it, or why it found nothing.
   function findDetail(t2, find) {
-    if (find?.state === "capturing") return t2("formats.browser.capturing");
+    if (find?.state === "capturing") return t2(find.via === "torbox" ? "formats.torbox.waiting" : "formats.browser.capturing");
     if (find?.state !== "failed") return null;
     const reason = find.reason === "console" ? t2("formats.browser.consoleOnly") : find.reason === "unread" ? t2("formats.browser.unread") : find.reason;
     return t2("formats.browser.failed", { reason });
@@ -200,6 +200,8 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
   function Section2({ group, items, selected, recommended, revealed, onPick, onDebrid, tag, finder }) {
     const t2 = useT();
     const findOf = useBrowserFinds();
+    // glibren: the row whose "Find" offers two ways (the console's browser, TorBox), open under it.
+    const [menuFor, setMenuFor] = (0, useState)(null);
     const launches = ps5FakePackagesLaunch(deviceFacts().firmware);
     const { title, icon } = SECTION[group];
     const note = group === "torrent" && !(onDebrid && activeService()) ? "sources.section.torrentNeeds" : SECTION[group].note;
@@ -221,7 +223,11 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
         const torbox = !gone && !torrent && Boolean(onDebrid) && debridSupports(release);
         const idle = gone || torrent && !viaDebrid;
         // glibren: a link of no known format on a site that needs the browser: "Find" beside it.
-        const findable = Boolean(finder) && !gone && !torrent && Boolean(release.formatInfo) && !release.formatInfo.format && (group === "browser" || release.requiresBrowser === true);
+        const unknownFormat = Boolean(release.formatInfo) && !release.formatInfo.format;
+        const byBrowser = Boolean(finder) && !gone && !torrent && unknownFormat && (group === "browser" || release.requiresBrowser === true);
+        // glibren: TorBox takes the link but does not hold it: it can be asked (a request of the account, removed after).
+        const byTorBox = !gone && !torrent && unknownFormat && activeService() === "torbox" && debridSupports(release) && heldByTorBox(release) !== true;
+        const findable = byBrowser || byTorBox;
         const find = findable ? findOf(release) : null;
         const extra = torbox || findable;
         const face = /* @__PURE__ */ (0, jsx)(View, { autoFocus: !gone && index === selected || revealed && row === 0, onPress: idle ? () => {
@@ -241,10 +247,22 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
         ) }, extra ? "row" : release.id);
         if (!extra) return face;
         const busy = find?.state === "capturing";
-        return /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "stretch", gap: 8 }, children: [
+        const startFind = (how) => {
+          setMenuFor(null);
+          if (how === "torbox") void findViaTorBox(release);
+          else void findViaBrowser(release, finder);
+        };
+        const pressFind = () => busy ? cancelFindViaBrowser() : byBrowser && byTorBox ? setMenuFor(menuFor === release.id ? null : release.id) : startFind(byTorBox ? "torbox" : "browser");
+        const rowView = /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "stretch", gap: 8 }, children: [
           face,
-          findable ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:find:${release.id}`, onPress: () => busy ? cancelFindViaBrowser() : void findViaBrowser(release, finder), style: findStyle, children: /* @__PURE__ */ (0, jsx)(FindFace, { busy }) }, "find") : null,
+          findable ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:find:${release.id}`, onPress: pressFind, style: findStyle, children: /* @__PURE__ */ (0, jsx)(FindFace, { busy }) }, "find") : null,
           torbox ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:torbox:${release.id}`, onPress: () => onDebrid(index), style: torboxStyle, children: /* @__PURE__ */ (0, jsx)(TorBoxFace, {}) }, "torbox") : null
+        ] }, release.id);
+        if (menuFor !== release.id || busy) return rowView;
+        return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 4 }, children: [
+          rowView,
+          /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:find:browser:${release.id}`, autoFocus: true, onPress: () => startFind("browser"), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "globe", text: t2("formats.browser.option"), note: t2("formats.browser.optionNote"), end: null }) }, "by-browser"),
+          /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:find:torbox:${release.id}`, onPress: () => startFind("torbox"), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "zap", text: t2("formats.torbox.option"), note: t2("formats.torbox.optionNote"), end: null }) }, "by-torbox")
         ] }, release.id);
       })
     ] });
@@ -390,6 +408,11 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     const countAll = (group) => countIn(everySection, group);
     const offered = countAll("direct") + countAll("page") + countAll("torrent") + countAll("browser") + countAll("dlc") + countAll("backport");
     useTorBoxInstant(onDebrid ? releases : [], lendNetwork);
+    // glibren: the links TorBox holds already with no format: asked of it at once (one call, nothing added).
+    const heldUnknown = releases.filter((release) => heldByTorBox(release) === true && !effectiveFormat(release, recordOf).format).map((release) => release.id).join(",");
+    (0, useEffect)(() => {
+      if (heldUnknown) void askTorBoxFormats(healthy);
+    }, [heldUnknown]);
     // With TorBox, a browser-only host it supports downloads in the app, so those sources are shown at once.
     const [browser, setBrowser] = (0, useState)(() => !countAll("direct") && !countAll("page") && !countAll("torrent") || describeSource(releases[selected]).group === "browser" || Boolean(onDebrid) && sections.some(({ group, items }) => group === "browser" && items.some(({ release }) => debridSupports(release))));
     const debrid = onDebrid ? (index) => {

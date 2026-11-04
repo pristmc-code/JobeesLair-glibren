@@ -89,6 +89,8 @@ import { sourceKind, webURL } from './download-sources.js';
     const cooled = /* @__PURE__ */ new Map();
     const progress = /* @__PURE__ */ new Map();
     let running = null;
+    // glibren: links already asked of TorBox by themselves this session (askTorBox): once each.
+    const askedOfTorBox = /* @__PURE__ */ new Set();
     function load() {
       if (records) return records;
       const saved = store.get();
@@ -354,6 +356,32 @@ import { sourceKind, webURL } from './download-sources.js';
           running = null;
           emit();
         });
+      },
+      /**
+       * glibren: the links of `releases` nothing names a format for that `wanted(link)` picks (TorBox Instant ones),
+       * asked of TorBox in one call (checkcached list_files: nothing added to the account), once a session each,
+       * under `quiet`. Resolves with how many formats it found.
+       */
+      async askTorBox(releases, wanted = () => true) {
+        const links = unknownLinks(releases, recordOf, debridOn).filter((link) => link.kind !== "unavailable" && !askedOfTorBox.has(link.key) && wanted(link.key));
+        if (!links.length) return 0;
+        for (const link of links) askedOfTorBox.add(link.key);
+        const run = { stop: false, abort: null, stopping: new Promise(() => {
+        }) };
+        let held;
+        try {
+          held = await quiet("torbox formats", () => lookTorBox(run, links));
+        } catch {
+          return 0;
+        }
+        let found = 0;
+        for (const link of links) {
+          const format = fromNames(held.get(link.key));
+          if (!format) continue;
+          remember(link.key, { f: format, how: "found" });
+          found++;
+        }
+        return found;
       },
       /** Stops the search of `key` (what was found stands). */
       cancel(key) {
