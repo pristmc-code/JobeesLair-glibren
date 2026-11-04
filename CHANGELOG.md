@@ -6,6 +6,19 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **The exact type of a link, not only its group.** Rows say "exFAT image", "FFPKG image", "RAR archive" where the
+  type is known (the catalog, a file name, a page, TorBox's names, a download's or a capture's first bytes; a UFS2
+  image is told by its superblock 66 KiB in), and the catalog's ".exfat Image" pill no longer says it twice. With
+  images shown, the format filter picks image types too (exFAT, FFPKG, FFPFS with FFPFSC), saved with the rest.
+- **"Find" beside a link whose site needs the browser.** The console's browser opens on it, the gamer passes the
+  site's check as for a download, and only the file's name or first bytes are read: nothing is downloaded. The
+  format is kept as found. Only on the console (the desktop preview says so).
+- **A TorBox key added later counts.** A link "Find formats" had found to need the browser is asked of TorBox again
+  once a key is set, and the counts under "Find formats" are what is known now.
+- **One link opens the list too** ("View download link"), with the format filter, Find formats and Find; the line
+  under the download button names the chosen link's format as worked out.
+- **Badges no longer sit over the size.** A row's badges wrap within its text column, beside the TorBox and Find
+  buttons too.
 - **The whole queue keeps downloading with the app closed.** With "keep downloading when I close the app" on, the
   downloads still waiting in the queue are handed to the background payload ahead, in the queue's order: the ones it
   can fetch alone (direct links, and TorBox once its link is asked) download one after another (or as many at once

@@ -2,7 +2,9 @@
 // reconstructed from the esbuild bundle in eboot.bin
 // MODIFIED (glibren): a format filter at the top of the list (All, Image, PKG, Archive, unknown on or off; saved for
 // every game, state/format-filter.js), each row's format as worked out (state/link-formats.js) and "Find formats"
-// (state/format-probe.js), which asks what the unknown links are without downloading them.
+// (state/format-probe.js), which asks what the unknown links are without downloading them. With images shown, the
+// image types (exFAT, FFPKG, FFPFS) can be picked too; "Find" beside a link whose site needs the browser opens it in
+// the console's browser for the gamer to pass its check, and reads only what the file is (state/links.js).
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
@@ -15,9 +17,9 @@ import { activeService, debridSupports, heldByTorBox, serviceName, useTorBoxInst
 import { downloadQueue } from '../state/downloads.js';
 import { deviceFacts } from '../state/device.js';
 import { backportAdvice, ps5FakePackagesLaunch } from '../state/firmware.js';
-import { cancelFindFormats, findFormatsNow, linkFormats, useFormatSearch, useHealthyReleases, useLinkCheck, useLinkFormats } from '../state/links.js';
-import { effectiveFormat } from '../state/link-formats.js';
-import { filterSections, isFiltering, setFormatFilter, showAllKinds, toggleKind, toggleUnknown, useFormatFilter } from '../state/format-filter.js';
+import { cancelFindFormats, cancelFindViaBrowser, findFormatsNow, findViaBrowser, linkFormats, useBrowserFinds, useFormatSearch, useFormatSummary, useHealthyReleases, useLinkCheck, useLinkFormats } from '../state/links.js';
+import { FORMAT_GROUP, effectiveFormat, imageTypeOf } from '../state/link-formats.js';
+import { filterSections, imagesShown, isFiltering, setFormatFilter, showAllKinds, toggleImageType, toggleKind, toggleUnknown, useFormatFilter } from '../state/format-filter.js';
 import { CdnAura, CdnSpark } from '../ui/CdnAura.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
 import { Icon } from '../ui/Icon.jsx';
@@ -83,7 +85,34 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     ] });
   }
   var torboxStyle = (_state) => [{ position: "relative", width: 112, alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, paddingVertical: 10 }, _state.focused ? { backgroundColor: colors.surface2, borderColor: GOLD } : null];
+  // glibren: "Find" beside a link whose site needs the browser (state/links.js findViaBrowser): the console's browser
+  // opens on it, the gamer passes its check, and only what the file is gets read; pressed again, it stops.
+  function FindFace({ busy }) {
+    const t2 = useT();
+    const focused = useIsFocused();
+    const ink2 = focused ? colors.fg : colors.muted;
+    return /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
+      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
+      /* @__PURE__ */ (0, jsx)(Icon, { name: busy ? "x" : "globe", size: 20, color: ink2 }),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 19, fontWeight: 600, color: ink2, lineHeight: 24 }, children: t2(busy ? "formats.browser.stop" : "formats.browser.button") })
+    ] });
+  }
+  var findStyle = (_state) => [{ position: "relative", width: 104, alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, paddingVertical: 10 }, _state.focused ? { backgroundColor: colors.surface2, borderColor: colors.accent } : null];
+  // A row's second line while "Find" works on it, or why it found nothing.
+  function findDetail(t2, find) {
+    if (find?.state === "capturing") return t2("formats.browser.capturing");
+    if (find?.state !== "failed") return null;
+    const reason = find.reason === "console" ? t2("formats.browser.consoleOnly") : find.reason === "unread" ? t2("formats.browser.unread") : find.reason;
+    return t2("formats.browser.failed", { reason });
+  }
   var PILL = { ink: colors.subtle, line: colors.line };
+  // glibren: the row's name already says which image it is ("exFAT image"): the catalog's ".exfat Image" pill would
+  // say it twice. An archive of an image keeps it (the name says the archive, the pill what it holds).
+  function sameImage(release) {
+    if (release.dumpType !== "image") return false;
+    const format = release.formatInfo?.format ?? String(release.format || "").toLowerCase();
+    return FORMAT_GROUP[format] === "image" && (!release.imageFormat || imageTypeOf(format) === release.imageFormat);
+  }
   // What a source is (release-sets.js releaseType), as a plain pill: Folder Dump, .exfat Image, FFPKG,
   // FFPFS Image, (PS4) Backport, FPKG. Nothing when it cannot be told before the download.
   function typePill(t2, release) {
@@ -158,15 +187,18 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
         ] }),
         // What it is, whether it runs on 13.60 and how its link stands, on a line of their own so a long name
         // never pushes them out of the row.
-        badges.some(Boolean) ? /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 3 }, children: badges.filter(Boolean).map((badge) => /* @__PURE__ */ (0, jsx)(View, { style: { borderRadius: radius.xs, borderWidth: 1, borderColor: badge.line, paddingHorizontal: 8, paddingVertical: 1 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 17, fontWeight: 600, color: badge.ink, lineHeight: 22 }, children: badge.text }) }, badge.text)) }) : null,
-        /* @__PURE__ */ (0, jsx)(Text, { style: [{ width: narrow ? 330 : 450, fontFamily: "Exo2", fontSize: 21, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, { color: ink2 }], children: detail2 || t2("sources.noDetails") })
+        // glibren: they wrap within the text column (its width, as the line below), so the last one never sits over
+        // the size and the check on the right, with the TorBox and Find buttons beside the row too.
+        badges.some(Boolean) ? /* @__PURE__ */ (0, jsx)(View, { style: { width: narrow === 2 ? 220 : narrow ? 330 : 450, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, rowGap: 6, marginTop: 3 }, children: badges.filter(Boolean).map((badge) => /* @__PURE__ */ (0, jsx)(View, { style: { borderRadius: radius.xs, borderWidth: 1, borderColor: badge.line, paddingHorizontal: 8, paddingVertical: 1 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 17, fontWeight: 600, color: badge.ink, lineHeight: 22 }, children: badge.text }) }, badge.text)) }) : null,
+        /* @__PURE__ */ (0, jsx)(Text, { style: [{ width: narrow === 2 ? 220 : narrow ? 330 : 450, fontFamily: "Exo2", fontSize: 21, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, { color: ink2 }], children: detail2 || t2("sources.noDetails") })
       ] }),
       /* @__PURE__ */ (0, jsx)(Text, { style: [{ width: narrow ? 96 : 108, fontFamily: "Exo2", fontSize: 21, textAlign: "end", lineHeight: 30 }, { color: ink2 }], children: size ?? "" }),
       /* @__PURE__ */ (0, jsx)(View, { style: { width: 27, alignItems: "flex-end" }, children: current ? /* @__PURE__ */ (0, jsx)(Icon, { name: "check", size: 18, color: colors.fg }) : null })
     ] });
   }
-  function Section2({ group, items, selected, recommended, revealed, onPick, onDebrid, tag }) {
+  function Section2({ group, items, selected, recommended, revealed, onPick, onDebrid, tag, finder }) {
     const t2 = useT();
+    const findOf = useBrowserFinds();
     const launches = ps5FakePackagesLaunch(deviceFacts().firmware);
     const { title, icon } = SECTION[group];
     const note = group === "torrent" && !(onDebrid && activeService()) ? "sources.section.torrentNeeds" : SECTION[group].note;
@@ -187,25 +219,31 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
         // TorBox can fetch it (a TorBox key is set and it lists the host): a TorBox button beside the row.
         const torbox = !gone && !torrent && Boolean(onDebrid) && debridSupports(release);
         const idle = gone || torrent && !viaDebrid;
+        // glibren: a link of no known format on a site that needs the browser: "Find" beside it.
+        const findable = Boolean(finder) && !gone && !torrent && Boolean(release.formatInfo) && !release.formatInfo.format && (group === "browser" || release.requiresBrowser === true);
+        const find = findable ? findOf(release) : null;
+        const extra = torbox || findable;
         const face = /* @__PURE__ */ (0, jsx)(View, { autoFocus: !gone && index === selected || revealed && row === 0, onPress: idle ? () => {
-        } : torrent ? () => onDebrid(index) : () => onPick(index), style: (_state) => [{ position: "relative", minHeight: 84, flexDirection: "row", alignItems: "center", gap: 18, borderRadius: radius.md, paddingHorizontal: 18, paddingVertical: 12 }, torbox ? { flex: 1 } : null, idle ? { opacity: 0.55 } : null, _state.focused ? { backgroundColor: colors.surface2 } : null], children: /* @__PURE__ */ (0, jsx)(
+        } : torrent ? () => onDebrid(index) : () => onPick(index), style: (_state) => [{ position: "relative", minHeight: 84, flexDirection: "row", alignItems: "center", gap: 18, borderRadius: radius.md, paddingHorizontal: 18, paddingVertical: 12 }, extra ? { flex: 1 } : null, idle ? { opacity: 0.55 } : null, _state.focused ? { backgroundColor: colors.surface2 } : null], children: /* @__PURE__ */ (0, jsx)(
           RowFace,
           {
             icon,
             name,
-            detail: gone ? deadDetail(t2, release, host) : rowDetail(t2, release, detail2, host, launches),
+            detail: gone ? deadDetail(t2, release, host) : findDetail(t2, find) ?? rowDetail(t2, release, detail2, host, launches),
             size,
-            narrow: torbox,
+            narrow: torbox && findable ? 2 : extra ? 1 : 0,
             cdn: !gone && isCdnProvider(release.provider),
             recommended: !gone && index === recommended && group !== "browser" && release.linkHealth?.status !== "dead",
             current: !gone && index === selected,
-            badges: [typePill(t2, release), gone ? null : compatBadge(t2, release, launches), linkBadge(t2, release, group), gone ? null : captureBadge(t2, release), torbox || viaDebrid ? instantBadge(t2, release) : null]
+            badges: [sameImage(release) ? null : typePill(t2, release), gone ? null : compatBadge(t2, release, launches), linkBadge(t2, release, group), gone ? null : captureBadge(t2, release), torbox || viaDebrid ? instantBadge(t2, release) : null]
           }
-        ) }, torbox ? "row" : release.id);
-        if (!torbox) return face;
+        ) }, extra ? "row" : release.id);
+        if (!extra) return face;
+        const busy = find?.state === "capturing";
         return /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "stretch", gap: 8 }, children: [
           face,
-          /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:torbox:${release.id}`, onPress: () => onDebrid(index), style: torboxStyle, children: /* @__PURE__ */ (0, jsx)(TorBoxFace, {}) }, "torbox")
+          findable ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:find:${release.id}`, onPress: () => busy ? cancelFindViaBrowser() : void findViaBrowser(release, finder), style: findStyle, children: /* @__PURE__ */ (0, jsx)(FindFace, { busy }) }, "find") : null,
+          torbox ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:torbox:${release.id}`, onPress: () => onDebrid(index), style: torboxStyle, children: /* @__PURE__ */ (0, jsx)(TorBoxFace, {}) }, "torbox") : null
         ] }, release.id);
       })
     ] });
@@ -254,17 +292,26 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
         chip("all", t2("formats.filter.all"), all, () => setFormatFilter(showAllKinds(filter))),
         ...FILTER_CHIPS.map(([kind, text]) => chip(kind, t2(text), !all && filter.kinds.includes(kind), () => setFormatFilter(toggleKind(filter, kind)))),
         chip("unknown", t2(filter.unknown ? "formats.filter.unknownOn" : "formats.filter.unknownOff"), filter.unknown, () => setFormatFilter(toggleUnknown(filter)))
-      ] })
+      ] }),
+      // glibren: with images shown, which image types (exFAT, FFPKG, FFPFS with FFPFSC).
+      imagesShown(filter) ? /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }, children: [
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 19, fontWeight: 600, color: colors.subtle }, children: t2("formats.filter.imageTypes") }),
+        chip("img:all", t2("formats.filter.allImages"), !filter.images?.length, () => setFormatFilter({ ...filter, images: [] })),
+        ...IMAGE_CHIPS.map(([type, text]) => chip(`img:${type}`, text, Boolean(filter.images?.includes(type)), () => setFormatFilter(toggleImageType(filter, type))))
+      ] }) : null
     ] });
   }
+  var IMAGE_CHIPS = [["exfat", "exFAT"], ["ffpkg", "FFPKG"], ["ffpfs", "FFPFS / FFPFSC"]];
   // What "Find formats" says under its name: what it does, how far it got, or what it found.
-  function searchDetail(t2, progress, unknown) {
+  function searchDetail(t2, progress, unknown, live) {
     if (progress?.state === "waiting") return t2("links.check.waiting");
     if (progress?.state === "checking") return t2("formats.find.checking", { done: Math.min(progress.done + 1, Math.max(progress.total, 1)), total: Math.max(progress.total, 1) });
     if (progress?.state === "cancelled") return t2("formats.find.cancelled");
     if (progress?.state === "failed") return t2("links.check.failed");
     if (progress?.state === "done" && progress.summary) {
-      const { image, pkg, archive, browser, none } = progress.summary;
+      // glibren: what is known now (a format found later, by TorBox or the browser, counts at once).
+      const { image, pkg, archive, browser } = live ?? progress.summary;
+      const none = progress.summary.none;
       return [t2("formats.find.summary", { image, pkg, archive }), none ? t2("formats.find.noAnswer", { count: none }) : null, browser ? t2("formats.find.browser", { count: browser }) : null].filter(Boolean).join(" \xB7 ");
     }
     return unknown ? t2("formats.find.detail", { count: unknown }) : t2("formats.find.none");
@@ -274,6 +321,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
   function FormatSearch({ gameId, releases }) {
     const t2 = useT();
     const progress = useFormatSearch(gameId);
+    const live = useFormatSummary(releases);
     const busy = progress?.state === "waiting" || progress?.state === "checking";
     let unknown = 0;
     try {
@@ -284,7 +332,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     return /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:find:${gameId}`, onPress: () => {
       if (busy) cancelFindFormats(gameId);
       else if (unknown) void findFormatsNow(gameId, releases);
-    }, style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: busy ? "x" : "file", text: t2(busy ? "formats.find.cancel" : "formats.find.label"), note: searchDetail(t2, progress, unknown), end: null }) });
+    }, style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: busy ? "x" : "file", text: t2(busy ? "formats.find.cancel" : "formats.find.label"), note: searchDetail(t2, progress, unknown, live), end: null }) });
   }
   function Versions({ editions, current, onEdition }) {
     const t2 = useT();
@@ -347,6 +395,8 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
       submit(index);
       onClose();
     };
+    // glibren: what "Find via the browser" captures by (download-queue.js captureFileLink).
+    const finder = (0, useMemo)(() => ({ title, titleId: getGame(current)?.titleId ?? current }), [title, current]);
     const t2 = useT();
     return /* @__PURE__ */ (0, jsx)(SideSheet, { title: t2("sources.title"), subtitle: title, onClose, children: /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 42, padding: 9, paddingBottom: 48 }, children: [
       editions.length > 1 ? /* @__PURE__ */ (0, jsx)(
@@ -377,7 +427,8 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
             recommended,
             revealed: revealed && group === "browser",
             onPick: pick2,
-            onDebrid: debrid
+            onDebrid: debrid,
+            finder
           },
           group
         )
