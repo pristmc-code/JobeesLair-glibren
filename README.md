@@ -153,6 +153,7 @@ On Linux (or WSL) with `clang-18`, `llvm-18`, `cmake`, `ninja-build`, `nodejs`, 
 `build-essential`, `pkg-config`, `unzip`, `curl`, `exfatprogs` and Pillow (`ps5-react/requirements.txt`):
 
 ```sh
+node tools/catalog/catalog-index.mjs   # only after editing app/data/catalog.js; the tests check it is current
 cd ps5-react
 python3 tools/build_ps5.py --app-dir ../app --llvm /usr/bin
 cp -a dist/PPSA99471 ../stage

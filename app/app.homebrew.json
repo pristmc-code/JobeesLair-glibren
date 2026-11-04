@@ -23,6 +23,7 @@
     "emoji"
   ],
   "resources": [
+    "data/catalog",
     "data/releases",
     "data/pages",
     "data/homebrew.json",

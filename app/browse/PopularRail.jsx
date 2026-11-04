@@ -6,18 +6,20 @@ import { memo } from 'react';
 import { GameRail } from './GameRail.jsx';
 import { featured } from './featured.js';
 import { FEATURED, READY, TOP } from './Lanes.jsx';
-import { games } from '../data/catalog.js';
+import { games } from '../data/catalog-index.js';
 import { useT } from '../i18n/index.js';
 import { NO_FILTERS, oneEach, otherThan } from '../state/catalog.js';
 import { useNavActions } from '../state/nav.jsx';
 import { useStoreActions } from '../state/store.jsx';
 import { GameCard } from '../ui/GameCard.jsx';
+import { noteRow } from '../state/cover-warm.js';
 
   var WIDTH4 = 152;
   // 0.5.3: the most played games on PlayStation (the most rated on its store), less those the rows above already show
   // (the carousel, Featured, Top rated, Ready). It took Most popular's order, which puts the games Archive.org serves
   // first, and opened with the same eight games as Featured and Ready right above it.
   var POPULAR = oneEach(otherThan(games.filter((game) => game.ratingCount > 0).sort((a, b) => b.ratingCount - a.ratingCount || b.recommendations - a.recommendations), [...featured, ...FEATURED, ...TOP, ...READY])).slice(0, 15);
+  noteRow(POPULAR, POPULAR.length);
   var PopularRail = (0, memo)(function PopularRail2() {
     const t2 = useT();
     const { openGame, focusLater } = useNavActions();

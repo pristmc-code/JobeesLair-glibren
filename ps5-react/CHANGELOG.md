@@ -8,6 +8,10 @@ Native ABI v24.
   MiB), counted in 64 bits, and stores nothing new while its drive has less than 4 GiB free (the host's
   `disk_usage`, asked at most every 10 seconds), so cached art never takes the room a game download needs.
   Not yet hardware-tested.
+- **`Power.keepAwake` says what it does** (PS5 host): each on and off, the first `sceSystemServicePowerTick` answer
+  and any change of answer (in hex), how many ticks ran and for how long, and a tick that comes long after it was
+  due (the process was frozen) go to the log, so a console run shows whether the ticks hold rest mode off. Still
+  not hardware-tested.
 - **The PS5's own keyboard** (`Keyboard`): `Keyboard.open({title, text, placeholder, maxLength, type, enter,
   multiline, password})` shows the system keyboard (libSceImeDialog) over the app, in the player's languages and
   input methods, and resolves with what was typed and how it closed. The host keeps the controller from the app

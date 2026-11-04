@@ -9,7 +9,7 @@ import { EmptyState } from './EmptyState.jsx';
 import { SortSelect } from './SortSelect.jsx';
 import { SPAN_MAX, fitBytes } from '../i18n/fit.js';
 import { useLocale, useT } from '../i18n/index.js';
-import { games } from '../data/catalog.js';
+import { games } from '../data/catalog-index.js';
 import { activeCount, filterGames, oneEach, sortGames } from '../state/catalog.js';
 import { useNavActions } from '../state/nav.jsx';
 import { useStore } from '../state/store.jsx';

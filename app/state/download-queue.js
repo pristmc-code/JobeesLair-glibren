@@ -626,7 +626,14 @@ import { mirrorsFor } from './download-mirrors.js';
       const busy = captures.size > 0 || jobs.some((job2) => BUSY.includes(job2.state));
       if (busy !== awake2) {
         awake2 = busy;
-        power.keepAwake(busy);
+        // The console's rest-mode timer is held off while the queue has work (ps5-react Power.keepAwake): said in
+        // the debug log, beside the engine's own lines about its ticks, to check it on a console.
+        console.log(`[download-queue] keepAwake ${busy ? "on" : "off"} (${jobs.filter((job2) => BUSY.includes(job2.state)).length} busy, ${captures.size} capturing)`);
+        try {
+          power.keepAwake(busy);
+        } catch (error2) {
+          console.log(`[download-queue] keepAwake failed: ${error2.message}`);
+        }
       }
       const value = snapshot();
       for (const listener of listeners4) listener(value);

@@ -6,10 +6,13 @@
 // MODIFIED: bundledIndex keeps the bundled titles' ids and direct flags for the live game counter.
 // MODIFIED: each game carries `formats`, the kinds of download it has (state/formats.js), for the Format filter:
 // the bundled games' from data/formats.js, a feed's releases sorted when the feeds load.
+// MODIFIED: warmCovers still warms every cover, the first ones of each row first (state/cover-warm.js).
+// MODIFIED: the bundled games come from data/catalog-index.js (data/catalog/index.json, read at launch), their
+// banners, logos and other covers from its art files when first drawn; nothing here reads those for every game.
 // MODIFIED (0.5.1): each game carries its PlayStation Store star rating, `stars` and `ratingCount` (the live
 // catalog's when it has one, else data/ratings.js), and the rating sort and Top Rated go by ratingScore.
 
-import { features, games, twins } from '../data/catalog.js';
+import { catalogLoad, coverSize, features, games, twins } from '../data/catalog-index.js';
 import { formats as bundledFormats } from '../data/formats.js';
 import { formatDate2, t } from '../i18n/core.js';
 import { createPageCache } from './page-cache.js';
@@ -19,8 +22,9 @@ import { createReleaseCache } from './release-cache.js';
 import { KINDS, gameFormats, ready1360 } from './formats.js';
 import { deviceFacts } from './device.js';
 import { consoleFirmware, firmwareText, ps5FakePackagesLaunch } from './firmware.js';
-import { FileSystem, Image } from '@ps5-react/core';
+import { FileSystem } from '@ps5-react/core';
 import { PS4 } from './ps4.js';
+import { noteRow, warmAtStart } from './cover-warm.js';
 
   // 0.5.1: "Ready" is for this console's firmware. At 11.60 or lower PS5 fake packages start too, so a PS5 game
   // with one is ready there, and the label names that firmware ("Ready for 9.60"); above, it is 13.60's rule and
@@ -44,8 +48,6 @@ import { PS4 } from './ps4.js';
     const low = lowFirmware();
     return low ? text.replace("13.60", low) : text;
   };
-  var COVER_WIDTH = 440;
-  var coverSize = (url) => url.startsWith("https://image.api.playstation.com/") ? url.replace(/([?&]w=)\d+/, `$1${COVER_WIDTH}`) : url;
   var releaseCache = createReleaseCache((path) => FileSystem.readFile(`/app0/${path}`));
   var pageCache = createPageCache((path) => FileSystem.readFile(`/app0/${path}`));
   var NO_PAGE = { about: [], shots: [], summary: "" };
@@ -130,7 +132,9 @@ import { PS4 } from './ps4.js';
     Object.setPrototypeOf(game, game.feedPage ? FeedEntry : Entry);
     game.genres = [...new Set(game.genres.flatMap((genre) => genre.split(" / ")).map((genre) => SYNONYMS[genre] ?? genre))];
     (_a = game.art).cover && (_a.cover = coverSize(game.art.cover));
-    if (game.art.coverFallbacks) game.art.coverFallbacks = game.art.coverFallbacks.map(coverSize);
+    // A bundled game's other covers wait in its art file (data/catalog-index.js sizes them when read): only a
+    // feed game's own are sized here.
+    if (Object.hasOwn(game.art, "coverFallbacks") && game.art.coverFallbacks) game.art.coverFallbacks = game.art.coverFallbacks.map(coverSize);
   }
   for (const game of entries) {
     const bundled = bundledFormats[game.id]?.split(" ") ?? [];
@@ -166,8 +170,18 @@ import { PS4 } from './ps4.js';
     return editionsOf(game).find((edition2) => listed.has(edition2) && edition2.platform === game.platform)?.id ?? id;
   }
   function warmCovers() {
-    Image.warm(sortGames(games, "relevance").filter((game) => game.art.cover).map((game) => game.art.cover));
+    // How the launch read the catalog index (it ran before the debug log opened).
+    const load = catalogLoad;
+    console.log(load.error ? `[catalog] the bundled catalog was not read: ${load.error}` : `[catalog] index read at launch: ${load.games} games, ${load.twins} other editions, ${load.bytes} bytes in ${load.ms} ms`);
+    // Every cover, by relevance as before, with the first of each Discover row and of the catalog grid first
+    // (state/cover-warm.js).
+    const all = sortGames(games, "relevance");
+    noteRow(oneEach(all), GRID_FIRST);
+    const { count, lead } = warmAtStart(all);
+    console.log(`[covers] ${count} covers to warm at launch, the first ${lead} for the first screens`);
   }
+  // The catalog grid's first rows (browse/Catalog.jsx: six a row) warmed at launch.
+  var GRID_FIRST = 36;
   var SORTS = [
     // Most popular puts the games Archive.org serves first: the app downloads them fastest.
     { id: "relevance", compare: (a, b) => fromArchive(b) - fromArchive(a) || b.recommendations - a.recommendations },

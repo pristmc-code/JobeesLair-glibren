@@ -9,10 +9,11 @@ import { jsx, jsxs } from 'react/jsx-runtime';
 import { memo } from 'react';
 import { GameRail } from './GameRail.jsx';
 import { featured } from './featured.js';
-import { games } from '../data/catalog.js';
+import { games, hasArt } from '../data/catalog-index.js';
 import { useT } from '../i18n/index.js';
 import { NO_FILTERS, fromArchive, oneEach, otherThan, ratingScore, readyHere, readyLabel, sortGames, topRated } from '../state/catalog.js';
 import { isoDate } from '../state/clock.js';
+import { noteRow } from '../state/cover-warm.js';
 import { useNavActions } from '../state/nav.jsx';
 import { useStoreActions } from '../state/store.jsx';
 import { GameCard } from '../ui/GameCard.jsx';
@@ -30,7 +31,7 @@ import { useEffect, useState } from 'react';
   // Famous games with banner art, the ones Archive.org serves (fastest) first.
   // 0.5.1: each row shows a game once (state/catalog.js oneEach), not its PS4 and PS5 editions side by side.
   // 0.5.3: not the carousel's games (browse/featured.js), right above it, nor their other editions.
-  var FEATURED = oneEach(otherThan([...games].filter((game) => game.art.hero).sort((a, b) => fromArchive(b) - fromArchive(a) || b.recommendations - a.recommendations), featured)).slice(0, 12);
+  var FEATURED = oneEach(otherThan([...games].filter((game) => hasArt(game, "hero")).sort((a, b) => fromArchive(b) - fromArchive(a) || b.recommendations - a.recommendations), featured)).slice(0, 12);
   var RECENT = oneEach(sortGames(games.filter((game) => game.releaseDate), "newest")).slice(0, 15);
   // 0.5.1: by PlayStation Store rating, weighed by how many rated (state/catalog.js topRated), over every game.
   var TOP = topRated(games).slice(0, 20);
@@ -43,6 +44,8 @@ import { useEffect, useState } from 'react';
   // 0.5.3: not the carousel's or the Featured row's games: they opened with the same Archive.org games (its See all
   // has them all).
   var READY = oneEach(otherThan(sortGames(READY_ALL, "relevance"), [...featured, ...FEATURED])).slice(0, 15);
+  // Their first covers warm first at launch (state/cover-warm.js); the Featured row draws banners.
+  for (const row of [RECENT, NEW_WEEK, READY, TOP]) noteRow(row);
   var READY_GREEN = "#4ade80";
   var FIRST_FEATURED = FEATURED.length ? `lane:featured:${FEATURED[0].id}` : void 0;
   function useSeeAll() {

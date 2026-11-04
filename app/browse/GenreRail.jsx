@@ -4,11 +4,12 @@
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useState } from 'react';
 import { GenreCard } from './GenreCard.jsx';
-import { games } from '../data/catalog.js';
+import { games } from '../data/catalog-index.js';
 import { useT } from '../i18n/index.js';
 import { genres } from '../state/catalog.js';
 import { useStoreActions, useStoreState } from '../state/store.jsx';
 import { SectionHeader } from '../ui/SectionHeader.jsx';
+import { noteRow } from '../state/cover-warm.js';
 import { ScrollView, View } from '@ps5-react/core';
 import { colors } from '../ui/colors.js';
 
@@ -18,6 +19,8 @@ import { colors } from '../ui/colors.js';
     covers.forEach((game) => used.add(game.id));
     return { genre, count: matches.length, covers };
   });
+  // Each genre's tile shows three covers.
+  noteRow(RAIL.flatMap(({ covers }) => covers), 30);
   function GenreRail() {
     const t2 = useT();
     const { filters } = useStoreState();

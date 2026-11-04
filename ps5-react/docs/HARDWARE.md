@@ -374,8 +374,13 @@ firmware 8.20, with AC-3, E-AC-3 and DTS heard on a TV. A/V sync with a real rec
 
 ## Not yet validated
 
-- `Power.keepAwake` (ABI v4, `sceSystemServicePowerTick` every 30 s): builds,
-  but no console has been observed staying out of rest mode with it on.
+- `Power.keepAwake` (ABI v4, `sceSystemServicePowerTick` at once, then every 30 s): builds,
+  but no console has been observed staying out of rest mode with it on. Quer3q's Dump Forge holds auto rest
+  off the same way, also without recorded evidence. To check it, set the console's "Enter rest mode" timer to
+  its shortest, start a long download with nobody touching the controller, and read the log:
+  `keepAwake on`, `sceSystemServicePowerTick=0x00000000 (tick 1)` and no `no tick for … s (the process was
+  suspended)` while the timer has long passed is the evidence; a non-zero answer or a console in rest mode is
+  the opposite.
 - HDMI audio passthrough (`<Video audioOutput>`, ABI v13): the bitstream output has not been opened
   from a PS5 React app; see above.
 
