@@ -12,7 +12,11 @@
 // Este modulo embrulha o Downloads do ps5-react (createBackgroundDownloads): a fila (download-queue.js) chama
 // downloads.enqueue() como sempre e recebe uma tarefa com a mesma interface (subscribe, done, cancel,
 // snapshot). Por baixo, a tarefa e do payload; se ele nao subir, ou a opcao estiver desligada, ou o download
-// nao couber (pecas/espelhos, a atualizacao do proprio app), e o motor nativo, como antes.
+// nao couber (pecas, a atualizacao do proprio app), e o motor nativo, como antes.
+// Espelhos (mirrors: o mesmo arquivo em outros links, download-mirrors.js): o payload baixa so do link principal,
+// para o download continuar com o app fechado. As opcoes guardadas mantem os espelhos, entao, se o download voltar
+// ao motor do app ("Baixar pelo app", payload que some), ele volta a usa-los. Com a opcao desligada, o app usa os
+// espelhos desde o inicio, como antes.
 // A parcial (.part/.resume/.complete) tem o mesmo formato nos dois, entao:
 //   - "Baixar pelo app" (takeOverDownload) libera o job no payload (ele grava o checkpoint e esquece o job) e
 //     continua no motor nativo de onde parou;
@@ -181,7 +185,7 @@ import { loadList, saveList } from './saved.js';
       if (answer.status === 200) secretsFor = `${state.pid}:${provider}`;
     }
     const eligible = (options) => platform === "ps5" && on() && options.background && typeof options.url === "string" &&
-      /^https?:\/\//.test(options.url) && options.destination && !options.pieces && !options.mirrors?.length && !options.unlimited;
+      /^https?:\/\//.test(options.url) && options.destination && !options.pieces && !options.unlimited;
 
     function hybridTask(options, meta) {
       const destination = options.destination;
@@ -339,7 +343,7 @@ import { loadList, saveList } from './saved.js';
               log(`payload refused the download (HTTP ${answer.status}: ${answer.data?.error ?? ""}); downloading in the app`);
               return runNative();
             }
-            log(`${baseName(destination)}: handed to the background job ${jobId}`);
+            log(`${baseName(destination)}: handed to the background job ${jobId}${options.mirrors?.length ? ` (main link only; the app keeps ${options.mirrors.length} mirror(s) for a take-over)` : ""}`);
           }
           if (cancelled) {
             await release();

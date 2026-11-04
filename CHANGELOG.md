@@ -6,6 +6,10 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **Downloads with mirrors carry on with the app closed too.** With "keep downloading when I close the app" on,
+  a download that has mirrors is handed to the background payload from its main link only (one site at a time);
+  taken back by the app ("Download in the app", or the payload gone), it uses the mirrors again. With the option
+  off, the app downloads from the mirrors from the start, as before.
 - **Unpacking no longer holds up the queue.** A downloaded archive is unpacked beside the next download, which starts
   at once; archives still unpack one at a time, in order ("Waiting to extract…"). A download that only fits once the
   unpacking on its drive is done waits for it instead of failing.

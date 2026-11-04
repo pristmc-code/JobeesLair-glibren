@@ -118,6 +118,21 @@ test('opcao desligada, fora do PS5, sem dados de segundo plano ou com pecas: o m
   }
 });
 
+test('com espelhos: o payload baixa do link principal e, ao voltar para o app, os espelhos voltam junto', async () => {
+  const { takeOverDownload } = await import('../app/state/background-downloads.js');
+  const payload = fakePayload();
+  const engine = fakeEngine();
+  const mirrors = ['https://mirror-a.example/file.exfat', 'https://mirror-b.example/file.exfat'];
+  make(payload, engine).enqueue(queueOptions({ mirrors }));
+  await wait(30);
+  assert.equal(engine.started.length, 0, 'continua com o app fechado: quem baixa e o payload');
+  const created = payload.calls.find((call) => call.method === 'POST' && call.path === '/jobs').body;
+  assert.equal(created.url, 'https://cdn.example/file.exfat?sig=1', 'so o link principal');
+  assert.equal(created.mirrors, undefined, 'o payload nao recebe os espelhos');
+  assert.equal(await takeOverDownload('/mnt/ext0/downloads/images/Game.exfat'), true);
+  assert.deepEqual(engine.started[0].options.mirrors, mirrors, 'o motor do app volta a usar os espelhos');
+});
+
 test('payload que nao sobe: o app baixa ele mesmo', async () => {
   const payload = fakePayload({ up: false });
   payload.tokenOnDisk = false;
