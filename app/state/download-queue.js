@@ -666,7 +666,104 @@ import { mirrorsFor } from './download-mirrors.js';
     const change = () => {
       save();
       emit2();
+      scheduleHandoff();
     };
+    // glibren: com o segundo plano ligado, a fila que ainda nao comecou vai para o payload com antecedencia
+    // (background-downloads.js syncQueue), para seguir com a Jobee'sLair fechada: na ordem da fila, o que ele baixa
+    // sozinho (link direto, ou TorBox ja pedido) e marcadores "waiting-app" para o resto (paginas de site, navegador,
+    // conjuntos em partes, manifestos). A fila do app continua mandando: pausar, cancelar, apagar ou reordenar aqui
+    // manda a lista nova, e o payload larga o que saiu dela.
+    function handoffRequest(job2) {
+      const release = job2.release;
+      if (!release || release.parts || release.manifestUrl || job2.directURL || job2.capturedLink || job2.install || !job2.artifact || !job2.root) return null;
+      const debrid = throughDebrid(job2);
+      let options = job2.options;
+      if (!options) {
+        if (debrid || sourceKind(release) !== "direct" || !release.url) return null;
+        try {
+          options = { url: webURL(release.url).url, rejectHtml: true, expectedBytes: release.sizeBytes || void 0, sha256: release.sha256 || void 0 };
+        } catch {
+          return null;
+        }
+      } else if (debrid ? linkStale(job2) : sourceKind(release) !== "direct") {
+        // Um link de pagina de site lido antes pode vencer; um do TorBox velho e pedido de novo pelo app.
+        return null;
+      }
+      const destination = job2.downloadDestination || (job2.downloadDestination = fs.exists(`${job2.artifact.destination}.part`) ? job2.artifact.destination : stagedPath(job2.artifact, job2.root));
+      return {
+        ...options,
+        rejectHtml: true,
+        ...transferTuning(job2, options.url, destination, DEFAULT_TUNING.rangeBytes, job2),
+        destination,
+        storageRoot: job2.root,
+        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: release }
+      };
+    }
+    // Agendada (e nao na hora): change() roda tambem enquanto a fila ainda esta sendo montada, e varias mudancas
+    // seguidas viram uma entrega so.
+    let handoffTimer = null;
+    function scheduleHandoff() {
+      if (typeof downloads.syncQueue !== "function" || handoffTimer) return;
+      handoffTimer = setTimeout(() => {
+        handoffTimer = null;
+        try {
+          handQueueToPayload();
+        } catch (error2) {
+          console.log(`[download-queue] queue not handed to the payload: ${error2.message}`);
+        }
+      }, 300);
+      handoffTimer?.unref?.();
+    }
+    function handQueueToPayload() {
+      if (typeof downloads.syncQueue !== "function") return;
+      const ahead = downloads.queueAhead?.() ?? false;
+      const items = !ahead ? [] : jobs.filter((job2) => job2.state === "queued" && !lanes.has(job2) && !job2.install).map((job2) => {
+        const request = handoffRequest(job2);
+        return { key: job2.id, name: job2.title, total: job2.release?.sizeBytes || job2.total || 0, ...request ? { request } : {} };
+      });
+      downloads.syncQueue(items);
+      if (ahead) void resolveForHandoff();
+    }
+    // O TorBox de quem ainda nao pediu o arquivo: o pedido e feito aqui, com antecedencia, para o payload poder baixa-lo
+    // sozinho (ele so sabe renovar um link ja pedido). Cada um cria um pedido na conta TorBox e conta nos limites do
+    // plano (downloads ativos) e da API: so os HANDOFF_DEBRID primeiros da fila, um de cada vez, com um intervalo; quem
+    // falha (o TorBox ainda preparando, limite) fica "aguardando o app" e so e tentado de novo depois de 10 minutos.
+    const HANDOFF_DEBRID = 4;
+    const handoffResolving = /* @__PURE__ */ new Map();
+    let handoffRunning = false;
+    async function resolveForHandoff() {
+      if (handoffRunning) return;
+      handoffRunning = true;
+      try {
+        for (; ; ) {
+          const waiting = jobs.filter((job2) => job2.state === "queued" && !lanes.has(job2) && !job2.release?.parts && throughDebrid(job2) && job2.release?.debrid?.service === "torbox");
+          const job2 = waiting.slice(0, HANDOFF_DEBRID).find((item) => !item.options && !(item.handoffTriedAt > Date.now() - 10 * 6e4));
+          if (!job2 || !(downloads.queueAhead?.() ?? false)) return;
+          job2.handoffTriedAt = Date.now();
+          const work = (async () => {
+            const { expectedBytes: known, repacked, ...resolved } = await sources.resolve(job2.release, {});
+            if (job2.options || job2.state !== "queued") return;
+            job2.options = { ...resolved, rejectHtml: true, expectedBytes: known === null ? void 0 : known ?? (job2.release.sizeBytes || void 0), sha256: repacked ? void 0 : job2.release.sha256 || void 0 };
+            job2.linkAt = Date.now();
+            resolvedNow(job2);
+            delete job2.handoffTriedAt;
+            console.log(`[download-queue] ${job2.id}: TorBox link asked ahead, for the background payload`);
+          })();
+          handoffResolving.set(job2, work);
+          try {
+            await work;
+          } catch (error2) {
+            console.log(`[download-queue] ${job2.id}: TorBox link not asked ahead (${error2.message}); it waits for the app`);
+          } finally {
+            handoffResolving.delete(job2);
+          }
+          change();
+          await wait(2e3);
+        }
+      } finally {
+        handoffRunning = false;
+      }
+    }
     if (legacy !== file && fs.exists(legacy)) {
       try {
         if (stored === legacy) save();
@@ -942,6 +1039,7 @@ import { mirrorsFor } from './download-mirrors.js';
           console.log(`[download-queue] ${job2.id}: the debrid link is ${Math.round((Date.now() - job2.linkAt) / 6e4)} min old; asking for a new one first`);
           delete job2.options;
         }
+        if (handoffResolving.has(job2)) await handoffResolving.get(job2).catch(() => {});
         if (!job2.options) {
           if (job2.release.manifestUrl) {
             const response = await http.request(job2.release.manifestUrl, { maxBytes: 4 * 1024 * 1024, signal });

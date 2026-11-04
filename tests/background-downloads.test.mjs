@@ -11,7 +11,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Um payload falso: guarda os jobs e responde a API (GET /health, GET /jobs, POST /jobs, /secret, acoes).
 function fakePayload({ up = true, pid = 7 } = {}) {
-  const state = { up, pid, jobs: [], calls: [], secrets: [], configs: [], next: 0 };
+  const state = { up, pid, jobs: [], calls: [], secrets: [], configs: [], queues: [], next: 0 };
   const respond = (status, data) => ({ status, ok: status < 300, json: async () => data });
   state.http = {
     async request(url, { method = 'GET', headers = {}, body } = {}) {
@@ -23,6 +23,7 @@ function fakePayload({ up = true, pid = 7 } = {}) {
       if (method === 'GET' && path === '/jobs') return respond(200, { jobs: state.jobs.map((job) => ({ ...job })) });
       if (method === 'POST' && path === '/secret') { state.secrets.push(JSON.parse(body)); return respond(200, { ok: true }); }
       if (method === 'POST' && path === '/config') { state.configs.push(JSON.parse(body)); return respond(200, { ok: true }); }
+      if (method === 'POST' && path === '/queue') { state.queues.push(JSON.parse(body)); return respond(200, { ok: true }); }
       if (method === 'POST' && path === '/jobs') {
         const job = { ...JSON.parse(body), id: `b${++state.next}`, state: 'queued', written: 0, total: 0, published: '' };
         state.jobs.push(job);
@@ -34,6 +35,7 @@ function fakePayload({ up = true, pid = 7 } = {}) {
         if (!job) return respond(404, { error: 'no such job' });
         if (action[2] === 'release' || action[2] === 'forget') state.jobs = state.jobs.filter((item) => item !== job);
         if (action[2] === 'resume') job.state = 'queued';
+        if (action[2] === 'follow') job.followed = true;
         return respond(200, { ok: true });
       }
       return respond(404, {});
@@ -274,4 +276,49 @@ test('cancelado no celular: a fila cancela como se fosse no app (apaga o que sob
   await assert.rejects(task.done, (error) => error.name === 'AbortError');
   assert.deepEqual(remote, ['cancel']);
   assert.equal(payload.jobs.length, 0, 'o job cancelado e esquecido no payload');
+});
+
+// ---- glibren: a fila inteira entregue ao payload com antecedencia (syncQueue, POST /queue) ----
+
+test('fila inteira: o que o payload baixa sozinho (direto, TorBox) vai como job; o resto vira marcador; sem reenviar igual', async () => {
+  const payload = fakePayload();
+  let enabled = true;
+  const handoff = (source) => source?.debrid?.service === 'torbox' ? { provider: 'torbox', kind: 'webdl', id: 42, fileId: 3, zip: false } : source?.debrid?.service === 'alldebrid' ? { provider: 'alldebrid' } : null;
+  const wrapper = make(payload, fakeEngine(), { on: () => enabled, queueDelayMs: 0, handoff });
+  const req = (name, source = {}) => queueOptions({ destination: `/mnt/ext0/downloads/images/${name}`, background: { title: name, publishTo: '', source } });
+  const items = [
+    { key: 'j1', name: 'Direto', total: 10, request: req('A.exfat') },
+    { key: 'j2', name: 'MediaFire', total: 20 },
+    { key: 'j3', name: 'TorBox', total: 30, request: req('C.exfat', { debrid: { service: 'torbox' } }) },
+    { key: 'j4', name: 'AllDebrid', total: 40, request: req('D.exfat', { debrid: { service: 'alldebrid' } }) },
+  ];
+  wrapper.syncQueue(items);
+  await wrapper.flushQueue();
+  const sent = payload.queues.at(-1).items;
+  assert.deepEqual(sent.map((item) => [item.key, Boolean(item.job)]), [['j1', true], ['j2', false], ['j3', true], ['j4', false]], 'na ordem da fila');
+  assert.equal(sent[0].job.destination, '/mnt/ext0/downloads/images/A.exfat');
+  assert.equal(sent[0].job.rangeBytes, 16 * MiB, 'o mesmo rangeBytes do app (a parcial e a mesma)');
+  assert.deepEqual(sent[2].job.source, { provider: 'torbox', kind: 'webdl', id: 42, fileId: 3, zip: false });
+  assert.deepEqual(sent[1], { key: 'j2', name: 'MediaFire', total: 20 }, 'o marcador nao leva link nenhum');
+  assert.ok(payload.secrets.some((secret) => secret.service === 'torbox'), 'a chave do TorBox vai antes, por /secret');
+  assert.ok(!JSON.stringify(payload.queues).includes('SECRET-KEY'), 'nunca a chave na fila');
+  const count = payload.queues.length;
+  wrapper.syncQueue(items);
+  await wrapper.flushQueue();
+  assert.equal(payload.queues.length, count, 'a mesma fila nao e mandada de novo');
+  enabled = false;
+  wrapper.syncQueue(items);
+  await wrapper.flushQueue();
+  assert.deepEqual(payload.queues.at(-1), { items: [] }, 'opcao desligada: a fila entregue e retirada');
+});
+
+test('fila inteira: ao comecar no app um job ja entregue com antecedencia, o app o acompanha (follow) sem criar outro', async () => {
+  const payload = fakePayload();
+  payload.jobs.push({ id: 'b7', state: 'queued', ahead: true, followed: false, destination: '/mnt/ext0/downloads/images/Game.exfat' });
+  const task = make(payload, fakeEngine()).enqueue(queueOptions());
+  await wait(30);
+  assert.ok(payload.calls.some((call) => call.path === '/jobs/b7/follow'));
+  assert.equal(payload.calls.filter((call) => call.method === 'POST' && call.path === '/jobs').length, 0, 'nada baixa duas vezes');
+  task.cancel();
+  await assert.rejects(task.done, (error) => error.name === 'AbortError');
 });

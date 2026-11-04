@@ -126,7 +126,11 @@ import { loadList, saveList } from './saved.js';
     // monitorText}, ou null), o IP que o payload informa, e quem trata uma pausa ou um cancelamento pedidos no celular.
     monitor = () => null,
     addressSeen = () => {},
-    onRemote = null
+    onRemote = null,
+    // glibren: a fila entregue com antecedencia (syncQueue): de quanto em quanto o app avisa que esta aberto (o payload
+    // so comeca sozinho o que foi entregue depois de ~15 s sem noticias do app) e a espera antes de mandar a fila.
+    heartbeatMs = 5e3,
+    queueDelayMs = 300
   }) {
     const base = `http://127.0.0.1:${port}`;
     let secretsFor = null; // pid do payload que ja recebeu a chave
@@ -209,6 +213,30 @@ import { loadList, saveList } from './saved.js';
     }
     const eligible = (options) => platform === "ps5" && on() && options.background && typeof options.url === "string" &&
       /^https?:\/\//.test(options.url) && options.destination && !options.pieces && !options.unlimited;
+    // O job como o payload o recebe (POST /jobs, ou um item de POST /queue).
+    function jobBody(options, meta, source) {
+      const destination = options.destination;
+      const publishTo = meta.publishTo && meta.publishTo !== destination ? meta.publishTo : "";
+      const name = meta.title || baseName(destination);
+      return {
+        url: options.url,
+        destination,
+        storageRoot: options.storageRoot || "",
+        name,
+        sha256: options.sha256 || "",
+        expectedBytes: options.expectedBytes || 0,
+        rangeBytes: options.rangeBytes || ENGINE_RANGE,
+        connections: options.connections || 8,
+        rejectHtml: Boolean(options.rejectHtml),
+        publishTo,
+        source,
+        notifyDone: text("downloads.background.notifyDone", { name }),
+        notifyFailed: text("downloads.background.notifyFailed", { name })
+      };
+    }
+    // Um job entregue com antecedencia que o app passou a acompanhar: o payload so o comeca com o app aberto assim.
+    const follow = (job) => job?.ahead && !job.followed ? call(token0(), "POST", `/jobs/${job.id}/follow`).catch(() => {}) : null;
+    const token0 = () => readToken();
 
     function hybridTask(options, meta) {
       const destination = options.destination;
@@ -332,6 +360,8 @@ import { loadList, saveList } from './saved.js';
         }
         emit(shown(job));
         if (settle(job)) return;
+        // Um payload que voltou (e perdeu o "follow" da memoria) espera o app: avisa de novo.
+        if (job.ahead && !job.followed) follow(job);
         // Pausado pelo payload (troca de rede, repouso): retoma. Pausado no celular: fica pausado, e a fila do app
         // passa a mostra-lo pausado (onRemote -> pausa -> o job volta ao app com a parcial).
         if (job.state === "paused" && !cancelled && job.by !== "remote") call(token, "POST", `/jobs/${jobId}/resume`).catch(() => {});
@@ -356,24 +386,10 @@ import { loadList, saveList } from './saved.js';
             jobId = existing.id;
             log(`${baseName(destination)}: following the background job ${jobId} (${existing.state})`);
             if (settle(existing)) return;
+            // Entregue com antecedencia (a fila do app): agora e o app que o comeca.
+            await follow(existing);
           } else {
-            const publishTo = meta.publishTo && meta.publishTo !== destination ? meta.publishTo : "";
-            const name = meta.title || baseName(destination);
-            const answer = await call(token, "POST", "/jobs", {
-              url: options.url,
-              destination,
-              storageRoot: options.storageRoot || "",
-              name,
-              sha256: options.sha256 || "",
-              expectedBytes: options.expectedBytes || 0,
-              rangeBytes: options.rangeBytes || ENGINE_RANGE,
-              connections: options.connections || 8,
-              rejectHtml: Boolean(options.rejectHtml),
-              publishTo,
-              source,
-              notifyDone: text("downloads.background.notifyDone", { name }),
-              notifyFailed: text("downloads.background.notifyFailed", { name })
-            });
+            const answer = await call(token, "POST", "/jobs", jobBody(options, meta, source));
             if (answer.status === 409 && answer.data?.id) jobId = answer.data.id;
             else if (answer.status === 201 && answer.data?.id) jobId = answer.data.id;
             else {
@@ -458,6 +474,66 @@ import { loadList, saveList } from './saved.js';
     };
     // glibren: a pagina do celular mudou (ligada/desligada, PIN): o payload no ar recebe a configuracao de novo.
     wrapper.refreshConfig = () => syncConcurrency(readToken()).catch(() => {});
+    // glibren: a fila inteira com antecedencia. `items` na ordem da fila: { key, name, total, request? }, `request` o
+    // pedido de enqueue (com `background`) de um download que o payload baixa sozinho (link direto, ou TorBox ja
+    // pedido); sem ele, so um marcador "waiting-app" para o celular. Com a opcao desligada (ou fora do PS5), uma fila
+    // ja entregue e retirada. Enquanto ha algo entregue, um batimento a cada heartbeatMs diz que o app esta aberto.
+    let queueSent = "", queueTimer = null, beat = null, queueItems = null, queueBusy = null;
+    wrapper.queueAhead = () => platform === "ps5" && on();
+    wrapper.syncQueue = (items) => {
+      queueItems = items;
+      clearTimeout(queueTimer);
+      queueTimer = setTimeout(() => {
+        queueTimer = null;
+        queueBusy = (queueBusy || Promise.resolve()).then(sendQueue, sendQueue);
+      }, queueDelayMs);
+      queueTimer?.unref?.();
+      return queueTimer;
+    };
+    wrapper.flushQueue = async () => {
+      clearTimeout(queueTimer);
+      queueTimer = null;
+      await (queueBusy = (queueBusy || Promise.resolve()).then(sendQueue, sendQueue));
+    };
+    async function sendQueue() {
+      const ahead = wrapper.queueAhead();
+      const list = ahead ? queueItems ?? [] : [];
+      const items = list.map((item) => {
+        const { background, ...options } = item.request ?? {};
+        const source = item.request && eligible({ ...options, background }) ? handoff(background.source) || { provider: "direct" } : null;
+        // So o que o payload sabe baixar sozinho e renovar: link direto, ou o TorBox (com o pedido); o resto espera o app.
+        const job = source && ["direct", "torbox"].includes(source.provider) ? jobBody(options, background, source) : null;
+        return { key: String(item.key), name: String(item.name || ""), total: Math.max(0, Math.round(Number(item.total) || 0)), ...job ? { job } : {} };
+      });
+      const body = JSON.stringify({ items });
+      if (body === queueSent) return;
+      // Sem nada para o payload baixar, ele nao e chamado so para mostrar marcadores.
+      const token = items.some((item) => item.job) ? await ensurePayload() : readToken();
+      if (!token || !await health(token)) {
+        if (!items.length) queueSent = body;
+        return;
+      }
+      for (const item of items) if (item.job?.source?.provider === "torbox") await handSecret(token, "torbox").catch(() => {});
+      await syncConcurrency(token).catch(() => {});
+      const answer = await call(token, "POST", "/queue", { items });
+      if (answer.status !== 200) {
+        log(`payload did not take the queue (HTTP ${answer.status}: ${answer.data?.error ?? ""})`);
+        return;
+      }
+      queueSent = body;
+      const handed = items.filter((item) => item.job).length;
+      log(`queue handed to the payload: ${handed} to download by itself, ${items.length - handed} waiting for the app`);
+      if (items.length && !beat) {
+        beat = setInterval(() => {
+          const now = readToken();
+          if (now) health(now).catch(() => {});
+        }, heartbeatMs);
+        beat?.unref?.();
+      } else if (!items.length && beat) {
+        clearInterval(beat);
+        beat = null;
+      }
+    }
     return wrapper;
   }
 

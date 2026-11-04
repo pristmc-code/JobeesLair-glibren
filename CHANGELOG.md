@@ -6,6 +6,20 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **The whole queue keeps downloading with the app closed.** With "keep downloading when I close the app" on, the
+  downloads still waiting in the queue are handed to the background payload ahead, in the queue's order: the ones it
+  can fetch alone (direct links, and TorBox once its link is asked) download one after another (or as many at once
+  as "Simultaneous downloads" says) after the app closes. While the app is open nothing changes: it starts each one
+  as before and the payload only follows (it starts nothing handed ahead until it has heard nothing from the app for
+  about 15 seconds). Pausing, cancelling, deleting or reordering in the app sends the new queue; what left it leaves
+  the payload too (its partial kept). The TorBox link of the first four waiting is asked ahead, one at a time (each
+  is a request on the TorBox account and counts toward its limits); one that cannot be had yet waits for the app and
+  is tried again after ten minutes. What only the app can download (a host's page, the browser, a set in parts, a
+  manifest, AllDebrid) shows on the phone page as "Waiting for Jobee'sLair: starts when you open the app", with no
+  buttons (cancel it in the app). Before each download it starts alone, the payload checks the drive has room (plus
+  256 MiB) and otherwise stops it as "open the app"; a direct link refused as expired (401/403/410) also waits for
+  the app, never tried again by itself. Reopening the app, each game follows what the payload did. Not yet tested
+  on a console.
 - **Follow the background downloads on your phone.** While the app is closed, the background payload serves a page
   at the console's address, port 34201, on the home network: each game's progress, speed and time left, the total
   speed and what is left. Pausing, resuming and cancelling there ask for a PIN set in Settings > Downloads ("Follow

@@ -779,3 +779,66 @@ test('simultaneous: the setting is 1 to 4 and heard by those listening', async (
   assert.deepEqual(heard, [3, 1]);
   settings.setSimultaneousDownloads(1);
 });
+
+// ---- glibren: the whole queue handed to the background payload ahead (background-downloads.js syncQueue) ----
+
+const later = (ms = 400) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('handoff: the queue not started goes to the payload in order; a host page only waits; pausing or cancelling here takes it out', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  const handed = [];
+  let ahead = true;
+  downloads.queueAhead = () => ahead;
+  downloads.syncQueue = (items) => handed.push(items);
+  const queue = queueWith({ fs, downloads });
+  const a = queue.enqueue(other(1), image('Alpha.exfat'), '/data');
+  const b = queue.enqueue(other(2), image('Beta.exfat'), '/data');
+  const c = queue.enqueue(other(3), page('Gamma.exfat'), '/data');
+  const d = queue.enqueue(other(4), image('Delta.exfat'), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  await later();
+  let last = handed.at(-1);
+  assert.deepEqual(last.map((item) => item.key), [b, c, d], 'the one running in the app is not handed; the rest in order');
+  assert.equal(last[0].request.url, 'https://example.com/Beta.exfat');
+  assert.equal(last[0].request.background.title, 'Test Game');
+  assert.ok(last[0].request.destination.startsWith('/data/'));
+  assert.equal(last[1].request, undefined, 'a host page needs the app to read its link: it only waits');
+  assert.equal(last[1].total, 1000);
+  assert.equal(queue.snapshot().find((job) => job.id === b).downloadDestination, last[0].request.destination, 'the app downloads it where the payload would');
+  queue.pause(b);
+  await queue.cancel(d);
+  await later();
+  last = handed.at(-1);
+  assert.deepEqual(last.map((item) => item.key), [c], 'paused and cancelled here leave the payload');
+  ahead = false;
+  queue.resume(b);
+  await later();
+  assert.deepEqual(handed.at(-1), [], 'with the background off nothing is handed');
+  first.open();
+  for (const id of [a, b]) assert.equal((await settle(queue, id)).state, 'downloaded');
+});
+
+test('handoff: a TorBox link is asked ahead (at most a few, one at a time) so the payload can download it alone', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  const handed = [];
+  downloads.queueAhead = () => true;
+  downloads.syncQueue = (items) => handed.push(items);
+  const asked = [];
+  const sources = { resolve: async (release) => { asked.push(release.url); return { url: `https://torbox.example/dl/${asked.length}` }; } };
+  const queue = queueWith({ fs, downloads, sources });
+  const a = queue.enqueue(other(1), image('Alpha.exfat'), '/data');
+  const t = queue.enqueue(other(2), debridPage(), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  for (let i = 0; i < 20 && !handed.at(-1)?.[0]?.request; i++) await later(100);
+  const item = handed.at(-1).find((entry) => entry.key === t);
+  assert.ok(item.request, 'once its link was had, it goes to the payload');
+  assert.match(item.request.url, /^https:\/\/torbox\.example\/dl\//);
+  assert.equal(asked.length, 1, 'asked once');
+  first.open();
+  assert.equal((await settle(queue, t)).state, 'downloaded');
+  assert.equal(asked.length, 1, 'the app downloads it with the link asked ahead, without a second TorBox request');
+});
