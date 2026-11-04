@@ -47,7 +47,8 @@
     "update-prompt.json": isRecord,
     "online.json": isRecord,
     "compat.json": isRecord,
-    "shared-links.json": isRecord
+    "shared-links.json": isRecord,
+    "link-formats.json": isRecord
   };
 
 export { SAVED_FILES, isRecord, isStringList, readJSON };

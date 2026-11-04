@@ -9,6 +9,9 @@
 
 import { useEffect, useState } from 'react';
 import { createLinkHealth, onLinkReport, onOutcome } from './link-health.js';
+import { createFormatProbe } from './format-probe.js';
+import { onFormatReport } from './link-formats.js';
+import { torBoxFileNames } from './debrid.js';
 import { refreshShared, reportShared, sharedDead, subscribeShared } from './shared-links.js';
 import { downloadQueue } from './downloads.js';
 import { savedList } from './saved.js';
@@ -74,5 +77,40 @@ import { Http } from '@ps5-react/core';
   }
   /** Checks every link of `releases` now; resolves with the counts (or null). */
   var checkLinksNow = (key, releases) => linkHealth().checkNow(key, releases);
+  // glibren: "Find formats" (state/format-probe.js), kept in link-formats.json, on the same terms as a check the
+  // gamer asks for (quietNetwork); with a TorBox key, TorBox's cached items' file names are asked first.
+  var formats = null;
+  function linkFormats() {
+    return formats ?? (formats = createFormatProbe({
+      http: Http,
+      store: savedList("link-formats.json", "link formats"),
+      quiet: (reason, work) => {
+        const queue = downloadQueue();
+        return queue.quietNetwork ? queue.quietNetwork(reason, work) : work();
+      },
+      torbox: (links) => torBoxFileNames(links)
+    }));
+  }
+  // A download's first bytes name its format (download-queue.js reportFormat): kept for the source list too.
+  onFormatReport((release, format) => linkFormats().report(release, format));
+  /** The saved formats' reader (link-formats.js effectiveFormat), re-rendering when one is found. */
+  function useLinkFormats() {
+    const probe = linkFormats();
+    const [version, setVersion] = (0, useState)(probe.version);
+    (0, useEffect)(() => probe.subscribe(setVersion), []);
+    return { recordOf: probe.recordOf, version };
+  }
+  /** How "Find formats" of `key` stands (format-probe.js progressOf), updated as it goes. */
+  function useFormatSearch(key) {
+    const probe = linkFormats();
+    const [progress, setProgress] = (0, useState)(() => probe.progressOf(key));
+    (0, useEffect)(() => {
+      setProgress(probe.progressOf(key));
+      return probe.subscribe(() => setProgress(probe.progressOf(key)));
+    }, [key]);
+    return progress;
+  }
+  var findFormatsNow = (key, releases) => linkFormats().discover(key, releases);
+  var cancelFindFormats = (key) => linkFormats().cancel(key);
 
-export { checkLinksNow, linkHealth, startSharedLinks, useHealthyReleases, useLinkCheck, useLinkWatch, watchLinks };
+export { cancelFindFormats, checkLinksNow, findFormatsNow, linkFormats, linkHealth, startSharedLinks, useFormatSearch, useHealthyReleases, useLinkCheck, useLinkFormats, useLinkWatch, watchLinks };

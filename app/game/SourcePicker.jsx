@@ -1,5 +1,8 @@
 // ../pub-game-store/native/game/SourcePicker.jsx
 // reconstructed from the esbuild bundle in eboot.bin
+// MODIFIED (glibren): a format filter at the top of the list (All, Image, PKG, Archive, unknown on or off; saved for
+// every game, state/format-filter.js), each row's format as worked out (state/link-formats.js) and "Find formats"
+// (state/format-probe.js), which asks what the unknown links are without downloading them.
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
@@ -12,7 +15,9 @@ import { activeService, debridSupports, heldByTorBox, serviceName, useTorBoxInst
 import { downloadQueue } from '../state/downloads.js';
 import { deviceFacts } from '../state/device.js';
 import { backportAdvice, ps5FakePackagesLaunch } from '../state/firmware.js';
-import { useHealthyReleases, useLinkCheck } from '../state/links.js';
+import { cancelFindFormats, findFormatsNow, linkFormats, useFormatSearch, useHealthyReleases, useLinkCheck, useLinkFormats } from '../state/links.js';
+import { effectiveFormat } from '../state/link-formats.js';
+import { filterSections, isFiltering, setFormatFilter, showAllKinds, toggleKind, toggleUnknown, useFormatFilter } from '../state/format-filter.js';
 import { CdnAura, CdnSpark } from '../ui/CdnAura.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
 import { Icon } from '../ui/Icon.jsx';
@@ -228,6 +233,59 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
       if (!busy) void onCheck();
     }, style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: busy ? "globe" : "restart", text: t2("links.check.label"), note: checkDetail(t2, progress), end: null }) });
   }
+  // glibren: the format filter's row (state/format-filter.js): All, Image, PKG, Archive (several at once), and
+  // whether links of no known format show. The same for every game, saved in settings.json.
+  function ChipFace({ text, on }) {
+    const focused = useIsFocused();
+    return /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
+      /* @__PURE__ */ (0, jsx)(FocusRing, {}),
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 20, fontWeight: 600, lineHeight: 26, color: on ? "#ffffff" : focused ? colors.fg : colors.muted }, children: text })
+    ] });
+  }
+  var chipStyle = (on) => (_state) => [{ position: "relative", borderRadius: radius.sm, borderWidth: 1, borderColor: on ? colors.accent : colors.line, paddingHorizontal: 14, paddingVertical: 6 }, on ? { backgroundColor: colors.accent } : null, _state.focused ? { borderColor: colors.fg } : null];
+  var FILTER_CHIPS = [["image", "formats.filter.image"], ["pkg", "formats.filter.pkg"], ["archive", "formats.filter.archive"]];
+  function FormatFilterBar({ filter }) {
+    const t2 = useT();
+    const all = !filter.kinds.length;
+    const chip = (key, text, on, onPress) => /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:${key}`, onPress, style: chipStyle(on), children: /* @__PURE__ */ (0, jsx)(ChipFace, { text, on }) }, key);
+    return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 8, paddingHorizontal: 18 }, children: [
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 20, fontWeight: 600, color: colors.subtle }, children: t2("formats.filter.title") }),
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }, children: [
+        chip("all", t2("formats.filter.all"), all, () => setFormatFilter(showAllKinds(filter))),
+        ...FILTER_CHIPS.map(([kind, text]) => chip(kind, t2(text), !all && filter.kinds.includes(kind), () => setFormatFilter(toggleKind(filter, kind)))),
+        chip("unknown", t2(filter.unknown ? "formats.filter.unknownOn" : "formats.filter.unknownOff"), filter.unknown, () => setFormatFilter(toggleUnknown(filter)))
+      ] })
+    ] });
+  }
+  // What "Find formats" says under its name: what it does, how far it got, or what it found.
+  function searchDetail(t2, progress, unknown) {
+    if (progress?.state === "waiting") return t2("links.check.waiting");
+    if (progress?.state === "checking") return t2("formats.find.checking", { done: Math.min(progress.done + 1, Math.max(progress.total, 1)), total: Math.max(progress.total, 1) });
+    if (progress?.state === "cancelled") return t2("formats.find.cancelled");
+    if (progress?.state === "failed") return t2("links.check.failed");
+    if (progress?.state === "done" && progress.summary) {
+      const { image, pkg, archive, browser, none } = progress.summary;
+      return [t2("formats.find.summary", { image, pkg, archive }), none ? t2("formats.find.noAnswer", { count: none }) : null, browser ? t2("formats.find.browser", { count: browser }) : null].filter(Boolean).join(" \xB7 ");
+    }
+    return unknown ? t2("formats.find.detail", { count: unknown }) : t2("formats.find.none");
+  }
+  // "Find formats": the links of this game nothing names a format for, asked about without downloading them
+  // (state/format-probe.js); pressed again while it runs, it stops.
+  function FormatSearch({ gameId, releases }) {
+    const t2 = useT();
+    const progress = useFormatSearch(gameId);
+    const busy = progress?.state === "waiting" || progress?.state === "checking";
+    let unknown = 0;
+    try {
+      unknown = linkFormats().unknownLinks(releases).length;
+    } catch {
+    }
+    if (!unknown && !progress) return null;
+    return /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:find:${gameId}`, onPress: () => {
+      if (busy) cancelFindFormats(gameId);
+      else if (unknown) void findFormatsNow(gameId, releases);
+    }, style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: busy ? "x" : "file", text: t2(busy ? "formats.find.cancel" : "formats.find.label"), note: searchDetail(t2, progress, unknown), end: null }) });
+  }
   function Versions({ editions, current, onEdition }) {
     const t2 = useT();
     return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 6 }, children: [
@@ -255,14 +313,28 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
   };
   function SourcePicker({ title, releases: catalogReleases, selected, submit, onDebrid, editions = [], current, onEdition, onClose, checkLinks }) {
     // What is known of the links, applied here so a check started from this sheet shows as it goes.
-    const releases = useHealthyReleases(catalogReleases);
+    const healthy = useHealthyReleases(catalogReleases);
+    // glibren: each "binary" source with the format worked out for it (state/link-formats.js), for its row's
+    // name and the format filter; the same objects otherwise, and the same order and ranking.
+    const { recordOf, version: formatsVersion } = useLinkFormats();
+    const releases = useMemo(() => healthy.map((release) => {
+      const info = effectiveFormat(release, recordOf);
+      return info.how === "catalog" ? release : { ...release, formatInfo: info };
+    }), [healthy, formatsVersion]);
     const recommended = preferredRelease(releases);
-    const sections = sourceSections(releases);
+    const everySection = sourceSections(releases);
+    const filter = useFormatFilter();
+    const [unfiltered, setUnfiltered] = (0, useState)(false);
+    const filtered = unfiltered ? { sections: everySection, hidden: 0 } : filterSections(everySection, filter, { selected, recordOf });
+    const sections = filtered.sections;
     const advice = useBackportAdvice(current);
-    const count = (group) => sections.find((section) => section.group === group)?.items.length ?? 0;
+    const countIn = (list, group) => list.find((section) => section.group === group)?.items.length ?? 0;
+    const count = (group) => countIn(sections, group);
+    const countAll = (group) => countIn(everySection, group);
+    const offered = countAll("direct") + countAll("page") + countAll("torrent") + countAll("browser") + countAll("dlc") + countAll("backport");
     useTorBoxInstant(onDebrid ? releases : [], lendNetwork);
     // With TorBox, a browser-only host it supports downloads in the app, so those sources are shown at once.
-    const [browser, setBrowser] = (0, useState)(() => !count("direct") && !count("page") && !count("torrent") || describeSource(releases[selected]).group === "browser" || Boolean(onDebrid) && sections.some(({ group, items }) => group === "browser" && items.some(({ release }) => debridSupports(release))));
+    const [browser, setBrowser] = (0, useState)(() => !countAll("direct") && !countAll("page") && !countAll("torrent") || describeSource(releases[selected]).group === "browser" || Boolean(onDebrid) && sections.some(({ group, items }) => group === "browser" && items.some(({ release }) => debridSupports(release))));
     const debrid = onDebrid ? (index) => {
       onDebrid(index);
       onClose();
@@ -270,7 +342,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     const [revealed, setRevealed] = (0, useState)(false);
     // Shown from the start when nothing can be downloaded in the app any more (every file link was taken
     // down, say): an empty sheet would look like a fault, the list of what is gone and why does not.
-    const [deadShown, setDeadShown] = (0, useState)(() => !count("direct") && !count("page") && !count("torrent"));
+    const [deadShown, setDeadShown] = (0, useState)(() => !countAll("direct") && !countAll("page") && !countAll("torrent"));
     const pick2 = (index) => {
       submit(index);
       onClose();
@@ -288,6 +360,13 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
           }
         }
       ) : null,
+      offered ? /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 6 }, children: [
+        /* @__PURE__ */ (0, jsx)(FormatFilterBar, { filter }),
+        // What the filter hides, said and undone in one press; all of a game's links hidden says so.
+        filtered.hidden ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:showAll:${current}`, onPress: () => setUnfiltered(true), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "alert", text: t2(filtered.shown ? "formats.hidden" : "formats.allHidden", { count: filtered.hidden }), note: t2("formats.showAll"), end: null }) }) : null,
+        unfiltered && isFiltering(filter) ? /* @__PURE__ */ (0, jsx)(View, { onPress: () => setUnfiltered(false), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "layers", text: t2("formats.reapply"), note: t2("formats.reapplyNote"), end: null }) }) : null,
+        /* @__PURE__ */ (0, jsx)(FormatSearch, { gameId: current, releases: healthy })
+      ] }) : null,
       sections.filter(({ group }) => group === "direct" || group === "page" || group === "torrent" || browser && group === "browser").map(
         ({ group, items }) => /* @__PURE__ */ (0, jsx)(
           Section2,

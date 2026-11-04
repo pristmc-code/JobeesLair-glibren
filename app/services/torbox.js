@@ -255,6 +255,36 @@ import { parseStamp } from '../state/clock.js';
         }
         return held;
       },
+      /**
+       * glibren: the file names of the `links` TorBox holds already (checkcached with list_files=true), largest
+       * first: a Map of link -> names. Asking adds nothing to the account and spends no quota. list_files is
+       * documented for torrents; a web download's answer may carry only the item's `name`, or nothing more,
+       * and both are taken as they come.
+       */
+      async cachedFiles(links, { signal } = {}) {
+        const found = /* @__PURE__ */ new Map();
+        const namesOf = (entry) => {
+          if (!entry || typeof entry !== "object") return [];
+          const files = Array.isArray(entry.files) ? [...entry.files].sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0)).map((file) => file?.short_name || file?.name) : [];
+          return [...files, entry.name].filter((name) => typeof name === "string" && name);
+        };
+        const ask = async (path, byHash) => {
+          const hashes = [...byHash.keys()];
+          for (let i = 0; i < hashes.length; i += 100) {
+            const data = await call(path, { params: { hash: hashes.slice(i, i + 100).join(","), format: "object", list_files: true }, signal });
+            for (const [hash, entry] of Object.entries(data || {})) {
+              const link = byHash.get(hash.toLowerCase());
+              const names = namesOf(entry);
+              if (link && names.length && !found.has(link)) found.set(link, names);
+            }
+          }
+        };
+        const web = links.filter((link) => !isMagnet(link));
+        await ask("/webdl/checkcached", new Map(web.flatMap((link) => linkHashes(link).map((hash) => [hash, link]))));
+        const magnets = links.filter(isMagnet).map((link) => [magnetHash(link), link]).filter(([hash]) => hash);
+        if (magnets.length) await ask("/torrents/checkcached", new Map(magnets));
+        return found;
+      },
       /** Adds `link` (a file host URL or a magnet) to the account: { kind: "webdl" | "torrent", id, hash }. */
       async createDownload(link, { password, signal } = {}) {
         if (isMagnet(link)) {

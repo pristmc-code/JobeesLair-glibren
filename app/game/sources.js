@@ -2,6 +2,7 @@
 // reconstructed from the esbuild bundle in eboot.bin
 // MODIFIED: Vikingfile is a browser source again (its file link captured from the console's browser), and a
 // browser source ranks by how captures on its host fare on this console (state/capture-hosts.js).
+// MODIFIED (glibren): a row names the format worked out for a "binary" source and how it is known (kindOf).
 
 import { activeService, serviceName } from '../state/debrid.js';
 import { t } from '../i18n/core.js';
@@ -21,12 +22,22 @@ import { formatBytes } from '../state/size.js';
     rar: "sources.kind.archive",
     "7z": "sources.kind.archive",
     tar: "sources.kind.archive",
-    "archive-set": "sources.kind.archive"
+    "archive-set": "sources.kind.archive",
+    archive: "sources.kind.archive"
   };
   // Disk images mount through ShadowMount as they are; an archive can hold an image or an extracted game
   // folder (a folder dump), and a "binary" release says nothing until its bytes arrive.
   var isImage = (release) => KIND[release.format] === "sources.kind.image";
-  var kindOf = (release) => t(KIND[release.format] ?? "sources.kind.unknown");
+  // glibren: a "binary" release's format as the source list worked it out (state/link-formats.js
+  // effectiveFormat, set as `formatInfo` by SourcePicker.jsx), with how it is known: read from its name,
+  // found by "Find formats" or a download, likely (an archive password). Ranking still goes by the catalog's.
+  var HOW = { name: "sources.kind.byName", found: "sources.kind.found", download: "sources.kind.found", password: "sources.kind.likely" };
+  function kindOf(release) {
+    const info = release.formatInfo;
+    if (!info || info.how === "catalog") return t(KIND[release.format] ?? "sources.kind.unknown");
+    if (!info.format) return t(info.how === "browser" ? "sources.kind.unknownBrowser" : "sources.kind.unknown");
+    return t(HOW[info.how] ?? "sources.kind.found", { kind: t(KIND[info.format] ?? "sources.kind.unknown") });
+  }
   var REGIONS = { US: "USA", USA: "USA", EU: "EUR", EUR: "EUR", EUROPE: "EUR", UK: "UK", JP: "JPN", JPN: "JPN", JAP: "JPN", JAPAN: "JPN", ASIA: "ASIA", ASA: "ASIA", KR: "KOR", KOR: "KOR", CN: "CHN", CHN: "CHN", HK: "HKG", HKG: "HKG", WORLD: "World", GLOBAL: "World" };
   // "USA Base (v01.21) - Direct" → "USA"; null when the label names no region.
   function regionOf({ label }) {

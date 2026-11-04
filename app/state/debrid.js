@@ -292,5 +292,14 @@ import { Http } from '@ps5-react/core';
       if (stale.length && !asking) void askInstant(stale, lend);
     }, [stale.join("\n")]);
   }
+  /**
+   * glibren: the file names of the `links` TorBox holds already (services/torbox.js cachedFiles), for "Find
+   * formats" (state/format-probe.js); null without a TorBox key or with a test client that cannot list them.
+   */
+  function torBoxFileNames(links) {
+    if (!keyOf()) return null;
+    const api = torbox();
+    return typeof api.cachedFiles === "function" ? api.cachedFiles(links) : null;
+  }
 
-export { activeService, askInstant as askTorBoxInstant, debridResolver, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };
+export { activeService, askInstant as askTorBoxInstant, torBoxFileNames, debridResolver, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };

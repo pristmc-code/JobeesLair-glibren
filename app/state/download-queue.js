@@ -17,6 +17,7 @@ import { fakelibState } from './fakelib.js';
 import { consoleFirmware, newerFirmware, ps5FakePackagesLaunch, titleRequirement } from './firmware.js';
 import { releaseType } from './release-sets.js';
 import { reportLink, reportOutcome } from './link-health.js';
+import { reportFormat } from './link-formats.js';
 import { BrowserRequired, RESOLVED_KINDS, archiveRefusal, cancellation, createSourceResolver, sourceKind, webURL } from './download-sources.js';
 import { captureAnchor } from './browser-links.js';
 import { createCaptureFlow } from './capture-flow.js';
@@ -941,6 +942,8 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       if (Date.now() - started > 250) console.log(`[download-queue] header check took ${Date.now() - started} ms`);
       if (!kind) return;
       job2.inspected = kind;
+      // glibren: the format its first bytes say, kept for the source list (state/link-formats.js).
+      reportFormat(job2.release, kind);
       noteTitle(job2, title);
       if (refusal) {
         job2.error = refusal;
@@ -1012,6 +1015,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       if (!archives?.inspect) return;
       const { kind, refusal, title } = archives.inspect([job2.downloadDestination]);
       if (refusal) throw new Error(refusal);
+      if (kind) reportFormat(job2.release, kind);
       noteTitle(job2, title);
       // (From Overdrive 1.0.6.) A source listed without a format is kept only for what its headers turn out
       // to be: a small file they name nothing in is the host's web page, not the game, and says so instead
