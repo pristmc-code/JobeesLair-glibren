@@ -29,6 +29,9 @@
     archive: "archive"
   };
   var GROUPS = ["image", "pkg", "archive"];
+  // glibren: the image types the filter can pick among (FFPFSC goes with FFPFS: the same mount, compressed).
+  var IMAGE_TYPES = ["exfat", "ffpkg", "ffpfs"];
+  var imageTypeOf = (format) => format === "ffpfsc" ? "ffpfs" : IMAGE_TYPES.includes(format) ? format : null;
   var groupOf = (format) => FORMAT_GROUP[format] ?? null;
   var decodeName = (value) => {
     try {
@@ -112,8 +115,12 @@
   var formatFromContentType = (value) => TYPES[String(value || "").split(";")[0].trim().toLowerCase()] ?? null;
   // The first bytes of a file (a string of one character per byte, as Http.request's binary bytes() gives
   // them): an archive's signature, a package's, an exFAT or PFS image's. A UFS2 image (.ffpkg) keeps its
-  // magic at 65536 + 1372, past what is asked, so only its name tells it.
+  // magic at 65536 + 1372, past what is asked: format-probe.js asks those four bytes apart (UFS_MAGIC_AT)
+  // when the first ones say nothing.
   var BYTES_ASKED = 64;
+  // glibren: UFS2's superblock (at 65536) holds fs_magic 0x19540119 at offset 1372, little-endian.
+  var UFS_MAGIC_AT = 65536 + 1372;
+  var formatFromUfsMagic = (bytes) => typeof bytes === "string" && bytes.slice(0, 4) === "\x19\x01\x54\x19" ? "ffpkg" : null;
   var at = (bytes, offset, text) => bytes.length >= offset + text.length && bytes.slice(offset, offset + text.length) === text;
   function formatFromMagic(bytes) {
     if (typeof bytes !== "string" || bytes.length < 4) return null;
@@ -180,6 +187,8 @@
     const key = formatKeyOf(release);
     const record = key ? recordOf(key) : null;
     if (record?.f && FORMAT_GROUP[record.f]) return { format: record.f, how: record.how === "download" ? "download" : "found" };
+    // glibren: the catalog's label or names call it an image of a kind ("exFAT", release-sets.js imageFormat).
+    if (release?.dumpType === "image" && IMAGE_TYPES.includes(release.imageFormat)) return { format: release.imageFormat, how: "name" };
     if (release?.archivePassword || sourcesOf(release).some((source) => source.archivePassword)) return { format: "archive", how: "password" };
     return { format: null, how: record?.s === "browser" ? "browser" : null };
   }
@@ -201,4 +210,4 @@
     return () => reporters.delete(reporter);
   }
 
-export { BYTES_ASKED, FORMAT_GROUP, GROUPS, deduceFormat, effectiveFormat, formatFromContentType, formatFromDisposition, formatFromMagic, formatFromName, formatKeyOf, groupOf, nameFromDisposition, onFormatReport, pageReaderOf, readHostPage, reportFormat };
+export { BYTES_ASKED, FORMAT_GROUP, GROUPS, IMAGE_TYPES, UFS_MAGIC_AT, formatFromUfsMagic, imageTypeOf, deduceFormat, effectiveFormat, formatFromContentType, formatFromDisposition, formatFromMagic, formatFromName, formatKeyOf, groupOf, nameFromDisposition, onFormatReport, pageReaderOf, readHostPage, reportFormat };

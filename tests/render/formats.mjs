@@ -61,8 +61,8 @@ const sheet = (selected = 0, releases = catalog) => texts({ type: SourcePicker, 
 const all = sheet(3);
 console.log(`--- source list, no filter\n${all.join('\n')}`);
 for (const chip of ['Show formats', 'All', 'Image', 'PKG', 'Archive', 'Unknown format: shown']) assert.ok(all.includes(chip), chip);
-assert.ok(all.some((text) => text.startsWith('Disk image (found)')), 'the 1fichier link TorBox or its page named');
-assert.ok(all.some((text) => text.startsWith('Archive (by name)')), 'MediaFire\'s URL names a .rar');
+assert.ok(all.some((text) => text.startsWith('exFAT image (found)')), 'the 1fichier link TorBox or its page named');
+assert.ok(all.some((text) => text.startsWith('RAR archive (by name)')), 'MediaFire\'s URL names a .rar');
 assert.ok(all.some((text) => text.startsWith('Archive (likely)')), 'an archive password');
 assert.ok(all.some((text) => text.startsWith('Format unknown until downloaded')), 'gofile says nothing');
 assert.ok(!all.some((text) => /hidden by the filter/.test(text)));
@@ -84,8 +84,35 @@ assert.ok(images.includes('Unknown format: hidden'));
 setFormatFilter({ kinds: ['pkg'], unknown: false });
 const emptied = sheet(0, catalog.slice(2, 5));
 console.log(`--- source list, nothing the filter wants\n${emptied.join('\n')}`);
-assert.ok(emptied.some((text) => text.startsWith('Archive (by name)')), 'the selected source stays');
+assert.ok(emptied.some((text) => text.startsWith('RAR archive (by name)')), 'the selected source stays');
 assert.ok(emptied.includes('2 links hidden by the filter') && emptied.includes('Show all'), emptied.join(' | '));
 setFormatFilter(DEFAULT_FORMAT_FILTER);
 assert.ok(!files.get('/download0/JobeesLair/settings.json')?.includes('linkFormats'), 'the default leaves no key');
+// glibren: image types, Find via the browser, the badges' row.
+setFormatFilter(DEFAULT_FORMAT_FILTER);
+const typed = sheet(3);
+for (const chip of ['Image types', 'Every image', 'exFAT', 'FFPKG', 'FFPFS / FFPFSC']) assert.ok(typed.includes(chip), chip);
+assert.ok(typed.some((text) => text.startsWith('exFAT image')), 'the exact image type in the name');
+assert.ok(typed.includes('Find'), 'Find beside a link of no known format whose site needs the browser');
+setFormatFilter({ kinds: ['image'], unknown: false, images: ['ffpkg'] });
+const ffpkgOnly = sheet(3);
+assert.ok(!ffpkgOnly.some((text) => /^exFAT image/.test(text) && !text.includes('found')) || ffpkgOnly.some((text) => /hidden by the filter/.test(text)), 'exFAT hidden with FFPKG only');
+setFormatFilter(DEFAULT_FORMAT_FILTER);
+const { findViaBrowser } = await load('app/state/links.js');
+const gofile = catalog.find((release) => release.id === 'go');
+assert.equal(await findViaBrowser(gofile, { title: 'Returnal', titleId: 'PPSA01285' }), null, 'no console browser in a test');
+const after = sheet(3);
+assert.ok(after.includes("Format not found: only on the PS5, it needs the console's browser"), after.join(' | '));
+// The badges wrap within the text column: a style with flexWrap and the column's width, never unbounded.
+const styles = [];
+(function walk(node) {
+  if (node == null || typeof node !== 'object') return;
+  if (Array.isArray(node)) return node.forEach(walk);
+  const { type, props = {} } = node;
+  const style = typeof props.style === 'function' ? props.style({ focused: false }) : props.style;
+  for (const each of [style].flat()) if (each && each.marginTop === 3 && each.flexDirection === 'row') styles.push(each);
+  if (typeof type === 'function') return walk(type(props));
+  walk(props.children);
+})({ type: SourcePicker, props: { title: 'Returnal', releases: catalog, selected: 3, submit() {}, current: 'PPSA01285', onClose() {}, checkLinks: async () => {} } });
+assert.ok(styles.length > 0 && styles.every((style) => style.flexWrap === 'wrap' && [220, 330, 450].includes(style.width)), JSON.stringify(styles));
 console.log('OK: source list with the format filter and Find formats');

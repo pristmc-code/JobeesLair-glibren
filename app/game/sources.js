@@ -32,11 +32,22 @@ import { formatBytes } from '../state/size.js';
   // effectiveFormat, set as `formatInfo` by SourcePicker.jsx), with how it is known: read from its name,
   // found by "Find formats" or a download, likely (an archive password). Ranking still goes by the catalog's.
   var HOW = { name: "sources.kind.byName", found: "sources.kind.found", download: "sources.kind.found", password: "sources.kind.likely" };
+  // glibren: the exact type where it is known ("exFAT image", "RAR archive"), not only the group: a gamer who
+  // mounts .exfat picks by it. A plain "archive" (a password says only that) and a package keep the group's name.
+  var TYPE = { exfat: "exFAT", ffpkg: "FFPKG", ffpfs: "FFPFS", ffpfsc: "FFPFSC", rar: "RAR", zip: "ZIP", "7z": "7z", tar: "TAR", fpkg: "FPKG" };
+  function kindName(format) {
+    const kind = KIND[format] ?? "sources.kind.unknown";
+    const type = TYPE[format];
+    if (!type) return t(kind);
+    if (kind === "sources.kind.image") return t("sources.kind.imageType", { type });
+    if (kind === "sources.kind.archive") return t("sources.kind.archiveType", { type });
+    return type === "FPKG" ? type : t(kind);
+  }
   function kindOf(release) {
     const info = release.formatInfo;
-    if (!info || info.how === "catalog") return t(KIND[release.format] ?? "sources.kind.unknown");
+    if (!info || info.how === "catalog") return kindName(release.format);
     if (!info.format) return t(info.how === "browser" ? "sources.kind.unknownBrowser" : "sources.kind.unknown");
-    return t(HOW[info.how] ?? "sources.kind.found", { kind: t(KIND[info.format] ?? "sources.kind.unknown") });
+    return t(HOW[info.how] ?? "sources.kind.found", { kind: kindName(info.format) });
   }
   var REGIONS = { US: "USA", USA: "USA", EU: "EUR", EUR: "EUR", EUROPE: "EUR", UK: "UK", JP: "JPN", JPN: "JPN", JAP: "JPN", JAPAN: "JPN", ASIA: "ASIA", ASA: "ASIA", KR: "KOR", KOR: "KOR", CN: "CHN", CHN: "CHN", HK: "HKG", HKG: "HKG", WORLD: "World", GLOBAL: "World" };
   // "USA Base (v01.21) - Direct" → "USA"; null when the label names no region.

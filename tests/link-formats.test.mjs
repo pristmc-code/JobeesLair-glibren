@@ -152,7 +152,7 @@ test('row names: the format and how it is known', () => {
 });
 
 // A search on a clock that only moves when it waits; answers per URL (a status, or a response object).
-function world({ table = {}, torbox = () => null, quiet } = {}) {
+function world({ table = {}, torbox = () => null, quiet, debridOn = () => false } = {}) {
   const state = { clock: 1e9, saved: null, calls: [], quiet: 0, inFlight: 0, most: 0 };
   const http = {
     async request(url, options) {
@@ -179,6 +179,7 @@ function world({ table = {}, torbox = () => null, quiet } = {}) {
     store: { get: () => state.saved, set: (value) => { state.saved = JSON.parse(JSON.stringify(value)); } },
     quiet: quiet ?? (async (reason, work) => { state.quiet++; try { return await work(); } finally { state.quiet--; } }),
     torbox,
+    debridOn,
     now: () => state.clock,
     wait: async (ms) => { state.clock += ms; await new Promise((resolve) => setImmediate(resolve)); },
     timeout: () => () => {},
@@ -283,4 +284,81 @@ test('a download\'s first bytes are kept for the source list (reportFormat)', ()
   assert.equal(probe.recordOf(VIKING.url).f, 'tar');
   assert.equal(probe.recordOf(DATAVAULTS.url), null);
   assert.equal(unknownLinks([FICHIER], probe.recordOf).length, 0);
+});
+
+// ---- glibren: TorBox after "needs the browser", the exact image type, Find via the browser ----
+const FICHIER_GONE_BROWSER = { id: 'gb', provider: 'gofile.io', url: 'https://gofile.io/d/aY3sL9', browserUrl: 'https://gofile.io/d/aY3sL9', format: 'binary', filename: 'x.binary', requiresBrowser: true, label: 'USA' };
+test('a "needs the browser" answer is asked of TorBox again once a key is set; the counts are what is known now', async () => {
+  let key = false;
+  const asked = [];
+  const { probe } = world({ debridOn: () => key, torbox: async (links) => { if (!key) return null; asked.push(...links); return new Map([[FICHIER_GONE_BROWSER.url, ['Game.exfat']]]); } });
+  // Without a key: gofile needs the browser, recorded so (with debrid: false) and not asked again.
+  await probe.discover('K', [FICHIER_GONE_BROWSER]);
+  assert.equal(probe.recordOf(FICHIER_GONE_BROWSER.url).s, 'browser');
+  assert.equal(probe.recordOf(FICHIER_GONE_BROWSER.url).debrid, false);
+  assert.equal(probe.unknownLinks([FICHIER_GONE_BROWSER]).length, 0, 'its week stands without a key');
+  assert.deepEqual(probe.summaryOf([FICHIER_GONE_BROWSER]), { image: 0, pkg: 0, archive: 0, browser: 1 });
+  // A key now: asked again, TorBox names the file, and the count says so at once.
+  key = true;
+  assert.equal(probe.unknownLinks([FICHIER_GONE_BROWSER]).length, 1, 'a key came since: TorBox may hold it');
+  await probe.discover('K', [FICHIER_GONE_BROWSER]);
+  assert.deepEqual(asked, [FICHIER_GONE_BROWSER.url]);
+  assert.equal(probe.recordOf(FICHIER_GONE_BROWSER.url).f, 'exfat');
+  assert.deepEqual(probe.summaryOf([FICHIER_GONE_BROWSER]), { image: 1, pkg: 0, archive: 0, browser: 0 });
+  // A browser answer given with a key is not asked again while it stands.
+  const other = { ...FICHIER_GONE_BROWSER, id: 'o', url: 'https://gofile.io/d/other', browserUrl: 'https://gofile.io/d/other' };
+  await probe.discover('K2', [other]);
+  assert.equal(probe.recordOf(other.url).debrid, true);
+  assert.equal(probe.unknownLinks([other]).length, 0);
+});
+
+test('a UFS2 image (.ffpkg) is told by its superblock 66 KiB in, asked only when the first bytes say nothing', async () => {
+  const { UFS_MAGIC_AT, formatFromUfsMagic } = formats;
+  assert.equal(formatFromUfsMagic('\x19\x01\x54\x19'), 'ffpkg');
+  assert.equal(formatFromUfsMagic('\x00\x00\x00\x00'), null);
+  const U = 'https://cdn.example.com/blob/u';
+  const { state, probe } = world({ table: {
+    [`HEAD ${U}`]: [{ status: 200, headers: { 'content-type': 'application/octet-stream' } }],
+    [`GET ${U}`]: [{ status: 206, bytes: '\0'.repeat(64) }, { status: 206, bytes: '\x19\x01\x54\x19' }],
+  } });
+  await probe.discover('U', [fileLink('u', U)]);
+  assert.equal(probe.recordOf(U).f, 'ffpkg');
+  const ranges = state.calls.filter((call) => call.method === 'GET').map((call) => call.headers.Range);
+  assert.deepEqual(ranges, ['bytes=0-63', `bytes=${UFS_MAGIC_AT}-${UFS_MAGIC_AT + 3}`]);
+});
+
+test('learn: a link captured through the browser, by its file name, else its first bytes; saved as found', async () => {
+  const B = 'https://dl.example.com/x/abc';
+  const { state, probe } = world({ table: { [`GET ${B}`]: [{ status: 206, bytes: 'Rar!\x1A\x07\x01\x00' + '\0'.repeat(56) }] } });
+  assert.equal(await probe.learn(FICHIER, { url: 'https://cdn.example.com/PPSA01285.exfat', name: 'PPSA01285 Game.exfat' }), 'exfat');
+  assert.deepEqual(effectiveFormat(FICHIER, probe.recordOf), { format: 'exfat', how: 'found' });
+  assert.equal(state.calls.length, 0, 'the name said it');
+  assert.equal(await probe.learn(VIKING, { url: B, name: '' }), 'rar');
+  assert.equal(state.calls[0].headers.Range, 'bytes=0-63');
+  assert.equal(await probe.learn(DATAVAULTS, { url: 'https://nothing.example/none', name: 'readme' }), null);
+  assert.equal(probe.recordOf(DATAVAULTS.url), null);
+});
+
+test('image types: the filter picks exFAT, FFPKG or FFPFS (with FFPFSC); a filter saved before them reads as it did', () => {
+  const { normalizeFilter, passes, toggleImageType, isFiltering } = filters;
+  assert.deepEqual(normalizeFilter({ kinds: ['image'], unknown: true }), { kinds: ['image'], unknown: true }, 'no images key');
+  const exfat = toggleImageType({ kinds: [], unknown: true }, 'exfat');
+  assert.deepEqual(exfat.images, ['exfat']);
+  assert.ok(isFiltering(exfat));
+  assert.ok(passes(exfat, 'image', 'exfat'));
+  assert.ok(!passes(exfat, 'image', 'ffpkg'));
+  assert.ok(passes(exfat, 'archive', 'rar'), 'archives and packages go by their own chips');
+  const pfs = toggleImageType(exfat, 'ffpfs');
+  assert.ok(passes(pfs, 'image', 'ffpfsc'), 'FFPFSC goes with FFPFS');
+  assert.deepEqual(toggleImageType(pfs, 'exfat').images, ['ffpfs']);
+  assert.equal(toggleImageType(pfs, 'ffpkg').images, undefined, 'all three is every type');
+  assert.equal(normalizeFilter({ images: ['exfat', 'ffpkg', 'ffpfs'] }).images, undefined, 'every type is no type');
+  assert.ok(isFiltering({ kinds: ['pkg'], unknown: true, images: ['exfat'] }), 'packages only still filters');
+});
+
+test('the catalog calling a link an exFAT image names it so, after the file names (an archive of one stays an archive)', () => {
+  const labelled = { ...FICHIER, dumpType: 'image', imageFormat: 'exfat' };
+  assert.deepEqual(effectiveFormat(labelled), { format: 'exfat', how: 'name' });
+  const archived = { ...MEDIAFIRE, dumpType: 'image', imageFormat: 'exfat' };
+  assert.equal(effectiveFormat(archived).format, 'rar');
 });
