@@ -28,6 +28,7 @@ import { STAGING_SUFFIXES } from './extraction-staging.js';
 import { busyWhileOpen, mountedImages, shadowRequest, within2 } from './shadowmount.js';
 import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
+import { mirrorsFor } from './download-mirrors.js';
 
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
   var BUSY = ["queued", ...ACTIVE];
@@ -735,6 +736,14 @@ import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
       const rangeBytes = rangeFor(holder, tuned, started, legacy);
       return { connections: tuned.connections, ...rangeBytes ? { rangeBytes } : {} };
     }
+    // Mirrors for one file (state/download-mirrors.js): the other catalog links that are the same file and need nothing
+    // resolved, or undefined when there are none.
+    function mirrorLinks(job2, primary, options, candidates) {
+      const links = mirrorsFor(primary, options, candidates ?? []);
+      if (!links.length) return void 0;
+      console.log(`[download-queue] ${job2.id}: ${links.length} mirror${links.length === 1 ? "" : "s"} offered (the engine keeps those serving the same bytes)`);
+      return links;
+    }
     async function execute(job2) {
       let task;
       let unsubscribe;
@@ -807,7 +816,7 @@ import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
         fs.mkdir(job2.artifact.directory, { recursive: true });
         fs.mkdir(job2.downloadDestination.slice(0, job2.downloadDestination.lastIndexOf("/")), { recursive: true });
         active2.transferring = true;
-        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: void 0, ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true });
+        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true });
         active2.task = task;
         // Most catalog releases do not say their size, so the check above had nothing to go on: once the
         // server does, the rest is checked against the drive once, before it fills (the partial file counts
@@ -1567,6 +1576,8 @@ import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
           const task = downloads.enqueue({
             ...part.options,
             rejectHtml: true,
+            // The part's other sources that are the same file, as mirrors.
+            mirrors: mirrorLinks(job2, source2, part.options, job2.release.parts[index].sources.filter((other) => other !== source2)),
             // A part an earlier build started kept the engine's default range size (none was given).
             ...transferTuning(part, part.options.url, part.destination, null),
             adaptive: true,

@@ -174,3 +174,81 @@ test('tuning: a set\'s new parts get the table\'s range size; one an earlier bui
   assert.equal(downloads.requests[1].rangeBytes, undefined, 'the engine default it started with');
   assert.equal(downloads.requests[1].connections, 64);
 });
+
+// ---- 1. Mirrors ----
+
+const SHA = 'a'.repeat(64);
+const OTHER_SHA = 'b'.repeat(64);
+
+test('mirrors: same SHA-256 when the file has one; same size and name otherwise; only plain direct links', async () => {
+  const { mirrorsFor, sameFile } = await load('app/state/download-mirrors.js');
+  const primary = image('Game.exfat', 'https://a.example/Game.exfat', 5000, { sha256: SHA });
+  const options = { url: 'https://a.example/Game.exfat', sha256: SHA, expectedBytes: 5000 };
+  const candidates = [
+    image('Game.exfat', 'https://b.example/Game.exfat', 5000, { sha256: SHA }),
+    image('Game.exfat', 'https://c.example/Game.exfat', 5000, { sha256: OTHER_SHA }),
+    image('Game.exfat', 'https://d.example/Game.exfat', 5000),
+    image('Game.exfat', 'https://www.mediafire.com/file/abc/Game.exfat/file', 5000, { sha256: SHA }),
+    image('Game.exfat', 'https://e.example/Game.exfat', 5000, { sha256: SHA, debrid: { service: 'torbox' } }),
+    image('Game.exfat', 'https://f.example/Game.exfat', 5000, { sha256: SHA, browserUrl: 'https://f.example/page' }),
+    image('Game.exfat', 'https://g.example/Game.exfat', 5000, { sha256: SHA, requiresBrowser: true }),
+    image('Game.exfat', 'https://a.example/Game.exfat', 5000, { sha256: SHA }),
+    image('Game.exfat', 'https://b.example/Game.exfat', 5000, { sha256: SHA }),
+  ];
+  assert.deepEqual(mirrorsFor(primary, options, candidates), ['https://b.example/Game.exfat'], 'one checksum match; pages, debrid, browser and duplicates left out');
+  // No checksum: the same size and name (the engine then also wants the same strong ETag).
+  const plain = image('Game.exfat', 'https://a.example/Game.exfat', 5000);
+  assert.deepEqual(mirrorsFor(plain, { url: plain.url }, [
+    image('Game.exfat', 'https://b.example/dl/Game.exfat', 5000),
+    image('game.EXFAT', 'https://c.example/x?id=1', 5000),
+    image('Game.exfat', 'https://d.example/Game.exfat', 4999),
+    image('Other.exfat', 'https://e.example/Other.exfat', 5000),
+    image('Game.exfat', 'https://f.example/Game.exfat', 5000, { sha256: SHA }),
+    image('Game.exfat', 'https://g.example/Game.exfat'),
+  ]), ['https://b.example/dl/Game.exfat', 'https://c.example/x?id=1']);
+  assert.equal(sameFile({ filename: 'a', sizeBytes: null }, { filename: 'a', sizeBytes: null }), false, 'an unknown size proves nothing');
+  // The resolved size wins over the listing's.
+  assert.deepEqual(mirrorsFor(plain, { url: plain.url, expectedBytes: 4000 }, [image('Game.exfat', 'https://b.example/Game.exfat', 5000)]), []);
+  // Never with a split manifest or a debrid repack, and at most four.
+  assert.deepEqual(mirrorsFor(primary, { ...options, pieces: [{}] }, candidates), []);
+  assert.deepEqual(mirrorsFor(primary, { ...options, repacked: true }, candidates), []);
+  const many = Array.from({ length: 6 }, (_, i) => image('Game.exfat', `https://m${i}.example/Game.exfat`, 5000, { sha256: SHA }));
+  assert.equal(mirrorsFor(primary, options, many).length, 4);
+});
+
+test('mirrors: the queue offers the game\'s other direct sources of the same file to the engine', async () => {
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const queue = queueWith({ fs, downloads });
+  const primary = image('Game.exfat', 'https://a.example/Game.exfat', 1000, { sha256: SHA });
+  const alternatives = [
+    image('Game.exfat', 'https://b.example/Game.exfat', 1000, { sha256: SHA }),
+    image('Game.exfat', 'https://www.mediafire.com/file/abc/Game.exfat/file', 1000, { sha256: SHA }),
+    image('Game.exfat', 'https://c.example/Game.exfat', 1000, { sha256: OTHER_SHA }),
+  ];
+  const job = await settle(queue, queue.enqueue(game, primary, '/data', alternatives));
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.deepEqual(downloads.requests[0].mirrors, ['https://b.example/Game.exfat']);
+  assert.equal(downloads.requests[0].sha256, SHA, 'the checksum that makes them safe goes along');
+  // Nothing alike: no mirrors at all (the option stays unset).
+  const fs2 = memoryFs();
+  const downloads2 = engine(fs2);
+  const queue2 = queueWith({ fs: fs2, downloads: downloads2 });
+  await settle(queue2, queue2.enqueue(game, image('Game.exfat'), '/data', [image('Other.exfat', 'https://b.example/Other.exfat')]));
+  assert.equal(downloads2.requests[0].mirrors, undefined);
+});
+
+test('mirrors: a set\'s part gets its other direct sources of the same volume', async () => {
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const queue = queueWith({ fs, downloads });
+  const volume = (n, host, extra = {}) => ({ url: `https://${host}/Game.part${n}.rar`, filename: `Game.part${n}.rar`, sizeBytes: 100, ...extra });
+  const parts = [
+    { number: 1, sources: [volume(1, 'a.example'), volume(1, 'b.example'), volume(1, 'vikingfile.com', { requiresBrowser: true, browserUrl: 'https://vikingfile.com/f/x' })] },
+    { number: 2, sources: [volume(2, 'a.example')] },
+  ];
+  const id = queue.enqueue(game, { id: 'set', provider: 'host', filename: 'Game', parts }, '/data');
+  await settle(queue, id);
+  assert.deepEqual(downloads.requests[0].mirrors, ['https://b.example/Game.part1.rar']);
+  assert.equal(downloads.requests[1].mirrors, undefined);
+});
