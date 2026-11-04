@@ -117,6 +117,24 @@ as the DMCA and GitHub's process provide.
 
 This notice is not legal advice and does not change the [LICENSE](LICENSE).
 
+## Videos (homebrew YouTube app)
+
+**Videos** on a game's page opens a homebrew YouTube app on a search for that game, its gameplay or its trailer.
+It works with [ytps5](https://github.com/pristmc-code/ps5-glibren-releases) (`PPSA99350`, preferred) or
+YouTube Max'd (`PPSA99991`) builds that read `glibren_busca.txt`; the official YouTube app is never opened.
+
+1. The app is found by `/data/homebrew/<title ID>/eboot.bin` (or its `/user/appmeta` entry and that folder).
+   Without one, the sheet says how to install it and nothing else happens.
+2. `"<name> gameplay"` (or `trailer`), one UTF-8 line of at most 200 bytes, is written to
+   `/data/homebrew/<title ID>/glibren_busca.txt.tmp` and renamed to `glibren_busca.txt`. The app reads it when it
+   opens (and about every second while open), deletes it and shows the results.
+3. `companion-daemon.elf` is sent to the payload loader (port 9021) with the request `LNC1`, the title ID and the
+   payload folder. It launches that title (`sceLncUtilLaunchApp`) without closing anything, writes `launched`,
+   `running` or `failed 0x<code>` to `launch.txt` there, and exits. Errors are shown in the sheet.
+
+Code: `app/state/youtube.js`, `app/game/VideosSheet.jsx`, `app/native/companion_daemon.c`; tests:
+`tests/youtube.test.mjs`, `tests/render/videos.mjs`.
+
 ## Build it yourself
 
 <details>

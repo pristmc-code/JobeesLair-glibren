@@ -1376,5 +1376,18 @@
   "phone.game.playersHere": "{started} von {all} auf deiner Firmware",
   "whatsNew.players": "Startet es bei anderen?",
   "whatsNew.playersDetail": "Die Details eines Spiels zeigen, auf wie vielen Konsolen von Spielern es gestartet ist, und wie vielen auf deiner Firmware.",
-  "diagnosis.frozeTip": "Es ist eingefroren: Das Spiel reagierte nicht mehr, und die Konsole hat es geschlossen, als sie es nicht pausieren konnte. Es wurde richtig installiert, das Einfrieren kommt also von den eigenen Dateien des Spiels, nicht vom Download oder von ShadowMount. Ein anderer Download davon auf seiner Seite läuft vielleicht."
+  "diagnosis.frozeTip": "Es ist eingefroren: Das Spiel reagierte nicht mehr, und die Konsole hat es geschlossen, als sie es nicht pausieren konnte. Es wurde richtig installiert, das Einfrieren kommt also von den eigenen Dateien des Spiels, nicht vom Download oder von ShadowMount. Ein anderer Download davon auf seiner Seite läuft vielleicht.",
+  "game.videos": "Videos",
+  "videos.title": "Videos auf YouTube",
+  "videos.gameplay": "Gameplay",
+  "videos.trailer": "Trailer",
+  "videos.searchIn": "Sucht \"{text}\" in {app}",
+  "videos.opening": "{app} wird geöffnet…",
+  "videos.running": "{app} war schon offen: Die Suche wartet dort. Wechsle dorthin, um die Ergebnisse zu sehen.",
+  "videos.failed": "{app} wurde nicht geöffnet (Fehler {code}).",
+  "videos.noAnswer": "Der Payload-Loader (Port 9021) antwortet nicht. Läuft er?",
+  "videos.writeFailed": "Die Suche konnte nicht an {app} übergeben werden: {error}",
+  "videos.sendFailed": "Die Anfrage konnte nicht an den Payload-Loader gesendet werden: {error}",
+  "videos.missing": "Keine Homebrew-YouTube-App installiert.",
+  "videos.missingHow": "Installiere ytps5 (PPSA99350) oder YouTube Max'd (PPSA99991): über das Fenster Apps des glibren-Payloads oder indem du das Release von github.com/pristmc-code/ps5-glibren-releases nach /data/homebrew kopierst. Die offizielle YouTube-App wird von hier nie geöffnet."
 }

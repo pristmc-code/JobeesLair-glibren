@@ -1376,5 +1376,18 @@
   "phone.game.playersHere": "{started} dari {all} di firmware-mu",
   "whatsNew.players": "Jalan di konsol lain?",
   "whatsNew.playersDetail": "Detail sebuah game menunjukkan di berapa konsol pemain game itu berjalan, dan berapa di firmware-mu.",
-  "diagnosis.frozeTip": "Game ini macet: berhenti merespons, dan konsol menutupnya saat tidak bisa menjedanya. Pemasangannya benar, jadi macetnya berasal dari file game itu sendiri, bukan dari unduhan atau ShadowMount. Unduhan lain dari halamannya mungkin bisa berjalan."
+  "diagnosis.frozeTip": "Game ini macet: berhenti merespons, dan konsol menutupnya saat tidak bisa menjedanya. Pemasangannya benar, jadi macetnya berasal dari file game itu sendiri, bukan dari unduhan atau ShadowMount. Unduhan lain dari halamannya mungkin bisa berjalan.",
+  "game.videos": "Videos",
+  "videos.title": "Videos on YouTube",
+  "videos.gameplay": "Gameplay",
+  "videos.trailer": "Trailer",
+  "videos.searchIn": "Searches \"{text}\" in {app}",
+  "videos.opening": "Opening {app}…",
+  "videos.running": "{app} was already open: the search is waiting there. Switch to it to see the results.",
+  "videos.failed": "{app} didn't open (error {code}).",
+  "videos.noAnswer": "No answer from the payload loader (port 9021). Is it running?",
+  "videos.writeFailed": "Couldn't hand the search to {app}: {error}",
+  "videos.sendFailed": "Couldn't send the request to the payload loader: {error}",
+  "videos.missing": "No homebrew YouTube app is installed.",
+  "videos.missingHow": "Install ytps5 (PPSA99350) or YouTube Max'd (PPSA99991): from the Apps window of the glibren payload, or by copying its release from github.com/pristmc-code/ps5-glibren-releases to /data/homebrew. The official YouTube app is never opened from here."
 }

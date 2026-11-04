@@ -47,4 +47,5 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
     return /* @__PURE__ */ (0, jsx)(SideSheet, { title: t2("download.optionsTitle"), subtitle: title, onClose, children: /* @__PURE__ */ (0, jsx)(View, { style: { gap: 6, padding: 9 }, children: items.map((item, index) => /* @__PURE__ */ (0, jsx)(Option, { item, autoFocus: index === 0, onClose }, item.label)) }) });
   }
 
-export { OptionsSheet };
+// Option: also the rows of VideosSheet.jsx.
+export { Option, OptionsSheet };

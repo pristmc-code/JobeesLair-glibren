@@ -1,5 +1,6 @@
 // ../pub-game-store/native/game/GameHero.jsx
 // reconstructed from the esbuild bundle in eboot.bin
+// MODIFIED: a Videos button beside Favorite opens VideosSheet.jsx (a homebrew YouTube app on the game's videos).
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
@@ -119,7 +120,9 @@ import { Icon } from '../ui/Icon.jsx';
                   focusKey: `favorite:${game.id}`,
                   children: /* @__PURE__ */ (0, jsx)(WishHeart, { active: wished })
                 }
-              )
+              ),
+              // Videos: a homebrew YouTube app opened on the game's gameplay or trailer (VideosSheet.jsx).
+              jsx(Button2, { variant: "outline", size: "lg", icon: "play", label: t2("game.videos"), onPress: () => onRequestDialog({ kind: "videos", title: game.title, from: `videos:${game.id}` }), nextFocusDown: nextDown, focusKey: `videos:${game.id}` })
             ] })
           ] })
         ] })

@@ -1376,5 +1376,18 @@
   "phone.game.playersHere": "आपके फ़र्मवेयर पर {all} में से {started}",
   "whatsNew.players": "क्या दूसरों के लिए चलता है?",
   "whatsNew.playersDetail": "किसी गेम की जानकारी में दिखता है कि वह कितने खिलाड़ियों के कंसोल पर चला, और आपके फ़र्मवेयर पर कितनों पर।",
-  "diagnosis.frozeTip": "यह अटक गया: गेम ने जवाब देना बंद कर दिया, और कंसोल ने उसे रोक न पाने पर बंद कर दिया। यह सही तरह इंस्टॉल हुआ था, इसलिए अटकना गेम की अपनी फ़ाइलों से है, डाउनलोड या ShadowMount से नहीं। इसके पेज से कोई दूसरा डाउनलोड चल सकता है।"
+  "diagnosis.frozeTip": "यह अटक गया: गेम ने जवाब देना बंद कर दिया, और कंसोल ने उसे रोक न पाने पर बंद कर दिया। यह सही तरह इंस्टॉल हुआ था, इसलिए अटकना गेम की अपनी फ़ाइलों से है, डाउनलोड या ShadowMount से नहीं। इसके पेज से कोई दूसरा डाउनलोड चल सकता है।",
+  "game.videos": "Videos",
+  "videos.title": "Videos on YouTube",
+  "videos.gameplay": "Gameplay",
+  "videos.trailer": "Trailer",
+  "videos.searchIn": "Searches \"{text}\" in {app}",
+  "videos.opening": "Opening {app}…",
+  "videos.running": "{app} was already open: the search is waiting there. Switch to it to see the results.",
+  "videos.failed": "{app} didn't open (error {code}).",
+  "videos.noAnswer": "No answer from the payload loader (port 9021). Is it running?",
+  "videos.writeFailed": "Couldn't hand the search to {app}: {error}",
+  "videos.sendFailed": "Couldn't send the request to the payload loader: {error}",
+  "videos.missing": "No homebrew YouTube app is installed.",
+  "videos.missingHow": "Install ytps5 (PPSA99350) or YouTube Max'd (PPSA99991): from the Apps window of the glibren payload, or by copying its release from github.com/pristmc-code/ps5-glibren-releases to /data/homebrew. The official YouTube app is never opened from here."
 }

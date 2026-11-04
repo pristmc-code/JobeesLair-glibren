@@ -20,6 +20,12 @@
 // The session cookie is the one the app's own server gives every phone for the right PIN (jbh): a phone
 // signed in on either side stays signed in when the other takes over the port.
 //
+// It also opens a homebrew YouTube app for a game's page ("Videos", app/state/youtube.js): request
+// "LNC1", the title ID (only ytps5, PPSA99350, or YouTube Max'd, PPSA99991; never the official YouTube app) and the
+// payload folder. It launches that title without closing what is open, writes "launched", "running" (it was
+// already open and the launch was refused) or "failed 0x<code>" to launch.txt in the payload folder, and exits:
+// it never touches the companion running beside it.
+//
 // Built by the app's build (app.json "payloads") with the PS5 Payload SDK, like the engine's updater.elf;
 // -DCOMPANION_HOST_TEST builds it for the desktop, where tests/companion-daemon.test.mjs runs it.
 #include <arpa/inet.h>
@@ -56,12 +62,13 @@ static int title_running(const char* title) {
   struct stat st;
   return path && stat(path, &st) == 0;
 }
+// The file names the title launched.
 static int launch_title(const char* title) {
-  (void)title;
   const char* path = getenv("COMPANION_TEST_RUNNING");
   if (!path) return -1;
   FILE* file = fopen(path, "w");
   if (!file) return -1;
+  fputs(title, file);
   fclose(file);
   return 0;
 }
@@ -90,11 +97,13 @@ int sceLncUtilGetAppId(const char* title_id);
 int sceLncUtilLaunchApp(const char* title_id, const char** argv, LncAppParam* param);
 
 static int title_running(const char* title) { return sceLncUtilGetAppId(title) >= 0; }
+// 0 when launched, else the system's (negative) error.
 static int launch_title(const char* title) {
   sceUserServiceInitialize(NULL);
   LncAppParam param = {sizeof param, 0, 0, 0, 0};
   sceUserServiceGetForegroundUser((int*)&param.user_id);
-  return sceLncUtilLaunchApp(title, NULL, &param) < 0 ? -1 : 0;
+  const int result = sceLncUtilLaunchApp(title, NULL, &param);
+  return result < 0 ? result : 0;
 }
 static int control_port(void) { return CONTROL_PORT; }
 static int loader_port(void) { return 9021; }
@@ -202,9 +211,10 @@ static int valid_session(const char* value) {
   return 1;
 }
 
-static int read_config(int fd, Config* config) {
-  char magic[8], port[8];
-  if (!read_line(fd, magic, sizeof magic) || (strcmp(magic, "CMP1") && strcmp(magic, "CMP2"))) return 0;
+// The settings after their first line, `magic`.
+static int read_config_after(int fd, const char* magic, Config* config) {
+  char port[8];
+  if (strcmp(magic, "CMP1") && strcmp(magic, "CMP2")) return 0;
   if (!read_line(fd, config->title, sizeof config->title) || !valid_title(config->title)) return 0;
   if (!read_line(fd, port, sizeof port) || (config->port = atoi(port)) < 1 || config->port > 65535) return 0;
   if (!read_line(fd, config->pin, sizeof config->pin) || !valid_pin(config->pin)) return 0;
@@ -217,6 +227,11 @@ static int read_config(int fd, Config* config) {
     else if (!valid_session(config->session)) return 0;
   }
   return 1;
+}
+
+static int read_config(int fd, Config* config) {
+  char magic[8];
+  return read_line(fd, magic, sizeof magic) && read_config_after(fd, magic, config);
 }
 
 static void say(int fd, const char* line) {
@@ -578,6 +593,38 @@ static void reply_to_app(const Config* config, const char* word) {
   close(fd);
 }
 
+// The homebrew YouTube apps a game's "Videos" may open. The official app (PPSA01650-2) is never one: on consoles
+// that use it as their exploit's entry, opening it from here would run that instead.
+static const char* const VIDEO_APPS[] = {"PPSA99350", "PPSA99991"};
+
+// LNC1: opens one of VIDEO_APPS and says how it went, on stdout and in launch.txt in the payload folder (the app
+// reads that a moment later rather than wait on the connection). Nothing is closed first.
+static int launch_video_app(int fd) {
+  char title[16], folder[512];
+  if (!read_line(fd, title, sizeof title) || !read_line(fd, folder, sizeof folder) || !valid_path(folder)) return 1;
+  int allowed = 0;
+  for (size_t i = 0; i < sizeof VIDEO_APPS / sizeof VIDEO_APPS[0]; ++i) allowed |= !strcmp(title, VIDEO_APPS[i]);
+  char word[32];
+  if (!allowed) {
+    snprintf(word, sizeof word, "refused\n");
+  } else {
+    const int result = launch_title(title);
+    if (result == 0) snprintf(word, sizeof word, "launched\n");
+    // Open already (in the background): it reads the search from its folder by itself.
+    else if (title_running(title)) snprintf(word, sizeof word, "running\n");
+    else snprintf(word, sizeof word, "failed 0x%08x\n", (unsigned)result);
+  }
+  say(STDOUT_FILENO, word);
+  char path[600];
+  snprintf(path, sizeof path, "%s/launch.txt", folder);
+  int out = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (out >= 0) {
+    say(out, word);
+    close(out);
+  }
+  return allowed ? 0 : 1;
+}
+
 // Sends `config` to the helper on the control port, as CMP2 (or as CMP1, which Pre Release 1 reads), and
 // reads its answer into `answer` ("" when it gave none).
 static void hand_over(const Config* config, int version, const char* pin, char* answer, size_t capacity) {
@@ -597,7 +644,10 @@ int main(void) {
   signal(SIGPIPE, SIG_IGN);
   Config config;
   memset(&config, 0, sizeof config);
-  if (!read_config(STDIN_FILENO, &config)) return 1;
+  char magic[8];
+  if (!read_line(STDIN_FILENO, magic, sizeof magic)) return 1;
+  if (!strcmp(magic, "LNC1")) return launch_video_app(STDIN_FILENO);
+  if (!read_config_after(STDIN_FILENO, magic, &config)) return 1;
   const int stopping = !strcmp(config.pin, "-");
   // One runs at a time: a second hands its settings to the first, which takes them (or stops on "-"). One
   // from Pre Release 1 does not read CMP2 and answers nothing: it is told to stop, and this one starts.

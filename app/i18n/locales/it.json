@@ -1376,5 +1376,18 @@
   "phone.game.playersHere": "{started} su {all} sul tuo firmware",
   "whatsNew.players": "Si avvia agli altri?",
   "whatsNew.playersDetail": "I dettagli di un gioco dicono su quante console dei giocatori si è avviato, e su quante con il tuo firmware.",
-  "diagnosis.frozeTip": "Si è bloccato: il gioco ha smesso di rispondere e la console l'ha chiuso quando non è riuscita a metterlo in pausa. Si è installato correttamente, quindi il blocco viene dai file del gioco, non dal download né da ShadowMount. Un altro download dalla sua pagina potrebbe funzionare."
+  "diagnosis.frozeTip": "Si è bloccato: il gioco ha smesso di rispondere e la console l'ha chiuso quando non è riuscita a metterlo in pausa. Si è installato correttamente, quindi il blocco viene dai file del gioco, non dal download né da ShadowMount. Un altro download dalla sua pagina potrebbe funzionare.",
+  "game.videos": "Video",
+  "videos.title": "Video su YouTube",
+  "videos.gameplay": "Gameplay",
+  "videos.trailer": "Trailer",
+  "videos.searchIn": "Cerca \"{text}\" in {app}",
+  "videos.opening": "Apertura di {app}…",
+  "videos.running": "{app} era già aperta: la ricerca ti aspetta lì. Passa a quell'app per vedere i risultati.",
+  "videos.failed": "{app} non si è aperta (errore {code}).",
+  "videos.noAnswer": "Il loader dei payload (porta 9021) non ha risposto. È in esecuzione?",
+  "videos.writeFailed": "Impossibile passare la ricerca a {app}: {error}",
+  "videos.sendFailed": "Impossibile inviare la richiesta al loader dei payload: {error}",
+  "videos.missing": "Nessuna app YouTube homebrew installata.",
+  "videos.missingHow": "Installa ytps5 (PPSA99350) o YouTube Max'd (PPSA99991): dalla finestra Apps del payload glibren, oppure copiando la sua release da github.com/pristmc-code/ps5-glibren-releases in /data/homebrew. L'app ufficiale di YouTube non viene mai aperta da qui."
 }
