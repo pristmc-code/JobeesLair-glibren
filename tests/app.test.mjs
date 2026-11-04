@@ -1036,11 +1036,11 @@ test('a backport that is a disk image stays out of homebrew', async () => {
 
 test('source rows lead with what the gamer gets: format, region, version', () => {
   const row = describeSource({ provider: 'VikingFile', format: 'exfat', label: 'USA Base (v01.10) - VikingFile', sizeBytes: 22e9 });
-  assert.equal(row.name, 'Disk image · USA v1.10');
+  assert.equal(row.name, 'exFAT image · USA v1.10', 'glibren: the exact image type');
   assert.match(row.detail, /^VikingFile/);
   assert.equal(row.host, 'VikingFile');
   assert.equal(describeSource({ provider: '1fichier.com', format: 'binary', label: 'EUR Base (v01.28) - Direct' }).name, 'Format unknown until downloaded · EUR v1.28');
-  assert.equal(describeSource({ provider: 'MediaFire', format: 'rar', label: 'Backport (v01.00)', version: '01.02' }).name, 'Archive · v1.2');
+  assert.equal(describeSource({ provider: 'MediaFire', format: 'rar', label: 'Backport (v01.00)', version: '01.02' }).name, 'RAR archive · v1.2');
   assert.match(describeSource({ provider: 'MediaFire', format: 'rar', label: 'USA Backport' }).detail, /Backport/);
 });
 
@@ -3594,4 +3594,31 @@ test("a download tells the shared list its catalog link was gone, or worked; nev
   await settle(queue, queue.enqueue({ ...game, id: 'PPSA09999', titleId: 'PPSA09999' }, { ...image('Debrid.exfat', 500), debrid: 'torbox' }, '/data'));
   stop();
   assert.deepEqual(heard, [['https://example.com/Good.exfat', true], ['https://example.com/Gone.exfat', false]]);
+});
+
+// glibren: "Find via the browser": the file link behind a page captured to learn what the file is; nothing is queued.
+test('find via the browser: the captured link comes back and nothing downloads; stop; refused without the console browser', async () => {
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const FILE = 'https://cdn.example.com/f/PPSA01234.Game.exfat';
+  const opened = [];
+  const queue = captureQueue({ fs, downloads, http: probe({ [FILE]: 5e9 }), browserCapture: capturer([FILE]), opened });
+  assert.equal(queue.canCaptureLinks(), true);
+  const page = { ...hosted, format: 'binary', filename: 'x.binary', sizeBytes: null };
+  const found = await queue.captureFileLink(page, { title: 'Test Game', titleId: 'PPSA01234' });
+  assert.equal(found.url, FILE);
+  assert.equal(found.name, 'PPSA01234.Game.exfat');
+  assert.deepEqual(opened, [PAGE], 'the console browser opened on the page');
+  assert.equal(queue.snapshot().length, 0, 'nothing queued');
+  assert.equal(downloads.requests.length, 0, 'nothing downloaded');
+  // Stopped: it rejects with `stopped`, and a capture can start again.
+  const waiting = captureQueue({ fs, downloads, http: probe({}), browserCapture: capturer([]), opened: [] });
+  const pending = waiting.captureFileLink(page, { title: 'Test Game', titleId: 'PPSA01234' });
+  await new Promise((resolve) => setImmediate(resolve));
+  waiting.cancelFileLinkCapture();
+  await assert.rejects(pending, (error) => error.stopped === true);
+  // Without the console's browser (the desktop preview): refused, saying so.
+  const desk = captureQueue({ fs, downloads, http: probe({}), browserCapture: null, opened: [] });
+  assert.equal(desk.canCaptureLinks(), false);
+  await assert.rejects(desk.captureFileLink(page, { title: 'Test Game', titleId: 'PPSA01234' }), (error) => error.console === true);
 });

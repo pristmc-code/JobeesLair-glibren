@@ -65,7 +65,7 @@ const has = (list, pattern) => list.some((text) => pattern.test(text));
 // The badges of the row whose host line is `host`: the pills between its name and its detail.
 function rowBadges(list, host) {
   const at = list.findIndex((text, i) => text === host || (i > 0 && text.startsWith(`${host} `)));
-  const start = list.slice(0, at).findLastIndex((text) => /^(Disk image|Archive|Package|Format unknown)/.test(text));
+  const start = list.slice(0, at).findLastIndex((text) => /^(Disk image|\S+ image|Archive|\S+ archive|Package|FPKG(?: ·|$)|Format unknown)/.test(text));
   return list.slice(start + 1, at).filter((text) => text !== 'Recommended');
 }
 
@@ -74,15 +74,16 @@ const describeSourceOf = (release) => describe(release).detail;
 const { describeSource: describe } = await load('app/game/sources.js');
 const picker = texts({ type: SourcePicker, props: { title: 'Test Game', releases: catalog, selected: 0, submit() {}, current: 'PPSA01234', onClose() {}, checkLinks: async () => {} } });
 console.log(`--- source list (${picker.rendered} components)\n${picker.out.join('\n')}`);
-assert.deepEqual(rowBadges(picker.out, 'cdn.example.com'), ['.exfat Image', '13.60 Ready']);
-assert.deepEqual(rowBadges(picker.out, 'slow.example.org'), ['.exfat Image', '13.60 Ready', 'Offline'], 'the silent mirror is tagged');
+assert.deepEqual(rowBadges(picker.out, 'cdn.example.com'), ['13.60 Ready'], 'glibren: the name says exFAT image, not the pill again');
+assert.deepEqual(rowBadges(picker.out, 'slow.example.org'), ['13.60 Ready', 'Offline'], 'the silent mirror is tagged');
 assert.ok(has(picker.out, /^slow\.example\.org didn't answer\. It may be down for a while\.$/));
 assert.deepEqual(rowBadges(picker.out, 'pkg.example'), ['FPKG (<=11.60)'], 'one badge, not FPKG twice');
 assert.ok(has(picker.out, /^pkg\.example · Needs firmware 11\.60 or lower\. On 13\.60, use a folder dump or ShadowMount\+ image$/), 'why, in place of a tooltip');
 assert.ok(has(picker.out, /^Folder Dump$/) && has(picker.out, /^Backport$/));
-assert.equal(picker.out[picker.out.indexOf('Recommended') + 1], '.exfat Image', 'Recommended sits on a working image');
+assert.equal(picker.out[picker.out.indexOf('Recommended') + 1], '13.60 Ready', 'Recommended sits on a working image');
+assert.ok(/^exFAT image/.test(picker.out[picker.out.indexOf('Recommended') - 1]), 'an exFAT image');
 // The link the check found gone stays listed, as in 0.1.0: tagged, last of its section, never "Recommended".
-assert.deepEqual(rowBadges(picker.out, 'archive.org'), ['.exfat Image', '13.60 Ready', 'Broken link']);
+assert.deepEqual(rowBadges(picker.out, 'archive.org'), ['13.60 Ready', 'Broken link']);
 assert.ok(has(picker.out, /^archive\.org · the file is gone \(HTTP 404\)$/));
 assert.ok(!has(picker.out, /unavailable link/), 'nothing hidden');
 assert.ok(has(picker.out, /^Check link health$/));
@@ -90,7 +91,7 @@ assert.ok(has(picker.out, /^Check link health$/));
 // A PS4 game's backport: the pill stays, the green badge does not; a PS5 backport keeps both.
 const ps4Backport = withReleaseTypes([source('b4', 'mirror.example', 'https://mirror.example/Game-Backport.zip', 'zip', 'USA Backport (v01.10) - Direct'), source('g4', 'cdn.example.com', 'https://cdn.example.com/CUSA.exfat', 'exfat', 'USA Base (v01.00) - Direct')], 'ps4');
 const ps4 = texts({ type: SourcePicker, props: { title: 'PS4 Game', releases: ps4Backport, selected: 1, submit() {}, current: 'CUSA01234', onClose() {}, checkLinks: async () => {} } });
-const backportRow = ps4.out.slice(ps4.out.indexOf('Archive · USA v1.10') + 1, ps4.out.indexOf('mirror.example · Backport'));
+const backportRow = ps4.out.slice(ps4.out.indexOf('ZIP archive · USA v1.10') + 1, ps4.out.indexOf('mirror.example · Backport'));
 assert.deepEqual(backportRow, ['PS4 Backport'], 'PS4 backport: the pill, no "13.60 Ready"');
 assert.deepEqual(rowBadges(picker.out, 'mirror.example · Backport'), ['Backport', '13.60 Ready'], 'PS5 backport: unchanged');
 
@@ -110,10 +111,10 @@ assert.ok(has(button.out, /^This PS5 fake package won't launch on this console$/
 const imageGame = { ...fpkgGame, releases: [catalog[2]] };
 const fine = texts({ type: DownloadButton, props: { game: imageGame, onDownloaded() {}, onRequestDialog() {} } });
 assert.ok(!has(fine.out, /won't launch|isn't answering/), 'nothing to warn about for a working image');
-assert.ok(has(fine.out, /^13\.60 Ready · Disk image · USA v1 · /), 'the chosen image leads with its 13.60 Ready tag');
+assert.ok(has(fine.out, /^13\.60 Ready · exFAT image · USA v1 · /), 'the chosen image leads with its 13.60 Ready tag');
 const offlineGame = { ...fpkgGame, releases: [catalog[1]] };
 const offline = texts({ type: DownloadButton, props: { game: offlineGame, onDownloaded() {}, onRequestDialog() {} } });
-assert.ok(has(offline.out, /^slow\.example\.org isn't answering right now$/) && has(offline.out, /^13\.60 Ready · Disk image · USA v1 · Offline · slow\.example\.org/));
+assert.ok(has(offline.out, /^slow\.example\.org isn't answering right now$/) && has(offline.out, /^13\.60 Ready · exFAT image · USA v1 · Offline · slow\.example\.org/));
 // Every link of a game refused (Archive.org's 403 "Item not available"): the sheet still lists both, tagged,
 // and the button says what the check found while the download can still be tried.
 const GONE1 = 'https://archive.org/download/item-a/Game.ffpfsc', GONE2 = 'https://archive.org/download/item-b/Game.ffpfsc';
@@ -171,13 +172,14 @@ const keyedTorrent = torrentSheet(() => {});
 console.log(`--- source list with a torrent (TorBox key set)\n${keyedTorrent.join('\n')}`);
 assert.ok(has(keyedTorrent, /^Torrents · 1$/), 'its own section');
 assert.ok(has(keyedTorrent, /^Through your debrid service/), 'what happens');
-assert.deepEqual(rowBadges(keyedTorrent, 'Torrent'), ['.exfat Image', '13.60 Ready', 'TorBox Instant']);
+assert.deepEqual(rowBadges(keyedTorrent, 'Torrent'), ['13.60 Ready', 'TorBox Instant']);
 assert.equal(keyedTorrent.filter((text) => text === 'TorBox').length, 0, 'no button beside a torrent: the row is the debrid download');
 debrid.setTorBoxKey('');
 const plainTorrent = torrentSheet(() => {});
 assert.ok(has(plainTorrent, /^Torrents · 1$/) && has(plainTorrent, /^Needs TorBox or AllDebrid/), 'listed, with what to add');
 assert.ok(!plainTorrent.includes('TorBox Instant'));
 const torrentButton = texts({ type: DownloadButton, props: { game: { id: 'PPSA06666', titleId: 'PPSA06666', title: 'Seeded Game', platform: 'ps5', releases: [torrentSources[1]] }, onDownloaded() {}, onRequestDialog() {} } }).out;
+assert.ok(torrentButton.includes('View download link'), 'glibren: one link opens the list too');
 assert.ok(has(torrentButton, /^This source is a torrent$/) && has(torrentButton, /^Add a TorBox or AllDebrid API key/), torrentButton.join(' | '));
 debrid.setTorBoxKey('0123abcd-4567-89ef-0123-456789abcdef');
 // The download button on a TorBox download: its line says so, and it is the game's own job on reopening.

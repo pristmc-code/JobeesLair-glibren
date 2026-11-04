@@ -418,6 +418,70 @@ import { mirrorsFor } from './download-mirrors.js';
       notifications,
       onCapture
     });
+    // glibren: "Find via the browser" (state/links.js findViaBrowser): a link captured only to learn what the file
+    // is. The gamer passes the host's check in the console's browser as for a download; the capture works on a
+    // stand-in through a capture flow of its own, and the link it validates is handed back, never queued.
+    const finds = /* @__PURE__ */ new Map();
+    function settleFind(find, error, value) {
+      if (finds.get(find.stand.id) !== find) return;
+      finds.delete(find.stand.id);
+      const session = captures.get(find.stand.id);
+      if (session) {
+        captures.delete(find.stand.id);
+        session.cancel.cancel();
+        session.task?.cancel();
+      }
+      if (error) find.reject(error);
+      else find.resolve(value);
+    }
+    const findFlow = createCaptureFlow({
+      captures,
+      jobs: () => [...finds.values()].map((find) => find.stand),
+      active: () => null,
+      change: () => {
+        for (const find of [...finds.values()]) {
+          // A file that names no game is taken as it is: nothing is downloaded, only its name or first bytes read.
+          if (find.stand.captureState === "confirm") captures.get(find.stand.id)?.decide?.(true);
+          else if (find.stand.captureState === "failed") settleFind(find, new Error(find.stand.captureError || "The capture failed."));
+        }
+        change();
+      },
+      pump: () => {
+      },
+      continueJob: (stand, url, options) => {
+        const find = finds.get(stand.id);
+        if (find) settleFind(find, null, { url: options?.url || url, name: stand.fileName || null, bytes: options?.expectedBytes ?? null });
+      },
+      http,
+      linking,
+      browserCapture,
+      notifications: { show: () => {
+      } },
+      onCapture
+    });
+    function findFileLink(release, { title = "", titleId = "" } = {}) {
+      if (!browserCapture) return Promise.reject(Object.assign(new Error("Only the console's browser can pass this site's check."), { console: true }));
+      if (captures.size) return Promise.reject(new Error("Another download's verification is open. Finish or cancel it first."));
+      const source2 = release?.parts?.[0]?.sources?.[0] ?? release;
+      let viking = false;
+      try {
+        viking = Boolean(source2) && (sourceKind(source2) === "vikingfile" || Boolean(vikingLinkPage(source2)));
+      } catch {
+      }
+      if (!source2 || !viking && !captureAnchor(titleId)) return Promise.reject(new Error("This game has no title ID to find its file by."));
+      const stand = { id: `find:${release.id}`, state: "awaiting-browser", title, titleId, release, browserUrl: source2.browserUrl || source2.url };
+      return new Promise((resolve, reject) => {
+        const find = { stand, resolve, reject };
+        finds.set(stand.id, find);
+        const session = { cancel: cancellation(), task: null };
+        captures.set(stand.id, session);
+        stand.captureState = "preparing";
+        console.log(`[browser-capture] finding the format of ${release.id} (viking=${viking}); nothing will be downloaded`);
+        const run = viking ? findFlow.captureVikingfile(stand, source2, session) : findFlow.captureBrowserLink(stand, source2, session);
+        Promise.resolve(run).catch(() => {
+        }).then(() => settleFind(find, new Error(stand.captureError || "The capture stopped.")));
+      });
+    }
     function aheadCaptured(stand, options) {
       const job2 = jobs.find((item) => item.id === stand.jobId);
       const ahead = aheads.get(stand.jobId);
@@ -2976,6 +3040,17 @@ import { mirrorsFor } from './download-mirrors.js';
         if (!linking?.openURL(webURL(job2.browserUrl).url)) throw new Error("The browser could not open. Open this source on another device.");
         job2.message = t("downloads.afterVerification");
         change();
+      },
+      /** glibren: whether links can be captured from the browser here (the console's BrowserCapture). */
+      canCaptureLinks: () => Boolean(browserCapture),
+      /**
+       * glibren: the file link behind `release`'s page, captured through the console's browser after the gamer
+       * passes its check, to learn the file's format: resolves { url, name, bytes }. Nothing is queued.
+       */
+      captureFileLink: (release, game) => findFileLink(release, game),
+      /** glibren: stops a capture started by captureFileLink (it rejects with `stopped`). */
+      cancelFileLinkCapture() {
+        for (const find of [...finds.values()]) settleFind(find, Object.assign(new Error("Stopped."), { stopped: true }));
       },
       /** The gamer's answer about a captured file that names no game: download it, or scan on. */
       confirmCapturedFile(id, accepted) {

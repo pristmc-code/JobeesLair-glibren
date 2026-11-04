@@ -7,11 +7,11 @@
 //   - "Check link health" in its source list, every link at once
 // A download that fails with "gone" reports its link too (download-queue.js reportLink).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createLinkHealth, onLinkReport, onOutcome } from './link-health.js';
 import { createFormatProbe } from './format-probe.js';
-import { onFormatReport } from './link-formats.js';
-import { torBoxFileNames } from './debrid.js';
+import { formatKeyOf, onFormatReport } from './link-formats.js';
+import { activeService, torBoxFileNames } from './debrid.js';
 import { refreshShared, reportShared, sharedDead, subscribeShared } from './shared-links.js';
 import { downloadQueue } from './downloads.js';
 import { savedList } from './saved.js';
@@ -88,7 +88,8 @@ import { Http } from '@ps5-react/core';
         const queue = downloadQueue();
         return queue.quietNetwork ? queue.quietNetwork(reason, work) : work();
       },
-      torbox: (links) => torBoxFileNames(links)
+      torbox: (links) => torBoxFileNames(links),
+      debridOn: () => Boolean(activeService())
     }));
   }
   // A download's first bytes name its format (download-queue.js reportFormat): kept for the source list too.
@@ -111,6 +112,56 @@ import { Http } from '@ps5-react/core';
     return progress;
   }
   var findFormatsNow = (key, releases) => linkFormats().discover(key, releases);
+  /** What a game's links are known to be now (format-probe.js summaryOf), re-read when a format is found. */
+  function useFormatSummary(releases) {
+    const { version } = useLinkFormats();
+    return (0, useMemo)(() => linkFormats().summaryOf(releases), [releases, version]);
+  }
+  // glibren: "Find via the browser": the gamer passes a host's check in the console's browser, the file link is
+  // captured (download-queue.js captureFileLink) and only the file's name or first bytes read; nothing is
+  // downloaded. One link at a time. Per link: { state: "capturing" | "failed", reason }, kept until the list
+  // closes or another starts; a format found shows in the row's name (link-formats.json).
+  var browserFinds = /* @__PURE__ */ new Map();
+  var browserVersion = 0;
+  var browserListeners = /* @__PURE__ */ new Set();
+  function setBrowserFind(key, value) {
+    if (value) browserFinds.set(key, value);
+    else browserFinds.delete(key);
+    browserVersion++;
+    for (const listener of [...browserListeners]) listener(browserVersion);
+  }
+  /** (release) -> its "Find via the browser" state, or null; re-renders as it changes. */
+  function useBrowserFinds() {
+    const [, setVersion] = (0, useState)(browserVersion);
+    (0, useEffect)(() => {
+      browserListeners.add(setVersion);
+      return () => browserListeners.delete(setVersion);
+    }, []);
+    return (release) => browserFinds.get(formatKeyOf(release)) ?? null;
+  }
+  var findingViaBrowser = () => [...browserFinds.values()].some((find) => find.state === "capturing");
+  async function findViaBrowser(release, game) {
+    const key = formatKeyOf(release);
+    if (!key || findingViaBrowser()) return null;
+    setBrowserFind(key, { state: "capturing" });
+    try {
+      const queue = downloadQueue();
+      if (!queue.captureFileLink) throw Object.assign(new Error("no capture"), { console: true });
+      const captured = await queue.captureFileLink(release, game);
+      const format = await linkFormats().learn(release, captured);
+      setBrowserFind(key, format ? null : { state: "failed", reason: "unread" });
+      return format;
+    } catch (error) {
+      setBrowserFind(key, error?.stopped ? null : { state: "failed", reason: error?.console ? "console" : error?.message || "" });
+      return null;
+    }
+  }
+  function cancelFindViaBrowser() {
+    try {
+      downloadQueue().cancelFileLinkCapture?.();
+    } catch {
+    }
+  }
   var cancelFindFormats = (key) => linkFormats().cancel(key);
 
-export { cancelFindFormats, checkLinksNow, findFormatsNow, linkFormats, linkHealth, startSharedLinks, useFormatSearch, useHealthyReleases, useLinkCheck, useLinkFormats, useLinkWatch, watchLinks };
+export { cancelFindFormats, cancelFindViaBrowser, checkLinksNow, findFormatsNow, findViaBrowser, findingViaBrowser, linkFormats, useBrowserFinds, useFormatSummary, linkHealth, startSharedLinks, useFormatSearch, useHealthyReleases, useLinkCheck, useLinkFormats, useLinkWatch, watchLinks };

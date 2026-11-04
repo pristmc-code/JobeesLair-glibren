@@ -17,8 +17,11 @@
 //   TorBox       with a key: which links TorBox holds already, with their files' names (checkcached,
 //                list_files), first and in one call per hundred links. Nothing is added to the account.
 //   the rest     a host that needs the console's browser, with no page reader: not asked; recorded as such.
+//                glibren: recorded with whether a debrid key was set; a key added since asks TorBox again.
+  // A link the gamer passes the browser's check for ("Find via the browser", state/links.js) is learned too
+  // (learn): the captured file's name, else its first bytes; nothing is downloaded.
 
-import { BYTES_ASKED, FORMAT_GROUP, formatFromContentType, formatFromDisposition, formatFromMagic, formatFromName, formatKeyOf, effectiveFormat, pageReaderOf, readHostPage } from './link-formats.js';
+import { BYTES_ASKED, FORMAT_GROUP, UFS_MAGIC_AT, formatFromContentType, formatFromDisposition, formatFromMagic, formatFromName, formatFromUfsMagic, formatKeyOf, effectiveFormat, pageReaderOf, readHostPage } from './link-formats.js';
 import { sourceKind, webURL } from './download-sources.js';
 
   var MINUTE = 6e4;
@@ -37,15 +40,17 @@ import { sourceKind, webURL } from './download-sources.js';
   var stopped = () => Object.assign(new Error("Format search stopped."), { stopped: true });
   // The links of `releases` whose format nothing names yet (a guess from an archive password included), one
   // per release: its first source (a set's first part names the set's kind).
-  function unknownLinks(releases, recordOf) {
+  function unknownLinks(releases, recordOf, debridOn = () => false) {
     const seen = /* @__PURE__ */ new Set();
     const links = [];
     for (const release of releases || []) {
       if (!release || release.unavailableReason) continue;
       const known = effectiveFormat(release, recordOf);
-      // Known, or found a short while ago to need the browser (TTL.browser): not asked again yet.
-      if (known.format && known.how !== "password" || known.how === "browser") continue;
+      // Known, or found a short while ago to need the browser (TTL.browser): not asked again yet, unless a
+      // debrid key came since that answer (TorBox may hold the file).
+      if (known.format && known.how !== "password") continue;
       const key = formatKeyOf(release);
+      if (known.how === "browser" && !(debridOn() && key && !recordOf(key)?.debrid)) continue;
       if (!key || seen.has(key)) continue;
       seen.add(key);
       const first = release.parts?.[0]?.sources?.[0] ?? release;
@@ -66,6 +71,8 @@ import { sourceKind, webURL } from './download-sources.js';
     quiet = (reason, work) => work(),
     // (links) -> Promise<Map<link, string[]>> | null: TorBox's cached items' file names (state/debrid.js).
     torbox = () => null,
+    // Whether a debrid key is set now (state/debrid.js activeService): kept with a "needs the browser" answer.
+    debridOn = () => false,
     now = Date.now,
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     timeout = (fn, ms) => {
@@ -180,9 +187,17 @@ import { sourceKind, webURL } from './download-sources.js';
           continue;
         }
         if (response.status !== 206 && response.status !== 200 || typeof response.bytes !== "function") return null;
-        return formatFromMagic(await response.bytes());
+        const magic = formatFromMagic(await response.bytes());
+        // glibren: nothing at the start, and the host answers ranges: a UFS2 image (.ffpkg) says so 66 KiB in.
+        if (magic || response.status !== 206) return magic;
+        return ufsMagic(run, link, target);
       }
       return null;
+    }
+    async function ufsMagic(run, link, url) {
+      const response = await ask(run, link.host, url, { method: "GET", headers: { Range: `bytes=${UFS_MAGIC_AT}-${UFS_MAGIC_AT + 3}` }, binary: true, maxBytes: 64 * 1024, followRedirects: false });
+      if (response.failed || limited(link.host, response) || response.status !== 206 || typeof response.bytes !== "function") return null;
+      return formatFromUfsMagic(await response.bytes());
     }
     // What one link turns out to be: { f } (a format), { s: "browser" }, { s: "gone" } or { s: "none" }.
     async function probe(run, link) {
@@ -240,7 +255,7 @@ import { sourceKind, webURL } from './download-sources.js';
       return null;
     }
     async function search(key, releases, run) {
-      const all = unknownLinks(releases, recordOf);
+      const all = unknownLinks(releases, recordOf, debridOn);
       const links = all.slice(0, RUN_LINKS);
       const summary = { image: 0, pkg: 0, archive: 0, browser: 0, none: all.length - links.length, total: all.length };
       const started = now();
@@ -258,7 +273,7 @@ import { sourceKind, webURL } from './download-sources.js';
           remember(link.key, { f: found.f, how: "found" });
           count(found.f);
         } else {
-          if (found.s === "browser") remember(link.key, { s: "browser" });
+          if (found.s === "browser") remember(link.key, { s: "browser", debrid: Boolean(debridOn()) });
           summary[found.s === "browser" ? "browser" : "none"]++;
         }
         setProgress(key, { done: progress.get(key).done + 1 });
@@ -269,7 +284,49 @@ import { sourceKind, webURL } from './download-sources.js';
       /** The saved, still valid record of a link: { f, how, at } or { s, at }; null when none. */
       recordOf,
       /** The links of `releases` a search would ask about (link-formats.js effectiveFormat names none). */
-      unknownLinks: (releases) => unknownLinks(releases, recordOf),
+      unknownLinks: (releases) => unknownLinks(releases, recordOf, debridOn),
+      /**
+       * What is known now of `releases`' links that a search or a download learned: { image, pkg, archive,
+       * browser } (each link once). "Find formats" shows these, so a format found later counts at once.
+       */
+      summaryOf(releases) {
+        const seen = /* @__PURE__ */ new Set();
+        const counts = { image: 0, pkg: 0, archive: 0, browser: 0 };
+        for (const release of releases || []) {
+          if (!release || release.unavailableReason) continue;
+          const key = formatKeyOf(release);
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          const info = effectiveFormat(release, recordOf);
+          if ((info.how === "found" || info.how === "download") && FORMAT_GROUP[info.format]) counts[FORMAT_GROUP[info.format]]++;
+          else if (info.how === "browser") counts.browser++;
+        }
+        return counts;
+      },
+      /**
+       * A link captured through the console's browser (state/links.js findViaBrowser): its format from the
+       * file's name, else from its first bytes (a Range, as a search asks). Saved as found; resolves with the
+       * format or null. Nothing is downloaded.
+       */
+      async learn(release, { url, name } = {}) {
+        const key = formatKeyOf(release);
+        if (!key) return null;
+        let format = formatFromName(name || "") ?? formatFromName(String(url || "").split(/[?#]/)[0].split("/").pop());
+        if (!format && url) {
+          let host = "";
+          try {
+            host = webURL(url).host;
+          } catch {
+            return null;
+          }
+          const run = { stop: false, abort: null, stopping: new Promise(() => {
+          }) };
+          format = await quiet(`find format ${key}`, () => firstBytes(run, { host, key }, url)).catch(() => null);
+        }
+        if (!format || !FORMAT_GROUP[format]) return null;
+        remember(key, { f: format, how: "found" });
+        return format;
+      },
       /**
        * Finds the formats of `releases`' links now (the gamer asked), under `quiet`: resolves with
        * { image, pkg, archive, browser, none, total }, or null when cancelled or failed.

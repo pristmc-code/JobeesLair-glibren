@@ -18,7 +18,8 @@ import { formatPercent2 } from '../i18n/core.js';
 import { useT } from '../i18n/index.js';
 import { editionsOf, readyLabel } from '../state/catalog.js';
 import { BUSY, COMPLETE } from '../state/download-queue.js';
-import { checkLinksNow, useHealthyReleases } from '../state/links.js';
+import { checkLinksNow, useHealthyReleases, useLinkFormats } from '../state/links.js';
+import { effectiveFormat } from '../state/link-formats.js';
 import { debridSource, debridSupports } from '../state/debrid.js';
 import { deviceFacts } from '../state/device.js';
 import { consoleFirmware, firmwareText, ps5FakePackagesLaunch } from '../state/firmware.js';
@@ -87,6 +88,10 @@ import { colors, radius } from '../ui/colors.js';
     // Through TorBox, the source's TorBox form (the same object for the same source); its mirrors stay the
     // fallbacks, so a TorBox failure falls back to downloading them directly.
     const release = viaDebrid && releases[selected] ? debridSource(releases[selected]) : releases[selected];
+    // glibren: the chosen source's format as worked out (state/link-formats.js), for its line under the button.
+    const { recordOf: formatRecord } = useLinkFormats();
+    const formatInfo = release ? effectiveFormat(release, formatRecord) : null;
+    const sourceShown = release && formatInfo && formatInfo.how !== "catalog" ? { ...release, formatInfo } : release;
     const alternatives = (0, useMemo)(() => fallbacks(releases, selected), [releases, selected]);
     const download = useDownload(game, release, roots[storage], alternatives);
     const { progress, restart, remove, deleteFromDisk, job: job2, error: error2 } = download;
@@ -329,7 +334,7 @@ import { colors, radius } from '../ui/colors.js';
       roomless && release && roomFocus,
       choosing && release && sourceChoice && sourceFocus,
       ...readyPicks.map(({ index }) => readyKey(index)),
-      choosing && release && releases.length > 1 && linksFocus,
+      choosing && release && releases.length >= 1 && linksFocus,
       !job2 && roots.length > 1 && storageFocus,
       browser && browserFocus,
       job2 && queueFocus,
@@ -395,12 +400,13 @@ import { colors, radius } from '../ui/colors.js';
           // 0.5.1: "13.60 Ready" first when the chosen source runs here, so the page says so at a glance; then
           // what the gamer gets ("Disk image · USA v1.10"), where from and how big.
           // A warning (won't launch here, offline) right after the name: the line is cut to the button's width.
-          text: [runsHere(release, deviceFacts().firmware) ? readyTag : null, describeSource(release).name, compatTag, linkTag, describeSource(release).host, release.sizeBytes && formatBytes(release.sizeBytes)].filter(Boolean).join(" \xB7 ")
+          text: [runsHere(release, deviceFacts().firmware) ? readyTag : null, describeSource(sourceShown).name, compatTag, linkTag, describeSource(release).host, release.sizeBytes && formatBytes(release.sizeBytes)].filter(Boolean).join(" \xB7 ")
         }
       ) : null,
       ...readyPicks.map(({ item, index }) => /* @__PURE__ */ (0, jsx)(ReadyPick, { focusKey: readyKey(index), nextFocusDown: after(readyKey(index)), onPress: () => pick2(index, describeSource(item).group === "torrent"), tag: readyTag, text: [describeSource(item).name, describeSource(item).host, item.sizeBytes && formatBytes(item.sizeBytes)].filter(Boolean).join(" \xB7 ") }, readyKey(index))),
       // 0.5.1: the full list, said plainly ("More download links (12)"), not only the chevron on the chosen one.
-      choosing && release && releases.length > 1 ? /* @__PURE__ */ (0, jsx)(TextAction, { focusKey: linksFocus, nextFocusDown: after(linksFocus), onPress: () => chooseSource(linksFocus), text: t2("download.moreLinks", { count: String(releases.length) }) }) : null,
+      // glibren: one link too ("View download link"): the list has the format filter, Find formats and Find.
+      choosing && release && releases.length >= 1 ? /* @__PURE__ */ (0, jsx)(TextAction, { focusKey: linksFocus, nextFocusDown: after(linksFocus), onPress: () => chooseSource(linksFocus), text: releases.length > 1 ? t2("download.moreLinks", { count: String(releases.length) }) : t2("download.viewLink") }) : null,
       !job2 ? /* @__PURE__ */ (0, jsx)(
         Choice,
         {
