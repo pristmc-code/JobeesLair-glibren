@@ -221,3 +221,57 @@ test('downloads simultaneos: o payload recebe o numero ao comecar um job e a cad
   for (const job of payload.jobs) job.state = 'completed';
   await wait(30);
 });
+
+// ---- glibren: a pagina do celular (porta 34201 do payload) ----
+
+test('pagina do celular: a configuracao vai junto com o numero de downloads, e o IP do payload chega ao app', async () => {
+  const payload = fakePayload();
+  payload.http.request = ((request) => async (url, options = {}) => {
+    const answer = await request(url, options);
+    if (url.endsWith('/health') && answer.status === 200) return { ...answer, json: async () => ({ ok: true, version: '1.0.0', pid: payload.pid, ip: '192.168.0.20' }) };
+    return answer;
+  })(payload.http.request);
+  const seen = [];
+  let monitor = { monitor: true, pinSalt: '', pinHash: '', monitorText: 'veja em {address}' };
+  const wrapper = make(payload, fakeEngine(), { monitor: () => monitor, addressSeen: (ip) => seen.push(ip) });
+  wrapper.enqueue(queueOptions());
+  await wait(30);
+  assert.deepEqual(payload.configs, [{ concurrency: 1, monitor: true, pinSalt: '', pinHash: '', monitorText: 'veja em {address}' }]);
+  assert.ok(seen.includes('192.168.0.20'), 'o endereco que o payload informa vai para as Configuracoes');
+  monitor = { ...monitor, pinSalt: 'a'.repeat(64), pinHash: 'b'.repeat(64) };
+  await wrapper.refreshConfig();
+  assert.equal(payload.configs.at(-1).pinHash, 'b'.repeat(64), 'um PIN novo chega ao payload no ar');
+  const before = payload.configs.length;
+  await wrapper.refreshConfig();
+  assert.equal(payload.configs.length, before, 'a mesma configuracao nao e mandada de novo');
+  assert.ok(!JSON.stringify(payload.configs).includes('1234'), 'nunca o PIN em texto');
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
+});
+
+test('pausado no celular: o app nao retoma sozinho e a fila passa a mostra-lo pausado (onRemote)', async () => {
+  const payload = fakePayload();
+  const remote = [];
+  const task = make(payload, fakeEngine(), { onRemote: (destination, action) => remote.push([destination, action]) }).enqueue(queueOptions());
+  await wait(30);
+  Object.assign(payload.jobs[0], { state: 'paused', by: 'remote' });
+  await wait(40);
+  assert.equal(payload.calls.filter((call) => call.path === '/jobs/b1/resume').length, 0, 'a pausa do celular nao e desfeita');
+  assert.deepEqual(remote, [['/mnt/ext0/downloads/images/Game.exfat', 'pause']], 'uma vez so');
+  // Uma pausa do proprio payload (sem "by") continua sendo retomada, como antes.
+  Object.assign(payload.jobs[0], { state: 'paused', by: '' });
+  await wait(30);
+  assert.ok(payload.calls.some((call) => call.path === '/jobs/b1/resume'));
+  task.cancel();
+  await assert.rejects(task.done, (error) => error.name === 'AbortError');
+});
+
+test('cancelado no celular: a fila cancela como se fosse no app (apaga o que sobrou), sem trocar de fonte', async () => {
+  const payload = fakePayload();
+  payload.jobs.push({ id: 'b5', state: 'cancelled', by: 'remote', destination: '/mnt/ext0/downloads/images/Game.exfat' });
+  const remote = [];
+  const task = make(payload, fakeEngine(), { onRemote: (destination, action) => remote.push(action) }).enqueue(queueOptions());
+  await assert.rejects(task.done, (error) => error.name === 'AbortError');
+  assert.deepEqual(remote, ['cancel']);
+  assert.equal(payload.jobs.length, 0, 'o job cancelado e esquecido no payload');
+});

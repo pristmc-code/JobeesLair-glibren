@@ -13,6 +13,7 @@ import { createSourceResolver } from './download-sources.js';
 import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
 import { createBackgroundDownloads } from './background-downloads.js';
 import { onSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
+import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
 import { recordCapture } from './capture-hosts.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
 import { freeBytes, storageRoots } from './drives.js';
@@ -28,6 +29,7 @@ import { online } from './online.js';
 import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileSystem, Http, Linking, Notifications, Packages, Payloads, Platform, Power } from '@ps5-react/core';
 
   var instance;
+  var background = null;
   // Jobee'sLair's own launches (this version's title ID, and the one 0.4.0 and Overdrive use) are not games played.
   var OWN_TITLES = [TITLE_ID, OLD_TITLE_ID];
   var mocked = () => Platform.OS !== "ps5" && FileSystem.exists(`${DATA_DIR}/mock-downloads`);
@@ -52,7 +54,21 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
     fs: FileSystem,
     archives: Archives,
     // glibren-bg: com a opcao ligada, o download da fila e do payload de segundo plano (background-downloads.js).
-    downloads: createBackgroundDownloads({ downloads: Downloads, http: Http, fs: FileSystem, payloads: Payloads, platform: Platform.OS, handoff: debridHandoff, secret: debridSecret, text: t, concurrency: simultaneousDownloads }),
+    // glibren: e serve a pagina do celular (phone-monitor.js); uma pausa ou um cancelamento pedidos la voltam a fila.
+    downloads: background = createBackgroundDownloads({
+      downloads: Downloads,
+      http: Http,
+      fs: FileSystem,
+      payloads: Payloads,
+      platform: Platform.OS,
+      handoff: debridHandoff,
+      secret: debridSecret,
+      text: t,
+      concurrency: simultaneousDownloads,
+      monitor: () => ({ ...phoneMonitorConfig(), monitorText: t("downloads.background.monitorNotice", { address: "{address}" }) }),
+      addressSeen: setPhoneMonitorAddress,
+      onRemote: (destination, action) => instance?.remoteAction?.(destination, action)
+    }),
     // glibren: quantos downloads rodam ao mesmo tempo (Configuracoes).
     concurrency: simultaneousDownloads,
     http: Http,
@@ -76,6 +92,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   }));
   // glibren: a change of simultaneous downloads (Settings) reaches the queue, its engine lanes and the payload at once.
   onSimultaneousDownloads(() => instance?.concurrencyChanged?.());
+  // glibren: the phone page's switch or PIN reaches a payload already running; Settings asks it for the address.
+  onPhoneMonitor(() => background?.refreshConfig?.());
+  setPhoneMonitorProbe(() => background?.refreshConfig?.());
   // 0.5.4: the first time with stats on, the launches known from before go to the players' numbers too.
   function reportPastLaunches() {
     try {

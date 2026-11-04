@@ -121,11 +121,16 @@ import { loadList, saveList } from './saved.js';
     startWaitMs = 8e3,
     port = PORT,
     stateDir = STATE_DIR,
-    concurrency = () => 1
+    concurrency = () => 1,
+    // glibren: a pagina do celular (phone-monitor.js): o que vai junto no POST /config ({monitor, pinSalt, pinHash,
+    // monitorText}, ou null), o IP que o payload informa, e quem trata uma pausa ou um cancelamento pedidos no celular.
+    monitor = () => null,
+    addressSeen = () => {},
+    onRemote = null
   }) {
     const base = `http://127.0.0.1:${port}`;
     let secretsFor = null; // pid do payload que ja recebeu a chave
-    let configFor = null; // pid:n do payload que ja recebeu o numero de downloads simultaneos
+    let configFor = null; // pid + a configuracao que o payload ja recebeu (downloads simultaneos, pagina do celular)
     const readToken = () => {
       try {
         const value = String(fs.readFile(`${stateDir}/token`) ?? "").trim();
@@ -151,6 +156,7 @@ import { loadList, saveList } from './saved.js';
     async function health(token) {
       try {
         const answer = await call(token, "GET", "/health");
+        if (answer.status === 200 && answer.data?.ok && "ip" in answer.data) addressSeen(answer.data.ip);
         return answer.status === 200 && answer.data?.ok ? answer.data : null;
       } catch {
         return null;
@@ -188,15 +194,18 @@ import { loadList, saveList } from './saved.js';
       const answer = await call(token, "POST", "/secret", { service: provider, key });
       if (answer.status === 200) secretsFor = `${state.pid}:${provider}`;
     }
-    // O payload baixa ate `concurrency()` jobs ao mesmo tempo: o numero vai a cada payload novo (pid) e a cada mudanca.
+    // O payload baixa ate `concurrency()` jobs ao mesmo tempo, e serve a pagina do celular como `monitor()` diz: a
+    // configuracao vai a cada payload novo (pid) e a cada mudanca.
     async function syncConcurrency(token) {
       if (!token) return;
       const count = concurrency();
+      const body = { concurrency: count, ...monitor() ?? {} };
       const state = await health(token);
-      if (!state || configFor === `${state.pid}:${count}`) return;
-      const answer = await call(token, "POST", "/config", { concurrency: count });
-      if (answer.status === 200) configFor = `${state.pid}:${count}`;
-      else log(`payload did not take ${count} simultaneous downloads (HTTP ${answer.status})`);
+      const key = `${state?.pid}:${JSON.stringify(body)}`;
+      if (!state || configFor === key) return;
+      const answer = await call(token, "POST", "/config", body);
+      if (answer.status === 200) configFor = key;
+      else log(`payload did not take its configuration (${count} simultaneous downloads; HTTP ${answer.status})`);
     }
     const eligible = (options) => platform === "ps5" && on() && options.background && typeof options.url === "string" &&
       /^https?:\/\//.test(options.url) && options.destination && !options.pieces && !options.unlimited;
@@ -212,6 +221,7 @@ import { loadList, saveList } from './saved.js';
       });
       done.catch(() => {});
       let mode = "starting", native = null, token = "", jobId = null, cancelled = false, settled = false, failures = 0, timer = null;
+      let remoteAsked = false; // a pausa pedida no celular ja foi entregue a fila (onRemote)
       const emit = (next) => {
         snapshot = Object.freeze({ ...next, destination });
         for (const listener of [...listeners]) {
@@ -281,6 +291,11 @@ import { loadList, saveList } from './saved.js';
         }
         if (job.state === "cancelled") {
           forget();
+          // Cancelado no celular: a fila cancela o download como se fosse aqui (apaga o que sobrou), sem trocar de fonte.
+          if (job.by === "remote" && onRemote) {
+            log(`${baseName(destination)}: cancelled on the phone`);
+            onRemote(destination, "cancel");
+          }
           finish(false, error("cancelled", "AbortError"));
           return true;
         }
@@ -317,7 +332,14 @@ import { loadList, saveList } from './saved.js';
         }
         emit(shown(job));
         if (settle(job)) return;
-        if (job.state === "paused" && !cancelled) call(token, "POST", `/jobs/${jobId}/resume`).catch(() => {});
+        // Pausado pelo payload (troca de rede, repouso): retoma. Pausado no celular: fica pausado, e a fila do app
+        // passa a mostra-lo pausado (onRemote -> pausa -> o job volta ao app com a parcial).
+        if (job.state === "paused" && !cancelled && job.by !== "remote") call(token, "POST", `/jobs/${jobId}/resume`).catch(() => {});
+        else if (job.state === "paused" && job.by === "remote" && !remoteAsked && onRemote) {
+          remoteAsked = true;
+          log(`${baseName(destination)}: paused on the phone`);
+          onRemote(destination, "pause");
+        }
         timer = setTimeout(poll, pollMs);
       }
       async function start() {
@@ -434,6 +456,8 @@ import { loadList, saveList } from './saved.js';
       syncConcurrency(readToken()).catch(() => {});
       return lanes;
     };
+    // glibren: a pagina do celular mudou (ligada/desligada, PIN): o payload no ar recebe a configuracao de novo.
+    wrapper.refreshConfig = () => syncConcurrency(readToken()).catch(() => {});
     return wrapper;
   }
 

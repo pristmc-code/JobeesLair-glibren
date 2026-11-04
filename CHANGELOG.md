@@ -6,6 +6,15 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **Follow the background downloads on your phone.** While the app is closed, the background payload serves a page
+  at the console's address, port 34201, on the home network: each game's progress, speed and time left, the total
+  speed and what is left. Pausing, resuming and cancelling there ask for a PIN set in Settings > Downloads ("Follow
+  on your phone"); without one the page only watches. Only a salted SHA-256 of the PIN is kept and sent to the
+  payload; a session lasts 12 hours and five wrong PINs block further tries for a while (30 s, doubling, at most
+  15 minutes). The page never shows links, keys or paths. A pause made on the phone stays: the app shows the game
+  paused when it opens instead of resuming it; a cancel there deletes the partial as a cancel in the app does.
+  Settings shows the address once the payload is running, and the console tells it in a notification the first
+  time a download goes to the background. Not yet tested on a console.
 - **Simultaneous downloads.** Settings > Downloads has "Simultaneous downloads": 1 (as before), 2, 3 or 4 games at
   once. Raising it starts the next ones at once; lowering it stops none, it only starts no other until fewer run.
   Downloads from the same site share its connections (at least 2 each); what the other downloads on a drive still

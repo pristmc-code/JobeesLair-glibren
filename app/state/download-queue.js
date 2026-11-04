@@ -2646,6 +2646,17 @@ import { mirrorsFor } from './download-mirrors.js';
       pause(id) {
         pauseJob(find(id));
       },
+      /**
+       * glibren: a pause or a cancel asked on the phone page (the background payload, port 34201), by the file's
+       * path: the job is paused or cancelled here as if the gamer had asked (background-downloads.js onRemote).
+       */
+      remoteAction(destination, action) {
+        const job2 = jobs.find((item) => [item.downloadDestination, item.artifact?.destination].includes(destination));
+        if (!job2) return;
+        console.log(`[download-queue] ${job2.id}: ${action} asked on the phone`);
+        if (action === "pause") this.pause(job2.id);
+        else if (action === "cancel") this.cancel(job2.id).catch((error2) => console.log(`[download-queue] ${job2.id}: not cancelled (${error2.message})`));
+      },
       /** Installs a downloaded PKG again, after the console refused it or the app closed while installing. */
       install(id) {
         const job2 = find(id);

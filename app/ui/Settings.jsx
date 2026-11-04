@@ -16,7 +16,7 @@ import '../assets/JetBrainsMono-Regular.ttf';
 import supportQr from '../assets/support-qr.png';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useState } from 'react';
-import { CREATOR, choosePin, setCompanion, setCompanionAway, useCompanion } from '../companion/service.js';
+import { CREATOR, choosePin, pinProblem, setCompanion, setCompanionAway, useCompanion } from '../companion/service.js';
 import { URLDialog } from '../downloads/URLDialog.jsx';
 import { formatDate2, formatNumber2 } from '../i18n/core.js';
 import { chooseLanguage, languageChoice, systemLocale, tWhole, useT } from '../i18n/index.js';
@@ -28,6 +28,7 @@ import { HOMEBREW_ONLY } from '../edition.js';
 import { LIMITS as SPEED_LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
 import { setBackgroundDownloads, useBackgroundDownloads } from '../state/background-downloads.js';
+import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
 import { setScreenSaver, showScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
 import { setTypingChoice, useTypingChoice } from '../state/system-keyboard.js';
@@ -339,16 +340,21 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
     ] });
   }
   // Drives, the speed limit and whether a download in parts opens the browser for its next part by itself.
-  function DownloadsCard() {
+  function DownloadsCard({ onPhonePin }) {
     const t2 = useT();
     const drives = useDrives();
     const autoParts = useAutoContinueParts();
     const background = useBackgroundDownloads();
+    const phone = usePhoneMonitor();
+    const phoneHint = !phone.on ? t2("settings.phoneMonitorDetail") : phone.address ? t2("settings.phoneMonitorAddress", { url: phone.address }) : t2("settings.phoneMonitorNoAddress");
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
       /* @__PURE__ */ (0, jsx)(CardHead, { icon: "download", title: t2("settings.card.downloads") }),
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:autoParts", name: t2("settings.autoParts"), hint: t2("settings.autoPartsDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: autoParts }), onPress: () => setAutoContinueParts(!autoParts) }),
       // glibren-bg: downloads em segundo plano (state/background-downloads.js).
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:background", name: t2("settings.background"), hint: t2("settings.backgroundDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: background }), onPress: () => setBackgroundDownloads(!background) }),
+      // glibren: a pagina do celular (state/phone-monitor.js): ver os downloads do segundo plano e, com o PIN, controla-los.
+      /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitor", name: t2("settings.phoneMonitor"), hint: phoneHint, end: /* @__PURE__ */ (0, jsx)(Switch, { on: phone.on }), onPress: () => setPhoneMonitor(!phone.on) }),
+      phone.on ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitorPin", name: t2(phone.hasPin ? "settings.phoneMonitorPinChange" : "settings.phoneMonitorPin"), hint: t2(phone.hasPin ? "settings.phoneMonitorPinDetail" : "settings.phoneMonitorNoPin"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", color: colors.muted }), onPress: () => onPhonePin(phone.hasPin ? "change" : "create") }) : null,
       /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
       /* @__PURE__ */ (0, jsx)(SimultaneousRow, {}),
       /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
@@ -603,6 +609,7 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
     const [adding, setAdding] = (0, useState)(false);
     const [mirrorOf, setMirrorOf] = (0, useState)(null);
     const [pinMode, setPinMode] = (0, useState)(null);
+    const [phonePinMode, setPhonePinMode] = (0, useState)(null);
     const [keying, setKeying] = (0, useState)(false);
     const [keyingAll, setKeyingAll] = (0, useState)(false);
     // Drawn again in a newly chosen accent while open; the rest of the store follows once it is left.
@@ -612,7 +619,7 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
     const closed = (key) => focusLater(key);
     const cards = {
       companion: [/* @__PURE__ */ (0, jsx)(CompanionCard, { onChoosePin: setPinMode }, "companion")],
-      downloads: [/* @__PURE__ */ (0, jsx)(DownloadsCard, {}, "downloads")],
+      downloads: [/* @__PURE__ */ (0, jsx)(DownloadsCard, { onPhonePin: setPhonePinMode }, "downloads")],
       feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onMirror: setMirrorOf }, "feeds")],
       debrid: [/* @__PURE__ */ (0, jsx)(DebridCard, { onKey: () => setKeying(true), onAllDebridKey: () => setKeyingAll(true) }, "debrid")],
       look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver")],
@@ -664,6 +671,15 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
         const mode = pinMode;
         setPinMode(null);
         closed(mode === "change" ? "settings:pin" : "settings:companion");
+      } }) : null,
+      phonePinMode ? /* @__PURE__ */ (0, jsx)(PinDialog, { mode: phonePinMode, onDone: (pin) => {
+        // O mesmo cuidado do PIN do companion: nada de digitos repetidos ou em sequencia.
+        const refused = pinProblem(pin);
+        if (refused) throw new Error(refused);
+        choosePhoneMonitorPin(pin);
+      }, onClose: () => {
+        setPhonePinMode(null);
+        closed("settings:phoneMonitorPin");
       } }) : null
     ] });
   }
