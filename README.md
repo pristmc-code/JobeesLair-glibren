@@ -11,6 +11,9 @@
 > mirrors, per-host connections, automatic retries and unlimited TorBox link renewal, unpacking beside the next
 > download, sealed debrid keys, a lighter catalog, a format filter with "Find formats", and a Videos button that opens
 > a homebrew YouTube app (ytps5 or YouTube Max'd, glibren builds). See [CHANGELOG.md](CHANGELOG.md) under "Unreleased".
+> **glibren.2** adds: simultaneous downloads (1-4), the whole queue handed to the background payload, a phone page at
+> `http://PS5-IP:34201` (view, pause, resume, cancel with a PIN; Android app "Jobe Controle" in the release),
+> exact image types (exFAT, FFPKG...) with an exFAT filter, "TorBox only" filter and "Find via TorBox / via the browser".
 > Download it from this fork's [releases](https://github.com/pristmc-code/JobeesLair-glibren/releases/latest);
 > its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
 > the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
