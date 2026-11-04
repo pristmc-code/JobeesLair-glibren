@@ -10,11 +10,17 @@
 // download queue calls for a source marked `debrid` (download-sources.js), so a resumed download asks
 // TorBox for a fresh link and the key never goes into downloads.json.
 //
-// debrid.json: { torbox: { key, account: { plan, planName, premium, expiresAt, checkedAt },
+// debrid.json: { torbox: { keyBox, account: { plan, planName, premium, expiresAt, checkedAt },
 //   hosters: { at, list }, items: { <md5 of link>: { kind, id, at } } } }
 // The console has no keychain: the key sits in the app's own data folder like its other settings, is shown
 // only as its last four characters, and goes nowhere but api.torbox.app (never to the phone companion,
 // never into a log line).
+// The key is kept sealed (`keyBox`, state/secret-box.js) with a random secret made on first use and kept apart
+// from debrid.json (on the console under /data/ps5-react/JobeesLair/, outside the app's data folder). That keeps a
+// copy of the data folder (a backup, a folder shared for help) from carrying a usable key. It does not protect the
+// key from anyone with full access to the console, who can read the secret as the app does: the runtime offers no
+// console-bound key store or identifier to tie it to. A key saved by an earlier build in plain text (`key`) is sealed
+// the first time it is read; where no secret can be kept, it stays as it was rather than be lost.
 //
 // The network (ps5-react docs/NETWORKING.md) runs one task at a time, so like link health this asks the
 // download queue first: a background check borrows it only while nothing downloads (`lend`, the queue's
@@ -27,20 +33,108 @@ import { cancellation, sourceKind } from './download-sources.js';
 import { savedList } from './saved.js';
 import { formatDate2 } from '../i18n/core.js';
 import { log, logger } from '../services/logger.js';
-import { Http } from '@ps5-react/core';
+import { DATA_DIR } from './data-dir.js';
+import { newSecret, open as openBox, seal } from './secret-box.js';
+import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
 
   var HOSTERS_MS = 24 * 36e5;
   var INSTANT_MS = 30 * 6e4;
   var KEPT_ITEMS = 200;
+  // ---- The keys, sealed (see the top of this file) ----
+  // Where the sealing secret is kept, first choice first: apart from debrid.json where the console allows it.
+  var SECRET_PATHS = Platform.OS === "ps5" ? ["/data/ps5-react/JobeesLair/debrid.secret", `${DATA_DIR}/.debrid.secret`] : [`${DATA_DIR}/.debrid.secret`];
+  var secretKept = null;
+  // Random text from the runtime (the local server's session tokens come from the system's random source), when it can.
+  function entropy() {
+    try {
+      return `${LocalServer.token()}${LocalServer.token()}`;
+    } catch {
+      return "";
+    }
+  }
+  /** The sealing secret: read from where it is kept, else (with `create`) made and kept; null when there is none. */
+  function boxSecret({ create = false } = {}) {
+    if (secretKept) return secretKept;
+    for (const path of SECRET_PATHS) {
+      try {
+        const text = FileSystem.exists(path) ? String(FileSystem.readFile(path)).trim() : "";
+        if (/^[0-9a-f]{64}$/.test(text)) return secretKept = text;
+      } catch {
+      }
+    }
+    if (!create) return null;
+    const value = newSecret(entropy());
+    for (const path of SECRET_PATHS) {
+      try {
+        FileSystem.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+        FileSystem.writeFile(`${path}.tmp`, value, { sync: true });
+        FileSystem.rename(`${path}.tmp`, path);
+        if (String(FileSystem.readFile(path)).trim() !== value) throw new Error("it did not read back");
+        console.log(`[debrid] made the secret the saved API keys are sealed with, kept in ${path}`);
+        return secretKept = value;
+      } catch (error) {
+        console.log(`[debrid] the keys' secret was not kept in ${path}: ${error.message}`);
+      }
+    }
+    return null;
+  }
+  var opened = /* @__PURE__ */ new Map();
+  var unreadable = /* @__PURE__ */ new Set();
+  /** The API key a service's saved record holds: sealed (`keyBox`) or, from an earlier build, plain (`key`); "" when none can be read. */
+  function plainKey(saved2) {
+    if (typeof saved2?.key === "string") return saved2.key;
+    const box = saved2?.keyBox;
+    if (typeof box !== "string" || !box) return "";
+    if (opened.has(box)) return opened.get(box);
+    const secret = boxSecret();
+    const key = secret ? openBox(box, secret) : null;
+    if (key === null) {
+      if (!unreadable.has(box)) console.log("[debrid] a saved API key could not be unsealed (its secret is missing or another console's); add it again in Settings");
+      unreadable.add(box);
+      return "";
+    }
+    opened.set(box, key);
+    return key;
+  }
+  /** What debrid.json keeps for `key`: { keyBox } sealed, or { key } plain when no secret can be kept; nothing for "". */
+  function keyFields(key) {
+    if (!key) return { key: void 0, keyBox: void 0 };
+    const secret = boxSecret({ create: true });
+    if (!secret) return { key, keyBox: void 0 };
+    const box = seal(key, secret, entropy());
+    opened.set(box, key);
+    return { key: void 0, keyBox: box };
+  }
+  // A key an earlier build saved in plain text is sealed once, when debrid.json is first read.
+  function sealPlainKeys(list) {
+    for (const name of ["torbox", "alldebrid"]) {
+      const entry = list.get()[name];
+      if (typeof entry?.key !== "string" || !entry.key) continue;
+      const fields = keyFields(entry.key);
+      if (!fields.keyBox) continue;
+      const { key: _plain, ...rest } = entry;
+      list.set({ ...list.get(), [name]: { ...rest, keyBox: fields.keyBox } });
+      console.log(`[debrid] the ${name} API key in debrid.json is sealed now`);
+    }
+  }
   var store = null;
-  var saved = () => store ?? (store = savedList("debrid.json", "debrid settings"));
+  function saved() {
+    if (store) return store;
+    store = savedList("debrid.json", "debrid settings");
+    try {
+      sealPlainKeys(store);
+    } catch (error) {
+      console.log(`[debrid] saved keys not sealed: ${error.message}`);
+    }
+    return store;
+  }
   var record = () => saved().get().torbox ?? {};
   function update(patch) {
     const next = { ...record(), ...patch };
     for (const name of Object.keys(next)) if (next[name] === void 0) delete next[name];
     saved().set({ ...saved().get(), torbox: next });
   }
-  var keyOf = () => typeof record().key === "string" ? record().key : "";
+  var keyOf = () => plainKey(record());
   var client = null;
   var torbox = () => client ?? (client = createTorBox({ http: Http, key: keyOf, log: (message) => log("torbox", message) }));
   // The key is never to be written to the log, in whatever line it might turn up.
@@ -55,7 +149,7 @@ import { Http } from '@ps5-react/core';
     for (const name of Object.keys(next)) if (next[name] === void 0) delete next[name];
     saved().set({ ...saved().get(), alldebrid: next });
   }
-  var allKeyOf = () => typeof allRecord().key === "string" ? allRecord().key : "";
+  var allKeyOf = () => plainKey(allRecord());
   var allClient = null;
   var alldebrid = () => allClient ?? (allClient = createAllDebrid({ http: Http, key: allKeyOf, log: (message) => log("alldebrid", message) }));
   try {
@@ -80,7 +174,7 @@ import { Http } from '@ps5-react/core';
     } catch {
     }
     log("alldebrid", key ? "API key set" : "API key removed");
-    updateAll({ key: key || void 0, account: void 0, hosters: void 0 });
+    updateAll({ ...keyFields(key), account: void 0, hosters: void 0 });
   }
   /** "Test connection" for AllDebrid: the account and the hosts it can use, saved for the rows. */
   async function testAllDebrid({ quiet = (_reason, work) => work() } = {}) {
@@ -114,7 +208,7 @@ import { Http } from '@ps5-react/core';
     } catch {
     }
     log("torbox", key ? "API key set" : "API key removed");
-    update({ key: key || void 0, account: void 0, items: void 0 });
+    update({ ...keyFields(key), account: void 0, items: void 0 });
     instant.clear();
   }
   // The hosts TorBox lists, kept for the rows; an empty answer says nothing (the rows treat it as unknown).
@@ -147,12 +241,13 @@ import { Http } from '@ps5-react/core';
   function debridView(all) {
     const torboxState = all.torbox ?? {};
     const allState = all.alldebrid ?? {};
+    const torboxKey = plainKey(torboxState), allKey = plainKey(allState);
     return {
-      configured: Boolean(torboxState.key),
-      masked: masked(torboxState.key),
+      configured: Boolean(torboxKey),
+      masked: masked(torboxKey),
       account: torboxState.account ?? null,
-      allDebrid: { configured: Boolean(allState.key), masked: masked(allState.key), account: allState.account ?? null },
-      active: torboxState.key ? "torbox" : allState.key ? "alldebrid" : null
+      allDebrid: { configured: Boolean(allKey), masked: masked(allKey), account: allState.account ?? null },
+      active: torboxKey ? "torbox" : allKey ? "alldebrid" : null
     };
   }
   /**
