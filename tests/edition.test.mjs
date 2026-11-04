@@ -18,7 +18,7 @@ test('the committed edition is the store, and version.js and the updater take th
   assert.equal(EDITION, 'store');
   assert.equal(HOMEBREW_ONLY, false);
   assert.equal(TITLE_ID, 'PPSA99471');
-  assert.equal(REPO, 'JVK3R/JobeesLair');
+  assert.equal(REPO, 'pristmc-code/JobeesLair-glibren');
   assert.equal(IMAGE_NAME, 'JobeesLair.exfat');
   assert.equal(APP_NAME, "Jobee'sLair");
   assert.equal(ASSETS.image, IMAGE_NAME);
