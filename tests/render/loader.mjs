@@ -23,8 +23,11 @@ export const jsxs = jsx;
 export const Fragment = 'Fragment';
 `;
 const core = `
+import { readFileSync as __read } from 'node:fs';
 const fs = () => globalThis.__fake?.fs ?? { exists: () => false, stat: () => null, readDir: () => [], readFile: () => '' };
-export const FileSystem = new Proxy({ dataDir: '/download0', appDir: '/app0' }, { get: (target, key) => key in target ? target[key] : (...args) => fs()[key]?.(...args) });
+// The package's own files (/app0/...) are the repository's app/ folder: the bundled catalog is read from there.
+const app0 = { readFile: (path) => path.startsWith('/app0/') ? __read(${JSON.stringify(new URL('../../app/', import.meta.url).pathname)} + path.slice(6), 'utf8') : fs().readFile?.(path) };
+export const FileSystem = new Proxy({ dataDir: '/download0', appDir: '/app0' }, { get: (target, key) => key in target ? target[key] : key === 'readFile' ? app0.readFile : (...args) => fs()[key]?.(...args) });
 export const Platform = { get OS() { return globalThis.__fake?.os ?? 'desktop'; }, select: (spec) => spec.desktop ?? spec.default };
 export const SelfUpdate = { arm: (dir) => (globalThis.__fake?.arms?.push(dir), globalThis.__fake?.armResult ?? true) };
 export const BackHandler = { exitApp: () => globalThis.__fake?.exits?.push(true), addEventListener: () => ({ remove() {} }) };

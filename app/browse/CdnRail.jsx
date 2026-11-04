@@ -6,7 +6,7 @@ import cdnCard from '../assets/cdn-card.png';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { memo } from 'react';
 import { GameRail } from './GameRail.jsx';
-import { games } from '../data/catalog.js';
+import { games } from '../data/catalog-index.js';
 import { useT } from '../i18n/index.js';
 import { CDN_HOST, NO_FILTERS, onCdn, oneEach, sortGames } from '../state/catalog.js';
 import { useNavActions } from '../state/nav.jsx';

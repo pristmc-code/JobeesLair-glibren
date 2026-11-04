@@ -6,7 +6,7 @@ import { memo } from 'react';
 import { GameRail } from './GameRail.jsx';
 import { featured } from './featured.js';
 import { FEATURED, READY, TOP } from './Lanes.jsx';
-import { games } from '../data/catalog.js';
+import { games } from '../data/catalog-index.js';
 import { useT } from '../i18n/index.js';
 import { NO_FILTERS, oneEach, otherThan } from '../state/catalog.js';
 import { useNavActions } from '../state/nav.jsx';

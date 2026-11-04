@@ -6,10 +6,12 @@
 // MODIFIED: bundledIndex keeps the bundled titles' ids and direct flags for the live game counter.
 // MODIFIED: each game carries `formats`, the kinds of download it has (state/formats.js), for the Format filter:
 // the bundled games' from data/formats.js, a feed's releases sorted when the feeds load.
+// MODIFIED: the bundled games come from data/catalog-index.js (data/catalog/index.json, read at launch), their
+// banners, logos and other covers from its art files when first drawn; nothing here reads those for every game.
 // MODIFIED (0.5.1): each game carries its PlayStation Store star rating, `stars` and `ratingCount` (the live
 // catalog's when it has one, else data/ratings.js), and the rating sort and Top Rated go by ratingScore.
 
-import { features, games, twins } from '../data/catalog.js';
+import { catalogLoad, coverSize, features, games, twins } from '../data/catalog-index.js';
 import { formats as bundledFormats } from '../data/formats.js';
 import { formatDate2, t } from '../i18n/core.js';
 import { createPageCache } from './page-cache.js';
@@ -44,8 +46,6 @@ import { PS4 } from './ps4.js';
     const low = lowFirmware();
     return low ? text.replace("13.60", low) : text;
   };
-  var COVER_WIDTH = 440;
-  var coverSize = (url) => url.startsWith("https://image.api.playstation.com/") ? url.replace(/([?&]w=)\d+/, `$1${COVER_WIDTH}`) : url;
   var releaseCache = createReleaseCache((path) => FileSystem.readFile(`/app0/${path}`));
   var pageCache = createPageCache((path) => FileSystem.readFile(`/app0/${path}`));
   var NO_PAGE = { about: [], shots: [], summary: "" };
@@ -130,7 +130,9 @@ import { PS4 } from './ps4.js';
     Object.setPrototypeOf(game, game.feedPage ? FeedEntry : Entry);
     game.genres = [...new Set(game.genres.flatMap((genre) => genre.split(" / ")).map((genre) => SYNONYMS[genre] ?? genre))];
     (_a = game.art).cover && (_a.cover = coverSize(game.art.cover));
-    if (game.art.coverFallbacks) game.art.coverFallbacks = game.art.coverFallbacks.map(coverSize);
+    // A bundled game's other covers wait in its art file (data/catalog-index.js sizes them when read): only a
+    // feed game's own are sized here.
+    if (Object.hasOwn(game.art, "coverFallbacks") && game.art.coverFallbacks) game.art.coverFallbacks = game.art.coverFallbacks.map(coverSize);
   }
   for (const game of entries) {
     const bundled = bundledFormats[game.id]?.split(" ") ?? [];
@@ -166,6 +168,9 @@ import { PS4 } from './ps4.js';
     return editionsOf(game).find((edition2) => listed.has(edition2) && edition2.platform === game.platform)?.id ?? id;
   }
   function warmCovers() {
+    // How the launch read the catalog index (it ran before the debug log opened).
+    const load = catalogLoad;
+    console.log(load.error ? `[catalog] the bundled catalog was not read: ${load.error}` : `[catalog] index read at launch: ${load.games} games, ${load.twins} other editions, ${load.bytes} bytes in ${load.ms} ms`);
     Image.warm(sortGames(games, "relevance").filter((game) => game.art.cover).map((game) => game.art.cover));
   }
   var SORTS = [

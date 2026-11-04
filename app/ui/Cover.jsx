@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Image, Text, View, motion } from '@ps5-react/core';
 import { colors } from './colors.js';
 import { EASE_OUT } from './ease.js';
+import { hasArt } from '../data/catalog-index.js';
 
   var SKELETON = { backgroundColor: colors.surface2 };
   var tinted = /* @__PURE__ */ new Map();
@@ -45,9 +46,12 @@ import { EASE_OUT } from './ease.js';
     const [loaded, setLoaded] = (0, useState)(null);
     const since = (0, useRef)(Date.now());
     const late = (0, useRef)(false);
-    const copies = [game.art.cover, ...game.art.coverFallbacks || []].filter((url) => url && !failed.includes(url));
+    // The other covers are read only once the first fails or stalls (or there is none): a bundled game's wait in
+    // its art file (data/catalog-index.js), and a row of cards should not read one file a card.
+    const fallbacks = failed.length || !game.art.cover ? game.art.coverFallbacks || [] : null;
+    const copies = [game.art.cover, ...fallbacks ?? []].filter((url) => url && !failed.includes(url));
     const uri = copies[0];
-    const last = copies.length < 2;
+    const last = fallbacks ? copies.length < 2 : !hasArt(game, "coverFallbacks");
     (0, useEffect)(() => {
       since.current = Date.now();
     }, [uri]);

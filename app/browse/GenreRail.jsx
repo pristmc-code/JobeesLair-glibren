@@ -4,7 +4,7 @@
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useState } from 'react';
 import { GenreCard } from './GenreCard.jsx';
-import { games } from '../data/catalog.js';
+import { games } from '../data/catalog-index.js';
 import { useT } from '../i18n/index.js';
 import { genres } from '../state/catalog.js';
 import { useStoreActions, useStoreState } from '../state/store.jsx';

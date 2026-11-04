@@ -11,7 +11,7 @@ const repo = process.env.JL_REPO || fileURLToPath(new URL('../..', import.meta.u
 const load = (rel) => import(pathToFileURL(path.join(repo, rel)).href);
 const en = (await load('app/i18n/locales/en.json')).default;
 (await load('app/i18n/core.js')).configure(() => en, en);
-const { games } = await load('app/data/catalog.js');
+const { games } = await load('app/data/catalog-index.js');
 const { getGame } = await load('app/state/catalog.js');
 const picks = games.slice(0, 60).map((game) => getGame(game.id)).filter(Boolean).slice(0, 6);
 assert.equal(picks.length, 6, 'six catalog games');

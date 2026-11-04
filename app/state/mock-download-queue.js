@@ -1,7 +1,7 @@
 // ../pub-game-store/native/state/mock-download-queue.js
 // reconstructed from the esbuild bundle in eboot.bin
 
-import { games } from '../data/catalog.js';
+import { games } from '../data/catalog-index.js';
 import { preferredRelease } from '../game/sources.js';
 
   var GB = 1024 ** 3;

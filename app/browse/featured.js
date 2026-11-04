@@ -2,7 +2,7 @@
 // each launch. It took the games with a logo that Archive.org serves, and 7 of the 1,845 were: the same five
 // every launch. The Featured lane under it leaves these out (browse/Lanes.jsx).
 
-import { games } from '../data/catalog.js';
+import { games, hasArt } from '../data/catalog-index.js';
 import { oneEach, ratingScore, sortGames } from '../state/catalog.js';
 
   var SLIDES = 5;
@@ -25,8 +25,9 @@ import { oneEach, ratingScore, sortGames } from '../state/catalog.js';
     };
     // 0.5.4: too few with a logo (none of the PS4's has one): any with a banner, its name written where the logo goes
     // (ui/GameLogo.jsx).
-    const banners = list.filter((game) => game.art.hero);
-    const logos = banners.filter((game) => game.art.logo);
+    // hasArt: whether a game has a banner or logo, without reading its art file (data/catalog-index.js).
+    const banners = list.filter((game) => hasArt(game, "hero"));
+    const logos = banners.filter((game) => hasArt(game, "logo"));
     const showable = oneEach(logos.length >= SLIDES ? logos : banners);
     const liked = showable.filter((game) => ratingScore(game) >= MIN_SCORE);
     const ranked = (liked.length >= SLIDES ? liked : showable).sort((a, b) => (b.ratingCount ?? 0) - (a.ratingCount ?? 0) || (b.recommendations ?? 0) - (a.recommendations ?? 0));
