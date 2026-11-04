@@ -75,10 +75,13 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 // A fake engine: every request is recorded; `plan(options, index)` may return { error } (fails), { gate } (a promise
 // the test resolves to let it end) or nothing (ends at once, publishing the expected bytes).
+// A step's `written` is reported as progress as soon as the queue subscribes; `tasks[i].emit(progress)` reports more.
 function engine(fs, plan = () => null) {
   const requests = [];
+  const tasks = [];
   return {
     requests,
+    tasks,
     enqueue(options) {
       const index = requests.push(options) - 1;
       const step = plan(options, index) || {};
@@ -95,7 +98,19 @@ function engine(fs, plan = () => null) {
         cancel = () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' }));
         (step.gate ?? tick()).then(() => { try { resolve(finish()); } catch (error) { reject(error); } });
       });
-      return { subscribe: () => () => {}, done, cancel: () => cancel() };
+      let listener = null;
+      const task = {
+        subscribe(fn) {
+          listener = fn;
+          if (step.written !== undefined) fn({ state: 'downloading', written: step.written, total: options.expectedBytes ?? null });
+          return () => { listener = null; };
+        },
+        emit: (progress) => listener?.(progress),
+        done,
+        cancel: () => cancel(),
+      };
+      tasks.push(task);
+      return task;
     },
   };
 }
@@ -251,4 +266,226 @@ test('mirrors: a set\'s part gets its other direct sources of the same volume', 
   await settle(queue, id);
   assert.deepEqual(downloads.requests[0].mirrors, ['https://b.example/Game.part1.rar']);
   assert.equal(downloads.requests[1].mirrors, undefined);
+});
+
+// ---- 10. Network failures while resolving a link; 5. a debrid service still preparing the file ----
+
+const page = (name = 'Game.exfat', extra = {}) => image(name, `https://www.mediafire.com/file/abc123/${name}/file`, 1000, { provider: 'MediaFire', ...extra });
+const MIN = 60e3;
+
+test('resolving: a network failure is tried again by itself after 30 s, 2 min, 10 min, before any other source', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  let calls = 0;
+  const failures = ["Couldn't resolve host name", 'Timeout was reached', 'TorBox didn\'t answer: Failure when receiving data from the peer'];
+  const sources = { resolve: async (release) => {
+    calls++;
+    if (release.url.includes('mediafire') && calls <= failures.length) throw new Error(failures[calls - 1]);
+    return { url: 'https://download.example/Game.exfat' };
+  } };
+  const queue = queueWith({ fs, downloads, sources });
+  const id = queue.enqueue(game, page(), '/data', [image('Game.exfat', 'https://other.example/Game.exfat')]);
+  let job = await until(queue, id, (item) => item.state === 'failed' && item.retryAt);
+  assert.match(job.error, /Couldn't resolve host name/);
+  assert.equal(job.release.provider, 'MediaFire', 'no switch to another source for the network');
+  assert.ok(job.retryAt - Date.now() <= 30e3 && job.retryAt - Date.now() > 25e3);
+  t.mock.timers.tick(30e3);
+  job = await until(queue, id, (item) => calls === 2 && item.state === 'failed' && item.retryAt);
+  assert.ok(job.retryAt - Date.now() > 100e3, 'then 2 minutes');
+  t.mock.timers.tick(2 * MIN);
+  job = await until(queue, id, (item) => calls === 3 && item.state === 'failed' && item.retryAt);
+  assert.ok(job.retryAt - Date.now() > 9 * MIN, 'then 10 minutes');
+  t.mock.timers.tick(10 * MIN);
+  job = await settle(queue, id);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(downloads.requests[0].url, 'https://download.example/Game.exfat');
+  assert.equal(job.networkRetries, undefined, 'the count starts over once a link is had');
+});
+
+test('resolving: past its tries, a network failure fails over as before; a host refusal still fails over at once', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const sources = { resolve: async (release) => {
+    if (release.url.includes('gone')) throw new Error('Source unavailable: HTTP 404. Choose another source.');
+    if (release.url.includes('mediafire')) throw new Error('Timeout was reached');
+    return { url: release.url };
+  } };
+  const queue = queueWith({ fs, downloads, sources });
+  const id = queue.enqueue(game, page(), '/data', [image('Game.exfat', 'https://other.example/Game.exfat')]);
+  for (const wait of [30e3, 2 * MIN, 10 * MIN]) {
+    await until(queue, id, (item) => item.state === 'failed' && item.retryAt);
+    t.mock.timers.tick(wait);
+  }
+  const job = await settle(queue, id);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(job.release.url, 'https://other.example/Game.exfat', 'switched once the tries were used');
+  // A 404 is the source, not the network: no wait.
+  const fs2 = memoryFs();
+  const queue2 = queueWith({ fs: fs2, downloads: engine(fs2), sources });
+  const gone = queue2.enqueue(game, page('Gone.exfat', { url: 'https://www.mediafire.com/file/gone/Gone.exfat/file' }), '/data');
+  const failed = await settle(queue2, gone);
+  assert.equal(failed.state, 'failed');
+  assert.equal(failed.retryAt, undefined);
+});
+
+const pending = (percent) => Object.assign(new Error(`TorBox is still fetching this file (${percent}%). Resume the download in a while.`), { code: 'PENDING' });
+const debridPage = (extra = {}) => image('Game.exfat', 'https://1fichier.com/?abc123', 1000, { id: 'Game~torbox', provider: '1fichier', debrid: { service: 'torbox' }, ...extra });
+
+test('debrid pending: asked again every 5 minutes by itself, the card saying so; RATE_LIMITED waits longer', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const answers = [pending(10), Object.assign(new Error('TorBox asked to slow down. Try again in a minute.'), { code: 'RATE_LIMITED' }), pending(80)];
+  let calls = 0;
+  const sources = { resolve: async () => {
+    const answer = answers[calls++];
+    if (answer) throw answer;
+    return { url: 'https://store.torbox.example/dl/1' };
+  } };
+  const queue = queueWith({ fs, downloads, sources });
+  const id = queue.enqueue(game, debridPage(), '/data', [image('Game.exfat', 'https://other.example/Game.exfat')]);
+  let job = await until(queue, id, (item) => item.state === 'failed' && item.retryAt);
+  assert.equal(job.error, 'TorBox is still fetching this file (10%).', 'no "resume it yourself": it does');
+  assert.deepEqual(job.pending.tries, 1);
+  assert.ok(job.retryAt - Date.now() > 4 * MIN);
+  assert.equal(job.release.debrid?.service, 'torbox', 'no other source meanwhile');
+  t.mock.timers.tick(5 * MIN);
+  job = await until(queue, id, (item) => calls === 2 && item.state === 'failed' && item.retryAt);
+  assert.match(job.error, /asked to slow down/);
+  assert.ok(job.retryAt - Date.now() > 1.5 * MIN, 'a rate limit waits its own 2 minutes');
+  t.mock.timers.tick(2 * MIN);
+  job = await until(queue, id, (item) => calls === 3 && item.state === 'failed' && item.retryAt);
+  assert.equal(job.pending.tries, 2);
+  t.mock.timers.tick(5 * MIN);
+  job = await settle(queue, id);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(job.pending, undefined);
+});
+
+test('debrid pending: cancelling stops the tries; one waiting when the app closed is asked again a minute after it opens', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fs = memoryFs();
+  let calls = 0;
+  const sources = { resolve: async () => { calls++; throw pending(50); } };
+  const queue = queueWith({ fs, downloads: engine(fs), sources });
+  const id = queue.enqueue(game, debridPage(), '/data');
+  await until(queue, id, (item) => item.state === 'failed' && item.retryAt);
+  await queue.cancel(id);
+  t.mock.timers.tick(10 * MIN);
+  await tick();
+  assert.equal(calls, 1, 'nothing asked after the cancel');
+  assert.equal(queue.snapshot().length, 0);
+  // The app closed while it waited: the saved job keeps its count, and the next launch asks again after a minute.
+  const id2 = queue.enqueue(game, debridPage(), '/data');
+  await until(queue, id2, (item) => item.state === 'failed' && item.retryAt);
+  assert.equal(calls, 2);
+  const reopened = queueWith({ fs, downloads: engine(fs), sources });
+  const restored = reopened.snapshot().find((item) => item.id === id2);
+  assert.equal(restored.pending.tries, 1);
+  assert.ok(restored.retryAt - Date.now() <= 60e3);
+  t.mock.timers.tick(60e3);
+  await until(reopened, id2, () => calls >= 3);
+});
+
+test('debrid pending: gives up after its tries, as a failure the gamer resumes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fs = memoryFs();
+  const sources = { resolve: async () => { throw pending(1); } };
+  const notices = [];
+  const queue = queueWith({ fs, downloads: engine(fs), sources, notices });
+  const id = queue.enqueue(game, debridPage(), '/data');
+  for (let i = 0; i < 24; i++) {
+    await until(queue, id, (item) => item.state === 'failed' && item.retryAt && item.pending?.tries === i + 1);
+    t.mock.timers.tick(5 * MIN);
+  }
+  const job = await until(queue, id, (item) => item.state === 'failed' && !item.retryAt);
+  assert.match(job.error, /still fetching/);
+  assert.equal(notices.length, 1, 'told once, at the end');
+});
+
+// ---- 4. TorBox links renewed whenever they expire ----
+
+const refused = () => new Error('provider denied the file; link expired or browser verification required');
+
+test('debrid link: renewed every time the engine is refused while bytes keep coming, never the browser', async () => {
+  const fs = memoryFs();
+  let links = 0;
+  const sources = { resolve: async () => ({ url: `https://store.torbox.example/dl/${++links}` }) };
+  // Four refusals in a row, each after more bytes arrived; the fifth link finishes it.
+  const downloads = engine(fs, (options, index) => index < 4 ? { error: refused(), written: (index + 1) * 100 } : null);
+  const queue = queueWith({ fs, downloads, sources });
+  const states = new Set();
+  queue.subscribe((jobs) => jobs.forEach((item) => states.add(item.state)));
+  const job = await settle(queue, queue.enqueue(game, debridPage(), '/data'));
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(links, 5, 'a new link each time, past the old limit of two');
+  assert.deepEqual(downloads.requests.map((request) => request.url), [1, 2, 3, 4, 5].map((n) => `https://store.torbox.example/dl/${n}`));
+  assert.ok(!states.has('awaiting-browser'));
+  assert.equal(downloads.requests[4].destination, downloads.requests[0].destination, 'the same partial carries on');
+  assert.equal(job.renewal, undefined);
+});
+
+test('debrid link: renewals that bring no bytes back off (30 s, 2 min, 10 min), then it fails saying why', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fs = memoryFs();
+  let links = 0;
+  const sources = { resolve: async () => ({ url: `https://store.torbox.example/dl/${++links}` }) };
+  const downloads = engine(fs, () => ({ error: refused() }));
+  const queue = queueWith({ fs, downloads, sources });
+  const id = queue.enqueue(game, debridPage(), '/data', [image('Game.exfat', 'https://other.example/Game.exfat')]);
+  for (const wait of [30e3, 2 * MIN, 10 * MIN]) {
+    const job = await until(queue, id, (item) => item.state === 'failed' && item.retryAt);
+    assert.ok(job.retryAt - Date.now() <= wait && job.retryAt - Date.now() > wait / 2, `waits ${wait} ms`);
+    t.mock.timers.tick(wait);
+  }
+  const job = await until(queue, id, (item) => item.state === 'failed' && !item.retryAt && links === 5);
+  assert.match(job.error, /link kept expiring/);
+  assert.equal(job.release.debrid?.service, 'torbox', 'not switched to another source: the link, not the source');
+});
+
+test('debrid link: at most six renewals an hour', async () => {
+  const fs = memoryFs();
+  let links = 0;
+  const sources = { resolve: async () => ({ url: `https://store.torbox.example/dl/${++links}` }) };
+  const downloads = engine(fs, (options, index) => ({ error: refused(), written: (index + 1) * 100 }));
+  const queue = queueWith({ fs, downloads, sources });
+  const job = await settle(queue, queue.enqueue(game, debridPage(), '/data'));
+  assert.equal(job.state, 'failed');
+  assert.equal(links, 7, 'the first link and six renewals');
+  assert.match(job.error, /link kept expiring/);
+});
+
+test('debrid link: one about to expire is renewed during the download, and before a resume starts on it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1e12 });
+  const fs = memoryFs();
+  let links = 0;
+  const sources = { resolve: async () => ({ url: `https://store.torbox.example/dl/${++links}` }) };
+  let open;
+  const gate = new Promise((resolve) => { open = resolve; });
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate, written: 10 } : null);
+  const queue = queueWith({ fs, downloads, sources });
+  const id = queue.enqueue(game, debridPage(), '/data');
+  await until(queue, id, () => downloads.tasks.length === 1);
+  t.mock.timers.tick(151 * MIN);
+  for (let i = 0; i < 20; i++) downloads.tasks[0].emit({ state: 'downloading', written: 20 + i });
+  const job = await settle(queue, id);
+  open();
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(links, 2, 'renewed while it downloaded');
+  assert.equal(downloads.requests[1].url, 'https://store.torbox.example/dl/2');
+  // A paused job whose link aged past the limit asks for a new one before it resumes.
+  const fs2 = memoryFs();
+  let links2 = 0;
+  const downloads2 = engine(fs2, (options, index) => index === 0 ? { error: Object.assign(new Error('cancelled'), { name: 'AbortError' }) } : null);
+  const queue2 = queueWith({ fs: fs2, downloads: downloads2, sources: { resolve: async () => ({ url: `https://store.torbox.example/x/${++links2}` }) } });
+  const id2 = queue2.enqueue(game, debridPage(), '/data');
+  await until(queue2, id2, (item) => item.state === 'failed');
+  t.mock.timers.tick(151 * MIN);
+  queue2.resume(id2);
+  const resumed = await settle(queue2, id2);
+  assert.equal(resumed.state, 'downloaded', resumed.error);
+  assert.equal(links2, 2);
+  assert.equal(downloads2.requests[1].url, 'https://store.torbox.example/x/2');
 });

@@ -73,6 +73,28 @@ import { mirrorsFor } from './download-mirrors.js';
   // launches: opening the app again is a try of its own.
   var BUSY_SERVER = /HTTP (?:429|5\d\d)\b|TorBox had a server error/;
   var RETRY_AFTER_MS = [3 * 6e4, 10 * 6e4];
+  // The network failing while a link is being resolved (no answer, a timeout, DNS, a connection dropped: libcurl's
+  // words, or a debrid service's "didn't answer") is the connection, not the source: it is tried again by itself this
+  // far apart before the download fails over or waits on the gamer. Not kept across launches.
+  var NETWORK_FAILURE = /Couldn't resolve|resolve host|Could not resolve|Timeout was reached|timed out|Couldn't connect|Failed to connect|Connection (?:refused|reset|timed out)|Failure when receiving data|Recv failure|Send failure|Server returned nothing|SSL connect error|Network is unreachable|No route to host|didn't answer|\bDNS\b/i;
+  var NETWORK_RETRY_MS = [30e3, 2 * 6e4, 10 * 6e4];
+  // A debrid service that asks to slow down (its RATE_LIMITED), while resolving: tried again this far apart.
+  var RATE_LIMITED = /asked to slow down/i;
+  var RATE_RETRY_MS = [2 * 6e4, 10 * 6e4, 10 * 6e4];
+  // A debrid service still fetching the file into its storage (its PENDING, after the resolver's own few minutes of
+  // waiting): asked again by itself every PENDING_RETRY_MS, PENDING_TRIES times at most (about two hours), the card
+  // saying so meanwhile; cancelling it stops that. Kept across launches: the first try comes a minute after.
+  var PENDING_RETRY_MS = 5 * 6e4;
+  var PENDING_TRIES = 24;
+  var STILL_PREPARING = /is still (?:fetching|preparing)/i;
+  // A debrid service's direct link lives a few hours (TorBox's three): it is asked for a new one when the engine is
+  // refused (401/403), and before it is that old (LINK_MAX_AGE_MS, at a start, a resume or during the download). The
+  // partial carries on: its resume is tied to the file's validator and size, not to the link. Against a loop, at most
+  // RENEWALS_PER_HOUR renewals an hour, and renewals that bring no new bytes wait longer each time (RENEW_BACKOFF_MS)
+  // until the download fails with the reason.
+  var LINK_MAX_AGE_MS = 150 * 6e4;
+  var RENEWALS_PER_HOUR = 6;
+  var RENEW_BACKOFF_MS = [0, 30e3, 2 * 6e4, 10 * 6e4];
   // The passwords the catalog's archives are published with. Some entries name none or the wrong one,
   // so after the catalog's own (or none) these are tried in turn. A wrong or missing password is caught
   // on the archive's headers before anything is written ("RAR archive password is missing.",
@@ -116,6 +138,8 @@ import { mirrorsFor } from './download-mirrors.js';
       delete job2.aheadPart;
       delete job2.retryAt;
       delete job2.autoRetries;
+      delete job2.networkRetries;
+      delete job2.rateRetries;
       if (job2.state === "installing") return { ...job2, state: "installer-required" };
       // An earlier build counted a title at rest (whose runtime ShadowMount mounts only at launch) as not
       // mounted; it is checked again.
@@ -190,13 +214,11 @@ import { mirrorsFor } from './download-mirrors.js';
     let queueApi = null;
     // A failed download's next try by itself (BUSY_SERVER): job id -> timer. job.retryAt is when, for its card.
     const retryTimers = /* @__PURE__ */ new Map();
-    function retryLater(job2) {
-      const tries = job2.autoRetries || 0;
-      if (job2.state !== "failed" || job2.cancelling || tries >= RETRY_AFTER_MS.length || !BUSY_SERVER.test(cause(job2.error || ""))) return false;
-      const wait2 = RETRY_AFTER_MS[tries];
-      job2.autoRetries = tries + 1;
+    // A failed job tried again by itself `wait2` ms from now (job.retryAt says when, for its card). Cancelling or
+    // removing it, or resuming it by hand, stops the timer's try.
+    function retryIn(job2, wait2, why) {
       job2.retryAt = Date.now() + wait2;
-      console.log(`[download-queue] ${job2.id}: the server is busy; trying again by itself in ${wait2 / 6e4} min`);
+      console.log(`[download-queue] ${job2.id}: ${why}; trying again by itself in ${wait2 >= 6e4 ? `${wait2 / 6e4} min` : `${wait2 / 1e3} s`}`);
       clearTimeout(retryTimers.get(job2.id));
       const timer = setTimeout(() => {
         retryTimers.delete(job2.id);
@@ -207,6 +229,95 @@ import { mirrorsFor } from './download-mirrors.js';
       timer?.unref?.();
       retryTimers.set(job2.id, timer);
       return true;
+    }
+    function retryLater(job2) {
+      const tries = job2.autoRetries || 0;
+      if (job2.state !== "failed" || job2.cancelling || tries >= RETRY_AFTER_MS.length || !BUSY_SERVER.test(cause(job2.error || ""))) return false;
+      job2.autoRetries = tries + 1;
+      return retryIn(job2, RETRY_AFTER_MS[tries], "the server is busy");
+    }
+    // A failure while resolving a link that is the connection or the service's pace, not the source (NETWORK_FAILURE,
+    // RATE_LIMITED, a debrid service still preparing the file): the job fails for now and is tried again by itself,
+    // without failing over to another source. False once its tries are used up (or for any other failure).
+    function waitAndRetry(job2, error2) {
+      const message = cause(error2.message || "");
+      if (job2.state === "pausing" || job2.cancelling) return false;
+      let why, wait2;
+      if (error2.code === "PENDING" || STILL_PREPARING.test(message)) {
+        const tries = job2.pending?.tries || 0;
+        if (tries >= PENDING_TRIES) return false;
+        job2.pending = { tries: tries + 1, since: job2.pending?.since ?? Date.now() };
+        [why, wait2] = [`the debrid service is still preparing the file (check ${tries + 1} of ${PENDING_TRIES})`, PENDING_RETRY_MS];
+      } else if (error2.code === "RATE_LIMITED" || RATE_LIMITED.test(message)) {
+        const tries = job2.rateRetries || 0;
+        if (tries >= RATE_RETRY_MS.length) return false;
+        job2.rateRetries = tries + 1;
+        [why, wait2] = ["the debrid service asked to slow down", RATE_RETRY_MS[tries]];
+      } else if (NETWORK_FAILURE.test(message)) {
+        const tries = job2.networkRetries || 0;
+        if (tries >= NETWORK_RETRY_MS.length) return false;
+        job2.networkRetries = tries + 1;
+        [why, wait2] = [`the network failed while resolving the link (${message})`, NETWORK_RETRY_MS[tries]];
+      } else return false;
+      job2.state = "failed";
+      // A service's own "resume it in a while" is what happens by itself now.
+      job2.error = error2.message.replace(/\s*Resume the download in a while\.$/, "");
+      return retryIn(job2, wait2, why);
+    }
+    // Whether the source a job downloads now is fetched through a debrid service (its link renewed by asking it again).
+    const throughDebrid = (job2) => {
+      try {
+        return sourceKind(job2.parts ? job2.currentSource : job2.release) === "debrid";
+      } catch {
+        return false;
+      }
+    };
+    // A debrid link old enough to expire soon (LINK_MAX_AGE_MS): `holder` the job or the set's part that keeps it.
+    const linkStale = (holder) => Boolean(holder?.linkAt) && Date.now() - holder.linkAt > LINK_MAX_AGE_MS;
+    // A link was had: the tries by itself that waited on resolving it start over.
+    function resolvedNow(job2) {
+      delete job2.pending;
+      delete job2.networkRetries;
+      delete job2.rateRetries;
+    }
+    // While a file downloads: a debrid link about to expire stops the transfer to be renewed (execute's catch, through
+    // renewLink), the partial kept, rather than the engine's ranges being refused one after another once it has.
+    function renewIfStale(job2, holder, task) {
+      if (!active2 || active2.job !== job2 || active2.renewDue || !linkStale(holder) || !throughDebrid(job2)) return;
+      active2.renewDue = true;
+      task.cancel();
+    }
+    /**
+     * Asks the debrid service for a new link to the file the job downloads (expired, refused, or about to be): its
+     * partial carries on. At most RENEWALS_PER_HOUR an hour; one that follows a renewal that brought no new bytes
+     * waits longer each time (RENEW_BACKOFF_MS) in a retry by itself. False when it gives up (the job's error says
+     * why): the loop guard tripped.
+     */
+    function renewLink(job2, reason) {
+      const now = Date.now();
+      const written = job2.parts ? job2.parts[job2.partIndex]?.written || 0 : job2.written || 0;
+      const last = job2.renewal ?? { at: [], stuck: 0, written: -1 };
+      const at = last.at.filter((time) => now - time < 36e5);
+      const stuck = last.written >= 0 && written <= last.written ? last.stuck + 1 : 0;
+      if (at.length >= RENEWALS_PER_HOUR || stuck >= RENEW_BACKOFF_MS.length) {
+        console.log(`[download-queue] ${job2.id}: the debrid link was renewed ${at.length} times this hour (${stuck} without new bytes); giving up for now`);
+        job2.renewal = { at, stuck, written };
+        job2.error = "The debrid service's link kept expiring without the download moving on. Try again later, or choose another source.";
+        return false;
+      }
+      job2.renewal = { at: [...at, now], stuck, written };
+      delete job2.options;
+      if (job2.parts?.[job2.partIndex]) delete job2.parts[job2.partIndex].options;
+      console.log(`[download-queue] ${job2.id}: asking the debrid service for a new link (${reason}; ${at.length + 1} this hour)`);
+      const wait2 = RENEW_BACKOFF_MS[stuck];
+      if (!wait2) {
+        job2.error = "";
+        job2.state = "queued";
+        return true;
+      }
+      job2.state = "failed";
+      job2.error = "The debrid service's link expired again without new bytes. Getting a new one by itself shortly.";
+      return retryIn(job2, wait2, "the renewed debrid link brought no new bytes");
     }
     function scheduleNextPart(job2) {
       if (!browserCapture || !job2.parts || !job2.partIndex || !job2.parts[job2.partIndex - 1]?.completed || !autoContinue()) return;
@@ -640,7 +751,7 @@ import { mirrorsFor } from './download-mirrors.js';
         job2.release = { ...next };
         job2.artifact = artifact2;
         job2.total = next.sizeBytes || null;
-        for (const key of ["options", "browserUrl", "directURL", "parts", "partIndex", "currentSource", "downloadDestination", "inspected", "adopted", "endChecked", "playerLink"]) delete job2[key];
+        for (const key of ["options", "browserUrl", "directURL", "parts", "partIndex", "currentSource", "downloadDestination", "inspected", "adopted", "endChecked", "playerLink", "linkAt", "renewal", "pending", "rangeBytes"]) delete job2[key];
         job2.error = "";
         job2.state = "queued";
         return true;
@@ -774,6 +885,11 @@ import { mirrorsFor } from './download-mirrors.js';
         if (job2.downloadDestination !== job2.artifact.destination && !fs.exists(job2.downloadDestination) && !fs.exists(`${job2.downloadDestination}.part`) && fs.exists(job2.artifact.destination) && fs.exists(`${job2.artifact.destination}.complete`))
           job2.downloadDestination = job2.artifact.destination;
         if (job2.routing) finishRouting(job2);
+        // A debrid link close to expiring is replaced before the download starts on it, not after it is refused.
+        if (job2.options && linkStale(job2) && throughDebrid(job2)) {
+          console.log(`[download-queue] ${job2.id}: the debrid link is ${Math.round((Date.now() - job2.linkAt) / 6e4)} min old; asking for a new one first`);
+          delete job2.options;
+        }
         if (!job2.options) {
           if (job2.release.manifestUrl) {
             const response = await http.request(job2.release.manifestUrl, { maxBytes: 4 * 1024 * 1024, signal });
@@ -792,7 +908,11 @@ import { mirrorsFor } from './download-mirrors.js';
               sha256: repacked ? void 0 : job2.release.sha256 || void 0
             };
             delete job2.directURL;
+            // When a debrid link was had, for its renewal before it expires.
+            if (throughDebrid(job2)) job2.linkAt = Date.now();
+            else delete job2.linkAt;
           }
+          resolvedNow(job2);
           job2.total = job2.options.expectedBytes || null;
           change();
         }
@@ -849,6 +969,9 @@ import { mirrorsFor } from './download-mirrors.js';
               task.cancel();
             }
             if (["extraction-required", "downloaded"].includes(job2.artifact.nextAction)) checkHeaders(job2, `${job2.downloadDestination}.part`, task);
+            // A debrid link about to expire is renewed now, the partial kept (see renewLink), rather than the
+            // engine's ranges being refused one after another once it has.
+            renewIfStale(job2, job2, task);
           }
           emit2();
         });
@@ -892,6 +1015,7 @@ import { mirrorsFor } from './download-mirrors.js';
         job2.state = job2.artifact.nextAction === "shadowmount" ? "downloaded" : job2.artifact.nextAction === "downloaded" ? "file-downloaded" : job2.artifact.nextAction;
         job2.written = job2.total || job2.written;
         job2.bytesPerSecond = 0;
+        delete job2.renewal;
         if ((job2.artifact.nextAction === "extraction-required" || job2.output) && archives) await extract(job2, [job2.downloadDestination]);
         delete job2.reresolved;
         notifications.show(t("downloads.notice.complete"), job2.title);
@@ -899,6 +1023,16 @@ import { mirrorsFor } from './download-mirrors.js';
       } catch (error2) {
         if (noRoom) error2 = noRoom;
         console.log("[download-queue] transfer stopped:", error2.message);
+        // Whether it failed before its file was handed to the engine: while its link was being resolved.
+        const resolving = !active2.transferring;
+        const stopping = job2.state === "pausing" || job2.cancelling;
+        // A debrid link refused by the engine (expired: 401/403) or stopped before it expires is asked for again,
+        // with no limit but the loop guard (renewLink); never the browser, which has nothing to pass for it.
+        const debrid = throughDebrid(job2);
+        const linkRefused = !resolving && /browser verification required|link expired|HTTP 40[13]\b/i.test(cause(error2.message));
+        const renewed = debrid && !stopping && (active2.renewDue || linkRefused) && renewLink(job2, active2.renewDue ? "it was about to expire" : "the engine was refused");
+        // The network or the service's pace while resolving: tried again by itself, before any other source.
+        const waiting = !renewed && resolving && !(error2 instanceof BrowserRequired) && waitAndRetry(job2, error2);
         // The engine words every 401/403 as a possible browser check; from Archive.org it is a
         // restricted or removed item, so it fails over like a dead link and reads as one.
         const refused = archiveRefusal(job2.parts ? job2.currentSource : job2.release, cause(error2.message));
@@ -919,9 +1053,10 @@ import { mirrorsFor } from './download-mirrors.js';
         const gone = !expired && (refused || /HTTP (?:404|410)\b/.test(cause(error2.message))) ? sharedLink(job2, failedSource) : null;
         if (gone) reportOutcome(gone, false);
         if (expired) console.log("[download-queue] the captured link expired while queued; asking for the check again");
-        const browser = !refused && (expired || error2 instanceof BrowserRequired || /browser verification required/i.test(cause(error2.message)));
-        const retried = job2.state !== "pausing" && !job2.cancelling && browser && active2.transferring && reresolve(job2);
-        const switched = !retried && !expired && job2.state !== "pausing" && !job2.cancelling && failOver(job2, error2);
+        const browser = !refused && !debrid && (expired || error2 instanceof BrowserRequired || /browser verification required/i.test(cause(error2.message)));
+        const retried = renewed || waiting || job2.state !== "pausing" && !job2.cancelling && browser && active2.transferring && reresolve(job2);
+        // A debrid link that kept expiring (renewLink gave up) is not the source's fault: no other source for it.
+        const switched = !retried && !expired && !(debrid && linkRefused) && job2.state !== "pausing" && !job2.cancelling && failOver(job2, error2);
         if (!retried && !switched && job2.state !== "pausing") {
           job2.state = browser ? "awaiting-browser" : "failed";
           job2.error || (job2.error = job2.adopted && STALE_PARTIAL.test(cause(error2.message)) ? ADOPTED : error2.message);
@@ -1562,10 +1697,15 @@ import { mirrorsFor } from './download-mirrors.js';
               delete job2.aheadPart;
             }
           }
+          // A debrid link close to expiring is replaced before the part starts on it.
+          if (part.options && linkStale(part) && throughDebrid(job2)) delete part.options;
           if (!part.options) {
             const resolved = await sources.resolve(source2, { signal, directURL: job2.directURL });
             part.options = { ...resolved, expectedBytes: source2.sizeBytes || void 0, sha256: source2.sha256 || void 0 };
             delete job2.directURL;
+            if (throughDebrid(job2)) part.linkAt = Date.now();
+            else delete part.linkAt;
+            resolvedNow(job2);
             change();
           }
           if (job2.state === "pausing") return;
@@ -1606,6 +1746,7 @@ import { mirrorsFor } from './download-mirrors.js';
                 task.cancel();
               }
               if (index === 0) checkHeaders(job2, `${part.destination}.part`, task);
+              renewIfStale(job2, part, task);
               // A first part that is a whole image needs no other part (placeImagePart): no browser for the next.
               if (index === 0 && IMAGE_KINDS.includes(job2.inspected)) endAhead(job2, null);
             }
@@ -1631,6 +1772,7 @@ import { mirrorsFor } from './download-mirrors.js';
           part.written = result.written ?? part.total ?? part.written;
           job2.written = job2.parts.reduce((sum, item) => sum + item.written, 0);
           part.completed = true;
+          delete job2.renewal;
           change();
           const inspection = index === 0 && archives?.inspect ? archives.inspect([part.destination]) : null;
           if (inspection?.refusal) throw new Error(inspection.refusal);
@@ -2201,6 +2343,10 @@ import { mirrorsFor } from './download-mirrors.js';
       change();
       pump(running);
     }
+    // A debrid service still preparing a file when the app closed: asked again a minute after it opens (waitAndRetry).
+    for (const job2 of jobs) {
+      if (job2.state === "failed" && job2.pending?.tries && job2.pending.tries < PENDING_TRIES) retryIn(job2, 6e4, "the debrid service was still preparing the file when the app closed");
+    }
     function continueJob(job2, url, verifiedOptions) {
       if (job2.state !== "awaiting-browser" || active2?.job === job2) return;
       webURL(url);
@@ -2336,6 +2482,10 @@ import { mirrorsFor } from './download-mirrors.js';
         if (paths.length) await removing(job2, () => removeAll(paths));
         delete job2.directURL;
         delete job2.reresolved;
+        // Started over by hand: no try by itself is waiting any more, and the debrid link is asked for anew.
+        for (const key of ["retryAt", "pending", "renewal", "linkAt", "networkRetries", "rateRetries"]) delete job2[key];
+        clearTimeout(retryTimers.get(job2.id));
+        retryTimers.delete(job2.id);
         if (job2.parts?.[job2.partIndex] && !job2.parts[job2.partIndex].completed) {
           job2.parts[job2.partIndex].written = 0;
           delete job2.parts[job2.partIndex].options;
