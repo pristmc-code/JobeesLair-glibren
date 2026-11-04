@@ -425,7 +425,9 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
         // What the filter hides, said and undone in one press; all of a game's links hidden says so.
         noneViaDebrid ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:showAll:${current}`, onPress: () => setUnfiltered(true), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "alert", text: t2("formats.debridNone", { service: serviceName(activeService()) }), note: t2("formats.showAll"), end: null }) }) : filtered.hidden ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:showAll:${current}`, onPress: () => setUnfiltered(true), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "alert", text: t2(filtered.shown ? "formats.hidden" : "formats.allHidden", { count: filtered.hidden }), note: t2("formats.showAll"), end: null }) }) : null,
         unfiltered && isFiltering(filter) ? /* @__PURE__ */ (0, jsx)(View, { onPress: () => setUnfiltered(false), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "layers", text: t2("formats.reapply"), note: t2("formats.reapplyNote"), end: null }) }) : null,
-        /* @__PURE__ */ (0, jsx)(FormatSearch, { gameId: current, releases: healthy })
+        /* @__PURE__ */ (0, jsx)(FormatSearch, { gameId: current, releases: healthy }),
+        // glibren: "Check link health" in the top tools too, beside "Find formats" (it was at the end of the list).
+        checkLinks ? /* @__PURE__ */ (0, jsx)(LinkCheck, { gameId: current, onCheck: checkLinks }) : null
       ] }) : null,
       sections.filter(({ group }) => group === "direct" || group === "page" || group === "torrent" || browser && group === "browser").map(
         ({ group, items }) => /* @__PURE__ */ (0, jsx)(
@@ -473,7 +475,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
           tag: advice
         }
       ) : null,
-      checkLinks ? /* @__PURE__ */ (0, jsx)(LinkCheck, { gameId: current, onCheck: checkLinks }) : null,
+      !offered && checkLinks ? /* @__PURE__ */ (0, jsx)(LinkCheck, { gameId: current, onCheck: checkLinks }) : null,
       // Links that no longer lead to the file, out of the way until asked for.
       count("unavailable") > 0 && !deadShown ? /* @__PURE__ */ (0, jsx)(View, { onPress: () => setDeadShown(true), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "alert", text: t2("links.showDead", { count: count("unavailable") }), note: t2("links.section.deadNote") }) }) : null,
       count("unavailable") > 0 && deadShown ? /* @__PURE__ */ (0, jsx)(
