@@ -189,6 +189,10 @@
             "pattern": "^[a-z0-9][a-z0-9-]{0,40}\\.elf$",
             "description": "The .elf it is built into, in the app folder."
           },
+          "network": {
+            "type": "boolean",
+            "description": "Links the pinned libcurl and OpenSSL ports into the payload, for HTTPS of its own (CA list: /system/common/cert/CA_LIST.cer)."
+          },
           "libs": {
             "type": "array",
             "items": {

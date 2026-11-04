@@ -308,7 +308,11 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
   }
   // TorBox's item for a link, so asking again (a resume, a retry) finds the same one instead of adding it twice.
   function remember(hash, entry) {
-    const items = Object.entries({ ...record().items ?? {}, [hash]: { kind: entry.kind, id: entry.id, at: Date.now() } });
+    // glibren-bg: o arquivo do pedido tambem (fileId/zip), para o payload de segundo plano pedir um link novo sozinho.
+    const kept = record().items?.[hash];
+    const fileId = entry.fileId !== void 0 ? entry.fileId : kept?.id === entry.id ? kept?.fileId : void 0;
+    const zip = entry.repacked !== void 0 ? Boolean(entry.repacked) : kept?.id === entry.id ? kept?.zip : void 0;
+    const items = Object.entries({ ...record().items ?? {}, [hash]: { kind: entry.kind, id: entry.id, fileId, zip, at: Date.now() } });
     items.sort((a, b) => b[1].at - a[1].at);
     update({ items: Object.fromEntries(items.slice(0, KEPT_ITEMS)) });
   }
@@ -335,6 +339,21 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
       return torrent ? { url: result.url, expectedBytes: result.repacked ? null : result.size || null, repacked: Boolean(result.repacked) } : { url: result.url };
     }
   };
+
+  /**
+   * glibren-bg: a fonte de um download como o payload de segundo plano (background-downloads.js) a entende:
+   * { provider: "torbox", kind, id, fileId, zip } para o TorBox (o bastante para pedir outro link quando este
+   * vencer), { provider: "alldebrid" }, ou null (link direto).
+   */
+  function debridHandoff(source) {
+    const service = source?.debrid?.service;
+    if (!service) return null;
+    if (service !== "torbox") return { provider: service };
+    const item = record().items?.[md5(linkOf(source))];
+    return item ? { provider: "torbox", kind: item.kind, id: item.id, fileId: item.fileId ?? null, zip: Boolean(item.zip) } : { provider: "torbox" };
+  }
+  /** glibren-bg: a chave do servico, so para entregar ao payload de segundo plano (POST /secret em 127.0.0.1). */
+  var debridSecret = (service) => service === "alldebrid" ? allKeyOf() : service === "torbox" ? keyOf() : "";
 
   // "TorBox Instant": which links TorBox already holds (so they start at once), asked once per half hour per
   // link, only while no download needs the network. Its hosts list is refreshed in the same turn once a day.
@@ -397,4 +416,4 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
     return typeof api.cachedFiles === "function" ? api.cachedFiles(links) : null;
   }
 
-export { activeService, askInstant as askTorBoxInstant, torBoxFileNames, debridResolver, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };
+export { activeService, askInstant as askTorBoxInstant, torBoxFileNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };
