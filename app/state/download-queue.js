@@ -27,6 +27,7 @@ import { readJSON } from './read-json.js';
 import { STAGING_SUFFIXES } from './extraction-staging.js';
 import { busyWhileOpen, mountedImages, shadowRequest, within2 } from './shadowmount.js';
 import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
+import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
   var BUSY = ["queued", ...ACTIVE];
@@ -719,6 +720,21 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       job2.message = t("downloads.fpkgHeld");
       return true;
     }
+    // The engine's connections and range size for one file, from the host its bytes come from (state/download-tuning.js,
+    // the one table). A file that already has a partial keeps the range size it started with (`legacy` for one an
+    // earlier build started), since its resume checkpoint is tied to it.
+    function transferTuning(holder, url, destination, legacy) {
+      const tuned = tuningFor(url);
+      const started = [".part", ".resume"].some((suffix) => {
+        try {
+          return fs.exists(destination + suffix);
+        } catch {
+          return false;
+        }
+      });
+      const rangeBytes = rangeFor(holder, tuned, started, legacy);
+      return { connections: tuned.connections, ...rangeBytes ? { rangeBytes } : {} };
+    }
     async function execute(job2) {
       let task;
       let unsubscribe;
@@ -791,7 +807,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         fs.mkdir(job2.artifact.directory, { recursive: true });
         fs.mkdir(job2.downloadDestination.slice(0, job2.downloadDestination.lastIndexOf("/")), { recursive: true });
         active2.transferring = true;
-        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: void 0, connections: 64, adaptive: true, rangeBytes: 16 * 1024 * 1024, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true });
+        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: void 0, ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true });
         active2.task = task;
         // Most catalog releases do not say their size, so the check above had nothing to go on: once the
         // server does, the rest is checked against the drive once, before it fills (the partial file counts
@@ -1551,7 +1567,8 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
           const task = downloads.enqueue({
             ...part.options,
             rejectHtml: true,
-            connections: 64,
+            // A part an earlier build started kept the engine's default range size (none was given).
+            ...transferTuning(part, part.options.url, part.destination, null),
             adaptive: true,
             destination: part.destination,
             storageRoot: job2.root,
