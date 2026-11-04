@@ -4,6 +4,23 @@ What changed in each version of Jobee'sLair. Each release on
 [GitHub](https://github.com/JVK3R/JobeesLair/releases) carries the full notes, the files and their
 SHA-256 checksums.
 
+## Unreleased
+
+- **Unpacking no longer holds up the queue.** A downloaded archive is unpacked beside the next download, which starts
+  at once; archives still unpack one at a time, in order ("Waiting to extract…"). A download that only fits once the
+  unpacking on its drive is done waits for it instead of failing.
+- **Mirrors.** A file the catalog lists on several direct links (the same SHA-256, or the same size and name) is
+  downloaded from up to four of them at once; the engine drops any that does not serve the same bytes.
+- **Gentler on busy hosts.** How many connections a download opens is set per host in one table
+  (`app/state/download-tuning.js`): fewer for archive.org, MediaFire and GitHub, 64 elsewhere as before.
+- **TorBox links renewed whenever they expire,** not twice at most, and before they are 2.5 hours old; the partial
+  carries on. Renewals that bring nothing back slow down and then stop, saying why.
+- **TorBox still preparing a file** is asked again every 5 minutes, for about two hours, by itself; cancel stops it.
+- **Network hiccups while a link is resolved** (no answer, a timeout, DNS) are tried again after 30 s, 2 and 10
+  minutes before another source is tried.
+- **The TorBox and AllDebrid keys are sealed** in debrid.json, with a secret kept apart from it: a copy of the data
+  folder no longer carries a usable key. Someone with full access to the console can still read it.
+
 ## 0.5.5 (2026-11-02)
 
 - **Broken links, flagged for everyone.** When downloads find a game's link gone (HTTP 404 or 410), they tell
