@@ -178,7 +178,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     const focused = useIsFocused();
     const ink2 = focused ? colors.fg : colors.muted;
     return /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
-      cdn ? /* @__PURE__ */ (0, jsx)(CdnAura, { radius: 8, width: 492 }) : null,
+      cdn ? /* @__PURE__ */ (0, jsx)(CdnAura, { radius: 8, width: 962 }) : null,
       /* @__PURE__ */ (0, jsx)(FocusRing, {}),
       cdn ? /* @__PURE__ */ (0, jsx)(CdnSpark, { size: 18 }) : /* @__PURE__ */ (0, jsx)(Icon, { name: icon, size: 18, color: ink2 }),
       /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, gap: 3 }, children: [
@@ -206,8 +206,8 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 6 }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { style: { marginBottom: 6, gap: 3, paddingHorizontal: 18 }, children: [
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 20, fontWeight: 600, color: colors.subtle }, children: `${t2(title)} \xB7 ${items.length}` }),
-        tag ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 660, fontFamily: "Exo2", fontSize: 21, fontWeight: 600, color: ADVICE_TONE[tag.key] ?? colors.subtle, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, children: tag.text }) : null,
-        note ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 660, fontFamily: "Exo2", fontSize: 21, color: colors.subtle, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, children: t2(note) }) : null
+        tag ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 1130, fontFamily: "Exo2", fontSize: 21, fontWeight: 600, color: ADVICE_TONE[tag.key] ?? colors.subtle, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, children: tag.text }) : null,
+        note ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 1130, fontFamily: "Exo2", fontSize: 21, color: colors.subtle, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, children: t2(note) }) : null
       ] }),
       items.map(({ release, index }, row) => {
         const { name, detail: detail2, size, host } = describeSource(release);
@@ -257,7 +257,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
       /* @__PURE__ */ (0, jsx)(Icon, { name: icon, size: 18, color: ink2 }),
       /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, gap: 3 }, children: [
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 23, fontWeight: 600, color: colors.fg }, children: text }),
-        /* @__PURE__ */ (0, jsx)(Text, { style: [{ width: 570, fontFamily: "Exo2", fontSize: 21, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, { color: ink2 }], children: note })
+        /* @__PURE__ */ (0, jsx)(Text, { style: [{ width: 1040, fontFamily: "Exo2", fontSize: 21, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, { color: ink2 }], children: note })
       ] }),
       end ? /* @__PURE__ */ (0, jsx)(Icon, { name: end, size: 18, color: ink2 }) : null
     ] });
@@ -298,7 +298,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
         chip("unknown", t2(filter.unknown ? "formats.filter.unknownOn" : "formats.filter.unknownOff"), filter.unknown, () => setFormatFilter(toggleUnknown(filter))),
         /* @__PURE__ */ (0, jsx)(View, { focusKey: "sources:formats:debrid", onPress: () => keyed ? setFormatFilter(toggleDebridOnly(filter)) : setExplain(true), style: (_state) => [...chipStyle(keyed && Boolean(filter.debridOnly))(_state), keyed ? null : { opacity: 0.55 }], children: /* @__PURE__ */ (0, jsx)(ChipFace, { text: t2("formats.filter.debridOnly", { service: serviceName(activeService() ?? "torbox") }), on: keyed && Boolean(filter.debridOnly) }) }, "debrid")
       ] }),
-      explain && !keyed ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 660, fontFamily: "Exo2", fontSize: 19, color: colors.subtle, lineHeight: 26 }, children: t2("formats.filter.debridNeedsKey") }) : null,
+      explain && !keyed ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 1130, fontFamily: "Exo2", fontSize: 19, color: colors.subtle, lineHeight: 26 }, children: t2("formats.filter.debridNeedsKey") }) : null,
       // glibren: with images shown, which image types (exFAT, FFPKG, FFPFS with FFPFSC).
       imagesShown(filter) ? /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }, children: [
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 19, fontWeight: 600, color: colors.subtle }, children: t2("formats.filter.imageTypes") }),
@@ -407,7 +407,8 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     // glibren: what "Find via the browser" captures by (download-queue.js captureFileLink).
     const finder = (0, useMemo)(() => ({ title, titleId: getGame(current)?.titleId ?? current }), [title, current]);
     const t2 = useT();
-    return /* @__PURE__ */ (0, jsx)(SideSheet, { title: t2("sources.title"), subtitle: title, onClose, children: /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 42, padding: 9, paddingBottom: 48 }, children: [
+    // glibren: 2/3 da largura da tela (1920), para ver a lista inteira com os selos e os botoes ao lado.
+    return /* @__PURE__ */ (0, jsx)(SideSheet, { title: t2("sources.title"), subtitle: title, onClose, width: 1280, children: /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 42, padding: 9, paddingBottom: 48 }, children: [
       editions.length > 1 ? /* @__PURE__ */ (0, jsx)(
         Versions,
         {
