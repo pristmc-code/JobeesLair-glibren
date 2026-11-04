@@ -50,6 +50,8 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 .job.paused .bar>i{background:var(--warn)}
 .job.completed .bar>i{background:var(--good)}
 .job.failed .bar>i{background:var(--bad)}
+.job.waiting-app .bar>i{background:var(--subtle)}
+.wait{font-size:13.5px;color:var(--muted)}
 .nums{display:flex;flex-wrap:wrap;gap:2px 14px;font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
 .nums b{color:var(--fg);font-weight:600}
 .err{font-size:13.5px;color:#fecaca}
@@ -123,7 +125,8 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 const T = {
   pt: { sub: "Downloads em segundo plano", online: "PS5 conectado", offline: "PS5 sem resposta", connecting: "Conectando…",
     locked: "Controles", unlocked: "Liberado", active: "Baixando", speed: "Velocidade", left: "Falta",
-    states: { downloading: "Baixando", connecting: "Conectando", verifying: "Conferindo", queued: "Na fila", paused: "Pausado", completed: "Concluído", failed: "Falhou", "needs-app": "Abra o app" },
+    states: { downloading: "Baixando", connecting: "Conectando", verifying: "Conferindo", queued: "Na fila", paused: "Pausado", completed: "Concluído", failed: "Falhou", "needs-app": "Abra o app", "waiting-app": "Aguardando o app" },
+    waitingApp: "Aguardando a Jobee'sLair: começa quando você abrir o app",
     of: "de", eta: "restam", conns: "conexões", pause: "Pausar", resume: "Retomar", cancel: "Cancelar",
     confirm: "Cancelar apaga o que já foi baixado deste jogo. Confirma?", yes: "Sim, cancelar", no: "Não",
     empty: "Nenhum download no segundo plano agora. Quando a Jobee'sLair entregar um download ao PS5, ele aparece aqui.",
@@ -132,7 +135,8 @@ const T = {
     noPin: "Defina um PIN nas configurações da Jobee'sLair para usar os controles." },
   en: { sub: "Background downloads", online: "PS5 connected", offline: "PS5 not answering", connecting: "Connecting…",
     locked: "Controls", unlocked: "Unlocked", active: "Downloading", speed: "Speed", left: "Left",
-    states: { downloading: "Downloading", connecting: "Connecting", verifying: "Verifying", queued: "Queued", paused: "Paused", completed: "Done", failed: "Failed", "needs-app": "Open the app" },
+    states: { downloading: "Downloading", connecting: "Connecting", verifying: "Verifying", queued: "Queued", paused: "Paused", completed: "Done", failed: "Failed", "needs-app": "Open the app", "waiting-app": "Waiting for app" },
+    waitingApp: "Waiting for Jobee'sLair: starts when you open the app",
     of: "of", eta: "left", conns: "connections", pause: "Pause", resume: "Resume", cancel: "Cancel",
     confirm: "Cancelling deletes what was downloaded for this game. Go ahead?", yes: "Yes, cancel", no: "No",
     empty: "No background downloads right now. When Jobee'sLair hands a download to the PS5, it shows here.",
@@ -167,6 +171,7 @@ const demo = { t: Date.now(), jobs: [
   { id: "b2", name: "Gran Turismo 7", state: "downloading", written: 12.1 * GB, total: 97.4 * GB, bytesPerSecond: 21.3 * MB, connectionsActive: 32 },
   { id: "b3", name: "Astro Bot", state: "paused", written: 4.2 * GB, total: 41.7 * GB, bytesPerSecond: 0, connectionsActive: 0 },
   { id: "b4", name: "Marvel's Spider-Man 2", state: "queued", written: 0, total: 98.9 * GB, bytesPerSecond: 0, connectionsActive: 0 },
+  { id: "b10", name: "Demon's Souls (MediaFire)", state: "waiting-app", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0 },
   { id: "b5", name: "Returnal", state: "queued", written: 0, total: 60.3 * GB, bytesPerSecond: 0, connectionsActive: 0 },
   { id: "b6", name: "Ratchet & Clank: Rift Apart", state: "queued", written: 0, total: 42.8 * GB, bytesPerSecond: 0, connectionsActive: 0 },
   { id: "b7", name: "Demon's Souls", state: "queued", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0 },
@@ -214,7 +219,9 @@ function render() {
       <div class="bar"><i style="width:${pct}%"></i></div><div class="nums">${nums.join("")}</div>`;
     el.querySelector(".name").textContent = j.name;
     if (j.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = j.error; el.append(e); }
-    if (j.state !== "completed") {
+    // So o app sabe baixar este (pagina de site, navegador...): sem botoes aqui; cancelar fica no app.
+    if (j.state === "waiting-app") { const w = document.createElement("div"); w.className = "wait"; w.textContent = L.waitingApp; el.append(w); }
+    else if (j.state !== "completed") {
       if (confirming === j.id) {
         const c = document.createElement("div"); c.className = "confirm";
         c.innerHTML = `<div></div><div class="row"><button class="btn" type="button" data-no>${L.no}</button><button class="btn solid-danger" type="button" data-yes>${L.yes}</button></div>`;

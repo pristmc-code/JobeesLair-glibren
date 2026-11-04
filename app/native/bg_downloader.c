@@ -49,6 +49,7 @@
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
@@ -583,6 +584,11 @@ typedef struct {
   int64_t link_at, created, updated;
   char state[24];  // queued connecting downloading verifying paused completed failed cancelled needs-app
   char by[8];      // "remote": a ultima pausa ou cancelamento veio do celular (pagina da porta 34201)
+  // A fila do app entregue com antecedencia (POST /queue): `ahead` baixa sozinho com o app fechado, na ordem `order`;
+  // `placeholder` ("waiting-app") so mostra no celular um item que so o app sabe baixar (sem URL). `key`: o id do job
+  // na fila do app. `followed`: o app abriu e acompanha este job (so na memoria).
+  int ahead, placeholder, followed, order;
+  char key[40];
   char error[600];
   int awaiting_app, renewals;
   uint64_t written, total;
@@ -611,6 +617,14 @@ static int g_monitor_announced;
 static void monitor_clear_sessions(void);
 static int g_monitor_port_now(void);
 
+// O app falou com o payload ha pouco (qualquer chamada com o token): enquanto fala, quem comeca os downloads e ele.
+// Com o app fechado (ou suspenso: o JS para), os jobs entregues com antecedencia seguem sozinhos. Comeca "agora", para
+// um payload recem-subido esperar o app mandar a fila antes de comecar o que ficou no jobs.json.
+static int64_t g_last_app_ms;
+static int64_t g_app_silence_ms = 15000;
+// Para testes: o espaco livre fingido (BGDL_FAKE_FREE_BYTES); 0 = o de verdade.
+static uint64_t g_fake_free;
+
 static int terminal(const char* state) {
   return !strcmp(state, "completed") || !strcmp(state, "failed") || !strcmp(state, "cancelled") || !strcmp(state, "needs-app");
 }
@@ -629,6 +643,9 @@ static void job_json(Buf* b, const Job* j) {
   buf_str(b, ",\"notifyFailed\":"); buf_json(b, j->notify_failed);
   buf_str(b, ",\"error\":"); buf_json(b, j->error);
   buf_str(b, ",\"by\":"); buf_json(b, j->by);
+  buf_str(b, ",\"key\":"); buf_json(b, j->key);
+  buf_fmt(b, ",\"ahead\":%s,\"placeholder\":%s,\"followed\":%s,\"order\":%d", j->ahead ? "true" : "false", j->placeholder ? "true" : "false",
+          j->followed ? "true" : "false", j->order);
   buf_fmt(b, ",\"expectedBytes\":%llu,\"rangeBytes\":%llu,\"connections\":%u,\"rejectHtml\":%s",
           (unsigned long long)j->expected_bytes, (unsigned long long)j->range_bytes, j->connections, j->reject_html ? "true" : "false");
   buf_str(b, ",\"source\":{\"provider\":"); buf_json(b, j->provider);
@@ -706,7 +723,11 @@ static int job_field(JP* jp, const char* key, void* ctx) {
   TEXT("state", state);
   TEXT("error", error);
   TEXT("by", by);
+  TEXT("key", key);
 #undef TEXT
+  if (!strcmp(key, "ahead")) return jp_bool(jp, &j->ahead) ? 1 : -1;
+  if (!strcmp(key, "placeholder")) return jp_bool(jp, &j->placeholder) ? 1 : -1;
+  if (!strcmp(key, "order")) { if (!jp_uint(jp, &number)) return -1; j->order = number > 100000 ? 100000 : (int)number; return 1; }
   if (!strcmp(key, "expectedBytes")) return jp_uint(jp, &j->expected_bytes) ? 1 : -1;
   if (!strcmp(key, "rangeBytes")) return jp_uint(jp, &j->range_bytes) ? 1 : -1;
   if (!strcmp(key, "connections")) { if (!jp_uint(jp, &number)) return -1; j->connections = (unsigned)number; return 1; }
@@ -751,6 +772,15 @@ static int is_hex64(const char* text) {
 
 // Valida um job (do corpo de POST /jobs ou de jobs.json). `error` recebe o motivo.
 static int validate_job(Job* j, char* error, size_t cap) {
+  // Um marcador "waiting-app": so nome, tamanho e ordem, nada para baixar.
+  if (j->placeholder) {
+    if (!j->key[0] || !safe_token_text(j->key)) { snprintf(error, cap, "a waiting item needs its key"); return 0; }
+    j->url[0] = j->destination[0] = j->storage_root[0] = j->publish_to[0] = 0;
+    j->ahead = 0;
+    snprintf(j->state, sizeof j->state, "waiting-app");
+    return 1;
+  }
+  if (j->key[0] && !safe_token_text(j->key)) { snprintf(error, cap, "invalid key"); return 0; }
   if (!safe_url(j->url)) { snprintf(error, cap, "url must be an http(s) URL without spaces"); return 0; }
   if (!safe_path(j->destination)) { snprintf(error, cap, "destination must be an absolute file path"); return 0; }
   if (j->storage_root[0]) {
@@ -1460,7 +1490,7 @@ static int probe_source(Engine* e) {
     conn_configure(c);
     CURLcode result = perform_probe(e, c);
     if (stopping(e)) return 0;
-    if (c->status == 401 || c->status == 403) { e->needs_renew = 1; return 0; }
+    if (c->status == 401 || c->status == 403 || c->status == 410) { e->needs_renew = 1; return 0; }
     char text[400];
     if ((congested(c, result) || (result == CURLE_WRITE_ERROR && c->status >= 500)) && attempt < 6) {
       logf_("job %s: sonda tentativa %u falhou: %s", e->job->id, attempt, describe(c, result, text, sizeof text));
@@ -1845,6 +1875,30 @@ static void notify_job(Job* j, int ok) {
 }
 
 // Uma passada de um job. Volta quando terminou, falhou, foi pausado/liberado ou o processo vai parar.
+// Sem o app nao ha a conta de espaco dele: um job entregue com antecedencia so comeca se o que falta (menos a parcial)
+// couber no disco com 256 MiB de folga. Devolve 1 (e o motivo) quando nao cabe; tamanho desconhecido passa.
+static int space_short(const Job* j, char* why, size_t cap) {
+  const uint64_t size = j->expected_bytes ? j->expected_bytes : j->total;
+  if (!size) return 0;
+  char part[1100], dir[1024];
+  snprintf(part, sizeof part, "%s.part", j->destination);
+  struct stat st;
+  const uint64_t have = stat(part, &st) ? 0 : (uint64_t)st.st_size;
+  const uint64_t need = (size > have ? size - have : 0) + 256ull * 1024 * 1024;
+  uint64_t free_bytes = g_fake_free;
+  if (!free_bytes) {
+    snprintf(dir, sizeof dir, "%s", j->storage_root[0] ? j->storage_root : j->destination);
+    if (!j->storage_root[0]) { char* slash = strrchr(dir, '/'); if (slash && slash != dir) *slash = 0; }
+    struct statvfs vfs;
+    if (statvfs(dir, &vfs)) return 0;
+    free_bytes = (uint64_t)vfs.f_bavail * (uint64_t)vfs.f_frsize;
+  }
+  if (free_bytes >= need) return 0;
+  snprintf(why, cap, "Not enough space on the drive: it needs %.1f GB free and has %.1f GB. Free space and open Jobee'sLair.",
+           (double)need / 1e9, (double)free_bytes / 1e9);
+  return 1;
+}
+
 static void run_job(Job* j) {
   Engine engine;
   Engine* e = &engine;
@@ -1864,6 +1918,10 @@ static void run_job(Job* j) {
     e->root_dev = st.st_dev; e->root_ino = st.st_ino; e->has_root = 1;
   }
   compute_receipt_identity(e);
+  if (j->ahead && !j->followed) {
+    char why[200];
+    if (space_short(j, why, sizeof why)) { finish(j, "needs-app", why); notify_job(j, 0); logf_("job %s: %s", j->id, why); goto out; }
+  }
   struct stat existing;
   if (!lstat(j->destination, &existing)) {
     if (recover_existing(e)) {
@@ -1978,13 +2036,16 @@ static void* downloader_loop(void* arg) {
   while (!g_stop) {
     Job* next = NULL;
     int64_t now = now_s(), soonest = 0;
+    const int app_away = mono_ms() - g_last_app_ms >= g_app_silence_ms;
     for (int i = 0; i < g_job_count && g_running_count < g_max_running; ++i) {
       Job* j = g_jobs[i];
       // `running` ja vale antes do estado mudar (run_job o muda sem a trava): sem ele, dois trabalhadores pegariam o mesmo job.
-      if (strcmp(j->state, "queued") || j->running) continue;
+      if (strcmp(j->state, "queued") || j->running || j->placeholder) continue;
+      // Entregue com antecedencia: com o app aberto, so quando ele o comeca (follow); fechado, segue a fila sozinho.
+      if (j->ahead && !j->followed && !app_away) continue;
       if (j->retry_at > now) { if (!soonest || j->retry_at < soonest) soonest = j->retry_at; continue; }
-      next = j;
-      break;
+      const int rank = j->ahead && !j->followed ? j->order : 0, best = next ? (next->ahead && !next->followed ? next->order : 0) : 0;
+      if (!next || rank < best) next = j;
     }
     if (!next) {
       struct timespec until;
@@ -2275,6 +2336,135 @@ static void handle_create(int fd, Request* r) {
   announce_monitor();
 }
 
+// POST /queue {"items":[{"key","name","total","job"?:{...}}]}: a fila do app que ainda nao comecou, na ordem. Com
+// "job" (link direto ou TorBox, que o payload baixa sozinho) o item vira um job antecipado; sem, um marcador
+// "waiting-app" (so o app sabe baixa-lo). O que sumiu da lista sai: antecipado parado (a parcial fica), rodando sem o
+// app acompanhar (para, gravando o checkpoint, e sai), marcador. Terminados ficam para o app conferir ao abrir.
+typedef struct { char key[40], name[256]; uint64_t total; Job* job; int has_job; } QueueItem;
+typedef struct { QueueItem* item; } QueueItemCtx;
+static int queue_item_field(JP* jp, const char* key, void* ctx) {
+  QueueItem* q = ((QueueItemCtx*)ctx)->item;
+  if (!strcmp(key, "key")) return jp_text(jp, q->key, sizeof q->key) ? 1 : -1;
+  if (!strcmp(key, "name")) return jp_text(jp, q->name, sizeof q->name) ? 1 : -1;
+  if (!strcmp(key, "total")) return jp_uint(jp, &q->total) ? 1 : -1;
+  if (!strcmp(key, "job")) {
+    jp_ws(jp);
+    if (jp_literal(jp, "null")) return 1;
+    if (!q->job && !(q->job = calloc(1, sizeof *q->job))) return -1;
+    JobParse parse = {q->job, 0};
+    q->has_job = 1;
+    return jp_object(jp, job_field, &parse) ? 1 : -1;
+  }
+  return jp_skip(jp) ? 1 : -1;
+}
+typedef struct { QueueItem* items; int count; } QueueBody;
+static int queue_field(JP* jp, const char* key, void* ctx) {
+  QueueBody* body = ctx;
+  if (strcmp(key, "items")) return jp_skip(jp) ? 1 : -1;
+  jp_ws(jp);
+  if (jp->p >= jp->end || *jp->p != '[') return -1;
+  ++jp->p;
+  jp_ws(jp);
+  if (jp->p < jp->end && *jp->p == ']') { ++jp->p; return 1; }
+  for (;;) {
+    if (body->count >= MAX_JOBS) return -1;
+    QueueItemCtx item = {&body->items[body->count++]};
+    if (!jp_object(jp, queue_item_field, &item)) return -1;
+    jp_ws(jp);
+    if (jp->p < jp->end && *jp->p == ',') { ++jp->p; jp_ws(jp); continue; }
+    if (jp->p < jp->end && *jp->p == ']') { ++jp->p; return 1; }
+    return -1;
+  }
+}
+static Job* find_destination_locked(const char* destination) {
+  for (int i = 0; i < g_job_count; ++i)
+    if (!g_jobs[i]->placeholder && (!strcmp(g_jobs[i]->destination, destination) || !strcmp(g_jobs[i]->published, destination))) return g_jobs[i];
+  return NULL;
+}
+static Job* find_placeholder_locked(const char* key) {
+  for (int i = 0; i < g_job_count; ++i) if (g_jobs[i]->placeholder && !strcmp(g_jobs[i]->key, key)) return g_jobs[i];
+  return NULL;
+}
+static void handle_queue(int fd, Request* r) {
+  QueueBody body = {calloc(MAX_JOBS, sizeof(QueueItem)), 0};
+  if (!body.items) { respond_error(fd, 500, "out of memory"); return; }
+  JP jp = {r->body, r->body + r->content_length, 0};
+  int ok = jp_object(&jp, queue_field, &body);
+  char error[200] = "";
+  for (int i = 0; ok && i < body.count; ++i) {
+    QueueItem* q = &body.items[i];
+    if (!q->key[0] || !safe_token_text(q->key)) { snprintf(error, sizeof error, "item %d: key", i); ok = 0; break; }
+    if (q->has_job) {
+      Job* j = q->job;
+      j->id[0] = j->state[0] = j->error[0] = j->by[0] = j->published[0] = 0;
+      j->placeholder = 0;
+      snprintf(j->key, sizeof j->key, "%s", q->key);
+      if (!j->name[0]) snprintf(j->name, sizeof j->name, "%s", q->name);
+      if (!j->expected_bytes) j->expected_bytes = q->total;
+      if (!validate_job(j, error, sizeof error)) ok = 0;
+    }
+  }
+  if (!ok) {
+    for (int i = 0; i < body.count; ++i) free(body.items[i].job);
+    free(body.items);
+    respond_error(fd, 400, error[0] ? error : "expected {items:[{key, name, total, job?}]}");
+    return;
+  }
+  pthread_mutex_lock(&g_lock);
+  int seen[MAX_JOBS] = {0}, created = 0, waiting = 0;
+  for (int i = 0; i < body.count; ++i) {
+    QueueItem* q = &body.items[i];
+    Job* j = q->has_job ? find_destination_locked(q->job->destination) : find_placeholder_locked(q->key);
+    if (!j && g_job_count < MAX_JOBS) {
+      if (q->has_job) {
+        j = q->job;
+        q->job = NULL;
+        j->ahead = 1;
+        snprintf(j->id, sizeof j->id, "b%u", ++g_next_id);
+        snprintf(j->state, sizeof j->state, "queued");
+        j->created = j->updated = now_s();
+        if (!j->link_at) j->link_at = now_s();
+        else if (j->link_at > 100000000000LL) j->link_at /= 1000;
+        ++created;
+      } else {
+        j = calloc(1, sizeof *j);
+        if (!j) break;
+        j->placeholder = 1;
+        snprintf(j->key, sizeof j->key, "%s", q->key);
+        snprintf(j->id, sizeof j->id, "b%u", ++g_next_id);
+        snprintf(j->state, sizeof j->state, "waiting-app");
+        j->created = now_s();
+      }
+      g_jobs[g_job_count++] = j;
+    }
+    if (!j) continue;
+    if (j->placeholder) { snprintf(j->name, sizeof j->name, "%s", q->name); j->total = q->total; ++waiting; }
+    if (j->ahead) snprintf(j->key, sizeof j->key, "%s", q->key);
+    j->order = i + 1;
+    j->updated = now_s();
+    for (int k = 0; k < g_job_count; ++k) if (g_jobs[k] == j) seen[k] = 1;
+  }
+  // O que nao veio na lista: marcadores e antecipados parados saem; um antecipado rodando sem o app para e sai.
+  int removed = 0;
+  for (int k = g_job_count - 1; k >= 0; --k) {
+    Job* j = g_jobs[k];
+    if (seen[k] || (!j->ahead && !j->placeholder) || j->followed) continue;
+    if (j->running) { j->ctl = CTL_RELEASE; ++removed; continue; }
+    if (!j->placeholder && terminal(j->state)) continue;
+    remove_job_locked(j);
+    ++removed;
+  }
+  save_jobs_locked();
+  pthread_cond_broadcast(&g_wake_downloader);
+  char answer[160];
+  snprintf(answer, sizeof answer, "{\"ok\":true,\"created\":%d,\"waiting\":%d,\"removed\":%d}", created, waiting, removed);
+  pthread_mutex_unlock(&g_lock);
+  for (int i = 0; i < body.count; ++i) free(body.items[i].job);
+  free(body.items);
+  if (created || removed) logf_("fila do app: %d itens (%d novos antecipados, %d aguardando o app, %d saiu)", body.count, created, waiting, removed);
+  respond(fd, 200, answer);
+}
+
 // pause | resume | cancel | release | forget, com a trava. `remote`: pedido do celular (so pause/resume/cancel),
 // que fica em j->by para o app nao desfazer a pausa. Devolve 200, 404 (acao desconhecida) ou 409 (forget de um
 // job rodando); *removed: o job saiu da lista (e foi liberado).
@@ -2296,6 +2486,10 @@ static int job_action_locked(Job* j, const char* action, int remote, int* remove
     else if (strcmp(j->state, "completed")) { remove_partials(j); snprintf(j->state, sizeof j->state, "cancelled"); snprintf(j->by, sizeof j->by, "%s", by); }
   } else if (remote) {
     return 404;
+  } else if (!strcmp(action, "follow")) {
+    j->followed = 1;
+    pthread_cond_broadcast(&g_wake_downloader);
+    return 200;
   } else if (!strcmp(action, "release")) {
     // Devolve o arquivo ao app: para (gravando o checkpoint) e esquece o job, mantendo .part/.resume.
     if (j->running) j->ctl = CTL_RELEASE;
@@ -2331,6 +2525,7 @@ static void handle_action(int fd, const char* id, const char* action) {
 
 static void route(int fd, Request* r) {
   if (!token_ok(r->token)) { respond_error(fd, 401, "missing or wrong token"); return; }
+  g_last_app_ms = mono_ms();
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
     char body[512], ip[64];
     current_ip(ip, sizeof ip);
@@ -2358,6 +2553,7 @@ static void route(int fd, Request* r) {
   }
   if (strcmp(r->method, "POST")) { respond_error(fd, 404, "not found"); return; }
   if (!strcmp(r->path, "/jobs")) { handle_create(fd, r); return; }
+  if (!strcmp(r->path, "/queue")) { handle_queue(fd, r); return; }
   if (!strcmp(r->path, "/config")) {
     ConfigBody c;
     memset(&c, 0, sizeof c);
@@ -2662,11 +2858,22 @@ static void public_error(const char* in, char* out, size_t cap) {
 static void monitor_status(Buf* b) {
   char error[600];
   pthread_mutex_lock(&g_lock);
+  // Na ordem da fila: os que o app comecou primeiro, depois os entregues com antecedencia e os aguardando o app.
+  const Job* sorted[MAX_JOBS];
+  for (int i = 0; i < g_job_count; ++i) sorted[i] = g_jobs[i];
+  for (int i = 1; i < g_job_count; ++i) {
+    const Job* item = sorted[i];
+    const int rank = item->ahead || item->placeholder ? item->order : 0;
+    int k = i - 1;
+    while (k >= 0 && (sorted[k]->ahead || sorted[k]->placeholder ? sorted[k]->order : 0) > rank) { sorted[k + 1] = sorted[k]; --k; }
+    sorted[k + 1] = item;
+  }
   buf_str(b, "{\"jobs\":[");
   int first = 1;
   for (int i = 0; i < g_job_count; ++i) {
-    const Job* j = g_jobs[i];
+    const Job* j = sorted[i];
     if (!strcmp(j->state, "cancelled")) continue;
+    (void)i;
     if (!first) buf_str(b, ",");
     first = 0;
     public_error(j->error, error, sizeof error);
@@ -2767,7 +2974,7 @@ static void monitor_action(int fd, Request* r) {
   pthread_mutex_lock(&g_lock);
   Job* j = find_job_locked(id);
   int status = 404, removed = 0;
-  if (j && strcmp(j->state, "cancelled")) status = job_action_locked(j, action, 1, &removed);
+  if (j && strcmp(j->state, "cancelled") && !j->placeholder) status = job_action_locked(j, action, 1, &removed);
   pthread_mutex_unlock(&g_lock);
   if (status != 200) { monitor_json(fd, 404, "{\"error\":\"no such job\"}"); return; }
   logf_("celular: job %s %s", id, action);
@@ -2904,6 +3111,10 @@ int main(void) {
   if (g_port <= 0 || g_port > 65535) g_port = DEFAULT_PORT;
   g_monitor_port = atoi(env_or("BGDL_MONITOR_PORT", "34201"));
   if (g_monitor_port <= 0 || g_monitor_port > 65535) g_monitor_port = MONITOR_PORT;
+  g_app_silence_ms = atoi(env_or("BGDL_APP_SILENCE_MS", "15000"));
+  if (g_app_silence_ms <= 0) g_app_silence_ms = 15000;
+  g_fake_free = strtoull(env_or("BGDL_FAKE_FREE_BYTES", "0"), NULL, 10);
+  g_last_app_ms = mono_ms();
   g_session_seconds = atoi(env_or("BGDL_SESSION_SECONDS", "43200"));
   if (g_session_seconds <= 0) g_session_seconds = 12 * 3600;
 #ifdef __PROSPERO__

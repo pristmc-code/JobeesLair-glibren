@@ -370,3 +370,95 @@ test('pagina do celular desligada: a porta fecha; ligada de novo, volta; um PIN 
   assert.equal(statSync(path.join(base, 'state/config.json')).mode & 0o777, 0o600);
   await stop(child);
 });
+
+// ---- glibren: a fila do app entregue com antecedencia (POST /queue) ----
+
+const small = (name, size = 3 * MiB) => { files[name] = randomBytes(size); return name; };
+const queued = (base, name, extra = {}) => ({ key: `k-${name.replace(/\W/g, '')}`, name, total: files[name]?.length || 0, job: { url: `http://127.0.0.1:${port}/f/${name}`, destination: path.join(base, 'disk/downloads', name), storageRoot: path.join(base, 'disk'), connections: 1, expectedBytes: files[name]?.length || 0, ...extra } });
+async function statusUntil(check, ms = 60000) {
+  let last;
+  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) {
+    try { last = (await page('/api/status')).data; if (check(last)) return last; } catch {}
+  }
+  throw new Error(`status never got there: ${JSON.stringify(last)}`);
+}
+
+test('fila entregue: com o app fechado, N=1 baixa um depois do outro na ordem; o item de site fica waiting-app', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  ['q1.bin', 'q2.bin', 'q3.bin'].forEach((name) => small(name));
+  srv.rate = 6 * MiB;
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '600' });
+  await up(base);
+  await pageUp();
+  const answer = await call(base, 'POST', '/queue', { items: [queued(base, 'q1.bin'), { key: 'kpage', name: 'Jogo do MediaFire', total: 5000 }, queued(base, 'q2.bin'), queued(base, 'q3.bin')] });
+  assert.equal(answer.status, 200);
+  assert.deepEqual([answer.data.created, answer.data.waiting], [3, 1]);
+  // Daqui em diante o "app" fica calado (fechado): so a pagina do celular, sem token, e consultada.
+  const done = [];
+  let most = 0;
+  const final = await statusUntil((status) => {
+    most = Math.max(most, status.jobs.filter((job) => ['connecting', 'downloading', 'verifying'].includes(job.state)).length);
+    for (const job of status.jobs) if (job.state === 'completed' && !done.includes(job.name)) done.push(job.name);
+    return done.length === 3;
+  });
+  assert.deepEqual(done, ['q1.bin', 'q2.bin', 'q3.bin'], 'na ordem da fila do app');
+  assert.equal(most, 1, 'um de cada vez (N=1)');
+  const waiting = final.jobs.find((job) => job.name === 'Jogo do MediaFire');
+  assert.deepEqual([waiting.state, waiting.total], ['waiting-app', 5000]);
+  for (const name of ['q1.bin', 'q2.bin', 'q3.bin']) assert.equal(sha(readFileSync(path.join(base, 'disk/downloads', name))), sha(files[name]));
+  srv.rate = 0;
+  await stop(child);
+});
+
+test('fila entregue: com o app aberto nada comeca sozinho (so com follow); reordenar e retirar refletem no payload', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  ['r1.bin', 'r2.bin', 'r3.bin'].forEach((name) => small(name, MiB));
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '1500' });
+  await up(base);
+  await pageUp();
+  await call(base, 'POST', '/queue', { items: [queued(base, 'r1.bin'), queued(base, 'r2.bin')] });
+  for (let i = 0; i < 8; i++) { await wait(100); await call(base, 'GET', '/health'); } // o app esta aberto
+  let jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+  assert.ok(jobs.every((job) => job.state === 'queued' && job.ahead), 'com o app aberto, quem comeca e o app');
+  const r1 = jobs.find((job) => job.name === 'r1.bin');
+  assert.equal((await call(base, 'POST', `/jobs/${r1.id}/follow`)).status, 200);
+  await until(base, r1.id, ['completed']);
+  await call(base, 'POST', '/queue', { items: [queued(base, 'r3.bin'), queued(base, 'r2.bin')] });
+  jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+  assert.deepEqual(['r3.bin', 'r2.bin'].map((name) => jobs.find((job) => job.name === name).order), [1, 2], 'a nova ordem do app');
+  const answer = await call(base, 'POST', '/queue', { items: [queued(base, 'r3.bin')] });
+  assert.equal(answer.data.removed, 1);
+  jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+  assert.ok(!jobs.some((job) => job.name === 'r2.bin'), 'cancelado/pausado no app: sai da fila do payload');
+  assert.ok(jobs.some((job) => job.name === 'r1.bin' && job.state === 'completed'), 'o terminado fica para o app conferir ao abrir');
+  // O app fecha: r3 segue sozinho.
+  await statusUntil((status) => status.jobs.some((job) => job.name === 'r3.bin' && job.state === 'completed'));
+  assert.ok(!existsSync(path.join(base, 'disk/downloads/r2.bin')) && !existsSync(path.join(base, 'disk/downloads/r2.bin.part')));
+  await stop(child);
+});
+
+test('fila entregue: sem espaco no disco vira needs-app; link vencido (403) vira needs-app sem repetir', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  small('s1.bin', MiB);
+  let child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '300', BGDL_FAKE_FREE_BYTES: '1000' });
+  await up(base);
+  await pageUp();
+  await call(base, 'POST', '/queue', { items: [queued(base, 's1.bin')] });
+  const full = await statusUntil((status) => status.jobs.some((job) => job.state === 'needs-app'));
+  assert.match(full.jobs[0].error, /Not enough space/);
+  assert.ok(!existsSync(path.join(base, 'disk/downloads/s1.bin.part')), 'nem comecou');
+  await stop(child);
+  const other = workspace();
+  child = start(other, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '300' });
+  await up(other);
+  await pageUp();
+  await call(other, 'POST', '/queue', { items: [{ key: 'kgone', name: 'gone', total: MiB, job: { url: `http://127.0.0.1:${port}/t/vencido/gone.bin`, destination: path.join(other, 'disk/downloads/gone.bin'), storageRoot: path.join(other, 'disk') } }] });
+  const expired = await statusUntil((status) => status.jobs.some((job) => ['needs-app', 'failed'].includes(job.state)));
+  assert.equal(expired.jobs[0].state, 'needs-app', 'a Jobee\'sLair renova ao abrir');
+  await wait(1500);
+  assert.equal((await page('/api/status')).data.jobs[0].state, 'needs-app', 'sem repetir sozinho');
+  await stop(child);
+});
