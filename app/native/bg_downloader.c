@@ -63,6 +63,7 @@
 #define DEFAULT_PORT 34200
 #define MAX_JOBS 64
 #define MAX_CONNS 32
+#define MAX_WORKERS 4 // downloads simultaneos: ate 4 jobs, cada um na sua thread e com seu Engine (POST /config)
 #define MAX_RANGES 65536
 #define DEFAULT_RANGE (32ull * 1024 * 1024) // o padrao do motor nativo (network.hpp)
 #define RENEW_AGE_S 9000                      // 2h30: os links do TorBox valem 3 h
@@ -595,8 +596,11 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_wake_downloader = PTHREAD_COND_INITIALIZER;
 static Job* g_jobs[MAX_JOBS];
 static int g_job_count;
-static Job* g_active;
 static unsigned g_next_id;
+// Quantos jobs baixam ao mesmo tempo (1 a MAX_WORKERS), escolhido no app e gravado em config.json; e quantos
+// estao baixando agora. Diminuir nao para ninguem: so nao comeca outro ate ficar abaixo.
+static int g_max_running = 1;
+static int g_running_count;
 static int g_dirty;
 
 static int terminal(const char* state) {
@@ -1946,15 +1950,28 @@ static void remove_partials(const Job* j) {
   }
 }
 
+// O primeiro job baixando, para /health e /jobs ("active"); NULL sem nenhum.
+static Job* first_running_locked(void) {
+  for (int i = 0; i < g_job_count; ++i) if (g_jobs[i]->running) return g_jobs[i];
+  return NULL;
+}
+
+// Para todos os jobs baixando: o processo vai parar (cada um grava o checkpoint).
+static void stop_running_locked(void) {
+  for (int i = 0; i < g_job_count; ++i) if (g_jobs[i]->running) g_jobs[i]->ctl = CTL_STOP;
+}
+
+// Um trabalhador: ate MAX_WORKERS rodam este laco, e no maximo g_max_running deles baixam ao mesmo tempo.
 static void* downloader_loop(void* arg) {
   (void)arg;
   pthread_mutex_lock(&g_lock);
   while (!g_stop) {
     Job* next = NULL;
     int64_t now = now_s(), soonest = 0;
-    for (int i = 0; i < g_job_count; ++i) {
+    for (int i = 0; i < g_job_count && g_running_count < g_max_running; ++i) {
       Job* j = g_jobs[i];
-      if (strcmp(j->state, "queued")) continue;
+      // `running` ja vale antes do estado mudar (run_job o muda sem a trava): sem ele, dois trabalhadores pegariam o mesmo job.
+      if (strcmp(j->state, "queued") || j->running) continue;
       if (j->retry_at > now) { if (!soonest || j->retry_at < soonest) soonest = j->retry_at; continue; }
       next = j;
       break;
@@ -1970,11 +1987,11 @@ static void* downloader_loop(void* arg) {
     next->retry_at = 0;
     next->running = 1;
     next->error[0] = 0;
-    g_active = next;
+    ++g_running_count;
     pthread_mutex_unlock(&g_lock);
     run_job(next);
     pthread_mutex_lock(&g_lock);
-    g_active = NULL;
+    --g_running_count;
     next->running = 0;
     if (next->ctl == CTL_CANCEL) {
       remove_partials(next);
@@ -1990,9 +2007,34 @@ static void* downloader_loop(void* arg) {
     save_jobs_locked();
     pthread_cond_broadcast(&g_wake_downloader);
   }
-  if (g_active) g_active->ctl = CTL_STOP;
+  stop_running_locked();
   pthread_mutex_unlock(&g_lock);
   return NULL;
+}
+
+// config.json: { "concurrency": n }, para os jobs voltarem com o mesmo numero depois de reiniciar o payload.
+typedef struct { uint64_t concurrency; int found; } ConfigBody;
+static int config_field(JP* jp, const char* key, void* ctx) {
+  ConfigBody* c = ctx;
+  if (!strcmp(key, "concurrency")) { c->found = 1; return jp_uint(jp, &c->concurrency) ? 1 : -1; }
+  return jp_skip(jp) ? 1 : -1;
+}
+static void load_config(void) {
+  char path[600];
+  snprintf(path, sizeof path, "%s/config.json", g_dir);
+  size_t size = 0;
+  char* text = read_text(path, 4096, &size);
+  if (!text) return;
+  ConfigBody c = {0, 0};
+  JP jp = {text, text + size, 0};
+  if (jp_object(&jp, config_field, &c) && c.found && c.concurrency >= 1 && c.concurrency <= MAX_WORKERS) g_max_running = (int)c.concurrency;
+  free(text);
+}
+static void save_config_locked(void) {
+  char path[600], text[64];
+  snprintf(path, sizeof path, "%s/config.json", g_dir);
+  const int size = snprintf(text, sizeof text, "{\"concurrency\":%d}\n", g_max_running);
+  if (!save_atomic(path, text, (size_t)size, 0600)) logf_("config.json nao gravado: %s", strerror(errno));
 }
 
 // ---- Servidor HTTP (127.0.0.1) --------------------------------------------------------------------------
@@ -2196,8 +2238,10 @@ static void route(int fd, Request* r) {
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
     char body[300];
     pthread_mutex_lock(&g_lock);
-    snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d}", BG_VERSION, (int)getpid(),
-             g_active ? "\"" : "", g_active ? g_active->id : "null", g_active ? "\"" : "", g_job_count);
+    const Job* active = first_running_locked();
+    snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d}",
+             BG_VERSION, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
+             g_running_count, g_max_running);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
     return;
@@ -2207,7 +2251,8 @@ static void route(int fd, Request* r) {
     pthread_mutex_lock(&g_lock);
     buf_str(&b, "{\"jobs\":[");
     for (int i = 0; i < g_job_count; ++i) { if (i) buf_str(&b, ","); job_json(&b, g_jobs[i]); }
-    buf_fmt(&b, "],\"active\":%s%s%s}", g_active ? "\"" : "", g_active ? g_active->id : "null", g_active ? "\"" : "");
+    const Job* active = first_running_locked();
+    buf_fmt(&b, "],\"active\":%s%s%s,\"concurrency\":%d}", active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_max_running);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, b.failed || !b.data ? "{\"jobs\":[]}" : b.data);
     free(b.data);
@@ -2215,6 +2260,26 @@ static void route(int fd, Request* r) {
   }
   if (strcmp(r->method, "POST")) { respond_error(fd, 404, "not found"); return; }
   if (!strcmp(r->path, "/jobs")) { handle_create(fd, r); return; }
+  if (!strcmp(r->path, "/config")) {
+    ConfigBody c = {0, 0};
+    JP jp = {r->body, r->body + r->content_length, 0};
+    if (!jp_object(&jp, config_field, &c) || !c.found || c.concurrency < 1 || c.concurrency > MAX_WORKERS) {
+      respond_error(fd, 400, "expected {concurrency: 1..4}");
+      return;
+    }
+    char body[80];
+    pthread_mutex_lock(&g_lock);
+    if (g_max_running != (int)c.concurrency) {
+      logf_("downloads simultaneos: %d -> %d", g_max_running, (int)c.concurrency);
+      g_max_running = (int)c.concurrency;
+      save_config_locked();
+    }
+    snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d}", g_max_running);
+    pthread_cond_broadcast(&g_wake_downloader);
+    pthread_mutex_unlock(&g_lock);
+    respond(fd, 200, body);
+    return;
+  }
   if (!strcmp(r->path, "/secret")) {
     SecretBody s;
     memset(&s, 0, sizeof s);
@@ -2415,9 +2480,15 @@ int main(void) {
   if (g_cainfo[0] && stat(g_cainfo, &st)) logf_("aviso: lista de CAs %s indisponivel (%s)", g_cainfo, strerror(errno));
   pthread_mutex_lock(&g_lock);
   load_jobs();
+  load_config();
   pthread_mutex_unlock(&g_lock);
-  pthread_t server, downloader;
-  if (spawn_thread(server_loop, NULL, &server) || spawn_thread(downloader_loop, NULL, &downloader)) { logf_("threads nao criadas"); return 1; }
+  logf_("downloads simultaneos: %d", g_max_running);
+  pthread_t server, workers[MAX_WORKERS];
+  if (spawn_thread(server_loop, NULL, &server)) { logf_("threads nao criadas"); return 1; }
+  int started = 0;
+  while (started < MAX_WORKERS && !spawn_thread(downloader_loop, NULL, &workers[started])) ++started;
+  if (!started) { logf_("threads nao criadas"); return 1; }
+  if (started < MAX_WORKERS) logf_("so %d trabalhadores criados", started);
   char ip[64] = "", last_ip[64] = "";
   current_ip(last_ip, sizeof last_ip);
   int64_t last_save = mono_ms();
@@ -2439,10 +2510,10 @@ int main(void) {
   }
   logf_("parando: gravando o checkpoint");
   pthread_mutex_lock(&g_lock);
-  if (g_active) g_active->ctl = CTL_STOP;
+  stop_running_locked();
   pthread_cond_broadcast(&g_wake_downloader);
   pthread_mutex_unlock(&g_lock);
-  pthread_join(downloader, NULL);
+  for (int i = 0; i < started; ++i) pthread_join(workers[i], NULL);
   pthread_join(server, NULL);
   pthread_mutex_lock(&g_lock);
   save_jobs_locked();

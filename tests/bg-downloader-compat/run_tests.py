@@ -419,6 +419,47 @@ def t17_sigcont_no_meio_reabre_e_termina():
     assert api("GET", "/health")[0] == 200, "o servidor deve voltar depois de reaberto"
     stop(p)
 
+def t18_downloads_simultaneos_config():
+    p = start()
+    assert api("GET", "/health")[1]["concurrency"] == 1, "padrao: um por vez"
+    admin("rate", bps=2 * MiB)
+    full = f"{T}/srv/data100.bin"
+    ids, dests = [], []
+    for i in range(3):
+        dest = f"{RUN}/disk/downloads/s{i}.bin"
+        s, r = create("data100.bin", dest, sha256=sha(full), connections=2)
+        assert s == 201, r
+        ids.append(r["id"]); dests.append(dest)
+    wait(ids[0], ["downloading"], 20)
+    time.sleep(1)
+    assert api("GET", "/health")[1]["running"] == 1 and job(ids[1])["state"] == "queued", api("GET", "/jobs")
+    assert api("POST", "/config", {"concurrency": 0})[0] == 400
+    assert api("POST", "/config", {"concurrency": 5})[0] == 400
+    assert api("POST", "/config", {"other": 2})[0] == 400
+    s, c = api("POST", "/config", {"concurrency": 3})
+    assert s == 200 and c["concurrency"] == 3, c
+    for jid in ids: wait(jid, ["downloading"], 20)
+    assert api("GET", "/health")[1]["running"] == 3
+    # Diminuir nao para ninguem: os tres continuam, so nao comeca outro.
+    assert api("POST", "/config", {"concurrency": 1})[1]["concurrency"] == 1
+    time.sleep(1.5)
+    assert api("GET", "/health")[1]["running"] == 3, api("GET", "/jobs")
+    assert json.load(open(f"{RUN}/state/config.json")) == {"concurrency": 1}
+    api("POST", "/config", {"concurrency": 2})
+    stop(p)
+    # O numero volta com o payload; os jobs parados com o processo continuam, dois de cada vez.
+    p = start()
+    assert api("GET", "/health")[1]["concurrency"] == 2
+    wait(ids[0], ["downloading"], 20)
+    time.sleep(1)
+    assert api("GET", "/health")[1]["running"] == 2, api("GET", "/jobs")
+    admin("rate", bps=0)
+    for jid, dest in zip(ids, dests):
+        j = wait(jid, ["completed", "failed"], 90)
+        assert j["state"] == "completed", j
+        assert sha(dest) == sha(full)
+    stop(p)
+
 if __name__ == "__main__":
     only = sys.argv[1:]
     for fn in [v for k, v in sorted(globals().items()) if k.startswith("t") and k[1:3].isdigit()]:
