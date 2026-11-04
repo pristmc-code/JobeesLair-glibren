@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#05070d">
+<title>Jobee'sLair · Downloads</title>
+<style>
+:root{--ink:#05070d;--deep:#090d16;--panel:#0f1520;--panel2:#151d2b;--raise:#1d2738;--line:#243047;--line-hi:#34445f;--fg:#f3f6fb;--muted:#aab4c6;--subtle:#7f8ca3;--accent:#3a86ff;--ice:#4cc9f0;--good:#4ade80;--warn:#fbbf24;--bad:#f87171;--ease:cubic-bezier(.2,.8,.2,1);--pad:16px}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;min-height:100%;background:var(--ink);color:var(--fg);font:16px/1.45 "Exo 2",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit}
+:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
+header{display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top)) max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));background:var(--ink);border-bottom:1px solid var(--line)}
+.brand{display:flex;flex-direction:column;min-width:0}
+.brand b{font-size:17px;letter-spacing:.02em;white-space:nowrap}
+.brand small{color:var(--subtle);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:440px){ .status span{display:none} .status{gap:0} }
+.status{margin-inline-start:auto;display:flex;align-items:center;gap:7px;color:var(--subtle);font-size:13px;white-space:nowrap}
+.status i{width:9px;height:9px;border-radius:50%;background:var(--bad)}
+.status.on i{background:var(--good);box-shadow:0 0 0 3px rgba(74,222,128,.18)}
+.status.on{color:var(--muted)}
+.lock{display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:6px 12px;border:1px solid var(--line-hi);border-radius:8px;background:var(--raise);color:var(--fg);font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.lock.open{border-color:rgba(74,222,128,.55);color:var(--good);background:transparent}
+.lock svg{width:16px;height:16px}
+.lock.gear{padding:6px 10px}
+.lock.gear svg{width:18px;height:18px}
+.pinned{position:sticky;top:0;z-index:5;background:var(--ink);border-bottom:1px solid var(--line)}
+.pinned header{border-bottom:0}
+.pinned.scrolled{box-shadow:0 8px 18px rgba(0,0,0,.55)}
+.pinned .summary{margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left))}
+main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(var(--pad),env(safe-area-inset-left));max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.summary div{background:var(--panel);padding:9px 12px;display:flex;flex-direction:column;min-width:0}
+.summary span{color:var(--subtle);font-size:12px;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.summary b{font-size:19px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list{display:grid;grid-template-columns:1fr;gap:10px}
+.job{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.job.downloading{border-color:var(--line-hi)}
+.top{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.name{font-weight:600;font-size:16px;line-height:1.3;min-width:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+.tag{margin-inline-start:auto;flex:none;font-size:12px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--line-hi);color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.tag.downloading{color:var(--ice);border-color:rgba(76,201,240,.5)}
+.tag.paused{color:var(--warn);border-color:rgba(251,191,36,.5)}
+.tag.completed{color:var(--good);border-color:rgba(74,222,128,.5)}
+.tag.failed{color:var(--bad);border-color:rgba(248,113,113,.55)}
+.bar{position:relative;height:8px;background:var(--raise);border-radius:4px;overflow:hidden}
+.bar>i{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:4px;transition:width .6s var(--ease)}
+.job.paused .bar>i{background:var(--warn)}
+.job.completed .bar>i{background:var(--good)}
+.job.failed .bar>i{background:var(--bad)}
+.nums{display:flex;flex-wrap:wrap;gap:2px 14px;font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+.nums b{color:var(--fg);font-weight:600}
+.err{font-size:13.5px;color:#fecaca}
+.actions{display:flex;gap:8px;margin-top:2px}
+.btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;border:1px solid var(--line-hi);border-radius:8px;padding:8px 12px;font-weight:600;font-size:14.5px;color:var(--fg);background:var(--raise);cursor:pointer}
+.btn svg{width:16px;height:16px}
+.btn.danger{background:transparent;border-color:rgba(248,113,113,.6);color:#fecaca}
+.btn.solid-danger{background:#b91c1c;border-color:#b91c1c;color:#fff}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.confirm{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid rgba(248,113,113,.5);border-radius:8px;background:rgba(127,29,29,.18);font-size:14px}
+.confirm .row{display:flex;gap:8px}
+.empty{grid-column:1/-1;padding:28px 16px;text-align:center;color:var(--muted);background:var(--panel);border:1px dashed var(--line-hi);border-radius:10px}
+.foot{color:var(--subtle);font-size:12.5px;text-align:center}
+/* PIN */
+.sheet{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:rgba(2,4,8,.72);padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+.dialog{width:100%;max-width:340px;background:var(--panel2);border:1px solid var(--line-hi);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.dialog h2{margin:0;font-size:18px}
+.dialog p{margin:0;color:var(--muted);font-size:14px}
+.pin{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--deep);color:var(--fg);font-size:22px;letter-spacing:.5em;text-align:center;outline:none}
+.pin:focus{border-color:var(--ice)}
+.dialog .row{display:flex;gap:8px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.msg{min-height:1.2em;font-size:13.5px;color:var(--bad)}
+/* Celular deitado / telas largas: duas colunas e topo mais baixo */
+@media (orientation:landscape) and (max-height:520px){
+  .pinned .summary{margin-bottom:6px}
+  header{padding-top:calc(6px + env(safe-area-inset-top));padding-bottom:6px}
+  .brand small{display:none}
+  main{padding-top:8px;gap:8px}
+  .summary div{padding:5px 12px;flex-direction:row;align-items:baseline;gap:8px}
+  .summary b{font-size:16px}
+  .list{grid-template-columns:1fr 1fr;gap:8px}
+  .job{padding:9px 12px;gap:5px}
+  .name{font-size:15px;-webkit-line-clamp:1}
+  .nums{font-size:13px}
+  .btn{min-height:34px;padding:5px 10px;font-size:13.5px}
+}
+@media (min-width:900px) and (min-height:521px){ .list{grid-template-columns:1fr 1fr} }
+@media (prefers-reduced-motion:reduce){ .bar>i{transition:none} }
+</style>
+</head>
+<body>
+<div class="pinned">
+<header>
+  <div class="brand"><b>Jobee'sLair</b><small id="sub">Downloads em segundo plano</small></div>
+  <div class="status" id="status"><i></i><span id="statusText">Conectando…</span></div>
+  <button class="lock" id="lock" type="button"></button>
+  <button class="lock gear" id="gear" type="button" hidden aria-label="Trocar IP"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+</header>
+  <div class="summary">
+    <div><span id="lblActive">Baixando</span><b id="sumActive">–</b></div>
+    <div><span id="lblSpeed">Velocidade</span><b id="sumSpeed">–</b></div>
+    <div><span id="lblLeft">Falta</span><b id="sumLeft">–</b></div>
+  </div>
+</div>
+<main>
+  <div class="list" id="list"></div>
+  <div class="foot" id="foot"></div>
+</main>
+<div class="sheet" id="sheet" hidden>
+  <form class="dialog" id="pinForm">
+    <h2 id="pinTitle">Liberar controles</h2>
+    <p id="pinText">Digite o PIN definido nas configurações da Jobee'sLair.</p>
+    <input class="pin" id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
+    <div class="msg" id="pinMsg"></div>
+    <div class="row"><button class="btn" type="button" id="pinCancel">Voltar</button><button class="btn primary" type="submit" id="pinOk">Liberar</button></div>
+  </form>
+</div>
+<script>
+"use strict";
+const T = {
+  pt: { sub: "Downloads em segundo plano", online: "PS5 conectado", offline: "PS5 sem resposta", connecting: "Conectando…",
+    locked: "Controles", unlocked: "Liberado", active: "Baixando", speed: "Velocidade", left: "Falta",
+    states: { downloading: "Baixando", connecting: "Conectando", verifying: "Conferindo", queued: "Na fila", paused: "Pausado", completed: "Concluído", failed: "Falhou", "needs-app": "Abra o app" },
+    of: "de", eta: "restam", conns: "conexões", pause: "Pausar", resume: "Retomar", cancel: "Cancelar",
+    confirm: "Cancelar apaga o que já foi baixado deste jogo. Confirma?", yes: "Sim, cancelar", no: "Não",
+    empty: "Nenhum download no segundo plano agora. Quando a Jobee'sLair entregar um download ao PS5, ele aparece aqui.",
+    foot: "Atualiza a cada 2 s · somente na sua rede local", pinTitle: "Liberar controles", pinText: "Digite o PIN definido nas configurações da Jobee'sLair.",
+    pinBack: "Voltar", pinOk: "Liberar", pinWrong: "PIN errado. Tente de novo.", pinBlocked: "Muitas tentativas. Espere {s} s.",
+    noPin: "Defina um PIN nas configurações da Jobee'sLair para usar os controles." },
+  en: { sub: "Background downloads", online: "PS5 connected", offline: "PS5 not answering", connecting: "Connecting…",
+    locked: "Controls", unlocked: "Unlocked", active: "Downloading", speed: "Speed", left: "Left",
+    states: { downloading: "Downloading", connecting: "Connecting", verifying: "Verifying", queued: "Queued", paused: "Paused", completed: "Done", failed: "Failed", "needs-app": "Open the app" },
+    of: "of", eta: "left", conns: "connections", pause: "Pause", resume: "Resume", cancel: "Cancel",
+    confirm: "Cancelling deletes what was downloaded for this game. Go ahead?", yes: "Yes, cancel", no: "No",
+    empty: "No background downloads right now. When Jobee'sLair hands a download to the PS5, it shows here.",
+    foot: "Refreshes every 2 s · on your local network only", pinTitle: "Unlock controls", pinText: "Enter the PIN set in Jobee'sLair's settings.",
+    pinBack: "Back", pinOk: "Unlock", pinWrong: "Wrong PIN. Try again.", pinBlocked: "Too many tries. Wait {s} s.",
+    noPin: "Set a PIN in Jobee'sLair's settings to use the controls." }
+};
+const L = T[(navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en"];
+document.documentElement.lang = L === T.pt ? "pt-BR" : "en";
+const $ = (id) => document.getElementById(id);
+const ICON = {
+  lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg>',
+  x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+};
+$("sub").textContent = L.sub; $("lblActive").textContent = L.active; $("lblSpeed").textContent = L.speed; $("lblLeft").textContent = L.left;
+$("foot").textContent = L.foot; $("pinTitle").textContent = L.pinTitle; $("pinText").textContent = L.pinText;
+$("pinCancel").textContent = L.pinBack; $("pinOk").textContent = L.pinOk;
+
+const GB = 1024 ** 3, MB = 1024 ** 2;
+const nf = (v, d) => v.toLocaleString(document.documentElement.lang, { minimumFractionDigits: d, maximumFractionDigits: d });
+const size = (b) => b >= GB ? `${nf(b / GB, 1)} GB` : `${nf(b / MB, 0)} MB`;
+const speed = (b) => b >= 1e6 ? `${nf(b * 8 / 1e6, 0)} Mbps` : b > 0 ? `${nf(b * 8 / 1e3, 0)} kbps` : "–";
+const eta = (s) => { if (!isFinite(s) || s <= 0) return "–"; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : m ? `${m} min` : `${s} s`; };
+
+let session = "", confirming = null, jobs = [], pinSet = true;
+const DEMO = location.protocol === "file:" || new URLSearchParams(location.search).has("demo");
+const demo = { t: Date.now(), jobs: [
+  { id: "b1", name: "Ghost of Tsushima Director's Cut", state: "downloading", written: 31.6 * GB, total: 48.2 * GB, bytesPerSecond: 38.5 * MB, connectionsActive: 32 },
+  { id: "b2", name: "Gran Turismo 7", state: "downloading", written: 12.1 * GB, total: 97.4 * GB, bytesPerSecond: 21.3 * MB, connectionsActive: 32 },
+  { id: "b3", name: "Astro Bot", state: "paused", written: 4.2 * GB, total: 41.7 * GB, bytesPerSecond: 0, connectionsActive: 0 },
+  { id: "b4", name: "Marvel's Spider-Man 2", state: "queued", written: 0, total: 98.9 * GB, bytesPerSecond: 0, connectionsActive: 0 },
+  { id: "b5", name: "Returnal", state: "queued", written: 0, total: 60.3 * GB, bytesPerSecond: 0, connectionsActive: 0 },
+  { id: "b6", name: "Ratchet & Clank: Rift Apart", state: "queued", written: 0, total: 42.8 * GB, bytesPerSecond: 0, connectionsActive: 0 },
+  { id: "b7", name: "Demon's Souls", state: "queued", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0 },
+  { id: "b8", name: "Horizon Forbidden West", state: "failed", written: 7.9 * GB, total: 89.6 * GB, bytesPerSecond: 0, connectionsActive: 0, error: "Link do TorBox venceu e não foi renovado. Abra a Jobee'sLair para continuar." },
+  { id: "b9", name: "Stellar Blade", state: "completed", written: 33.4 * GB, total: 33.4 * GB, bytesPerSecond: 0, connectionsActive: 0 }
+] };
+async function api(method, path, body) {
+  if (DEMO) {
+    const dt = (Date.now() - demo.t) / 1000; demo.t = Date.now();
+    for (const j of demo.jobs) if (j.state === "downloading") j.written = Math.min(j.total, j.written + j.bytesPerSecond * dt * (0.9 + Math.random() * 0.2));
+    if (method === "POST") { const [, id, act] = path.split("/").slice(1); const j = demo.jobs.find((x) => x.id === id);
+      if (path === "/api/unlock") return body.pin === "1234" ? { status: 200, data: { session: "demo" } } : { status: 403, data: { retryIn: 0 } };
+      if (j && act === "pause") Object.assign(j, { state: "paused", bytesPerSecond: 0, connectionsActive: 0 });
+      if (j && act === "resume") Object.assign(j, { state: "downloading", bytesPerSecond: 25 * MB, connectionsActive: 32 });
+      if (j && act === "cancel") demo.jobs = demo.jobs.filter((x) => x !== j);
+      return { status: 200, data: { ok: true } }; }
+    return { status: 200, data: { jobs: demo.jobs.map((j) => ({ ...j })), limit: 2 } };
+  }
+  const r = await fetch(path, { method, headers: { "Content-Type": "application/json", ...(session ? { "X-Session": session } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
+  // Resposta cortada no caminho (Wi-Fi ruim): data fica null e quem chamou trata como falha, sem apagar a lista.
+  let data = null; try { data = await r.json(); } catch {}
+  return { status: r.status, data: data ?? {}, parsed: data !== null };
+}
+function lockButton() {
+  const b = $("lock"); b.className = session ? "lock open" : "lock";
+  b.innerHTML = (session ? ICON.open : ICON.lock) + `<span>${session ? L.unlocked : L.locked}</span>`;
+}
+function render() {
+  const list = $("list"); list.textContent = "";
+  const active = jobs.filter((j) => ["downloading", "connecting", "verifying"].includes(j.state));
+  const total = jobs.filter((j) => j.state !== "completed" && j.state !== "failed");
+  const bps = active.reduce((s, j) => s + (j.bytesPerSecond || 0), 0);
+  const leftBytes = total.reduce((s, j) => s + Math.max(0, (j.total || 0) - (j.written || 0)), 0);
+  $("sumActive").textContent = `${active.length} / ${total.length}`;
+  $("sumSpeed").textContent = speed(bps);
+  $("sumLeft").textContent = leftBytes ? size(leftBytes) : "–";
+  if (!jobs.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = L.empty; list.append(e); return; }
+  for (const j of jobs) {
+    const pct = j.total ? Math.min(100, j.written / j.total * 100) : 0;
+    const el = document.createElement("article"); el.className = `job ${j.state}`;
+    const running = ["downloading", "connecting", "verifying"].includes(j.state);
+    const nums = [`<span><b>${nf(pct, 0)}%</b> · ${size(j.written || 0)} ${L.of} ${j.total ? size(j.total) : "?"}</span>`];
+    if (running) nums.push(`<span>${speed(j.bytesPerSecond || 0)}</span>`, `<span>${L.eta} <b>${eta(((j.total || 0) - (j.written || 0)) / (j.bytesPerSecond || 0))}</b></span>`);
+    el.innerHTML = `<div class="top"><div class="name"></div><span class="tag ${j.state}">${L.states[j.state] || j.state}</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div><div class="nums">${nums.join("")}</div>`;
+    el.querySelector(".name").textContent = j.name;
+    if (j.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = j.error; el.append(e); }
+    if (j.state !== "completed") {
+      if (confirming === j.id) {
+        const c = document.createElement("div"); c.className = "confirm";
+        c.innerHTML = `<div></div><div class="row"><button class="btn" type="button" data-no>${L.no}</button><button class="btn solid-danger" type="button" data-yes>${L.yes}</button></div>`;
+        c.firstChild.textContent = L.confirm;
+        c.querySelector("[data-no]").onclick = () => { confirming = null; render(); };
+        c.querySelector("[data-yes]").onclick = () => act(j.id, "cancel");
+        el.append(c);
+      } else {
+        const a = document.createElement("div"); a.className = "actions";
+        const paused = j.state === "paused" || j.state === "failed";
+        a.innerHTML = `<button class="btn" type="button" data-t>${paused ? ICON.play + L.resume : ICON.pause + L.pause}</button><button class="btn danger" type="button" data-c>${ICON.x}${L.cancel}</button>`;
+        a.querySelector("[data-t]").onclick = () => guarded(() => act(j.id, paused ? "resume" : "pause"));
+        a.querySelector("[data-c]").onclick = () => guarded(() => { confirming = j.id; render(); });
+        el.append(a);
+      }
+    }
+    list.append(el);
+  }
+}
+let pending = null;
+function guarded(fn) { if (session) fn(); else { pending = fn; openPin(); } }
+// Sem PIN definido na Jobee'sLair, a janela so explica onde definir (os controles ficam fechados).
+function openPin() {
+  $("pinMsg").textContent = ""; $("pin").value = "";
+  $("pinText").textContent = pinSet ? L.pinText : L.noPin;
+  $("pin").hidden = $("pinOk").hidden = !pinSet;
+  $("sheet").hidden = false;
+  if (pinSet) setTimeout(() => $("pin").focus(), 50);
+}
+$("lock").onclick = () => { if (session) { session = ""; lockButton(); } else openPin(); };
+$("pinCancel").onclick = () => { $("sheet").hidden = true; pending = null; };
+$("pinForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const r = await api("POST", "/api/unlock", { pin: $("pin").value });
+  if (r.status === 200 && r.data.session) { session = r.data.session; $("sheet").hidden = true; lockButton(); const f = pending; pending = null; if (f) f(); }
+  else if (r.data.noPin) { pinSet = false; openPin(); }
+  else $("pinMsg").textContent = r.data.retryIn ? L.pinBlocked.replace("{s}", r.data.retryIn) : L.pinWrong;
+};
+async function act(id, what) {
+  confirming = null;
+  const r = await api("POST", `/api/jobs/${id}/${what}`);
+  if (r.status === 401) { session = ""; lockButton(); pending = () => act(id, what); openPin(); return; }
+  await refresh();
+}
+let misses = 0;
+async function refresh() {
+  try {
+    const r = await api("GET", "/api/status");
+    if (r.status !== 200 || !Array.isArray(r.data.jobs)) throw new Error();
+    jobs = r.data.jobs || []; misses = 0; pinSet = r.data.pinSet !== false;
+    $("status").className = "status on"; $("statusText").textContent = L.online;
+  } catch { if (++misses >= 3) { $("status").className = "status"; $("statusText").textContent = L.offline; } }
+  render();
+}
+lockButton(); $("statusText").textContent = L.connecting;
+// Dentro do APK Jobe Controle: engrenagem para trocar o IP do PS5.
+if (window.JobeApp) { $("gear").hidden = false; $("gear").onclick = () => window.JobeApp.configurar(); }
+const pinned = document.querySelector(".pinned");
+addEventListener("scroll", () => pinned.classList.toggle("scrolled", scrollY > 4), { passive: true });
+refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
+</script>
+</body>
+</html>

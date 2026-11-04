@@ -444,7 +444,8 @@ def t18_downloads_simultaneos_config():
     assert api("POST", "/config", {"concurrency": 1})[1]["concurrency"] == 1
     time.sleep(1.5)
     assert api("GET", "/health")[1]["running"] == 3, api("GET", "/jobs")
-    assert json.load(open(f"{RUN}/state/config.json")) == {"concurrency": 1}
+    saved = json.load(open(f"{RUN}/state/config.json"))
+    assert saved["concurrency"] == 1 and saved["monitor"] is True and saved["pinHash"] == "", saved  # e a pagina do celular (padrao)
     api("POST", "/config", {"concurrency": 2})
     stop(p)
     # O numero volta com o payload; os jobs parados com o processo continuam, dois de cada vez.

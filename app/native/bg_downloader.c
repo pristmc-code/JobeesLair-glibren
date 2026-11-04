@@ -582,6 +582,7 @@ typedef struct {
   int zip;
   int64_t link_at, created, updated;
   char state[24];  // queued connecting downloading verifying paused completed failed cancelled needs-app
+  char by[8];      // "remote": a ultima pausa ou cancelamento veio do celular (pagina da porta 34201)
   char error[600];
   int awaiting_app, renewals;
   uint64_t written, total;
@@ -602,6 +603,13 @@ static unsigned g_next_id;
 static int g_max_running = 1;
 static int g_running_count;
 static int g_dirty;
+// A pagina do celular (porta 34201): ligada por padrao; o PIN chega do app so como sal + SHA-256 (hex), e o texto
+// da notificacao com o endereco ("{address}") no idioma do jogador. Tudo em config.json.
+static volatile int g_monitor_on = 1;
+static char g_pin_salt[65], g_pin_hash[65], g_monitor_text[300];
+static int g_monitor_announced;
+static void monitor_clear_sessions(void);
+static int g_monitor_port_now(void);
 
 static int terminal(const char* state) {
   return !strcmp(state, "completed") || !strcmp(state, "failed") || !strcmp(state, "cancelled") || !strcmp(state, "needs-app");
@@ -620,6 +628,7 @@ static void job_json(Buf* b, const Job* j) {
   buf_str(b, ",\"notifyDone\":"); buf_json(b, j->notify_done);
   buf_str(b, ",\"notifyFailed\":"); buf_json(b, j->notify_failed);
   buf_str(b, ",\"error\":"); buf_json(b, j->error);
+  buf_str(b, ",\"by\":"); buf_json(b, j->by);
   buf_fmt(b, ",\"expectedBytes\":%llu,\"rangeBytes\":%llu,\"connections\":%u,\"rejectHtml\":%s",
           (unsigned long long)j->expected_bytes, (unsigned long long)j->range_bytes, j->connections, j->reject_html ? "true" : "false");
   buf_str(b, ",\"source\":{\"provider\":"); buf_json(b, j->provider);
@@ -696,6 +705,7 @@ static int job_field(JP* jp, const char* key, void* ctx) {
   TEXT("notifyFailed", notify_failed);
   TEXT("state", state);
   TEXT("error", error);
+  TEXT("by", by);
 #undef TEXT
   if (!strcmp(key, "expectedBytes")) return jp_uint(jp, &j->expected_bytes) ? 1 : -1;
   if (!strcmp(key, "rangeBytes")) return jp_uint(jp, &j->range_bytes) ? 1 : -1;
@@ -2012,29 +2022,81 @@ static void* downloader_loop(void* arg) {
   return NULL;
 }
 
-// config.json: { "concurrency": n }, para os jobs voltarem com o mesmo numero depois de reiniciar o payload.
-typedef struct { uint64_t concurrency; int found; } ConfigBody;
+// config.json: { "concurrency": n, "monitor": bool, "pinSalt": hex, "pinHash": hex, "monitorText": "..." }, para o
+// payload voltar igual depois de reiniciar. POST /config aceita qualquer parte dele.
+typedef struct {
+  uint64_t concurrency;
+  int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text;
+  char pin_salt[65], pin_hash[65], monitor_text[300];
+} ConfigBody;
 static int config_field(JP* jp, const char* key, void* ctx) {
   ConfigBody* c = ctx;
-  if (!strcmp(key, "concurrency")) { c->found = 1; return jp_uint(jp, &c->concurrency) ? 1 : -1; }
+  if (!strcmp(key, "concurrency")) { c->found = c->has_concurrency = 1; return jp_uint(jp, &c->concurrency) ? 1 : -1; }
+  if (!strcmp(key, "monitor")) { c->found = c->has_monitor = 1; return jp_bool(jp, &c->monitor) ? 1 : -1; }
+  if (!strcmp(key, "pinSalt")) { c->found = c->has_pin_salt = 1; return jp_text(jp, c->pin_salt, sizeof c->pin_salt) ? 1 : -1; }
+  if (!strcmp(key, "pinHash")) { c->found = c->has_pin_hash = 1; return jp_text(jp, c->pin_hash, sizeof c->pin_hash) ? 1 : -1; }
+  if (!strcmp(key, "monitorText")) { c->found = c->has_text = 1; return jp_text(jp, c->monitor_text, sizeof c->monitor_text) ? 1 : -1; }
   return jp_skip(jp) ? 1 : -1;
+}
+// O que vale: concorrencia 1..MAX_WORKERS; o PIN vem inteiro (sal e hash, 64 hex cada) ou vazio (sem PIN).
+static int config_valid(const ConfigBody* c) {
+  if (!c->found) return 0;
+  if (c->has_concurrency && (c->concurrency < 1 || c->concurrency > MAX_WORKERS)) return 0;
+  if (c->has_pin_salt != c->has_pin_hash) return 0;
+  if (c->has_pin_hash && !((is_hex64(c->pin_salt) && is_hex64(c->pin_hash)) || (!c->pin_salt[0] && !c->pin_hash[0]))) return 0;
+  return 1;
+}
+// Aplica (com a trava); devolve 1 quando algo mudou. Um PIN novo desfaz as sessoes abertas no celular.
+static int config_apply_locked(const ConfigBody* c) {
+  int changed = 0;
+  if (c->has_concurrency && g_max_running != (int)c->concurrency) {
+    logf_("downloads simultaneos: %d -> %d", g_max_running, (int)c->concurrency);
+    g_max_running = (int)c->concurrency;
+    changed = 1;
+  }
+  if (c->has_monitor && g_monitor_on != (c->monitor ? 1 : 0)) {
+    g_monitor_on = c->monitor ? 1 : 0;
+    logf_("pagina do celular: %s", g_monitor_on ? "ligada" : "desligada");
+    changed = 1;
+  }
+  if (c->has_pin_hash && strcmp(g_pin_hash, c->pin_hash)) {
+    snprintf(g_pin_salt, sizeof g_pin_salt, "%s", c->pin_salt);
+    snprintf(g_pin_hash, sizeof g_pin_hash, "%s", c->pin_hash);
+    monitor_clear_sessions();
+    logf_("pagina do celular: PIN %s", g_pin_hash[0] ? "definido" : "removido");
+    changed = 1;
+  }
+  if (c->has_text && strcmp(g_monitor_text, c->monitor_text)) {
+    snprintf(g_monitor_text, sizeof g_monitor_text, "%s", c->monitor_text);
+    changed = 1;
+  }
+  return changed;
 }
 static void load_config(void) {
   char path[600];
   snprintf(path, sizeof path, "%s/config.json", g_dir);
   size_t size = 0;
-  char* text = read_text(path, 4096, &size);
+  char* text = read_text(path, 8192, &size);
   if (!text) return;
-  ConfigBody c = {0, 0};
+  ConfigBody c;
+  memset(&c, 0, sizeof c);
   JP jp = {text, text + size, 0};
-  if (jp_object(&jp, config_field, &c) && c.found && c.concurrency >= 1 && c.concurrency <= MAX_WORKERS) g_max_running = (int)c.concurrency;
+  if (jp_object(&jp, config_field, &c) && config_valid(&c)) config_apply_locked(&c);
   free(text);
 }
 static void save_config_locked(void) {
-  char path[600], text[64];
+  char path[600];
   snprintf(path, sizeof path, "%s/config.json", g_dir);
-  const int size = snprintf(text, sizeof text, "{\"concurrency\":%d}\n", g_max_running);
-  if (!save_atomic(path, text, (size_t)size, 0600)) logf_("config.json nao gravado: %s", strerror(errno));
+  Buf b = {0};
+  buf_fmt(&b, "{\"concurrency\":%d,\"monitor\":%s,\"pinSalt\":", g_max_running, g_monitor_on ? "true" : "false");
+  buf_json(&b, g_pin_salt);
+  buf_str(&b, ",\"pinHash\":");
+  buf_json(&b, g_pin_hash);
+  buf_str(&b, ",\"monitorText\":");
+  buf_json(&b, g_monitor_text);
+  buf_str(&b, "}\n");
+  if (b.failed || !b.data || !save_atomic(path, b.data, b.size, 0600)) logf_("config.json nao gravado: %s", strerror(errno));
+  free(b.data);
 }
 
 // ---- Servidor HTTP (127.0.0.1) --------------------------------------------------------------------------
@@ -2042,6 +2104,7 @@ static void save_config_locked(void) {
 typedef struct {
   char method[8], path[256];
   char token[128];
+  char session[48]; // X-Session: a sessao aberta pelo PIN na pagina do celular
   size_t content_length;
   char* body;
 } Request;
@@ -2063,7 +2126,7 @@ static int send_all(int fd, const char* data, size_t size) {
 
 static void respond(int fd, int status, const char* body) {
   const char* reason = status == 200 ? "OK" : status == 201 ? "Created" : status == 400 ? "Bad Request" : status == 401 ? "Unauthorized" :
-                       status == 404 ? "Not Found" : status == 409 ? "Conflict" : status == 413 ? "Payload Too Large" : "Error";
+                       status == 403 ? "Forbidden" : status == 404 ? "Not Found" : status == 409 ? "Conflict" : status == 413 ? "Payload Too Large" : "Error";
   char head[256];
   int n = snprintf(head, sizeof head, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %zu\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
                    status, reason, strlen(body));
@@ -2108,6 +2171,7 @@ static int read_request(int fd, Request* r) {
       while (*value == ' ' || *value == '\t') ++value;
       if (!strcasecmp(line, "content-length")) { uint64_t n; if (!decimal(value, &n) || n > 64 * 1024) return 413; r->content_length = (size_t)n; }
       else if (!strcasecmp(line, "x-jobe-token")) snprintf(r->token, sizeof r->token, "%s", value);
+      else if (!strcasecmp(line, "x-session")) snprintf(r->session, sizeof r->session, "%s", value);
       else if (!strcasecmp(line, "authorization") && !strncasecmp(value, "Bearer ", 7)) snprintf(r->token, sizeof r->token, "%s", value + 7);
     }
     line = next ? next + 2 : NULL;
@@ -2141,6 +2205,25 @@ static int secret_field(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 
+// "Acompanhe pelo celular em http://IP:34201", uma vez por processo, quando o primeiro download chega ao payload.
+static void announce_monitor(void) {
+  char text[300], ip[64];
+  pthread_mutex_lock(&g_lock);
+  const int due = g_monitor_on && !g_monitor_announced && g_monitor_text[0];
+  snprintf(text, sizeof text, "%s", g_monitor_text);
+  pthread_mutex_unlock(&g_lock);
+  if (!due || current_ip(ip, sizeof ip) || !ip[0]) return;
+  char address[96], out[720];
+  snprintf(address, sizeof address, "http://%s:%d", ip, g_monitor_port_now());
+  const char* mark = strstr(text, "{address}");
+  if (mark) snprintf(out, sizeof out, "%.*s%s%s", (int)(mark - text), text, address, mark + 9);
+  else snprintf(out, sizeof out, "%s %s", text, address);
+  pthread_mutex_lock(&g_lock);
+  g_monitor_announced = 1;
+  pthread_mutex_unlock(&g_lock);
+  notify(out);
+}
+
 static void handle_create(int fd, Request* r) {
   Job* j = calloc(1, sizeof *j);
   if (!j) { respond_error(fd, 500, "out of memory"); return; }
@@ -2148,7 +2231,7 @@ static void handle_create(int fd, Request* r) {
   JP jp = {r->body, r->body + r->content_length, 0};
   char error[200];
   if (!jp_object(&jp, job_field, &parse)) { free(j); respond_error(fd, 400, "invalid JSON body"); return; }
-  j->id[0] = 0; j->state[0] = 0; j->error[0] = 0; j->published[0] = 0; j->awaiting_app = 0; j->renewals = 0; j->written = j->total = 0;
+  j->id[0] = 0; j->state[0] = 0; j->error[0] = 0; j->by[0] = 0; j->published[0] = 0; j->awaiting_app = 0; j->renewals = 0; j->written = j->total = 0;
   if (!validate_job(j, error, sizeof error)) { free(j); respond_error(fd, 400, error); return; }
   pthread_mutex_lock(&g_lock);
   for (int i = 0; i < g_job_count; ++i) {
@@ -2189,59 +2272,74 @@ static void handle_create(int fd, Request* r) {
   logf_("job %s criado: %s (%s, %s)", j->id, j->name, host, j->provider);
   respond(fd, 201, b.data ? b.data : "{}");
   free(b.data);
+  announce_monitor();
 }
 
-// pause | resume | cancel | release | forget
-static void handle_action(int fd, const char* id, const char* action) {
-  pthread_mutex_lock(&g_lock);
-  Job* j = find_job_locked(id);
-  if (!j) { pthread_mutex_unlock(&g_lock); respond_error(fd, 404, "no such job"); return; }
-  int ok = 1;
+// pause | resume | cancel | release | forget, com a trava. `remote`: pedido do celular (so pause/resume/cancel),
+// que fica em j->by para o app nao desfazer a pausa. Devolve 200, 404 (acao desconhecida) ou 409 (forget de um
+// job rodando); *removed: o job saiu da lista (e foi liberado).
+static int job_action_locked(Job* j, const char* action, int remote, int* removed) {
+  *removed = 0;
+  const char* by = remote ? "remote" : "";
   if (!strcmp(action, "pause")) {
-    if (j->running) j->ctl = CTL_PAUSE;
-    else if (!strcmp(j->state, "queued")) snprintf(j->state, sizeof j->state, "paused");
+    if (j->running) { j->ctl = CTL_PAUSE; snprintf(j->by, sizeof j->by, "%s", by); }
+    else if (!strcmp(j->state, "queued")) { snprintf(j->state, sizeof j->state, "paused"); snprintf(j->by, sizeof j->by, "%s", by); }
   } else if (!strcmp(action, "resume")) {
     if (!strcmp(j->state, "paused") || !strcmp(j->state, "failed") || !strcmp(j->state, "needs-app")) {
       snprintf(j->state, sizeof j->state, "queued");
       j->error[0] = 0;
       j->retry_at = 0;
-    } else if (j->running && j->ctl == CTL_PAUSE) j->ctl = CTL_NONE;
+      j->by[0] = 0;
+    } else if (j->running && j->ctl == CTL_PAUSE) { j->ctl = CTL_NONE; j->by[0] = 0; }
   } else if (!strcmp(action, "cancel")) {
-    if (j->running) j->ctl = CTL_CANCEL;
-    else if (!terminal(j->state) || strcmp(j->state, "completed")) { remove_partials(j); snprintf(j->state, sizeof j->state, "cancelled"); }
+    if (j->running) { j->ctl = CTL_CANCEL; snprintf(j->by, sizeof j->by, "%s", by); }
+    else if (strcmp(j->state, "completed")) { remove_partials(j); snprintf(j->state, sizeof j->state, "cancelled"); snprintf(j->by, sizeof j->by, "%s", by); }
+  } else if (remote) {
+    return 404;
   } else if (!strcmp(action, "release")) {
     // Devolve o arquivo ao app: para (gravando o checkpoint) e esquece o job, mantendo .part/.resume.
     if (j->running) j->ctl = CTL_RELEASE;
-    else { remove_job_locked(j); j = NULL; }
+    else { remove_job_locked(j); *removed = 1; }
   } else if (!strcmp(action, "forget")) {
-    if (j->running) ok = 0;
-    else { remove_job_locked(j); j = NULL; }
+    if (j->running) return 409;
+    remove_job_locked(j);
+    *removed = 1;
   } else {
-    pthread_mutex_unlock(&g_lock);
-    respond_error(fd, 404, "unknown action");
-    return;
+    return 404;
   }
-  if (j) j->updated = now_s();
+  if (!*removed) j->updated = now_s();
   save_jobs_locked();
   pthread_cond_broadcast(&g_wake_downloader);
+  return 200;
+}
+
+static void handle_action(int fd, const char* id, const char* action) {
+  pthread_mutex_lock(&g_lock);
+  Job* j = find_job_locked(id);
+  if (!j) { pthread_mutex_unlock(&g_lock); respond_error(fd, 404, "no such job"); return; }
+  int removed = 0;
+  const int status = job_action_locked(j, action, 0, &removed);
+  if (status == 404) { pthread_mutex_unlock(&g_lock); respond_error(fd, 404, "unknown action"); return; }
   Buf b = {0};
-  if (!ok) buf_str(&b, "{\"error\":\"the job is running; release it first\"}");
-  else if (j) { buf_str(&b, "{\"ok\":true,\"job\":"); job_json(&b, j); buf_str(&b, "}"); }
+  if (status == 409) buf_str(&b, "{\"error\":\"the job is running; release it first\"}");
+  else if (!removed) { buf_str(&b, "{\"ok\":true,\"job\":"); job_json(&b, j); buf_str(&b, "}"); }
   else buf_str(&b, "{\"ok\":true,\"removed\":true}");
   pthread_mutex_unlock(&g_lock);
-  respond(fd, ok ? 200 : 409, b.data ? b.data : "{}");
+  respond(fd, status, b.data ? b.data : "{}");
   free(b.data);
 }
 
 static void route(int fd, Request* r) {
   if (!token_ok(r->token)) { respond_error(fd, 401, "missing or wrong token"); return; }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
-    char body[300];
+    char body[512], ip[64];
+    current_ip(ip, sizeof ip);
     pthread_mutex_lock(&g_lock);
     const Job* active = first_running_locked();
-    snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d}",
+    snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
+             "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s}",
              BG_VERSION, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
-             g_running_count, g_max_running);
+             g_running_count, g_max_running, ip, g_monitor_on ? "true" : "false", g_monitor_port_now(), g_pin_hash[0] ? "true" : "false");
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
     return;
@@ -2261,20 +2359,18 @@ static void route(int fd, Request* r) {
   if (strcmp(r->method, "POST")) { respond_error(fd, 404, "not found"); return; }
   if (!strcmp(r->path, "/jobs")) { handle_create(fd, r); return; }
   if (!strcmp(r->path, "/config")) {
-    ConfigBody c = {0, 0};
+    ConfigBody c;
+    memset(&c, 0, sizeof c);
     JP jp = {r->body, r->body + r->content_length, 0};
-    if (!jp_object(&jp, config_field, &c) || !c.found || c.concurrency < 1 || c.concurrency > MAX_WORKERS) {
-      respond_error(fd, 400, "expected {concurrency: 1..4}");
+    if (!jp_object(&jp, config_field, &c) || !config_valid(&c)) {
+      respond_error(fd, 400, "expected {concurrency: 1..4, monitor, pinSalt + pinHash, monitorText}");
       return;
     }
-    char body[80];
+    char body[160];
     pthread_mutex_lock(&g_lock);
-    if (g_max_running != (int)c.concurrency) {
-      logf_("downloads simultaneos: %d -> %d", g_max_running, (int)c.concurrency);
-      g_max_running = (int)c.concurrency;
-      save_config_locked();
-    }
-    snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d}", g_max_running);
+    if (config_apply_locked(&c)) save_config_locked();
+    snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d,\"monitor\":%s,\"pinSet\":%s}", g_max_running,
+             g_monitor_on ? "true" : "false", g_pin_hash[0] ? "true" : "false");
     pthread_cond_broadcast(&g_wake_downloader);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
@@ -2445,6 +2541,358 @@ static void load_token(void) {
   chmod(path, 0600);
 }
 
+// ---- Pagina do celular (0.0.0.0:34201) ------------------------------------------------------------------
+// A tela de downloads para o celular na rede de casa (app/native/bg_monitor.html, embutida em bg_monitor_html.h por
+// tools/bg-monitor/embed.mjs). Ver nao pede nada; pausar, retomar e cancelar pedem uma sessao aberta com o PIN
+// definido na Jobee'sLair (o app manda so sal + SHA-256). Nada de URL, chave, token ou caminho sai por aqui.
+// Fecha cada conexao aos poucos (shutdown + espera o cliente): fechar logo depois de responder corta o fim da
+// resposta no navegador do Android (ERR_CONTENT_LENGTH_MISMATCH).
+#include "bg_monitor_html.h"
+
+#define MONITOR_PORT 34201
+#define MONITOR_CLIENTS 4
+#define MONITOR_SESSIONS 16
+#define MONITOR_PEERS 32
+#define MONITOR_FREE_TRIES 5
+#define MONITOR_MAX_BLOCK 900
+
+static int g_monitor_port = MONITOR_PORT;
+static int64_t g_session_seconds = 12 * 3600;
+static volatile int g_reopen_monitor;
+static pthread_mutex_t g_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_monitor_clients;
+typedef struct { char token[33]; int64_t expires; } Session;
+static Session g_sessions[MONITOR_SESSIONS];
+typedef struct { uint32_t ip; int failures; int64_t blocked_until, last; } Peer;
+static Peer g_peers[MONITOR_PEERS];
+
+static int g_monitor_port_now(void) { return g_monitor_port; }
+
+static void monitor_clear_sessions(void) {
+  pthread_mutex_lock(&g_monitor_lock);
+  memset(g_sessions, 0, sizeof g_sessions);
+  pthread_mutex_unlock(&g_monitor_lock);
+}
+
+static int same_text(const char* a, const char* b, size_t size) { // tempo constante
+  unsigned diff = 0;
+  for (size_t i = 0; i < size; ++i) diff |= (unsigned)(unsigned char)a[i] ^ (unsigned)(unsigned char)b[i];
+  return diff == 0;
+}
+
+// 1 certo, 0 errado, -1 sem PIN definido.
+static int pin_matches(const char* pin) {
+  char salt[65], expected[65], got[65];
+  pthread_mutex_lock(&g_lock);
+  snprintf(salt, sizeof salt, "%s", g_pin_salt);
+  snprintf(expected, sizeof expected, "%s", g_pin_hash);
+  pthread_mutex_unlock(&g_lock);
+  if (!is_hex64(expected) || !is_hex64(salt)) return -1;
+  Hash h;
+  hash_init(&h);
+  hash_add(&h, salt, strlen(salt));
+  hash_add(&h, ":", 1);
+  hash_add(&h, pin, strlen(pin));
+  if (!hash_finish(&h, got)) return 0;
+  return same_text(got, expected, 64);
+}
+
+static void new_session(char out[33]) {
+  unsigned char bytes[16];
+  random_bytes(bytes, sizeof bytes);
+  static const char digits[] = "0123456789abcdef";
+  for (int i = 0; i < 16; ++i) { out[2 * i] = digits[bytes[i] >> 4]; out[2 * i + 1] = digits[bytes[i] & 15]; }
+  out[32] = 0;
+  const int64_t now = now_s();
+  pthread_mutex_lock(&g_monitor_lock);
+  int slot = 0;
+  for (int i = 0; i < MONITOR_SESSIONS; ++i) {
+    if (g_sessions[i].expires <= now) { slot = i; break; }
+    if (g_sessions[i].expires < g_sessions[slot].expires) slot = i;
+  }
+  snprintf(g_sessions[slot].token, sizeof g_sessions[slot].token, "%s", out);
+  g_sessions[slot].expires = now + g_session_seconds;
+  pthread_mutex_unlock(&g_monitor_lock);
+}
+
+static int session_ok(const char* given) {
+  if (strlen(given) != 32) return 0;
+  const int64_t now = now_s();
+  int ok = 0;
+  pthread_mutex_lock(&g_monitor_lock);
+  for (int i = 0; i < MONITOR_SESSIONS; ++i)
+    if (g_sessions[i].expires > now && same_text(g_sessions[i].token, given, 32)) ok = 1;
+  pthread_mutex_unlock(&g_monitor_lock);
+  return ok;
+}
+
+// O registro de tentativas de um IP (com g_monitor_lock): um livre, ou o usado ha mais tempo.
+static Peer* peer_of_locked(uint32_t ip) {
+  Peer* oldest = &g_peers[0];
+  for (int i = 0; i < MONITOR_PEERS; ++i) {
+    if (g_peers[i].last && g_peers[i].ip == ip) return &g_peers[i];
+    if (g_peers[i].last < oldest->last) oldest = &g_peers[i];
+  }
+  memset(oldest, 0, sizeof *oldest);
+  oldest->ip = ip;
+  return oldest;
+}
+
+// O erro de um job como a pagina pode mostrar: sem links nem caminhos.
+static void public_error(const char* in, char* out, size_t cap) {
+  size_t used = 0;
+  out[0] = 0;
+  for (const char* p = in; *p && used + 1 < cap;) {
+    const size_t word = strcspn(p, " \t\r\n");
+    int link = 0; // a palavra tem "://" (o PS5 nao tem memmem)
+    for (size_t k = 0; k + 2 < word && !link; ++k) link = p[k] == ':' && p[k + 1] == '/' && p[k + 2] == '/';
+    const int hidden = word > 0 && (*p == '/' || link);
+    const char* piece = hidden ? "[...]" : p;
+    size_t size = hidden ? 5 : word;
+    if (used + size >= cap) size = cap - 1 - used;
+    memcpy(out + used, piece, size);
+    used += size;
+    p += word;
+    if (*p && used + 1 < cap) out[used++] = ' ';
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+  }
+  out[used] = 0;
+}
+
+static void monitor_status(Buf* b) {
+  char error[600];
+  pthread_mutex_lock(&g_lock);
+  buf_str(b, "{\"jobs\":[");
+  int first = 1;
+  for (int i = 0; i < g_job_count; ++i) {
+    const Job* j = g_jobs[i];
+    if (!strcmp(j->state, "cancelled")) continue;
+    if (!first) buf_str(b, ",");
+    first = 0;
+    public_error(j->error, error, sizeof error);
+    buf_str(b, "{\"id\":"); buf_json(b, j->id);
+    buf_str(b, ",\"name\":"); buf_json(b, j->name);
+    buf_str(b, ",\"state\":"); buf_json(b, j->state);
+    buf_str(b, ",\"by\":"); buf_json(b, j->by);
+    buf_str(b, ",\"error\":"); buf_json(b, error);
+    buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u}", (unsigned long long)j->written,
+            (unsigned long long)(j->total ? j->total : j->expected_bytes), j->bytes_per_second, j->active_connections);
+  }
+  buf_fmt(b, "],\"limit\":%d,\"pinSet\":%s}", g_max_running, g_pin_hash[0] ? "true" : "false");
+  pthread_mutex_unlock(&g_lock);
+}
+
+static void monitor_send(int fd, int status, const char* type, const void* body, size_t size) {
+  const char* reason = status == 200 ? "OK" : status == 400 ? "Bad Request" : status == 401 ? "Unauthorized" : status == 403 ? "Forbidden" :
+                       status == 404 ? "Not Found" : status == 413 ? "Payload Too Large" : "Error";
+  char head[512];
+  const int html = !strncmp(type, "text/html", 9);
+  int n = snprintf(head, sizeof head,
+                   "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
+                   "Referrer-Policy: no-referrer\r\n%sConnection: close\r\n\r\n",
+                   status, reason, type, size,
+                   html ? "Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data:\r\n" : "");
+  if (send_all(fd, head, (size_t)n) && size) send_all(fd, body, size);
+}
+static void monitor_json(int fd, int status, const char* body) { monitor_send(fd, status, "application/json", body, strlen(body)); }
+
+typedef struct { char pin[16]; } UnlockBody;
+static int unlock_field(JP* jp, const char* key, void* ctx) {
+  if (!strcmp(key, "pin")) return jp_text(jp, ((UnlockBody*)ctx)->pin, sizeof ((UnlockBody*)ctx)->pin) ? 1 : -1;
+  return jp_skip(jp) ? 1 : -1;
+}
+
+static void monitor_unlock(int fd, Request* r, uint32_t ip) {
+  UnlockBody u;
+  memset(&u, 0, sizeof u);
+  JP jp = {r->body, r->body + r->content_length, 0};
+  size_t digits = strspn(u.pin, "0123456789");
+  if (!jp_object(&jp, unlock_field, &u) || (digits = strspn(u.pin, "0123456789")) != strlen(u.pin) || digits < 4 || digits > 8) {
+    memset(&u, 0, sizeof u);
+    monitor_json(fd, 400, "{\"error\":\"pin\"}");
+    return;
+  }
+  const int64_t now = now_s();
+  pthread_mutex_lock(&g_monitor_lock);
+  Peer* peer = peer_of_locked(ip);
+  peer->last = now;
+  const int64_t wait = peer->blocked_until - now;
+  pthread_mutex_unlock(&g_monitor_lock);
+  char body[96];
+  if (wait > 0) {
+    snprintf(body, sizeof body, "{\"retryIn\":%lld}", (long long)wait);
+    monitor_json(fd, 403, body);
+    memset(&u, 0, sizeof u);
+    return;
+  }
+  const int match = pin_matches(u.pin);
+  memset(&u, 0, sizeof u);
+  if (match < 0) { monitor_json(fd, 403, "{\"noPin\":true,\"retryIn\":0}"); return; }
+  pthread_mutex_lock(&g_monitor_lock);
+  peer = peer_of_locked(ip);
+  peer->last = now;
+  int64_t block = 0;
+  if (match) peer->failures = 0;
+  else if (++peer->failures >= MONITOR_FREE_TRIES) {
+    const int doubling = peer->failures - MONITOR_FREE_TRIES < 5 ? peer->failures - MONITOR_FREE_TRIES : 5;
+    block = 30LL << doubling;
+    if (block > MONITOR_MAX_BLOCK) block = MONITOR_MAX_BLOCK;
+    peer->blocked_until = now + block;
+  }
+  const int failures = peer->failures;
+  pthread_mutex_unlock(&g_monitor_lock);
+  if (!match) {
+    logf_("celular: PIN errado (%d seguidos)%s", failures, block ? "; bloqueado por um tempo" : "");
+    snprintf(body, sizeof body, "{\"retryIn\":%lld}", (long long)block);
+    monitor_json(fd, 403, body);
+    return;
+  }
+  char token[33];
+  new_session(token);
+  logf_("celular: controles liberados");
+  snprintf(body, sizeof body, "{\"session\":\"%s\"}", token);
+  monitor_json(fd, 200, body);
+}
+
+static void monitor_action(int fd, Request* r) {
+  char id[32], action[16];
+  const char* rest = r->path + strlen("/api/jobs/");
+  const char* slash = strchr(rest, '/');
+  if (!slash || (size_t)(slash - rest) >= sizeof id || strlen(slash + 1) >= sizeof action) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return; }
+  memcpy(id, rest, (size_t)(slash - rest));
+  id[slash - rest] = 0;
+  snprintf(action, sizeof action, "%s", slash + 1);
+  if (strcmp(action, "pause") && strcmp(action, "resume") && strcmp(action, "cancel")) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return; }
+  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  pthread_mutex_lock(&g_lock);
+  Job* j = find_job_locked(id);
+  int status = 404, removed = 0;
+  if (j && strcmp(j->state, "cancelled")) status = job_action_locked(j, action, 1, &removed);
+  pthread_mutex_unlock(&g_lock);
+  if (status != 200) { monitor_json(fd, 404, "{\"error\":\"no such job\"}"); return; }
+  logf_("celular: job %s %s", id, action);
+  monitor_json(fd, 200, "{\"ok\":true}");
+}
+
+static void monitor_route(int fd, Request* r, uint32_t ip) {
+  char* query = strchr(r->path, '?');
+  if (query) *query = 0;
+  if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {
+    monitor_send(fd, 200, "text/html; charset=utf-8", BG_MONITOR_HTML, BG_MONITOR_HTML_SIZE);
+    return;
+  }
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/status")) {
+    Buf b = {0};
+    monitor_status(&b);
+    if (b.failed || !b.data) monitor_json(fd, 500, "{\"error\":\"out of memory\"}");
+    else monitor_send(fd, 200, "application/json", b.data, b.size);
+    free(b.data);
+    return;
+  }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/unlock")) { monitor_unlock(fd, r, ip); return; }
+  if (!strcmp(r->method, "POST") && !strncmp(r->path, "/api/jobs/", 10)) { monitor_action(fd, r); return; }
+  monitor_json(fd, 404, "{\"error\":\"not found\"}");
+}
+
+// Fecha aos poucos: avisa o fim (SHUT_WR) e espera o navegador fechar (ate 2 s), para ele ler a resposta inteira.
+static void close_gently(int fd) {
+  shutdown(fd, SHUT_WR);
+  struct timeval linger = {0, 200000};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &linger, sizeof linger);
+  char drain[512];
+  for (const int64_t until = mono_ms() + 2000; mono_ms() < until;) {
+    ssize_t n = recv(fd, drain, sizeof drain, 0);
+    if (n == 0) break;
+    if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) break;
+  }
+  close(fd);
+}
+
+static void* serve_monitor(void* arg) {
+  int fd = (int)(intptr_t)arg;
+  struct timeval timeout = {5, 0};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
+#ifdef SO_NOSIGPIPE
+  int one = 1;
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+  struct sockaddr_in peer;
+  socklen_t peer_size = sizeof peer;
+  uint32_t ip = 0;
+  if (!getpeername(fd, (struct sockaddr*)&peer, &peer_size) && peer.sin_family == AF_INET) ip = peer.sin_addr.s_addr;
+  Request r;
+  memset(&r, 0, sizeof r);
+  int status = read_request(fd, &r);
+  if (status == 200) monitor_route(fd, &r, ip);
+  else if (status) monitor_json(fd, status, "{\"error\":\"bad request\"}");
+  if (r.body) { memset(r.body, 0, r.content_length); free(r.body); }
+  close_gently(fd);
+  pthread_mutex_lock(&g_monitor_lock);
+  --g_monitor_clients;
+  pthread_mutex_unlock(&g_monitor_lock);
+  return NULL;
+}
+
+static int open_monitor(void) {
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) return -1;
+  int one = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+  struct sockaddr_in address;
+  memset(&address, 0, sizeof address);
+  address.sin_family = AF_INET;
+  address.sin_port = htons((uint16_t)g_monitor_port);
+  address.sin_addr.s_addr = htonl(INADDR_ANY); // a rede de casa
+  if (bind(fd, (struct sockaddr*)&address, sizeof address) || listen(fd, 16)) { close(fd); return -1; }
+  return fd;
+}
+
+// Liga e desliga a porta conforme a opcao; no maximo MONITOR_CLIENTS conexoes ao mesmo tempo (o resto e fechado).
+static void* monitor_loop(void* arg) {
+  (void)arg;
+  int server = -1, failures = 0;
+  int64_t next_try = 0;
+  while (!g_stop) {
+    if (server >= 0 && (!g_monitor_on || g_reopen_monitor)) {
+      close(server);
+      server = -1;
+      if (g_reopen_monitor) next_try = mono_ms() + 2000;
+      logf_("pagina do celular: porta %d fechada%s", g_monitor_port, g_monitor_on ? " (reabrindo)" : "");
+    }
+    g_reopen_monitor = 0;
+    if (server < 0) {
+      if (!g_monitor_on || mono_ms() < next_try) { sleep_ms(200); continue; }
+      server = open_monitor();
+      if (server < 0) { logf_("pagina do celular: porta %d indisponivel (%s); tenta de novo em 10 s", g_monitor_port, strerror(errno)); next_try = mono_ms() + 10000; continue; }
+      logf_("pagina do celular: ouvindo em 0.0.0.0:%d", g_monitor_port);
+      failures = 0;
+    }
+    struct pollfd p = {server, POLLIN, 0};
+    if (poll(&p, 1, 500) <= 0) continue;
+    int client = accept(server, NULL, NULL);
+    if (client < 0) {
+      if (errno == EINTR) continue;
+      if (++failures >= 5) { close(server); server = -1; next_try = mono_ms() + 2000; }
+      continue;
+    }
+    failures = 0;
+    pthread_mutex_lock(&g_monitor_lock);
+    const int room = g_monitor_clients < MONITOR_CLIENTS;
+    if (room) ++g_monitor_clients;
+    pthread_mutex_unlock(&g_monitor_lock);
+    if (!room) { close(client); continue; }
+    if (spawn_thread(serve_monitor, (void*)(intptr_t)client, NULL)) {
+      close(client);
+      pthread_mutex_lock(&g_monitor_lock);
+      --g_monitor_clients;
+      pthread_mutex_unlock(&g_monitor_lock);
+    }
+  }
+  if (server >= 0) close(server);
+  return NULL;
+}
+
 int main(void) {
   signal(SIGPIPE, SIG_IGN); // um cliente que fecha no meio nao derruba o processo
   signal(SIGHUP, SIG_IGN);
@@ -2454,6 +2902,10 @@ int main(void) {
   snprintf(g_dir, sizeof g_dir, "%s", env_or("BGDL_DIR", "/data/JobeesLair/bg"));
   g_port = atoi(env_or("BGDL_PORT", "34200"));
   if (g_port <= 0 || g_port > 65535) g_port = DEFAULT_PORT;
+  g_monitor_port = atoi(env_or("BGDL_MONITOR_PORT", "34201"));
+  if (g_monitor_port <= 0 || g_monitor_port > 65535) g_monitor_port = MONITOR_PORT;
+  g_session_seconds = atoi(env_or("BGDL_SESSION_SECONDS", "43200"));
+  if (g_session_seconds <= 0) g_session_seconds = 12 * 3600;
 #ifdef __PROSPERO__
   snprintf(g_cainfo, sizeof g_cainfo, "/system/common/cert/CA_LIST.cer");
 #else
@@ -2483,8 +2935,10 @@ int main(void) {
   load_config();
   pthread_mutex_unlock(&g_lock);
   logf_("downloads simultaneos: %d", g_max_running);
-  pthread_t server, workers[MAX_WORKERS];
+  pthread_t server, monitor, workers[MAX_WORKERS];
   if (spawn_thread(server_loop, NULL, &server)) { logf_("threads nao criadas"); return 1; }
+  const int monitor_started = !spawn_thread(monitor_loop, NULL, &monitor);
+  if (!monitor_started) logf_("pagina do celular: thread nao criada");
   int started = 0;
   while (started < MAX_WORKERS && !spawn_thread(downloader_loop, NULL, &workers[started])) ++started;
   if (!started) { logf_("threads nao criadas"); return 1; }
@@ -2499,7 +2953,7 @@ int main(void) {
     current_ip(ip, sizeof ip);
     int woke = g_wake || wall - last_wall > 10 || wall < last_wall;
     if (strcmp(ip, last_ip)) { logf_("rede: IP %s -> %s", last_ip[0] ? last_ip : "-", ip[0] ? ip : "-"); woke = 1; snprintf(last_ip, sizeof last_ip, "%s", ip); }
-    if (woke) { g_wake = 0; ++g_epoch; g_reopen_server = 1; logf_("acordou (SIGCONT/IP/relogio): reabrindo servidor e conexoes"); }
+    if (woke) { g_wake = 0; ++g_epoch; g_reopen_server = 1; g_reopen_monitor = 1; logf_("acordou (SIGCONT/IP/relogio): reabrindo servidor e conexoes"); }
     last_wall = wall;
     if (mono_ms() - last_save >= 10000) {
       pthread_mutex_lock(&g_lock);
@@ -2515,6 +2969,7 @@ int main(void) {
   pthread_mutex_unlock(&g_lock);
   for (int i = 0; i < started; ++i) pthread_join(workers[i], NULL);
   pthread_join(server, NULL);
+  if (monitor_started) pthread_join(monitor, NULL);
   pthread_mutex_lock(&g_lock);
   save_jobs_locked();
   pthread_mutex_unlock(&g_lock);

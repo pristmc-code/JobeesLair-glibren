@@ -253,3 +253,120 @@ test('arquivo > 4 GB: retoma uma parcial esparsa e baixa so as faixas depois dos
   assert.ok(tail.equals(bigSlice(done * rb, BIG)), 'os bytes depois dos 4 GB estao no lugar certo');
   await stop(child);
 });
+
+// ---- glibren: a pagina do celular na porta 34201 (0.0.0.0) ----
+
+let monitorPort = 0; // escolhida em cada teste (um await aqui fora encerraria a raiz do node:test cedo)
+const PIN = '246810';
+const pinConfig = (pin = PIN) => { const salt = randomBytes(32).toString('hex'); return { pinSalt: salt, pinHash: sha(`${salt}:${pin}`) }; };
+async function page(route, { method = 'GET', body, session } = {}) {
+  const res = await fetch(`http://127.0.0.1:${monitorPort}${route}`, { method, headers: { 'Content-Type': 'application/json', ...(session ? { 'X-Session': session } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await res.text();
+  let data = {};
+  try { data = JSON.parse(text); } catch {}
+  return { status: res.status, data, text, type: res.headers.get('content-type'), length: Number(res.headers.get('content-length')) };
+}
+async function pageUp() {
+  for (let i = 0; i < 100; i++) { try { if ((await page('/api/status')).status === 200) return; } catch {} await wait(50); }
+  throw new Error('monitor did not start');
+}
+// Le a resposta devagar, 512 bytes de cada vez, como um celular numa Wi-Fi ruim: tem de chegar inteira.
+const slowRead = () => new Promise((resolve, reject) => {
+  const socket = net.connect(monitorPort, '127.0.0.1', () => socket.write('GET / HTTP/1.1\r\nHost: x\r\n\r\n'));
+  const chunks = [];
+  socket.on('data', (chunk) => { chunks.push(chunk); socket.pause(); setTimeout(() => socket.resume(), 5); });
+  socket.setTimeout(20000, () => reject(new Error('slow read timed out')));
+  socket.on('end', () => { socket.end(); resolve(Buffer.concat(chunks)); });
+  socket.on('error', reject);
+});
+
+test('pagina do celular: a tela embutida inteira (leitura lenta), status sem segredos, PIN certo/errado/bloqueio, controles remotos', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  srv.rate = 2 * MiB;
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_SESSION_SECONDS: '2', BGDL_NOTIFY_FILE: path.join(base, 'notify.txt') });
+  await up(base);
+  await pageUp();
+  const html = await slowRead();
+  const head = html.subarray(0, html.indexOf('\r\n\r\n')).toString();
+  const declared = Number(/Content-Length: (\d+)/i.exec(head)[1]);
+  assert.equal(html.length - head.length - 4, declared, 'o corpo chega inteiro, do tamanho anunciado');
+  assert.equal(declared, readFileSync(path.join(repo, 'app/native/bg_monitor.html')).length);
+  assert.match(head, /Cache-Control: no-store/);
+  // Sem PIN: ve, mas os controles respondem que falta o PIN.
+  assert.equal((await page('/api/status')).data.pinSet, false);
+  assert.deepEqual((await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data, { noPin: true, retryIn: 0 });
+  assert.equal((await call(base, 'POST', '/config', { ...pinConfig(), monitorText: 'Siga em {address}' })).status, 200);
+  const dest = path.join(base, 'disk/downloads/m.bin');
+  const secretUrl = `http://127.0.0.1:${port}/f/a.bin?token=SECRET-TOKEN`;
+  const { data } = await call(base, 'POST', '/jobs', { url: secretUrl, destination: dest, storageRoot: path.join(base, 'disk'), name: 'Jogo Teste', connections: 2 });
+  await until(base, data.id, ['downloading'], (job) => job.written > 0);
+  const status = await page('/api/status');
+  assert.equal(status.data.pinSet, true);
+  assert.deepEqual(Object.keys(status.data.jobs[0]).sort(), ['by', 'bytesPerSecond', 'connectionsActive', 'error', 'id', 'name', 'state', 'total', 'written']);
+  assert.equal(status.data.jobs[0].name, 'Jogo Teste');
+  for (const secret of ['SECRET-TOKEN', '/f/a.bin', dest, path.join(base, 'disk')]) assert.ok(!status.text.includes(secret), `a pagina nao ve ${secret}`);
+  // Sem sessao, nada muda.
+  assert.equal((await page(`/api/jobs/${data.id}/pause`, { method: 'POST' })).status, 401);
+  const ok = await page('/api/unlock', { method: 'POST', body: { pin: PIN } });
+  assert.equal(ok.status, 200);
+  assert.match(ok.data.session, /^[0-9a-f]{32}$/);
+  assert.equal((await page(`/api/jobs/${data.id}/pause`, { method: 'POST', session: ok.data.session })).status, 200);
+  let job = await until(base, data.id, ['paused']);
+  assert.equal(job.by, 'remote', 'o app sabe que a pausa veio do celular');
+  assert.equal((await page(`/api/jobs/${data.id}/resume`, { method: 'POST', session: ok.data.session })).status, 200);
+  job = await until(base, data.id, ['downloading', 'queued', 'connecting']);
+  assert.equal(job.by, '');
+  assert.equal((await page(`/api/jobs/${data.id}/cancel`, { method: 'POST', session: ok.data.session })).status, 200);
+  job = await until(base, data.id, ['cancelled']);
+  assert.equal(job.by, 'remote');
+  for (let i = 0; i < 50 && existsSync(`${dest}.part`); i++) await wait(100);
+  assert.ok(!existsSync(`${dest}.part`), 'cancelar pelo celular apaga a parcial');
+  assert.ok(!(await page('/api/status')).data.jobs.some((item) => item.id === data.id), 'um cancelado sai da pagina');
+  assert.equal((await page('/api/jobs/b999/pause', { method: 'POST', session: ok.data.session })).status, 404);
+  assert.equal((await page(`/api/jobs/${data.id}/forget`, { method: 'POST', session: ok.data.session })).status, 404, 'o celular so pausa, retoma e cancela');
+  // A sessao vence (2 s neste teste; 12 h de verdade).
+  await wait(2200);
+  assert.equal((await page(`/api/jobs/${data.id}/resume`, { method: 'POST', session: ok.data.session })).status, 401);
+  // PIN errado: 4 tentativas livres, a 5a bloqueia por 30 s, e nem o certo passa enquanto isso.
+  for (let i = 1; i <= 4; i++) assert.deepEqual((await page('/api/unlock', { method: 'POST', body: { pin: '111111' } })).data, { retryIn: 0 });
+  const blocked = await page('/api/unlock', { method: 'POST', body: { pin: '111111' } });
+  assert.equal(blocked.status, 403);
+  assert.ok(blocked.data.retryIn >= 29, JSON.stringify(blocked.data));
+  assert.ok((await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data.retryIn > 0);
+  assert.equal((await page('/api/unlock', { method: 'POST', body: { pin: 'abc' } })).status, 400);
+  // A notificacao com o endereco saiu uma vez, quando o primeiro download chegou.
+  assert.match(readFileSync(path.join(base, 'notify.txt'), 'utf8'), new RegExp(`Siga em http://[\\d.]+:${monitorPort}`));
+  const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+  assert.ok(!log.includes(PIN) && !log.includes(ok.data.session), 'nem PIN nem sessao no diario');
+  srv.rate = 0;
+  await stop(child);
+});
+
+test('pagina do celular desligada: a porta fecha; ligada de novo, volta; um PIN novo derruba as sessoes', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  await pageUp();
+  assert.equal((await call(base, 'POST', '/config', pinConfig())).status, 200);
+  const { session } = (await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data;
+  assert.ok(session);
+  assert.equal((await call(base, 'POST', '/config', pinConfig('135792'))).status, 200);
+  assert.equal((await page('/api/jobs/b1/pause', { method: 'POST', session })).status, 401, 'PIN trocado: a sessao antiga nao vale');
+  assert.equal((await call(base, 'POST', '/config', { monitor: false })).data.monitor, false);
+  await wait(800);
+  await assert.rejects(page('/api/status'), 'porta fechada');
+  assert.equal((await call(base, 'POST', '/config', { monitor: true })).status, 200);
+  await pageUp();
+  const health = (await call(base, 'GET', '/health')).data;
+  assert.equal(health.monitor, true);
+  assert.equal(health.monitorPort, monitorPort);
+  assert.equal(health.pinSet, true);
+  assert.equal((await call(base, 'POST', '/config', { pinSalt: 'x', pinHash: 'y' })).status, 400, 'sal/hash invalidos sao recusados');
+  const saved = JSON.parse(readFileSync(path.join(base, 'state/config.json'), 'utf8'));
+  assert.equal(saved.monitor, true);
+  assert.match(saved.pinHash, /^[0-9a-f]{64}$/);
+  assert.equal(statSync(path.join(base, 'state/config.json')).mode & 0o777, 0o600);
+  await stop(child);
+});
