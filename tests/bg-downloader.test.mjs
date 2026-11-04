@@ -305,6 +305,7 @@ test('pagina do celular: a tela embutida inteira (leitura lenta), status sem seg
   assert.equal(status.data.pinSet, true);
   assert.deepEqual(Object.keys(status.data.jobs[0]).sort(), ['by', 'bytesPerSecond', 'connectionsActive', 'error', 'id', 'name', 'state', 'total', 'written']);
   assert.equal(status.data.jobs[0].name, 'Jogo Teste');
+  assert.ok(!('via' in status.data.jobs[0]), 'um link direto nao diz via');
   for (const secret of ['SECRET-TOKEN', '/f/a.bin', dest, path.join(base, 'disk')]) assert.ok(!status.text.includes(secret), `a pagina nao ve ${secret}`);
   // Sem sessao, nada muda.
   assert.equal((await page(`/api/jobs/${data.id}/pause`, { method: 'POST' })).status, 401);

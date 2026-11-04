@@ -6,6 +6,13 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **TorBox Instant links name their type by themselves.** When the source list opens, the links TorBox holds already
+  with no format are asked of it in one call (checkcached with the file list: nothing is added to the account), so
+  a VikingFile "Instant" link reads "exFAT image" without a press.
+- **"Find via TorBox".** On a link TorBox takes but does not hold, "Find" can ask TorBox: a request is added to the
+  account only to read the files' names, and removed right after; nothing is downloaded on the console. A link
+  whose site also needs the browser offers both ways under its "Find".
+- **A download through TorBox says so** on its card ("via TorBox") and on the phone page.
 - **"TorBox only" in the source list's filter** (the active service's name: TorBox or AllDebrid), kept for every
   game: only the links the service fetches, the ones it holds already ("TorBox Instant") first, with the format
   and image type filters too (only exFAT through TorBox, say). The download button then starts with the best of

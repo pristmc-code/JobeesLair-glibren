@@ -202,6 +202,11 @@ __fake.jobs = [];
 const torButton = texts({ type: DownloadButton, props: { game: { id: 'PPSA05555', titleId: 'PPSA05555', title: 'Hosted Game', platform: 'ps5', releases: browserSources }, onDownloaded() {}, onRequestDialog() {} } });
 assert.ok(torButton.rendered > 0);
 assert.match(describeSourceOf(variant), /^1fichier\.com · via TorBox/);
+// glibren: a download through TorBox says so on its card ("via TorBox").
+const { DownloadCard } = await load('app/downloads/DownloadCard.jsx');
+const torJob = { id: 'PPSA05555~torbox', gameId: 'PPSA05555', title: 'Hosted Game', titleId: 'PPSA05555', state: 'downloading', written: 1e9, total: 5e9, root: '/data', release: variant, artifact: { destination: '/data/homebrew/Game.exfat', nextAction: 'shadowmount' }, downloadDestination: '/data/downloads/Game.exfat' };
+const card = texts({ type: DownloadCard, props: { job: torJob, game: { id: 'PPSA05555', title: 'Hosted Game', art: { cover: '' } }, run() {}, onOpenGame() {}, onFocusRow() {} } }).out;
+assert.ok(card.some((text) => / · via TorBox · /.test(text)), `a download through TorBox says so on its card: ${card.join(' | ')}`);
 debrid.setTorBoxKey('');
 debrid.setTorBoxClient(null);
 // Tips under the button, only when they matter: backport files, a DLC, a browser host's page.

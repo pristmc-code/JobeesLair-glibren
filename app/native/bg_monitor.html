@@ -215,6 +215,8 @@ function render() {
     const running = ["downloading", "connecting", "verifying"].includes(j.state);
     const nums = [`<span><b>${nf(pct, 0)}%</b> · ${size(j.written || 0)} ${L.of} ${j.total ? size(j.total) : "?"}</span>`];
     if (running) nums.push(`<span>${speed(j.bytesPerSecond || 0)}</span>`, `<span>${L.eta} <b>${eta(((j.total || 0) - (j.written || 0)) / (j.bytesPerSecond || 0))}</b></span>`);
+    // Por um servico debrid: so o nome dele (TorBox, AllDebrid), vindo do payload.
+    if (j.via === "TorBox" || j.via === "AllDebrid") nums.push(`<span>via ${j.via}</span>`);
     el.innerHTML = `<div class="top"><div class="name"></div><span class="tag ${j.state}">${L.states[j.state] || j.state}</span></div>
       <div class="bar"><i style="width:${pct}%"></i></div><div class="nums">${nums.join("")}</div>`;
     el.querySelector(".name").textContent = j.name;

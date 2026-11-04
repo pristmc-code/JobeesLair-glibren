@@ -32,6 +32,7 @@ import { ShimmerText } from '../ui/ShimmerText.jsx';
 import { colors, radius } from '../ui/colors.js';
 import { logical, px } from '../ui/scale.js';
 import { Text, View, motion } from '@ps5-react/core';
+import { serviceName } from '../state/debrid.js';
 
   var CARD_WIDTH = 900;
   var INNER = CARD_WIDTH - 2 * 28 - 2; // the padding and the border
@@ -192,7 +193,9 @@ import { Text, View, motion } from '@ps5-react/core';
       },
       onBlur: () => setWithin((current) => current === name ? null : current)
     });
-    const meta = [formatOf(job2, release), partOf(job2), `${release.provider} ${release.version || ""}`.trim(), job2.root].filter(Boolean).join(" \xB7 ");
+    // glibren: a download through the debrid service says so ("via TorBox"), as the source list does.
+    const via = release.debrid ? t2("debrid.via").replace("TorBox", serviceName(release.debrid.service)) : null;
+    const meta = [formatOf(job2, release), partOf(job2), `${release.provider} ${release.version || ""}`.trim(), via, job2.root].filter(Boolean).join(" \xB7 ");
     // 0.5.5: a busy server's download tries again by itself (download-queue.js retryLater), and says so.
     const explained = job2.error && explainError(job2.error, Boolean(release.parts));
     const problem = explained && job2.retryAt ? { ...explained, action: t2("downloads.retryingSoon") } : explained;

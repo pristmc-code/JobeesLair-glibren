@@ -2882,6 +2882,9 @@ static void monitor_status(Buf* b) {
     buf_str(b, ",\"state\":"); buf_json(b, j->state);
     buf_str(b, ",\"by\":"); buf_json(b, j->by);
     buf_str(b, ",\"error\":"); buf_json(b, error);
+    // glibren: through a debrid service: its name only (no item, link or key), for the page's "via TorBox".
+    if (!strcmp(j->provider, "torbox")) buf_str(b, ",\"via\":\"TorBox\"");
+    else if (!strcmp(j->provider, "alldebrid")) buf_str(b, ",\"via\":\"AllDebrid\"");
     buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u}", (unsigned long long)j->written,
             (unsigned long long)(j->total ? j->total : j->expected_bytes), j->bytes_per_second, j->active_connections);
   }
