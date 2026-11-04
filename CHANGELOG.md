@@ -10,6 +10,10 @@ SHA-256 checksums.
   `data/catalog/index.json` at launch (what the lists, search, filters and sorts use), and each game's banner, logo
   and other covers from small art files the first time they are drawn. On a PC that is 45 ms instead of 110 ms and
   about 0.5 MB less held in the script heap; nothing the store shows or sorts by changed.
+- **Downloads carry on after rest mode.** When the console wakes with the app open, a download that was running
+  and fails because the network is not back yet is tried again by itself (after 20 s, 1, 2 and 5 minutes), and the
+  debug log says how long the console slept and when the app held rest mode off (`keepAwake on/off`, with the
+  engine's answers), to check on a console that downloads keep it awake.
 - **The first screens' covers first.** Every cover is still fetched into the cache after launch, but the first ten of
   each Discover row and the catalog's first rows now come before the rest (Top Rated's tenth cover was the 529th
   fetched; now it is among the first hundred).

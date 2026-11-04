@@ -78,6 +78,12 @@ bool keeping_awake = false;
 std::int64_t next_power_tick_us = 0;
 // The idle timer before rest mode is minutes long at its shortest; a tick restarts it, like input.
 constexpr std::int64_t kPowerTickIntervalUs = 30 * 1000000;
+// Hardware evidence for Power.keepAwake (docs/HARDWARE.md "Not yet validated"): each on and off, the first
+// tick's answer and every change of answer go to the log, and at off how many ticks ran and how long it was on.
+unsigned power_ticks = 0;
+int last_power_result = 0;
+std::int64_t awake_since_us = 0;
+std::int64_t last_tick_us = 0;
 
 // Resolves a function from a module the title does not link, on first use. Only
 // the modules the platform already needs are linked: a NEEDED module the title
@@ -342,6 +348,19 @@ void set_light_bar(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
 void reset_light_bar() { set_light_bar(0, 0, 255); }
 
 void keep_awake(bool enabled) {
+  if (enabled != keeping_awake) {
+    if (enabled) {
+      async_log::write("[PS5-REACT] keepAwake on: sceSystemServicePowerTick now and every %d s",
+                       static_cast<int>(kPowerTickIntervalUs / 1000000));
+      power_ticks = 0;
+      awake_since_us = 0;
+      last_tick_us = 0;
+    } else {
+      async_log::write("[PS5-REACT] keepAwake off after %u ticks over %lld s, last answer 0x%08x", power_ticks,
+                       static_cast<long long>(awake_since_us && last_tick_us > awake_since_us ? (last_tick_us - awake_since_us) / 1000000 : 0),
+                       static_cast<unsigned>(last_power_result));
+    }
+  }
   keeping_awake = enabled;
   next_power_tick_us = 0;
 }
@@ -430,7 +449,16 @@ bool host_platform_read_touch(float* x, float* y) {
 
 void host_platform_tick(std::int64_t now_us) {
   if (!keeping_awake || now_us < next_power_tick_us) return;
+  // A tick due long ago: the process was frozen (rest mode, or the app suspended) while keepAwake was on.
+  if (last_tick_us && now_us - last_tick_us > 3 * kPowerTickIntervalUs)
+    async_log::write("[PS5-REACT] keepAwake: no tick for %lld s (the process was suspended)",
+                     static_cast<long long>((now_us - last_tick_us) / 1000000));
   next_power_tick_us = now_us + kPowerTickIntervalUs;
-  if (const int result = sceSystemServicePowerTick(); result != 0)
-    async_log::write("[PS5-REACT] sceSystemServicePowerTick=0x%08x", static_cast<unsigned>(result));
+  const int result = sceSystemServicePowerTick();
+  if (!power_ticks || result != last_power_result)
+    async_log::write("[PS5-REACT] sceSystemServicePowerTick=0x%08x (tick %u)", static_cast<unsigned>(result), power_ticks + 1);
+  if (!awake_since_us) awake_since_us = now_us;
+  last_power_result = result;
+  last_tick_us = now_us;
+  power_ticks++;
 }

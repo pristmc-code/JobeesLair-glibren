@@ -37,6 +37,7 @@ import { refreshDrives } from './state/drives.js';
 import { downloadQueue, reportPastLaunches } from './state/downloads.js';
 import { colors, useThemeEpoch } from './ui/colors.js';
 import { watchQueue } from './ui/lightBar.js';
+import { createRestWake } from './state/rest-wake.js';
 import { startInstaller, startUpdateChecks } from './state/update.js';
 import { startOnline, watchInstalls } from './state/online.js';
 import { startSharedLinks } from './state/links.js';
@@ -128,6 +129,13 @@ import './state/picture-route.js';
     }, []);
     // The light bar watches the queue from launch; a queue that cannot start leaves it breathing idle.
     (0, useEffect)(() => watchQueue((listener) => downloadQueue().subscribe(listener)), []);
+    // Back from rest mode: how long the console slept goes to the debug log, and the downloads that were running
+    // and fail on the network after it are tried again by themselves (state/rest-wake.js).
+    (0, useEffect)(() => {
+      if (HOMEBREW_ONLY) return void 0;
+      const wake = createRestWake({ queue: downloadQueue() });
+      return () => wake.stop();
+    }, []);
     // 0.5.5: the logs go by themselves when something fails or the run before crashed, once the player says yes
     // (state/bug-report.js; the first failure asks, ui/AutoReportAsk.jsx).
     (0, useEffect)(() => HOMEBREW_ONLY ? void 0 : startAutoReports(downloadQueue()), []);
