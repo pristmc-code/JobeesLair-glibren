@@ -5,6 +5,17 @@
   </picture>
 </p>
 
+> [!NOTE]
+> **This is the glibren fork of Jobee'sLair, kept by PristMC. It is not the official build.**
+> It adds, on top of Jobee'sLair 0.5.5: downloads that keep going with the app closed (`bg-downloader.elf` payload),
+> mirrors, per-host connections, automatic retries and unlimited TorBox link renewal, unpacking beside the next
+> download, sealed debrid keys, a lighter catalog, a format filter with "Find formats", and a Videos button that opens
+> a homebrew YouTube app (ytps5 or YouTube Max'd, glibren builds). See [CHANGELOG.md](CHANGELOG.md) under "Unreleased".
+> Download it from this fork's [releases](https://github.com/pristmc-code/JobeesLair-glibren/releases/latest);
+> its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
+> the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
+> All credit for Jobee'sLair goes to JVK3R; license unchanged (GPL-3.0-or-later).
+
 <p align="center">
   <b>English</b> ·
   <a href="README.ru.md">Русский</a>
