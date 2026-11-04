@@ -28,6 +28,8 @@ import { readJSON } from './read-json.js';
 import { STAGING_SUFFIXES } from './extraction-staging.js';
 import { busyWhileOpen, mountedImages, shadowRequest, within2 } from './shadowmount.js';
 import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
+import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
+import { mirrorsFor } from './download-mirrors.js';
 
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
   var BUSY = ["queued", ...ACTIVE];
@@ -72,6 +74,28 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
   // launches: opening the app again is a try of its own.
   var BUSY_SERVER = /HTTP (?:429|5\d\d)\b|TorBox had a server error/;
   var RETRY_AFTER_MS = [3 * 6e4, 10 * 6e4];
+  // The network failing while a link is being resolved (no answer, a timeout, DNS, a connection dropped: libcurl's
+  // words, or a debrid service's "didn't answer") is the connection, not the source: it is tried again by itself this
+  // far apart before the download fails over or waits on the gamer. Not kept across launches.
+  var NETWORK_FAILURE = /Couldn't resolve|resolve host|Could not resolve|Timeout was reached|timed out|Couldn't connect|Failed to connect|Connection (?:refused|reset|timed out)|Failure when receiving data|Recv failure|Send failure|Server returned nothing|SSL connect error|Network is unreachable|No route to host|didn't answer|\bDNS\b/i;
+  var NETWORK_RETRY_MS = [30e3, 2 * 6e4, 10 * 6e4];
+  // A debrid service that asks to slow down (its RATE_LIMITED), while resolving: tried again this far apart.
+  var RATE_LIMITED = /asked to slow down/i;
+  var RATE_RETRY_MS = [2 * 6e4, 10 * 6e4, 10 * 6e4];
+  // A debrid service still fetching the file into its storage (its PENDING, after the resolver's own few minutes of
+  // waiting): asked again by itself every PENDING_RETRY_MS, PENDING_TRIES times at most (about two hours), the card
+  // saying so meanwhile; cancelling it stops that. Kept across launches: the first try comes a minute after.
+  var PENDING_RETRY_MS = 5 * 6e4;
+  var PENDING_TRIES = 24;
+  var STILL_PREPARING = /is still (?:fetching|preparing)/i;
+  // A debrid service's direct link lives a few hours (TorBox's three): it is asked for a new one when the engine is
+  // refused (401/403), and before it is that old (LINK_MAX_AGE_MS, at a start, a resume or during the download). The
+  // partial carries on: its resume is tied to the file's validator and size, not to the link. Against a loop, at most
+  // RENEWALS_PER_HOUR renewals an hour, and renewals that bring no new bytes wait longer each time (RENEW_BACKOFF_MS)
+  // until the download fails with the reason.
+  var LINK_MAX_AGE_MS = 150 * 6e4;
+  var RENEWALS_PER_HOUR = 6;
+  var RENEW_BACKOFF_MS = [0, 30e3, 2 * 6e4, 10 * 6e4];
   // The passwords the catalog's archives are published with. Some entries name none or the wrong one,
   // so after the catalog's own (or none) these are tried in turn. A wrong or missing password is caught
   // on the archive's headers before anything is written ("RAR archive password is missing.",
@@ -115,6 +139,9 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       delete job2.aheadPart;
       delete job2.retryAt;
       delete job2.autoRetries;
+      delete job2.networkRetries;
+      delete job2.rateRetries;
+      delete job2.roomWait;
       if (job2.state === "installing") return { ...job2, state: "installer-required" };
       // An earlier build counted a title at rest (whose runtime ShadowMount mounts only at launch) as not
       // mounted; it is checked again.
@@ -179,6 +206,15 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
     sources ?? (sources = createSourceResolver({ http }));
     let jobs = [];
     let active2 = null;
+    // Extraction runs beside the downloads, in a lane of its own: one archive at a time (the engine's archive task is
+    // one), while the next download already runs. { job, task } of the job being extracted, or null. A job waiting
+    // for its turn reads "extracting" with phase "queued"; one that was extracting when the app closed downloads its
+    // file again from its receipt (recoverCompleted, no network) and queues again (restore).
+    let extractor2 = null;
+    // A set extracting while its volumes download (streamSet) holds the archive task: { task, done } until it ends.
+    let streaming = null;
+    // That set's extraction, handed from its download to the extraction lane once its last volume is in.
+    let handoff = null;
     // Browser captures in progress, one at a time: job id -> { cancel, task, decide }.
     const captures = /* @__PURE__ */ new Map();
     // MODIFIED (0.5.0 Pre Release 3): a download in parts that reaches a part only the browser can fetch,
@@ -189,13 +225,11 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
     let queueApi = null;
     // A failed download's next try by itself (BUSY_SERVER): job id -> timer. job.retryAt is when, for its card.
     const retryTimers = /* @__PURE__ */ new Map();
-    function retryLater(job2) {
-      const tries = job2.autoRetries || 0;
-      if (job2.state !== "failed" || job2.cancelling || tries >= RETRY_AFTER_MS.length || !BUSY_SERVER.test(cause(job2.error || ""))) return false;
-      const wait2 = RETRY_AFTER_MS[tries];
-      job2.autoRetries = tries + 1;
+    // A failed job tried again by itself `wait2` ms from now (job.retryAt says when, for its card). Cancelling or
+    // removing it, or resuming it by hand, stops the timer's try.
+    function retryIn(job2, wait2, why) {
       job2.retryAt = Date.now() + wait2;
-      console.log(`[download-queue] ${job2.id}: the server is busy; trying again by itself in ${wait2 / 6e4} min`);
+      console.log(`[download-queue] ${job2.id}: ${why}; trying again by itself in ${wait2 >= 6e4 ? `${wait2 / 6e4} min` : `${wait2 / 1e3} s`}`);
       clearTimeout(retryTimers.get(job2.id));
       const timer = setTimeout(() => {
         retryTimers.delete(job2.id);
@@ -206,6 +240,95 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       timer?.unref?.();
       retryTimers.set(job2.id, timer);
       return true;
+    }
+    function retryLater(job2) {
+      const tries = job2.autoRetries || 0;
+      if (job2.state !== "failed" || job2.cancelling || tries >= RETRY_AFTER_MS.length || !BUSY_SERVER.test(cause(job2.error || ""))) return false;
+      job2.autoRetries = tries + 1;
+      return retryIn(job2, RETRY_AFTER_MS[tries], "the server is busy");
+    }
+    // A failure while resolving a link that is the connection or the service's pace, not the source (NETWORK_FAILURE,
+    // RATE_LIMITED, a debrid service still preparing the file): the job fails for now and is tried again by itself,
+    // without failing over to another source. False once its tries are used up (or for any other failure).
+    function waitAndRetry(job2, error2) {
+      const message = cause(error2.message || "");
+      if (job2.state === "pausing" || job2.cancelling) return false;
+      let why, wait2;
+      if (error2.code === "PENDING" || STILL_PREPARING.test(message)) {
+        const tries = job2.pending?.tries || 0;
+        if (tries >= PENDING_TRIES) return false;
+        job2.pending = { tries: tries + 1, since: job2.pending?.since ?? Date.now() };
+        [why, wait2] = [`the debrid service is still preparing the file (check ${tries + 1} of ${PENDING_TRIES})`, PENDING_RETRY_MS];
+      } else if (error2.code === "RATE_LIMITED" || RATE_LIMITED.test(message)) {
+        const tries = job2.rateRetries || 0;
+        if (tries >= RATE_RETRY_MS.length) return false;
+        job2.rateRetries = tries + 1;
+        [why, wait2] = ["the debrid service asked to slow down", RATE_RETRY_MS[tries]];
+      } else if (NETWORK_FAILURE.test(message)) {
+        const tries = job2.networkRetries || 0;
+        if (tries >= NETWORK_RETRY_MS.length) return false;
+        job2.networkRetries = tries + 1;
+        [why, wait2] = [`the network failed while resolving the link (${message})`, NETWORK_RETRY_MS[tries]];
+      } else return false;
+      job2.state = "failed";
+      // A service's own "resume it in a while" is what happens by itself now.
+      job2.error = error2.message.replace(/\s*Resume the download in a while\.$/, "");
+      return retryIn(job2, wait2, why);
+    }
+    // Whether the source a job downloads now is fetched through a debrid service (its link renewed by asking it again).
+    const throughDebrid = (job2) => {
+      try {
+        return sourceKind(job2.parts ? job2.currentSource : job2.release) === "debrid";
+      } catch {
+        return false;
+      }
+    };
+    // A debrid link old enough to expire soon (LINK_MAX_AGE_MS): `holder` the job or the set's part that keeps it.
+    const linkStale = (holder) => Boolean(holder?.linkAt) && Date.now() - holder.linkAt > LINK_MAX_AGE_MS;
+    // A link was had: the tries by itself that waited on resolving it start over.
+    function resolvedNow(job2) {
+      delete job2.pending;
+      delete job2.networkRetries;
+      delete job2.rateRetries;
+    }
+    // While a file downloads: a debrid link about to expire stops the transfer to be renewed (execute's catch, through
+    // renewLink), the partial kept, rather than the engine's ranges being refused one after another once it has.
+    function renewIfStale(job2, holder, task) {
+      if (!active2 || active2.job !== job2 || active2.renewDue || !linkStale(holder) || !throughDebrid(job2)) return;
+      active2.renewDue = true;
+      task.cancel();
+    }
+    /**
+     * Asks the debrid service for a new link to the file the job downloads (expired, refused, or about to be): its
+     * partial carries on. At most RENEWALS_PER_HOUR an hour; one that follows a renewal that brought no new bytes
+     * waits longer each time (RENEW_BACKOFF_MS) in a retry by itself. False when it gives up (the job's error says
+     * why): the loop guard tripped.
+     */
+    function renewLink(job2, reason) {
+      const now = Date.now();
+      const written = job2.parts ? job2.parts[job2.partIndex]?.written || 0 : job2.written || 0;
+      const last = job2.renewal ?? { at: [], stuck: 0, written: -1 };
+      const at = last.at.filter((time) => now - time < 36e5);
+      const stuck = last.written >= 0 && written <= last.written ? last.stuck + 1 : 0;
+      if (at.length >= RENEWALS_PER_HOUR || stuck >= RENEW_BACKOFF_MS.length) {
+        console.log(`[download-queue] ${job2.id}: the debrid link was renewed ${at.length} times this hour (${stuck} without new bytes); giving up for now`);
+        job2.renewal = { at, stuck, written };
+        job2.error = "The debrid service's link kept expiring without the download moving on. Try again later, or choose another source.";
+        return false;
+      }
+      job2.renewal = { at: [...at, now], stuck, written };
+      delete job2.options;
+      if (job2.parts?.[job2.partIndex]) delete job2.parts[job2.partIndex].options;
+      console.log(`[download-queue] ${job2.id}: asking the debrid service for a new link (${reason}; ${at.length + 1} this hour)`);
+      const wait2 = RENEW_BACKOFF_MS[stuck];
+      if (!wait2) {
+        job2.error = "";
+        job2.state = "queued";
+        return true;
+      }
+      job2.state = "failed";
+      job2.error = "The debrid service's link expired again without new bytes. Getting a new one by itself shortly.";
+      return retryIn(job2, wait2, "the renewed debrid link brought no new bytes");
     }
     function scheduleNextPart(job2) {
       if (!browserCapture || !job2.parts || !job2.partIndex || !job2.parts[job2.partIndex - 1]?.completed || !autoContinue()) return;
@@ -639,7 +762,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         job2.release = { ...next };
         job2.artifact = artifact2;
         job2.total = next.sizeBytes || null;
-        for (const key of ["options", "browserUrl", "directURL", "parts", "partIndex", "currentSource", "downloadDestination", "inspected", "adopted", "endChecked", "playerLink"]) delete job2[key];
+        for (const key of ["options", "browserUrl", "directURL", "parts", "partIndex", "currentSource", "downloadDestination", "inspected", "adopted", "endChecked", "playerLink", "linkAt", "renewal", "pending", "rangeBytes"]) delete job2[key];
         job2.error = "";
         job2.state = "queued";
         return true;
@@ -656,7 +779,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       job2.state = "queued";
       return true;
     }
-    async function install(job2) {
+    async function install(job2, lane = active2) {
       const paths = job2.packages ?? [job2.downloadDestination || job2.artifact.destination];
       const backport = (path) => /backport/i.test(path);
       try {
@@ -668,7 +791,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
           job2.message = "";
           change();
           const task = packages.install({ path, name: job2.title });
-          active2.task = task;
+          lane.task = task;
           const off = task.subscribe((progress) => {
             job2.written = progress.written || 0;
             job2.total = progress.total ?? null;
@@ -720,6 +843,29 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       job2.message = t("downloads.fpkgHeld");
       return true;
     }
+    // The engine's connections and range size for one file, from the host its bytes come from (state/download-tuning.js,
+    // the one table). A file that already has a partial keeps the range size it started with (`legacy` for one an
+    // earlier build started), since its resume checkpoint is tied to it.
+    function transferTuning(holder, url, destination, legacy) {
+      const tuned = tuningFor(url);
+      const started = [".part", ".resume"].some((suffix) => {
+        try {
+          return fs.exists(destination + suffix);
+        } catch {
+          return false;
+        }
+      });
+      const rangeBytes = rangeFor(holder, tuned, started, legacy);
+      return { connections: tuned.connections, ...rangeBytes ? { rangeBytes } : {} };
+    }
+    // Mirrors for one file (state/download-mirrors.js): the other catalog links that are the same file and need nothing
+    // resolved, or undefined when there are none.
+    function mirrorLinks(job2, primary, options, candidates) {
+      const links = mirrorsFor(primary, options, candidates ?? []);
+      if (!links.length) return void 0;
+      console.log(`[download-queue] ${job2.id}: ${links.length} mirror${links.length === 1 ? "" : "s"} offered (the engine keeps those serving the same bytes)`);
+      return links;
+    }
     async function execute(job2) {
       let task;
       let unsubscribe;
@@ -739,6 +885,8 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         const signal = active2.cancel.signal;
         job2.state = "resolving";
         job2.error = "";
+        delete job2.roomWait;
+        if (job2.message === t("downloads.waitingForExtraction")) job2.message = "";
         change();
         if (job2.release.parts) {
           await executeSet(job2, signal);
@@ -750,6 +898,11 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         if (job2.downloadDestination !== job2.artifact.destination && !fs.exists(job2.downloadDestination) && !fs.exists(`${job2.downloadDestination}.part`) && fs.exists(job2.artifact.destination) && fs.exists(`${job2.artifact.destination}.complete`))
           job2.downloadDestination = job2.artifact.destination;
         if (job2.routing) finishRouting(job2);
+        // A debrid link close to expiring is replaced before the download starts on it, not after it is refused.
+        if (job2.options && linkStale(job2) && throughDebrid(job2)) {
+          console.log(`[download-queue] ${job2.id}: the debrid link is ${Math.round((Date.now() - job2.linkAt) / 6e4)} min old; asking for a new one first`);
+          delete job2.options;
+        }
         if (!job2.options) {
           if (job2.release.manifestUrl) {
             const response = await http.request(job2.release.manifestUrl, { maxBytes: 4 * 1024 * 1024, signal });
@@ -768,7 +921,11 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
               sha256: repacked ? void 0 : job2.release.sha256 || void 0
             };
             delete job2.directURL;
+            // When a debrid link was had, for its renewal before it expires.
+            if (throughDebrid(job2)) job2.linkAt = Date.now();
+            else delete job2.linkAt;
           }
+          resolvedNow(job2);
           job2.total = job2.options.expectedBytes || null;
           change();
         }
@@ -779,8 +936,14 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
           change();
         }
         const held = Math.max(job2.written, fs.stat(`${job2.downloadDestination}.part`)?.size || 0);
-        if (!fs.exists(job2.downloadDestination) && fs.diskUsage(job2.root).free < stillNeeded({ ...job2, written: held }) + MARGIN2)
-          throw new Error("Not enough space on the selected drive. Free space and retry.");
+        // Room for it beside what the extractions on the same drive will still write; when only they stand in the
+        // way, it waits for them (waitForRoom) instead of failing.
+        const fit = fs.exists(job2.downloadDestination) ? "fits" : room(job2, stillNeeded({ ...job2, written: held }));
+        if (fit === "no") throw new Error("Not enough space on the selected drive. Free space and retry.");
+        if (fit === "later") {
+          waitForRoom(job2);
+          return;
+        }
         // 0.5.4: a 7z's end, read before it downloads (checkEnd), once per file link. Refused before a byte was
         // written, it fails over to the game's next source like a dead link.
         if (job2.endChecked !== job2.options.url && (!job2.inspected || job2.inspected === "7z") && ["extraction-required", "downloaded", "shadowmount"].includes(job2.artifact.nextAction)) {
@@ -792,7 +955,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         fs.mkdir(job2.artifact.directory, { recursive: true });
         fs.mkdir(job2.downloadDestination.slice(0, job2.downloadDestination.lastIndexOf("/")), { recursive: true });
         active2.transferring = true;
-        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: void 0, connections: 64, adaptive: true, rangeBytes: 16 * 1024 * 1024, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true });
+        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true });
         active2.task = task;
         // Most catalog releases do not say their size, so the check above had nothing to go on: once the
         // server does, the rest is checked against the drive once, before it fills (the partial file counts
@@ -806,8 +969,9 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
           if (!sized && job2.total && !noRoom) {
             sized = true;
             const held2 = Math.max(job2.written, fs.stat(`${job2.downloadDestination}.part`)?.size || 0);
-            if (fs.diskUsage(job2.root).free < stillNeeded({ ...job2, written: held2 }) + MARGIN2) {
-              noRoom = new Error("Not enough space on the selected drive. Free space and retry.");
+            const fits = room(job2, stillNeeded({ ...job2, written: held2 }));
+            if (fits !== "fits") {
+              noRoom = fits === "no" ? new Error("Not enough space on the selected drive. Free space and retry.") : Object.assign(new Error("Waiting for room"), { later: true });
               task.cancel();
               return;
             }
@@ -825,6 +989,9 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
               task.cancel();
             }
             if (["extraction-required", "downloaded"].includes(job2.artifact.nextAction)) checkHeaders(job2, `${job2.downloadDestination}.part`, task);
+            // A debrid link about to expire is renewed now, the partial kept (see renewLink), rather than the
+            // engine's ranges being refused one after another once it has.
+            renewIfStale(job2, job2, task);
           }
           emit2();
         });
@@ -868,13 +1035,33 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         job2.state = job2.artifact.nextAction === "shadowmount" ? "downloaded" : job2.artifact.nextAction === "downloaded" ? "file-downloaded" : job2.artifact.nextAction;
         job2.written = job2.total || job2.written;
         job2.bytesPerSecond = 0;
-        if ((job2.artifact.nextAction === "extraction-required" || job2.output) && archives) await extract(job2, [job2.downloadDestination]);
+        delete job2.renewal;
         delete job2.reresolved;
+        // Its extraction waits its turn in the extraction lane; the next download starts meanwhile.
+        if ((job2.artifact.nextAction === "extraction-required" || job2.output) && archives) {
+          queueExtraction(job2);
+          return;
+        }
         notifications.show(t("downloads.notice.complete"), job2.title);
         if (job2.state === "installer-required" && canInstall() && !heldPackage(job2)) await install(job2);
       } catch (error2) {
+        // Only the extractions on its drive stand in the way: it waits for them, its partial kept.
+        if (noRoom?.later && job2.state !== "pausing" && !job2.cancelling) {
+          waitForRoom(job2);
+          return;
+        }
         if (noRoom) error2 = noRoom;
         console.log("[download-queue] transfer stopped:", error2.message);
+        // Whether it failed before its file was handed to the engine: while its link was being resolved.
+        const resolving = !active2.transferring;
+        const stopping = job2.state === "pausing" || job2.cancelling;
+        // A debrid link refused by the engine (expired: 401/403) or stopped before it expires is asked for again,
+        // with no limit but the loop guard (renewLink); never the browser, which has nothing to pass for it.
+        const debrid = throughDebrid(job2);
+        const linkRefused = !resolving && /browser verification required|link expired|HTTP 40[13]\b/i.test(cause(error2.message));
+        const renewed = debrid && !stopping && (active2.renewDue || linkRefused) && renewLink(job2, active2.renewDue ? "it was about to expire" : "the engine was refused");
+        // The network or the service's pace while resolving: tried again by itself, before any other source.
+        const waiting = !renewed && resolving && !(error2 instanceof BrowserRequired) && waitAndRetry(job2, error2);
         // The engine words every 401/403 as a possible browser check; from Archive.org it is a
         // restricted or removed item, so it fails over like a dead link and reads as one.
         const refused = archiveRefusal(job2.parts ? job2.currentSource : job2.release, cause(error2.message));
@@ -895,9 +1082,10 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         const gone = !expired && (refused || /HTTP (?:404|410)\b/.test(cause(error2.message))) ? sharedLink(job2, failedSource) : null;
         if (gone) reportOutcome(gone, false);
         if (expired) console.log("[download-queue] the captured link expired while queued; asking for the check again");
-        const browser = !refused && (expired || error2 instanceof BrowserRequired || /browser verification required/i.test(cause(error2.message)));
-        const retried = job2.state !== "pausing" && !job2.cancelling && browser && active2.transferring && reresolve(job2);
-        const switched = !retried && !expired && job2.state !== "pausing" && !job2.cancelling && failOver(job2, error2);
+        const browser = !refused && !debrid && (expired || error2 instanceof BrowserRequired || /browser verification required/i.test(cause(error2.message)));
+        const retried = renewed || waiting || job2.state !== "pausing" && !job2.cancelling && browser && active2.transferring && reresolve(job2);
+        // A debrid link that kept expiring (renewLink gave up) is not the source's fault: no other source for it.
+        const switched = !retried && !expired && !(debrid && linkRefused) && job2.state !== "pausing" && !job2.cancelling && failOver(job2, error2);
         if (!retried && !switched && job2.state !== "pausing") {
           job2.state = browser ? "awaiting-browser" : "failed";
           job2.error || (job2.error = job2.adopted && STALE_PARTIAL.test(cause(error2.message)) ? ADOPTED : error2.message);
@@ -1174,7 +1362,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       delete part.options;
       return true;
     }
-    async function extract(job2, files, streamed) {
+    async function extract(job2, files, streamed, lane = active2) {
       // 0.5.4: the app closed while this extraction's images moved into homebrew/ (imageTargets): they go back, so
       // the extraction is found whole, checked and placed again.
       if (job2.placing) {
@@ -1225,10 +1413,13 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         } catch {
           return;
         }
-        noRoom = spaceShortfall(job2.root, Math.max(0, total - written), free, []);
+        // A download running beside it on the same drive still needs the rest of its file (only its file: its own
+        // extraction comes after this one, and this one's archive is deleted by then).
+        const beside = active2?.job && active2.job !== job2 && active2.job.root === job2.root ? [{ title: active2.job.title, state: "extracting", total: active2.job.total ?? active2.job.release?.sizeBytes ?? 0, written: active2.job.written || 0 }] : [];
+        noRoom = spaceShortfall(job2.root, Math.max(0, total - written), free, beside);
         if (!noRoom) return;
         console.log(`[download-queue] ${job2.id}: ${noRoom}; the extraction stops before it fills the drive`);
-        active2?.task?.cancel();
+        lane?.task?.cancel();
       };
       const follow = (progress) => {
         if (progress.total && progress.total !== job2.total) {
@@ -1248,7 +1439,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       let result;
       try {
         if (streamed) {
-          active2.task = streamed.task;
+          lane.task = streamed.task;
           samples = [{ at: Date.now(), bytes: streamed.written }];
           report(streamed.written);
           const off = streamed.task.subscribe(follow);
@@ -1274,7 +1465,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
           const passwords = [listed, ...KNOWN_PASSWORDS.filter((password) => password !== listed)];
           for (let index = 0; !result; index++) {
             const task = archives.extract(passwords[index] === void 0 ? unlocked : { ...unlocked, password: passwords[index] });
-            active2.task = task;
+            lane.task = task;
             const off = task.subscribe(follow);
             try {
               result = await task.done;
@@ -1314,7 +1505,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         samples = [{ at: Date.now(), bytes: 0 }];
         change();
         const task = archives.extract({ sources: [`${job2.output}/${inner}`], destination, maxBytes: Math.min(1024 ** 4, Math.max(1, fs.diskUsage(job2.root).free - MARGIN2)) });
-        active2.task = task;
+        lane.task = task;
         const off = task.subscribe(follow);
         try {
           result = await task.done;
@@ -1415,6 +1606,8 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
     function streamSet(job2) {
       const first = job2.parts[0].destination;
       if (!archives?.streams || job2.parts.length < 2 || archives.inspect([first]).kind !== "rar") return null;
+      // The archive task is one: not while the extraction lane works or has a job waiting (it goes first).
+      if (extractor2 || jobs.some((other) => other !== job2 && other.state === "extracting")) return null;
       let task;
       try {
         const options = extraction(job2, job2.parts.map((part) => part.destination));
@@ -1429,7 +1622,15 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       const off = task.subscribe((progress) => {
         streamed.written = progress.written || 0;
       });
-      streamed.done = task.done.then((result) => ({ result }), (error2) => ({ error: error2 })).finally(off);
+      streamed.done = task.done.then((result) => ({ result }), (error2) => ({ error: error2 })).finally(() => {
+        off();
+        // The archive task is free again: an extraction waiting for it may start.
+        if (streaming === streamed) {
+          streaming = null;
+          Promise.resolve().then(pumpExtract);
+        }
+      });
+      streaming = streamed;
       return streamed;
     }
     const setDirectory = (job2) => `${job2.root}/downloads/sets/${job2.release.filename}`;
@@ -1541,21 +1742,33 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
               delete job2.aheadPart;
             }
           }
+          // A debrid link close to expiring is replaced before the part starts on it.
+          if (part.options && linkStale(part) && throughDebrid(job2)) delete part.options;
           if (!part.options) {
             const resolved = await sources.resolve(source2, { signal, directURL: job2.directURL });
             part.options = { ...resolved, expectedBytes: source2.sizeBytes || void 0, sha256: source2.sha256 || void 0 };
             delete job2.directURL;
+            if (throughDebrid(job2)) part.linkAt = Date.now();
+            else delete part.linkAt;
+            resolvedNow(job2);
             change();
           }
           if (job2.state === "pausing") return;
           storageIdentity(job2);
-          if (!fs.exists(part.destination) && fs.diskUsage(job2.root).free < setNeed(job2, streamed?.written) + MARGIN2)
-            throw new Error("Not enough space for the remaining volumes and their extraction. Free space and resume.");
+          const fits = fs.exists(part.destination) ? "fits" : room(job2, setNeed(job2, streamed?.written));
+          if (fits === "no") throw new Error("Not enough space for the remaining volumes and their extraction. Free space and resume.");
+          if (fits === "later") {
+            waitForRoom(job2);
+            return;
+          }
           active2.transferring = true;
           const task = downloads.enqueue({
             ...part.options,
             rejectHtml: true,
-            connections: 64,
+            // The part's other sources that are the same file, as mirrors.
+            mirrors: mirrorLinks(job2, source2, part.options, job2.release.parts[index].sources.filter((other) => other !== source2)),
+            // A part an earlier build started kept the engine's default range size (none was given).
+            ...transferTuning(part, part.options.url, part.destination, null),
             adaptive: true,
             destination: part.destination,
             storageRoot: job2.root,
@@ -1582,6 +1795,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
                 task.cancel();
               }
               if (index === 0) checkHeaders(job2, `${part.destination}.part`, task);
+              renewIfStale(job2, part, task);
               // A first part that is a whole image needs no other part (placeImagePart): no browser for the next.
               if (index === 0 && IMAGE_KINDS.includes(job2.inspected)) endAhead(job2, null);
             }
@@ -1607,6 +1821,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
           part.written = result.written ?? part.total ?? part.written;
           job2.written = job2.parts.reduce((sum, item) => sum + item.written, 0);
           part.completed = true;
+          delete job2.renewal;
           change();
           const inspection = index === 0 && archives?.inspect ? archives.inspect([part.destination]) : null;
           if (inspection?.refusal) throw new Error(inspection.refusal);
@@ -1624,9 +1839,92 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         }
       }
       if (job2.state === "pausing") return;
-      await extract(job2, job2.parts.map((part) => part.destination), streamed);
-      notifications.show(t("downloads.notice.complete"), job2.title);
-      if (job2.state === "installer-required" && canInstall() && !heldPackage(job2)) await install(job2);
+      // Its extraction (or the rest of the one running while it downloaded) goes on in the extraction lane.
+      if (!archives) throw new Error("Archive extraction requires the updated PS5 React runtime.");
+      queueExtraction(job2, streamed);
+    }
+    // ---- The extraction lane ----
+    // The files an extraction unpacks: the set's volumes, or the one downloaded file.
+    const extractionFiles = (job2) => job2.release.parts ? job2.parts.map((part) => part.destination) : [job2.downloadDestination];
+    // A downloaded archive waits for its turn to be extracted; `streamed` is a set's extraction already running.
+    function queueExtraction(job2, streamed = null) {
+      job2.state = "extracting";
+      job2.phase = "queued";
+      job2.bytesPerSecond = 0;
+      if (streamed) handoff = { job: job2, streamed };
+      console.log(`[download-queue] ${job2.id}: downloaded; ${streamed ? "its extraction goes on" : extractor2 ? `extracts after ${extractor2.job.id}` : "extracting"} beside the next download`);
+    }
+    // Starts the next extraction when the lane is free: a set's handed over first, else the first waiting in the queue.
+    function pumpExtract() {
+      if (extractor2 || !archives) return;
+      let job2 = null, streamed = null;
+      if (handoff) {
+        if (jobs.includes(handoff.job) && handoff.job.state === "extracting") ({ job: job2, streamed } = handoff);
+        else handoff.streamed.task.cancel();
+        handoff = null;
+      }
+      if (!job2) {
+        if (streaming) return;
+        job2 = jobs.find((item) => item.state === "extracting" && item.phase === "queued");
+        if (!job2) return;
+      }
+      extractor2 = { job: job2, task: null };
+      void runExtraction(job2, streamed);
+    }
+    async function runExtraction(job2, streamed) {
+      const lane = extractor2;
+      delete job2.phase;
+      try {
+        await extract(job2, extractionFiles(job2), streamed, lane);
+        notifications.show(t("downloads.notice.complete"), job2.title);
+        if (job2.state === "installer-required" && canInstall() && !heldPackage(job2)) await install(job2, lane);
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: extraction stopped: ${error2.message}`);
+        if (job2.state !== "pausing") {
+          job2.state = "failed";
+          job2.error || (job2.error = error2.message);
+          if (!job2.cancelling) notifications.show(t("downloads.notice.failed"), job2.title);
+        }
+      } finally {
+        if (job2.state === "pausing") job2.state = "paused";
+        delete job2.phase;
+        if (COMPLETE.includes(job2.state)) delete job2.launches;
+        if (job2.cancelling) {
+          try {
+            await forget(job2);
+          } catch (error2) {
+            delete job2.cancelling;
+            job2.error = error2.message;
+          }
+        }
+        extractor2 = null;
+        // Downloads that waited for this extraction's room look again.
+        for (const other of jobs) if (other.roomWait) delete other.roomWait;
+        try {
+          change();
+        } catch (error2) {
+          job2.error = `Queue save failed: ${error2.message}`;
+          emit2();
+        }
+        pump();
+      }
+    }
+    // What the extractions on `job2`'s drive will still write (waiting or running), other than its own.
+    const extractionReserve = (job2) => jobs.filter((other) => other !== job2 && other.root === job2.root && other.state === "extracting").reduce((sum, other) => sum + stillNeeded(other), 0);
+    // Whether `need` bytes fit on the job's drive: "fits", "later" (only once the extractions there are done), or "no".
+    function room(job2, need) {
+      const free = fs.diskUsage(job2.root).free;
+      if (free >= need + MARGIN2 + extractionReserve(job2)) return "fits";
+      return free >= need + MARGIN2 ? "later" : "no";
+    }
+    // A download that only fits once the extractions on its drive are done goes back to the queue, its partial kept, and
+    // is passed over until an extraction ends (runExtraction) or none is left (pump).
+    function waitForRoom(job2) {
+      console.log(`[download-queue] ${job2.id}: waits for the extraction on ${job2.root} to finish, for room`);
+      job2.state = "queued";
+      job2.roomWait = true;
+      job2.bytesPerSecond = 0;
+      job2.message = t("downloads.waitingForExtraction");
     }
     function lostPartial(job2) {
       const kept = (path) => fs.exists(path) || fs.exists(`${path}.part`);
@@ -1641,9 +1939,13 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       return jobs.filter((job2) => job2.root === root2 && (BUSY.includes(job2.state) || job2.state === "paused") && !lost.includes(job2));
     }
     function pump(first) {
+      pumpExtract();
       // `holds`: ShadowMount is being asked something that cannot wait for a download (quietNetwork).
       if (active2 || holds) return;
-      const job2 = first?.state === "queued" ? first : jobs.find((item) => item.state === "queued");
+      // One waiting for an extraction's room is passed over while any extraction is left to run.
+      const extracting = Boolean(extractor2) || jobs.some((item) => item.state === "extracting");
+      const ready = (item) => item?.state === "queued" && (!item.roomWait || !extracting);
+      const job2 = ready(first) ? first : jobs.find(ready);
       if (!job2) return;
       // The gamer's download goes first: the borrower stops, and this runs again once it gave the network back.
       if (borrower) {
@@ -1903,6 +2205,13 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         job2.state = "pausing";
         active2.cancel?.cancel();
         active2.task?.cancel();
+      } else if (extractor2?.job === job2 && ACTIVE.includes(job2.state)) {
+        // Its extraction stops (it starts over on resume: the engine keeps no partial extraction).
+        job2.state = "pausing";
+        extractor2.task?.cancel();
+      } else if (job2.state === "extracting" && job2.phase === "queued") {
+        job2.state = "paused";
+        delete job2.phase;
       }
       change();
     }
@@ -2177,6 +2486,10 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
       change();
       pump(running);
     }
+    // A debrid service still preparing a file when the app closed: asked again a minute after it opens (waitAndRetry).
+    for (const job2 of jobs) {
+      if (job2.state === "failed" && job2.pending?.tries && job2.pending.tries < PENDING_TRIES) retryIn(job2, 6e4, "the debrid service was still preparing the file when the app closed");
+    }
     function continueJob(job2, url, verifiedOptions) {
       if (job2.state !== "awaiting-browser" || active2?.job === job2) return;
       webURL(url);
@@ -2312,6 +2625,10 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         if (paths.length) await removing(job2, () => removeAll(paths));
         delete job2.directURL;
         delete job2.reresolved;
+        // Started over by hand: no try by itself is waiting any more, and the debrid link is asked for anew.
+        for (const key of ["retryAt", "pending", "renewal", "linkAt", "networkRetries", "rateRetries"]) delete job2[key];
+        clearTimeout(retryTimers.get(job2.id));
+        retryTimers.delete(job2.id);
         if (job2.parts?.[job2.partIndex] && !job2.parts[job2.partIndex].completed) {
           job2.parts[job2.partIndex].written = 0;
           delete job2.parts[job2.partIndex].options;
@@ -2390,7 +2707,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
         if (deletions.has(job2)) return deletions.get(job2);
         // A finished job, or one stopped part-way (paused, failed, waiting on a browser) whose partial and
         // extracted files would otherwise stay behind; one that is running is cancelled instead.
-        if (active2?.job === job2) throw new Error(t("downloads.deleteRunning"));
+        if (active2?.job === job2 || extractor2?.job === job2) throw new Error(t("downloads.deleteRunning"));
         if (!DELETABLE.includes(job2.state)) throw new Error(t("downloads.deleteBusy"));
         if (moves.has(job2)) throw new Error(t("move.busy"));
         // Resolves with { note } (what the gamer should know, or null) once the files are gone and the task
@@ -2428,7 +2745,8 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
        * the network back; the queue starts nothing until then.
        */
       lendNetwork(onYield) {
-        if (borrower || active2 || holds || jobs.some((job2) => job2.state === "queued")) return null;
+        // A download waiting for an extraction's room does not need the network until that ends (pump asks it back).
+        if (borrower || active2 || holds || jobs.some((job2) => job2.state === "queued" && !job2.roomWait)) return null;
         const lease = { yield: () => {
           try {
             onYield();
@@ -2534,6 +2852,17 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
           job2.cancelling = true;
           this.pause(id);
           return;
+        }
+        // Extracting in the extraction lane: stopped there first, then everything it put on the drive goes, as below.
+        if (extractor2?.job === job2) {
+          this.pause(id);
+          for (let tries = 0; tries < 600 && extractor2?.job === job2; tries++) await wait(100);
+          if (extractor2?.job === job2) throw new Error(t("downloads.deleteRunning"));
+        }
+        // Waiting for its turn to be extracted: it leaves that line, then goes as a stopped one.
+        if (job2.state === "extracting" && job2.phase === "queued") {
+          job2.state = "paused";
+          delete job2.phase;
         }
         // Stopped after its download finished (an extraction that failed, say): everything it put on the
         // drive goes, archive and extracted files included, where forgetting it would refuse ("A final

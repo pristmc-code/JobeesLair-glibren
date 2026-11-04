@@ -13,6 +13,7 @@ import { COMPLETE } from '../state/download-queue.js';
     "verifying",
     "pausing",
     "extracting",
+    "extractQueued",
     "finishing",
     "extracted",
     "paused",
@@ -26,8 +27,9 @@ import { COMPLETE } from '../state/download-queue.js';
     "extraction-required",
     "removing"
   ]);
-  var WAITING = ["resolving", "connecting", "verifying", "pausing", "finishing", "removing"];
-  var shownState = (job2) => job2.state === "extracting" && job2.phase === "finishing" ? "finishing" : job2.state;
+  var WAITING = ["resolving", "connecting", "verifying", "pausing", "finishing", "removing", "extractQueued"];
+  // A download waiting for its turn in the extraction lane (state/download-queue.js) reads as such, not as extracting.
+  var shownState = (job2) => job2.state === "extracting" && job2.phase === "finishing" ? "finishing" : job2.state === "extracting" && job2.phase === "queued" ? "extractQueued" : job2.state;
   var hasStateLabel = (state) => LABELED.has(state);
   var stateLabel = (state) => t(`downloadState.${state}`);
   // A finished card's X only clears it from this list (the game stays in the library, which is where it is

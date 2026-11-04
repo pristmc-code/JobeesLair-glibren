@@ -7,6 +7,9 @@ import { formatBytes } from './size.js';
   var extracts = (job2) => Boolean(job2.release?.parts) || job2.artifact?.nextAction === "extraction-required";
   function stillNeeded(job2) {
     if (job2.state === "installing") return 0;
+    // Downloaded, waiting for its turn to be extracted (download-queue.js's extraction lane): it will write about its
+    // archive's size again (the size it unpacks to is known only once it starts).
+    if (job2.state === "extracting" && job2.phase === "queued") return Math.max(0, job2.total ?? job2.release?.sizeBytes ?? 0);
     const factor = extracts(job2) && job2.state !== "extracting" ? 2 : 1;
     return Math.max(0, (job2.total ?? job2.release?.sizeBytes ?? 0) * factor - job2.written);
   }
