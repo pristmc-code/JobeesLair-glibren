@@ -13,6 +13,7 @@ import { games, hasArt } from '../data/catalog-index.js';
 import { useT } from '../i18n/index.js';
 import { NO_FILTERS, fromArchive, oneEach, otherThan, ratingScore, readyHere, readyLabel, sortGames, topRated } from '../state/catalog.js';
 import { isoDate } from '../state/clock.js';
+import { noteRow } from '../state/cover-warm.js';
 import { useNavActions } from '../state/nav.jsx';
 import { useStoreActions } from '../state/store.jsx';
 import { GameCard } from '../ui/GameCard.jsx';
@@ -43,6 +44,8 @@ import { useEffect, useState } from 'react';
   // 0.5.3: not the carousel's or the Featured row's games: they opened with the same Archive.org games (its See all
   // has them all).
   var READY = oneEach(otherThan(sortGames(READY_ALL, "relevance"), [...featured, ...FEATURED])).slice(0, 15);
+  // Their first covers warm first at launch (state/cover-warm.js); the Featured row draws banners.
+  for (const row of [RECENT, NEW_WEEK, READY, TOP]) noteRow(row);
   var READY_GREEN = "#4ade80";
   var FIRST_FEATURED = FEATURED.length ? `lane:featured:${FEATURED[0].id}` : void 0;
   function useSeeAll() {

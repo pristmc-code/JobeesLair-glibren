@@ -6,6 +6,7 @@
 // MODIFIED: bundledIndex keeps the bundled titles' ids and direct flags for the live game counter.
 // MODIFIED: each game carries `formats`, the kinds of download it has (state/formats.js), for the Format filter:
 // the bundled games' from data/formats.js, a feed's releases sorted when the feeds load.
+// MODIFIED: warmCovers still warms every cover, the first ones of each row first (state/cover-warm.js).
 // MODIFIED: the bundled games come from data/catalog-index.js (data/catalog/index.json, read at launch), their
 // banners, logos and other covers from its art files when first drawn; nothing here reads those for every game.
 // MODIFIED (0.5.1): each game carries its PlayStation Store star rating, `stars` and `ratingCount` (the live
@@ -21,8 +22,9 @@ import { createReleaseCache } from './release-cache.js';
 import { KINDS, gameFormats, ready1360 } from './formats.js';
 import { deviceFacts } from './device.js';
 import { consoleFirmware, firmwareText, ps5FakePackagesLaunch } from './firmware.js';
-import { FileSystem, Image } from '@ps5-react/core';
+import { FileSystem } from '@ps5-react/core';
 import { PS4 } from './ps4.js';
+import { noteRow, warmAtStart } from './cover-warm.js';
 
   // 0.5.1: "Ready" is for this console's firmware. At 11.60 or lower PS5 fake packages start too, so a PS5 game
   // with one is ready there, and the label names that firmware ("Ready for 9.60"); above, it is 13.60's rule and
@@ -171,8 +173,15 @@ import { PS4 } from './ps4.js';
     // How the launch read the catalog index (it ran before the debug log opened).
     const load = catalogLoad;
     console.log(load.error ? `[catalog] the bundled catalog was not read: ${load.error}` : `[catalog] index read at launch: ${load.games} games, ${load.twins} other editions, ${load.bytes} bytes in ${load.ms} ms`);
-    Image.warm(sortGames(games, "relevance").filter((game) => game.art.cover).map((game) => game.art.cover));
+    // Every cover, by relevance as before, with the first of each Discover row and of the catalog grid first
+    // (state/cover-warm.js).
+    const all = sortGames(games, "relevance");
+    noteRow(oneEach(all), GRID_FIRST);
+    const { count, lead } = warmAtStart(all);
+    console.log(`[covers] ${count} covers to warm at launch, the first ${lead} for the first screens`);
   }
+  // The catalog grid's first rows (browse/Catalog.jsx: six a row) warmed at launch.
+  var GRID_FIRST = 36;
   var SORTS = [
     // Most popular puts the games Archive.org serves first: the app downloads them fastest.
     { id: "relevance", compare: (a, b) => fromArchive(b) - fromArchive(a) || b.recommendations - a.recommendations },

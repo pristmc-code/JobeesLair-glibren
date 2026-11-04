@@ -10,6 +10,9 @@ SHA-256 checksums.
   `data/catalog/index.json` at launch (what the lists, search, filters and sorts use), and each game's banner, logo
   and other covers from small art files the first time they are drawn. On a PC that is 45 ms instead of 110 ms and
   about 0.5 MB less held in the script heap; nothing the store shows or sorts by changed.
+- **The first screens' covers first.** Every cover is still fetched into the cache after launch, but the first ten of
+  each Discover row and the catalog's first rows now come before the rest (Top Rated's tenth cover was the 529th
+  fetched; now it is among the first hundred).
 
 ## 0.5.5 (2026-11-02)
 
