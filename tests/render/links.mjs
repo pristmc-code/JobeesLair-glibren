@@ -146,7 +146,8 @@ const browserSources = withReleaseTypes([
 const sheet = (onDebrid) => texts({ type: SourcePicker, props: { title: 'Hosted Game', releases: browserSources, selected: 0, submit() {}, onDebrid, current: 'PPSA05555', onClose() {}, checkLinks: async () => {} } }).out;
 debrid.setTorBoxKey('');
 const plainSheet = sheet(() => {});
-assert.ok(!plainSheet.includes('TorBox'), 'no key, no TorBox');
+assert.ok(!plainSheet.includes('TorBox'), 'no key, no TorBox button');
+assert.ok(plainSheet.includes('TorBox only'), 'the filter chip shows, greyed, without a key');
 assert.ok(has(plainSheet, /^Show 2 web browser sources$/), 'browser sources folded as before');
 debrid.setTorBoxKey('0123abcd-4567-89ef-0123-456789abcdef');
 debrid.setTorBoxClient({ hosters: async () => [{ name: '1Fichier', domains: ['1fichier.com'], working: true }, { name: 'Rapidgator', domains: ['rapidgator.net'], working: true }], checkCachedLinks: async () => new Set([FICHIER]) });
@@ -157,6 +158,19 @@ assert.equal(torSheet.filter((text) => text === 'TorBox').length, 2, 'one per br
 assert.ok(!has(torSheet, /^Show \d+ web browser source/), 'shown at once');
 assert.deepEqual(rowBadges(torSheet, '1fichier.com'), ['Rarely works here', 'TorBox Instant'], 'its captures fail on the console; TorBox holds it');
 assert.deepEqual(rowBadges(torSheet, 'rapidgator.net'), ['Rarely works here'], 'not held: no Instant badge');
+// glibren: "TorBox only": the links TorBox fetches, the Instant one first; the download button starts with it.
+const { setFormatFilter: setFilter, DEFAULT_FORMAT_FILTER: NO_FILTER } = await load('app/state/format-filter.js');
+setFilter({ kinds: [], unknown: true, debridOnly: true });
+const onlyTor = texts({ type: SourcePicker, props: { title: 'Hosted Game', releases: browserSources, selected: 2, submit() {}, onDebrid() {}, current: 'PPSA05555', onClose() {}, checkLinks: async () => {} } }).out;
+console.log(`--- source list, TorBox only\n${onlyTor.join('\n')}`);
+assert.ok(onlyTor.includes('TorBox only'), 'the chip, named for the service');
+assert.ok(!onlyTor.includes('archive.org'), 'the file link TorBox does not fetch is hidden');
+assert.ok(onlyTor.indexOf('1fichier.com') >= 0 && onlyTor.indexOf('1fichier.com') < onlyTor.indexOf('rapidgator.net'), 'the Instant one first');
+const autoButton = texts({ type: DownloadButton, props: { game: { id: 'PPSA05556', titleId: 'PPSA05556', title: 'Hosted Game', platform: 'ps5', releases: browserSources }, onDownloaded() {}, onRequestDialog() {} } }).out;
+assert.ok(autoButton.some((text) => /1fichier\.com/.test(text)), `the button starts with the Instant link: ${autoButton.join(' | ')}`);
+const noneTor = texts({ type: SourcePicker, props: { title: 'Plain Game', releases: browserSources.slice(0, 1), selected: 0, submit() {}, onDebrid() {}, current: 'PPSA05557', onClose() {}, checkLinks: async () => {} } }).out;
+assert.ok(noneTor.includes('No link of this game through TorBox') && noneTor.includes('Show all'), noneTor.join(' | '));
+setFilter(NO_FILTER);
 // 0.5.1: a magnet link has a Torrents section of its own. With a TorBox key the row is the debrid download itself
 // (no button beside it) and "TorBox Instant" marks a torrent TorBox holds; without a key it is greyed, the note
 // says what to add, and the download button says why.

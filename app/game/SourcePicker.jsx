@@ -19,7 +19,8 @@ import { deviceFacts } from '../state/device.js';
 import { backportAdvice, ps5FakePackagesLaunch } from '../state/firmware.js';
 import { cancelFindFormats, cancelFindViaBrowser, findFormatsNow, findViaBrowser, linkFormats, useBrowserFinds, useFormatSearch, useFormatSummary, useHealthyReleases, useLinkCheck, useLinkFormats } from '../state/links.js';
 import { FORMAT_GROUP, effectiveFormat, imageTypeOf } from '../state/link-formats.js';
-import { filterSections, imagesShown, isFiltering, setFormatFilter, showAllKinds, toggleImageType, toggleKind, toggleUnknown, useFormatFilter } from '../state/format-filter.js';
+import { filterSections, imagesShown, isFiltering, setFormatFilter, showAllKinds, toggleDebridOnly, toggleImageType, toggleKind, toggleUnknown, useFormatFilter } from '../state/format-filter.js';
+import { debridOnlyOn } from '../state/debrid-choice.js';
 import { CdnAura, CdnSpark } from '../ui/CdnAura.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
 import { Icon } from '../ui/Icon.jsx';
@@ -285,14 +286,19 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
   function FormatFilterBar({ filter }) {
     const t2 = useT();
     const all = !filter.kinds.length;
+    // glibren: "TorBox only" (state/debrid-choice.js): greyed without a key, saying what to add when pressed.
+    const keyed = Boolean(activeService());
+    const [explain, setExplain] = (0, useState)(false);
     const chip = (key, text, on, onPress) => /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:${key}`, onPress, style: chipStyle(on), children: /* @__PURE__ */ (0, jsx)(ChipFace, { text, on }) }, key);
     return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 8, paddingHorizontal: 18 }, children: [
       /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 20, fontWeight: 600, color: colors.subtle }, children: t2("formats.filter.title") }),
       /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }, children: [
         chip("all", t2("formats.filter.all"), all, () => setFormatFilter(showAllKinds(filter))),
         ...FILTER_CHIPS.map(([kind, text]) => chip(kind, t2(text), !all && filter.kinds.includes(kind), () => setFormatFilter(toggleKind(filter, kind)))),
-        chip("unknown", t2(filter.unknown ? "formats.filter.unknownOn" : "formats.filter.unknownOff"), filter.unknown, () => setFormatFilter(toggleUnknown(filter)))
+        chip("unknown", t2(filter.unknown ? "formats.filter.unknownOn" : "formats.filter.unknownOff"), filter.unknown, () => setFormatFilter(toggleUnknown(filter))),
+        /* @__PURE__ */ (0, jsx)(View, { focusKey: "sources:formats:debrid", onPress: () => keyed ? setFormatFilter(toggleDebridOnly(filter)) : setExplain(true), style: (_state) => [...chipStyle(keyed && Boolean(filter.debridOnly))(_state), keyed ? null : { opacity: 0.55 }], children: /* @__PURE__ */ (0, jsx)(ChipFace, { text: t2("formats.filter.debridOnly", { service: serviceName(activeService() ?? "torbox") }), on: keyed && Boolean(filter.debridOnly) }) }, "debrid")
       ] }),
+      explain && !keyed ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 660, fontFamily: "Exo2", fontSize: 19, color: colors.subtle, lineHeight: 26 }, children: t2("formats.filter.debridNeedsKey") }) : null,
       // glibren: with images shown, which image types (exFAT, FFPKG, FFPFS with FFPFSC).
       imagesShown(filter) ? /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }, children: [
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 19, fontWeight: 600, color: colors.subtle }, children: t2("formats.filter.imageTypes") }),
@@ -373,8 +379,11 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     const everySection = sourceSections(releases);
     const filter = useFormatFilter();
     const [unfiltered, setUnfiltered] = (0, useState)(false);
-    const filtered = unfiltered ? { sections: everySection, hidden: 0 } : filterSections(everySection, filter, { selected, recordOf });
-    const sections = filtered.sections;
+    // glibren: "TorBox only": the links the debrid service fetches, the ones it holds already ("Instant") first.
+    const debridOnly = !unfiltered && debridOnlyOn(filter);
+    const filtered = unfiltered ? { sections: everySection, hidden: 0 } : filterSections(everySection, filter, { selected, recordOf, debrid: debridOnly ? debridSupports : null });
+    const sections = debridOnly ? filtered.sections.map((section) => ({ ...section, items: [...section.items].sort((a, b) => Number(heldByTorBox(b.release) === true) - Number(heldByTorBox(a.release) === true)) })) : filtered.sections;
+    const noneViaDebrid = debridOnly && !filtered.viaDebrid;
     const advice = useBackportAdvice(current);
     const countIn = (list, group) => list.find((section) => section.group === group)?.items.length ?? 0;
     const count = (group) => countIn(sections, group);
@@ -413,7 +422,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
       offered ? /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 6 }, children: [
         /* @__PURE__ */ (0, jsx)(FormatFilterBar, { filter }),
         // What the filter hides, said and undone in one press; all of a game's links hidden says so.
-        filtered.hidden ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:showAll:${current}`, onPress: () => setUnfiltered(true), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "alert", text: t2(filtered.shown ? "formats.hidden" : "formats.allHidden", { count: filtered.hidden }), note: t2("formats.showAll"), end: null }) }) : null,
+        noneViaDebrid ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:showAll:${current}`, onPress: () => setUnfiltered(true), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "alert", text: t2("formats.debridNone", { service: serviceName(activeService()) }), note: t2("formats.showAll"), end: null }) }) : filtered.hidden ? /* @__PURE__ */ (0, jsx)(View, { focusKey: `sources:formats:showAll:${current}`, onPress: () => setUnfiltered(true), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "alert", text: t2(filtered.shown ? "formats.hidden" : "formats.allHidden", { count: filtered.hidden }), note: t2("formats.showAll"), end: null }) }) : null,
         unfiltered && isFiltering(filter) ? /* @__PURE__ */ (0, jsx)(View, { onPress: () => setUnfiltered(false), style: revealStyle, children: /* @__PURE__ */ (0, jsx)(RevealFace, { icon: "layers", text: t2("formats.reapply"), note: t2("formats.reapplyNote"), end: null }) }) : null,
         /* @__PURE__ */ (0, jsx)(FormatSearch, { gameId: current, releases: healthy })
       ] }) : null,

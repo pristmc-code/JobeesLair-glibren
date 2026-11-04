@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **"TorBox only" in the source list's filter** (the active service's name: TorBox or AllDebrid), kept for every
+  game: only the links the service fetches, the ones it holds already ("TorBox Instant") first, with the format
+  and image type filters too (only exFAT through TorBox, say). The download button then starts with the best of
+  them, through the service: Instant first, then the format the filter wants, then the app's own pick; a link the
+  gamer picks stays. A game with none says so, with "Show all". Greyed without a key, saying what to add.
 - **The exact type of a link, not only its group.** Rows say "exFAT image", "FFPKG image", "RAR archive" where the
   type is known (the catalog, a file name, a page, TorBox's names, a download's or a capture's first bytes; a UFS2
   image is told by its superblock 66 KiB in), and the catalog's ".exfat Image" pill no longer says it twice. With

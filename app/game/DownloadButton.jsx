@@ -18,9 +18,11 @@ import { formatPercent2 } from '../i18n/core.js';
 import { useT } from '../i18n/index.js';
 import { editionsOf, readyLabel } from '../state/catalog.js';
 import { BUSY, COMPLETE } from '../state/download-queue.js';
-import { checkLinksNow, useHealthyReleases, useLinkFormats } from '../state/links.js';
+import { checkLinksNow, linkFormats, useHealthyReleases, useLinkFormats } from '../state/links.js';
 import { effectiveFormat } from '../state/link-formats.js';
-import { debridSource, debridSupports } from '../state/debrid.js';
+import { debridSource, debridSupports, useTorBoxInstant } from '../state/debrid.js';
+import { bestDebridIndex, debridOnlyOn } from '../state/debrid-choice.js';
+import { formatFilter, useFormatFilter } from '../state/format-filter.js';
 import { deviceFacts } from '../state/device.js';
 import { consoleFirmware, firmwareText, ps5FakePackagesLaunch } from '../state/firmware.js';
 import { isPatchOnly } from '../state/release-sets.js';
@@ -41,6 +43,14 @@ import { colors, radius } from '../ui/colors.js';
   var WIDTH6 = 272;
   var GB2 = 1e9;
   var STATUS = { fontFamily: "Exo2", fontSize: 21, lineHeight: 30 };
+  // The download queue's network, lent while it downloads nothing (TorBox's Instant check waits otherwise).
+  var lendQueueNetwork = (onYield) => {
+    try {
+      return downloadQueue().lendNetwork?.(onYield) ?? null;
+    } catch {
+      return null;
+    }
+  };
   function DownloadButton({ game, start, onDownloaded, nextDown, onRequestDialog }) {
     const t2 = useT();
     // The game's sources with what is known of their links (state/links.js): a dead one is unavailable,
@@ -61,6 +71,12 @@ import { colors, radius } from '../ui/colors.js';
         return index >= 0 ? { index, debrid: /~(?:torbox|alldebrid)$/.test(id) } : null;
       }).find(Boolean);
       if (owned2) return owned2;
+      // glibren: "TorBox only" (the source list's filter): the best link the debrid service fetches, through it.
+      const filter0 = formatFilter();
+      if (debridOnlyOn(filter0)) {
+        const best = bestDebridIndex(releases, filter0, linkFormats().recordOf);
+        if (best >= 0) return { index: best, debrid: true };
+      }
       // With TorBox set up, a browser-only source it can take goes through TorBox from the start: no browser.
       const index = preferredRelease(releases);
       // 0.5.1: a torrent too, which has no other way.
@@ -119,6 +135,19 @@ import { colors, radius } from '../ui/colors.js';
       setSwitched(t2(health === "dead" ? same ? "links.switchedSameHost" : "links.switched" : same ? "links.switchedSlowSameHost" : "links.switchedSlow", { from, to }));
       setSelected(best);
     }, [releases]);
+    // glibren: "TorBox only": TorBox is asked which links it holds, and the best one (Instant first) takes the
+    // place of the first pick until the gamer picks one or a download of it starts.
+    const filterNow = useFormatFilter();
+    const autoDebrid = debridOnlyOn(filterNow);
+    useTorBoxInstant(autoDebrid ? releases : [], lendQueueNetwork);
+    const bestDebrid = autoDebrid ? bestDebridIndex(releases, filterNow, formatRecord) : -1;
+    (0, useEffect)(() => {
+      if (!autoDebrid || chosen.current || job2 || bestDebrid < 0) return;
+      if (bestDebrid !== selected || !viaDebrid) {
+        setSelected(bestDebrid);
+        setViaDebrid(true);
+      }
+    }, [bestDebrid, autoDebrid]);
     const free = useFreeSpace(roots, download.status, !job2);
     const need = spaceNeeded(release, roots[storage]);
     const lacking = download.status === "idle" && need && free[storage] !== null && free[storage] < need + MARGIN2;

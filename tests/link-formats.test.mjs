@@ -362,3 +362,20 @@ test('the catalog calling a link an exFAT image names it so, after the file name
   const archived = { ...MEDIAFIRE, dumpType: 'image', imageFormat: 'exfat' };
   assert.equal(effectiveFormat(archived).format, 'rar');
 });
+
+test('TorBox only: kept only when on; the links the service fetches stay, the selected one always, and they are counted', () => {
+  const { normalizeFilter, toggleDebridOnly, isFiltering, filterSections: sectionsOf } = filters;
+  assert.deepEqual(normalizeFilter({ kinds: [], unknown: true, debridOnly: false }), { kinds: [], unknown: true });
+  const on = toggleDebridOnly({ kinds: [], unknown: true });
+  assert.equal(on.debridOnly, true);
+  assert.ok(isFiltering(on));
+  const sections = sourceSections([FICHIER, VIKING, DATAVAULTS]);
+  const fetched = (release) => release === VIKING;
+  const kept = sectionsOf(sections, on, { selected: 0, debrid: fetched });
+  const ids = kept.sections.flatMap(({ items }) => items.map(({ release }) => release.id));
+  assert.deepEqual(ids.sort(), [FICHIER.id, VIKING.id].sort(), 'VikingFile through the service, 1fichier because it is selected');
+  assert.equal(kept.viaDebrid, 1);
+  assert.equal(kept.hidden, 1);
+  const none = sectionsOf(sections, on, { selected: 0, debrid: () => false });
+  assert.equal(none.viaDebrid, 0, 'a game with none says so');
+});

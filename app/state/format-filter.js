@@ -4,6 +4,8 @@
 //   unknown  whether a link of no known format shows too (on unless turned off)
 //   images   glibren: with images shown, which image types (state/link-formats.js IMAGE_TYPES: exfat, ffpkg,
 //            ffpfs, FFPFSC going with FFPFS); none or all: every one
+//   debridOnly  glibren: only the links the debrid service (TorBox, AllDebrid) fetches (state/debrid-choice.js);
+//            nothing without a key
 // It only hides rows; their order, the recommended source and the download queue's failover stay as they were.
 // The selected source is never hidden, and a game the filter would empty says so (SourcePicker.jsx).
 
@@ -20,6 +22,7 @@ import { loadList, saveList } from './saved.js';
     const filter = { kinds: kinds.length === GROUPS.length ? [] : kinds, unknown: saved?.unknown !== false };
     // Image types only when some are picked (a filter saved before them reads as it did).
     if (images.length && images.length < IMAGE_TYPES.length) filter.images = images;
+    if (saved?.debridOnly === true) filter.debridOnly = true;
     return filter;
   }
   var allKinds = (filter) => !filter.kinds.length;
@@ -40,7 +43,9 @@ import { loadList, saveList } from './saved.js';
   }
   /** Whether the image types can be picked: images are among what shows (the chips appear then). */
   var imagesShown = (filter) => allKinds(filter) || filter.kinds.includes("image");
-  var isFiltering = (filter) => !allKinds(filter) || !filter.unknown || imagesShown(filter) && Boolean(filter.images?.length);
+  var isFiltering = (filter) => !allKinds(filter) || !filter.unknown || imagesShown(filter) && Boolean(filter.images?.length) || Boolean(filter.debridOnly);
+  /** "TorBox only" pressed. */
+  var toggleDebridOnly = (filter) => normalizeFilter({ ...filter, debridOnly: !filter.debridOnly });
   /** Whether a link of `group` (null: unknown) shows; `format` (exfat, ffpkg…) for an image's type. */
   function passes(filter, group, format = null) {
     if (!group) return filter.unknown;
@@ -52,23 +57,28 @@ import { loadList, saveList } from './saved.js';
   var FILTERED = /* @__PURE__ */ new Set(["direct", "page", "torrent", "browser", "dlc", "backport"]);
   /**
    * `sections` (game/sources.js sourceSections) with the rows `filter` leaves out taken away: { sections, hidden,
-   * shown }. `selected` (the chosen source's index) always stays. `recordOf` reads the saved formats.
+   * shown, viaDebrid }. `selected` (the chosen source's index) always stays. `recordOf` reads the saved formats.
+   * `debrid` (release -> boolean): with "TorBox only" on, the links the service fetches; `viaDebrid` counts those
+   * shown, so a game with none can say so.
    */
-  function filterSections(sections, filter, { selected = -1, recordOf } = {}) {
+  function filterSections(sections, filter, { selected = -1, recordOf, debrid = null } = {}) {
     let hidden = 0;
     let shown = 0;
+    let viaDebrid = 0;
     const result = sections.map((section) => {
       if (!FILTERED.has(section.group)) return section;
       const items = section.items.filter(({ release, index }) => {
         const format = effectiveFormat(release, recordOf).format;
-        const keep = index === selected || passes(filter, groupOf(format), format);
+        const fetched = !debrid || debrid(release);
+        const keep = index === selected || passes(filter, groupOf(format), format) && fetched;
+        if (keep && debrid && fetched) viaDebrid++;
         if (keep) shown++;
         else hidden++;
         return keep;
       });
       return items.length === section.items.length ? section : { ...section, items };
     }).filter((section) => section.items.length);
-    return { sections: result, hidden, shown };
+    return { sections: result, hidden, shown, viaDebrid };
   }
   var filter = null;
   var listeners = /* @__PURE__ */ new Set();
@@ -93,4 +103,4 @@ import { loadList, saveList } from './saved.js';
     return value;
   }
 
-export { DEFAULT as DEFAULT_FORMAT_FILTER, filterSections, formatFilter, imagesShown, isFiltering, normalizeFilter, passes, setFormatFilter, showAllKinds, toggleImageType, toggleKind, toggleUnknown, useFormatFilter };
+export { DEFAULT as DEFAULT_FORMAT_FILTER, filterSections, formatFilter, imagesShown, isFiltering, normalizeFilter, passes, setFormatFilter, showAllKinds, toggleDebridOnly, toggleImageType, toggleKind, toggleUnknown, useFormatFilter };
