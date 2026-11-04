@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <iterator>
 #include <fcntl.h>
 #include <memory>
 #include <mutex>
@@ -44,6 +45,12 @@ using Clock = std::chrono::steady_clock;
 // count: at 64 connections, 256 KiB blocks left none free for the writer queue.
 constexpr std::size_t block_size = 128 * 1024, block_count = 128;
 constexpr unsigned max_connections = 64, max_jobs = 8, max_ranges = 65536;
+// Downloads run in lanes (set_concurrency): each lane is a Service with its own network thread, curl multi
+// handle and buffers, running one task at a time as before. Lane 0 is the only one a title had until now and
+// keeps its 16 MiB and 64 connections; the others are smaller (4 MiB, 16 connections), so four lanes add
+// 12 MiB to the title's heap. A lane starts the first time set_concurrency asks for it and stays up.
+constexpr unsigned max_lanes = 4, lane_connections = 16;
+constexpr std::size_t lane_blocks = 32;
 // The smallest part a range is split into: each split costs a request and closes the cut connection.
 constexpr std::uint64_t min_split = 1024 * 1024;
 // Two writers keep one large write going while the next batch is copied; more did not raise PS5 storage
@@ -51,7 +58,10 @@ constexpr std::uint64_t min_split = 1024 * 1024;
 constexpr unsigned writer_count = 2;
 static_assert(sizeof(off_t) >= 8, "Large downloads require 64-bit file offsets");
 constexpr std::uint64_t safe_integer = 9007199254740991ULL;
-std::atomic<bool> downloading_file{false};
+// File downloads running in any lane; image loading yields while any runs, and lanes share the rate limit.
+std::atomic<unsigned> downloading_files{0};
+// Task IDs are unique across lanes, so cancel and poll need no lane in them.
+std::atomic<std::uint32_t> next_task_id{1};
 
 // Used for optional final-file verification and checkpoint identity, off the JS thread.
 using integrity::Hash;
@@ -640,6 +650,7 @@ struct Window {
 
 class Service {
 public:
+  Service(bool primary, std::size_t blocks, unsigned connections) : blocks_(blocks), connection_cap_(connections), primary_(primary) {}
   bool start();
   void stop();
   std::uint32_t enqueue(Request request, std::string& error);
@@ -647,13 +658,26 @@ public:
   std::vector<Snapshot> poll();
   bool running() const { return running_; }
   void set_rate_limit(std::uint64_t bytes_per_second) { rate_limit_ = bytes_per_second; }
+  // Tasks queued or running here and not yet finished: the next task goes to the lane with the fewest.
+  std::size_t load() {
+    std::lock_guard lock(mutex_);
+    return static_cast<std::size_t>(std::count_if(jobs_.begin(), jobs_.end(), [](const auto& job) { return !job->finalized; }));
+  }
+  bool holds(const std::string& destination) {
+    std::lock_guard lock(mutex_);
+    for (const auto& job : jobs_) if (job->request.destination == destination) return true;
+    return false;
+  }
 private:
   std::mutex mutex_, disk_mutex_;
   std::condition_variable wake_, disk_wake_, sync_wake_;
   std::deque<std::shared_ptr<Job>> jobs_, waiting_;
   std::deque<Write> writes_, syncs_;
   std::vector<Block*> free_;
-  std::array<Block, block_count> blocks_{};
+  std::vector<Block> blocks_;
+  // The most connections one task opens in this lane (the pool keeps two blocks for each).
+  unsigned connection_cap_ = max_connections;
+  bool primary_ = true;
   std::array<Transfer, max_connections> transfers_{};
   CURLM* multi_ = nullptr;
   std::atomic<bool> stopping_{false}, writer_stopping_{false};
@@ -666,13 +690,18 @@ private:
   Clock::time_point rate_refilled_{};
   std::size_t rate_turn_ = 0;
   void refill_rate(Clock::time_point now);
+  // This lane's part of the rate limit: the limit is shared by every file download running in any lane.
+  std::uint64_t rate_share() const {
+    const std::uint64_t limit = rate_limit_.load(std::memory_order_relaxed);
+    const unsigned files = downloading_files.load(std::memory_order_relaxed);
+    return files > 1 && limit ? std::max<std::uint64_t>(limit / files, 1) : limit;
+  }
   void resume_rate_paused(Job& job);
   std::uint64_t perform_us_ = 0;
   pthread_t network_thread_{}, sync_thread_{};
   std::array<pthread_t, writer_count> writer_threads_{};
   unsigned writers_started_ = 0;
   bool running_ = false, network_started_ = false, sync_started_ = false, platform_started_ = false, curl_started_ = false;
-  std::uint32_t next_id_ = 1;
   std::string error_;
   Block* take_block() {
     std::lock_guard lock(disk_mutex_);
@@ -726,7 +755,11 @@ private:
     return static_cast<Transfer*>(opaque)->job->cancelled.load() ? 1 : 0;
   }
 };
-Service service;
+Service lanes[max_lanes]{{true, block_count, max_connections}, {false, lane_blocks, lane_connections},
+                         {false, lane_blocks, lane_connections}, {false, lane_blocks, lane_connections}};
+// Guards which lanes take new tasks; each lane guards its own queue.
+std::mutex lanes_mutex;
+unsigned concurrency = 1;
 
 bool spawn(pthread_t& thread, void* (*entry)(void*), void* data) {
   pthread_attr_t attributes;
@@ -740,10 +773,13 @@ bool spawn(pthread_t& thread, void* (*entry)(void*), void* data) {
 bool Service::start() {
   if (running_) return true;
   stopping_ = false; writer_stopping_ = false;
-  platform_started_ = platform_start(error_);
-  if (!platform_started_) return false;
-  if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) { error_ = "curl initialization failed"; stop(); return false; }
-  curl_started_ = true;
+  // Only lane 0 brings the platform's network stack and libcurl up; the other lanes start after it.
+  if (primary_) {
+    platform_started_ = platform_start(error_);
+    if (!platform_started_) return false;
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) { error_ = "curl initialization failed"; stop(); return false; }
+    curl_started_ = true;
+  }
   multi_ = curl_multi_init();
   if (!multi_) { error_ = "curl multi initialization failed"; stop(); return false; }
   for (Block& block : blocks_) {
@@ -752,9 +788,9 @@ bool Service::start() {
     free_.push_back(&block);
   }
   // The idle-connection cache defaults to four per handle, and every cached TLS session costs heap.
-  if (curl_multi_setopt(multi_, CURLMOPT_MAXCONNECTS, static_cast<long>(max_connections)) != CURLM_OK ||
-      curl_multi_setopt(multi_, CURLMOPT_MAX_HOST_CONNECTIONS, static_cast<long>(max_connections)) != CURLM_OK ||
-      curl_multi_setopt(multi_, CURLMOPT_MAX_TOTAL_CONNECTIONS, static_cast<long>(max_connections)) != CURLM_OK) {
+  if (curl_multi_setopt(multi_, CURLMOPT_MAXCONNECTS, static_cast<long>(connection_cap_)) != CURLM_OK ||
+      curl_multi_setopt(multi_, CURLMOPT_MAX_HOST_CONNECTIONS, static_cast<long>(connection_cap_)) != CURLM_OK ||
+      curl_multi_setopt(multi_, CURLMOPT_MAX_TOTAL_CONNECTIONS, static_cast<long>(connection_cap_)) != CURLM_OK) {
     error_ = "curl connection limit configuration failed"; stop(); return false;
   }
   for (Transfer& t : transfers_) {
@@ -819,7 +855,7 @@ std::uint32_t Service::enqueue(Request request, std::string& error) {
   for (const auto& job : jobs_) if (!request.destination.empty() && job->request.destination == request.destination) {
     error = "destination already belongs to a queued task"; return 0;
   }
-  auto job = std::make_shared<Job>(std::move(request), next_id_++);
+  auto job = std::make_shared<Job>(std::move(request), next_task_id++);
   jobs_.push_back(job); waiting_.push_back(job); wake_.notify_one();
   return job->snapshot.id;
 }
@@ -907,7 +943,7 @@ std::size_t Service::header(char* data, std::size_t size, std::size_t count, voi
 }
 
 void Service::refill_rate(Clock::time_point now) {
-  const auto limit = static_cast<double>(rate_limit_.load(std::memory_order_relaxed));
+  const auto limit = static_cast<double>(rate_share());
   const double seconds = std::min(1.0, std::chrono::duration<double>(now-rate_refilled_).count());
   rate_refilled_ = now;
   if (!limit) { rate_budget_ = 0; return; }
@@ -1377,7 +1413,7 @@ void Service::log_stats(const Job& job, unsigned allowed, std::uint64_t& previou
   std::snprintf(line, sizeof line,
     "download: conns=%u/%u paused=%u recv=%lluKB/s disk=%lluKB/s buffered=%zuKiB queued=%zu retries=%u write_max=%ums sync_max=%ums net_busy=%llu%% write_avg=%lluKiB mirrors=%zu splits=%u",
     active, allowed, paused, static_cast<unsigned long long>((received-previous_received)/2048),
-    static_cast<unsigned long long>((written-previous_written)/2048), (block_count-free_blocks)*block_size/1024, queued,
+    static_cast<unsigned long long>((written-previous_written)/2048), (blocks_.size()-free_blocks)*block_size/1024, queued,
     job.retries, write_max_us_.exchange(0)/1000, sync_max_us_.exchange(0)/1000,
     static_cast<unsigned long long>(perform_us_/20000), static_cast<unsigned long long>(average_write / 1024),
     static_cast<std::size_t>(std::count_if(job.mirrors.begin(), job.mirrors.end(), [](const std::string& url) { return !url.empty(); })),
@@ -1395,7 +1431,7 @@ void Service::snapshot(Job& job, unsigned allowed, Clock::time_point now,
     written += t.written.load(); received += t.accepted; ++active;
   }
   std::uint64_t buffered;
-  { std::lock_guard lock(disk_mutex_); buffered = (block_count-free_.size())*block_size; }
+  { std::lock_guard lock(disk_mutex_); buffered = (blocks_.size()-free_.size())*block_size; }
   const double elapsed = std::chrono::duration<double>(now-previous).count();
   const double speed = elapsed > 0 && written >= previous_written ? (written-previous_written)/elapsed : 0;
   {
@@ -1435,16 +1471,16 @@ void Service::run_job(const std::shared_ptr<Job>& job) {
   }
   { std::lock_guard lock(job->mutex); job->snapshot.state = "connecting"; }
   const bool file = !job->request.destination.empty();
-  downloading_file = file;
   const bool prepared = !file || prepare(*job);
   for (Transfer& t : transfers_) t.probe = false;
   if (prepared && !job->cancelled && !job->recovering) {
     { std::lock_guard lock(job->mutex); job->snapshot.state = "downloading"; }
     // A capped download needs few connections: about one per MB/s, so each gets bytes often enough to
     // stay over curl's low-speed cutoff (1 byte/s for 30 s) between its turns.
-    const std::uint64_t capped = job->request.unlimited ? 0 : rate_limit_.load();
-    const unsigned limit = !job->ranged ? 1 : !capped ? job->request.connections :
-      std::min(std::max(static_cast<unsigned>(capped/(1024*1024)), 2u), job->request.connections);
+    const std::uint64_t capped = job->request.unlimited ? 0 : rate_share();
+    const unsigned wanted = std::min(job->request.connections, connection_cap_);
+    const unsigned limit = !job->ranged ? 1 : !capped ? wanted :
+      std::min(std::max(static_cast<unsigned>(capped/(1024*1024)), 2u), wanted);
     const unsigned initial = job->request.adaptive ? std::min(8u, limit) : limit;
     std::vector<Window> windows;
     const auto window_for = [&](const std::string& url) {
@@ -1688,19 +1724,60 @@ void Service::network_loop() {
       if (stopping_ && waiting_.empty()) break;
       job = waiting_.front(); waiting_.pop_front();
     }
+    const bool file = !job->request.destination.empty();
+    if (file) ++downloading_files;
     run_job(job);
-    downloading_file = false;
+    if (file) --downloading_files;
   }
 }
 } // namespace
-bool start() { return service.start(); }
-void stop() { service.stop(); }
-std::uint32_t enqueue(Request request, std::string& error) { return service.enqueue(std::move(request), error); }
-void cancel(std::uint32_t id) { service.cancel(id); }
-std::vector<Snapshot> poll() { return service.poll(); }
-void set_rate_limit(std::uint64_t bytes_per_second) { service.set_rate_limit(bytes_per_second); }
-bool downloading() { return downloading_file; }
-bool running() { return service.running(); }
+bool start() { return lanes[0].start(); }
+void stop() {
+  std::lock_guard lock(lanes_mutex);
+  // The other lanes first: lane 0 takes libcurl and the platform's network stack down with it.
+  for (unsigned i = max_lanes; i-- > 1;) if (lanes[i].running()) lanes[i].stop();
+  lanes[0].stop();
+  concurrency = 1;
+}
+std::uint32_t enqueue(Request request, std::string& error) {
+  std::lock_guard lock(lanes_mutex);
+  if (!request.destination.empty())
+    for (Service& lane : lanes) if (lane.running() && lane.holds(request.destination)) {
+      error = "destination already belongs to a queued task"; return 0;
+    }
+  // The lane with the fewest unfinished tasks among those in use: with one lane, everything queues as before;
+  // with more, a request (a link being resolved) no longer waits behind a file another lane downloads.
+  unsigned best = 0;
+  std::size_t fewest = lanes[0].load();
+  for (unsigned i = 1; i < concurrency && fewest; ++i) {
+    if (!lanes[i].running()) continue;
+    const std::size_t load = lanes[i].load();
+    if (load < fewest) { best = i; fewest = load; }
+  }
+  return lanes[best].enqueue(std::move(request), error);
+}
+void cancel(std::uint32_t id) { for (Service& lane : lanes) lane.cancel(id); }
+std::vector<Snapshot> poll() {
+  std::vector<Snapshot> out = lanes[0].poll();
+  for (unsigned i = 1; i < max_lanes; ++i) {
+    auto more = lanes[i].poll();
+    out.insert(out.end(), std::make_move_iterator(more.begin()), std::make_move_iterator(more.end()));
+  }
+  return out;
+}
+void set_rate_limit(std::uint64_t bytes_per_second) { for (Service& lane : lanes) lane.set_rate_limit(bytes_per_second); }
+unsigned set_concurrency(unsigned count) {
+  std::lock_guard lock(lanes_mutex);
+  if (!lanes[0].running()) return concurrency = 1;
+  count = std::clamp(count, 1u, max_lanes);
+  unsigned ready = 1;
+  while (ready < count && (lanes[ready].running() || lanes[ready].start())) ++ready;
+  if (ready < count) platform_log(("download lanes: only " + std::to_string(ready) + " of " + std::to_string(count) + " started").c_str());
+  // Fewer lanes stop nothing: tasks already in a lane run there to the end, new ones go to the first `concurrency`.
+  return concurrency = ready;
+}
+bool downloading() { return downloading_files.load() > 0; }
+bool running() { return lanes[0].running(); }
 const char* version() { return curl_version(); }
 } // namespace network
 #else
@@ -1713,6 +1790,7 @@ std::uint32_t enqueue(Request, std::string& error) {
 void cancel(std::uint32_t) {}
 std::vector<Snapshot> poll() { return {}; }
 void set_rate_limit(std::uint64_t) {}
+unsigned set_concurrency(unsigned) { return 1; }
 bool downloading() { return false; }
 bool running() { return false; }
 const char* version() { return "disabled"; }

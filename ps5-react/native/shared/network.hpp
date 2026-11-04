@@ -50,6 +50,9 @@ std::vector<Snapshot> poll();
 void set_rate_limit(std::uint64_t bytes_per_second);
 // True while a download to a file runs; image loading yields connections and memory to it.
 bool downloading();
+// How many file downloads may run at once, 1 to 4 (default 1); returns how many lanes are in use. Each lane
+// runs one task at a time and a new task goes to the least busy one. Lowering it cancels nothing.
+unsigned set_concurrency(unsigned lanes);
 // True once start() succeeded: the platform's network stack (PS5: libSceNet) is up.
 bool running();
 const char* version();

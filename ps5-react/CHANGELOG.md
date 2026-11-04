@@ -4,6 +4,12 @@
 
 Native ABI v24.
 
+- **Download lanes** (`Downloads.setConcurrency(n)`, 1 to 4, default 1): up to four file downloads run side by side,
+  each in its own lane (network thread, curl multi handle and buffers). Lane 0 is the one queue a title had, with
+  its 16 MiB and 64 connections; the others start when first asked for, with 4 MiB and 16 connections each. A new
+  task goes to the least busy lane, so a request no longer waits behind another lane's file; lowering the number
+  stops nothing; the rate limit is shared among the lanes downloading. `tools/test_network.py` covers it. Not yet
+  hardware-tested.
 - **A bigger image disk cache that steps aside for downloads**: `.cache/images` keeps up to 2 GiB (was 256
   MiB), counted in 64 bits, and stores nothing new while its drive has less than 4 GiB free (the host's
   `disk_usage`, asked at most every 10 seconds), so cached art never takes the room a game download needs.

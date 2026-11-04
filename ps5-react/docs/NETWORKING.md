@@ -260,7 +260,20 @@ The default concurrency is a starting point, not a measured PS5 optimum.
 
 The FIFO queue accepts eight unconsumed tasks, with **one task active at a time**;
 a large file uses multiple connections within that task. HTTP requests queued
-behind that file wait for it to finish. Polling consumes terminal snapshots and
+behind that file wait for it to finish.
+
+`Downloads.setConcurrency(n)` (1 to 4, default 1) runs tasks in **lanes**: each
+lane is the queue above, with its own network thread, curl multi handle and
+buffers, one task active at a time. Lane 0 keeps the 16 MiB pool and 64
+connections; lanes 1 to 3 start the first time they are asked for and have
+4 MiB and 16 connections each, so four lanes add 12 MiB to the title's heap.
+A new task goes to the lane with the fewest unfinished tasks among the first
+`n`, so with more than one lane a request no longer waits behind a file another
+lane downloads. Lowering `n` stops nothing: tasks finish in their lane, and new
+ones go to the first `n`. Task IDs are unique across lanes; cancel and poll
+reach every lane. The rate limit is shared: each lane running a file download
+gets an equal part of it. `tools/test_network.py` checks one, two and four
+lanes. Not yet measured on a console. Polling consumes terminal snapshots and
 frees queue slots. Hosts cancel and join both workers before destroying QuickJS.
 Workers never access JavaScript, the engine or controller state; native bridge
 calls synchronously submit/cancel/poll bounded work on the render thread.

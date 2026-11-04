@@ -523,6 +523,15 @@ export const Downloads = {
       throw new TypeError('Downloads.setRateLimit: expected bytes per second, 0 for no limit.');
     host().network.setRateLimit(Math.floor(bytesPerSecond));
   },
+  /** How many file downloads run at once, 1 to 4 (default 1). Each runs in its own lane of the native engine
+   * (its own connections and buffers); a new download goes to the least busy one. Lowering it stops nothing.
+   * Answers how many lanes are in use: 1 on a host without lanes. */
+  setConcurrency(count) {
+    if (!Number.isInteger(count) || count < 1 || count > 4)
+      throw new TypeError('Downloads.setConcurrency: expected 1 to 4.');
+    const network = host().network;
+    return typeof network.setConcurrency === 'function' ? network.setConcurrency(count) : 1;
+  },
   get transportVersion() { return host().network.version(); },
 };
 

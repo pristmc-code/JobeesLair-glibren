@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import socket
 import ssl
@@ -274,6 +275,43 @@ def compile_client(directory):
     return binary
 
 
+def compile_lanes_client(directory):
+    binary = directory / "lanes"
+    subprocess.run(["clang++", "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror", "-pthread",
+                    "-I", str(ROOT / "native/shared"), str(ROOT / "tools/tests/network_lanes_client.cpp"),
+                    str(ROOT / "native/shared/network.cpp"), str(ROOT / "tools/tests/network_test_platform.cpp"),
+                    "-lcurl", *([] if sys.platform == "darwin" else ["-lcrypto"]), "-o", str(binary)], check=True)
+    return binary
+
+
+def check_lanes(origin, directory):
+    """Download lanes (network::set_concurrency): files side by side, and a request that does not wait for them."""
+    binary = compile_lanes_client(directory)
+
+    def lanes(count, files, request=False):
+        out = directory / f"lanes-{count}-{files}"
+        out.mkdir()
+        result = subprocess.run([str(binary), origin, str(out), str(count), str(files), *(["request"] if request else [])],
+                                capture_output=True, text=True, timeout=90)
+        assert result.returncode == 0 and result.stdout.strip(), (result.returncode, result.stderr[-2000:])
+        report = json.loads(result.stdout)
+        for i in range(files):
+            assert report[f"file{i}"][0] == "completed", report
+            assert (out / f"lane{i}").read_bytes() == DATA, f"lane{i}"
+        shutil.rmtree(out)
+        return report
+
+    one = lanes(1, 2)
+    assert one["lanes"] == 1 and one["most"] == 1, one
+    two = lanes(2, 2)
+    assert two["lanes"] == 2 and two["most"] == 2, two
+    four = lanes(4, 3, request=True)
+    assert four["lanes"] == 4 and four["most"] == 3, four
+    assert four["request"][0] == "completed" and four["request"][1] < min(four[f"file{i}"][1] for i in range(3)), four
+    print(f"Download lanes: 1 lane ran {one['most']} file at a time, 2 lanes {two['most']}, 4 lanes {four['most']} "
+          f"with a request done in {four['request'][1]} ms beside them.")
+
+
 def main():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -281,6 +319,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="ps5-react-network-") as temporary:
         directory = Path(temporary)
         binary = compile_client(directory)
+        check_lanes(origin, directory)
 
         def run(endpoint, path="-", connections=4, max_bytes=1024*1024, cancel=0, digest="", method="GET", file_limit=0, stop=0, pieces=False, hashes=None, recover=False, reject_html=False, no_redirect=False, mirrors=(), adaptive=False, range_probe=False, range_bytes=0):
             environment = dict(os.environ)

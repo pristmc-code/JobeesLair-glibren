@@ -73,6 +73,8 @@
 //              binary (ABI v24; body as one character per byte)
 //     terminal snapshots: status, body, effective url, allowlisted lowercase headers
 //   network.cancel(id)             requests cancellation
+//   network.setConcurrency(n)      glibren; 1 to 4 file downloads at once (lanes, network.hpp); answers the
+//                                  lanes in use. Absent from older hosts: Downloads.setConcurrency then answers 1.
 //   network.setRateLimit(bytes)    ABI v21; bytes per second all file downloads share, 0 for no limit;
 //                                  applies at once, running downloads included, except unlimited ones
 //   network.poll()                 progress/results; consumes terminal snapshots

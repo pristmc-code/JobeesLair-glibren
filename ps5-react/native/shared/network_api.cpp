@@ -228,11 +228,18 @@ JSValue rate_limit(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
     return JS_ThrowTypeError(ctx, "network.setRateLimit: expected bytes per second, 0 for no limit");
   network::set_rate_limit(static_cast<std::uint64_t>(bytes)); return JS_UNDEFINED;
 }
+// How many file downloads run at once (1 to 4); answers how many lanes are in use.
+JSValue concurrency(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
+  double count = 0;
+  if (!argc || JS_ToFloat64(ctx, &count, argv[0]) || !(count >= 1) || count > 4 || count != static_cast<unsigned>(count))
+    return JS_ThrowTypeError(ctx, "network.setConcurrency: expected 1 to 4");
+  return JS_NewUint32(ctx, network::set_concurrency(static_cast<unsigned>(count)));
+}
 } // namespace
 
 JSValue ps5_react_network_api(JSContext* ctx) {
   JSValue out = JS_NewObject(ctx);
-  for (const auto& item : {std::pair<const char*, JSCFunction*>{"download", &download}, {"request", &request}, {"cancel", &cancel}, {"poll", &poll}, {"version", &info}, {"setRateLimit", &rate_limit}})
+  for (const auto& item : {std::pair<const char*, JSCFunction*>{"download", &download}, {"request", &request}, {"cancel", &cancel}, {"poll", &poll}, {"version", &info}, {"setRateLimit", &rate_limit}, {"setConcurrency", &concurrency}})
     JS_SetPropertyStr(ctx, out, item.first, JS_NewCFunction(ctx, item.second, item.first, 0));
   return out;
 }
