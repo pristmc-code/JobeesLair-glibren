@@ -122,6 +122,7 @@ Heap heap() {
   const auto probe = heap_probe.load();
   return probe ? probe() : Heap{};
 }
+std::atomic<bool (*)(const char*, std::uint64_t&)> disk_free_probe{nullptr};
 // A decode that ran out of heap counts as pressure for this long: the next poll trims unused decoded images
 // to kLowCacheBytes, so its retries find the room they held. Otherwise a retry met the same heap: on the
 // console, screen-size screenshots failed for hours after a download, every retry the way the first had.
@@ -466,8 +467,8 @@ public:
       while (dirent* item = readdir(dir)) {
         struct stat info;
         if (item->d_name[0] == '.' || stat(path(item->d_name).c_str(), &info) != 0 || !S_ISREG(info.st_mode)) continue;
-        files_.push_back({item->d_name, static_cast<std::size_t>(info.st_size), static_cast<std::int64_t>(info.st_mtime)});
-        total_ += static_cast<std::size_t>(info.st_size);
+        files_.push_back({item->d_name, static_cast<std::uint64_t>(info.st_size), static_cast<std::int64_t>(info.st_mtime)});
+        total_ += static_cast<std::uint64_t>(info.st_size);
       }
       closedir(dir);
     }
@@ -506,7 +507,7 @@ public:
   }
 
   void write(const std::string& url, const Bytes& body) {
-    if (directory_.empty()) return;
+    if (directory_.empty() || low_on_space()) return;
     const std::string name = key(url), temporary = path(name + ".tmp");
     Header header{};
     std::memcpy(header.magic, kMagic, sizeof header.magic);
@@ -518,7 +519,7 @@ public:
       ::write(fd, url.data(), url.size()) == static_cast<ssize_t>(url.size()) &&
       ::write(fd, body.data, body.size) == static_cast<ssize_t>(body.size);
     if (close(fd) != 0 || !ok || rename(temporary.c_str(), path(name).c_str()) != 0) { unlink(temporary.c_str()); return; }
-    const std::size_t size = sizeof header + url.size() + body.size;
+    const std::uint64_t size = sizeof header + url.size() + body.size;
     if (File* old = find(name)) { total_ -= old->size; old->size = size; old->used = header.fetched; }
     else files_.push_back({name, size, header.fetched});
     total_ += size;
@@ -529,7 +530,20 @@ private:
   static constexpr char kMagic[8] = {'P', '5', 'R', 'I', 'M', 'G', '0', '1'};
   static constexpr std::int64_t kMaxAgeSeconds = 7 * 24 * 3600;
   struct Header { char magic[8]; std::int64_t fetched; std::uint32_t url_size, reserved; };
-  struct File { std::string name; std::size_t size; std::int64_t used; };
+  struct File { std::string name; std::uint64_t size; std::int64_t used; };
+  static constexpr std::int64_t kFreeCheckSeconds = 10;
+
+  // Under kDiskCacheMinFreeBytes free on the cache's disk, by the host's probe, asked at most every
+  // kFreeCheckSeconds. Unknown (no probe, or it failed) is not low: the cache works as before.
+  bool low_on_space() {
+    const std::int64_t now = std::time(nullptr);
+    if (now - free_checked_ < kFreeCheckSeconds && free_checked_ != 0) return low_;
+    free_checked_ = now;
+    std::uint64_t free = 0;
+    const auto probe = disk_free_probe.load();
+    low_ = probe && probe(directory_.c_str(), free) && free < kDiskCacheMinFreeBytes;
+    return low_;
+  }
 
   static std::string key(const std::string& url) {
     std::uint64_t hash = 14695981039346656037ULL;
@@ -566,7 +580,9 @@ private:
 
   std::string directory_;
   std::vector<File> files_;
-  std::size_t total_ = 0;
+  std::uint64_t total_ = 0;
+  std::int64_t free_checked_ = 0;
+  bool low_ = false;
 };
 
 bool spawn(pthread_t& thread, void* (*body)(void*), void* data) {
@@ -1262,6 +1278,7 @@ Memory memory() { return {encoded_bytes.load(), decoded_bytes.load()}; }
 void set_cache_bytes(std::size_t bytes) { cache_bytes = bytes; }
 void hold_memory(bool hold) { holds += hold ? 1 : -1; }
 void set_heap_probe(Heap (*probe)()) { heap_probe = probe; }
+void set_disk_free_probe(bool (*probe)(const char*, std::uint64_t&)) { disk_free_probe = probe; }
 void defer(int ms) {
   deferred_until = (Clock::now() + std::chrono::milliseconds(ms)).time_since_epoch().count();
 }
@@ -1310,6 +1327,7 @@ Memory memory() { return {}; }
 void set_cache_bytes(std::size_t) {}
 void hold_memory(bool) {}
 void set_heap_probe(Heap (*)()) {}
+void set_disk_free_probe(bool (*)(const char*, std::uint64_t&)) {}
 void defer(int) {}
 std::string stats() { return {}; }
 } // namespace images

@@ -22,8 +22,12 @@ constexpr std::size_t kCacheEntries = 256;
 constexpr std::size_t kMaxEncodedBytes = 4 * 1024 * 1024;
 // Encoded bytes kept by URL, so the same image drawn at another size decodes without a fetch.
 constexpr std::size_t kEncodedCacheBytes = 4 * 1024 * 1024;
-// Encoded responses kept on disk between launches; entries older than a week are fetched again.
-constexpr std::size_t kDiskCacheBytes = 256 * 1024 * 1024;
+// Encoded responses kept on disk between launches; entries older than a week are fetched again. 64-bit
+// arithmetic: 2 GiB does not fit a 32-bit int.
+constexpr std::uint64_t kDiskCacheBytes = 2048ULL * 1024 * 1024;
+// Nothing new is stored while the disk holding the cache has less than this free (see set_disk_free_probe),
+// so cached art never competes with a game being downloaded to the same drive.
+constexpr std::uint64_t kDiskCacheMinFreeBytes = 4096ULL * 1024 * 1024;
 // While memory is held (see hold_memory), the heap is above kPressurePercent of its size, or for a minute
 // after a decode ran out of heap, unused decoded images are kept to kLowCacheBytes and encoded bytes to
 // kLowEncodedBytes; a decode that would take the heap past kCeilingPercent is refused and tried again
@@ -80,6 +84,9 @@ void hold_memory(bool hold);
 // The heap the loader runs in, read on the render, fetch and decode threads (size 0: unknown).
 struct Heap { std::size_t live = 0, size = 0; };
 void set_heap_probe(Heap (*probe)());
+// Free bytes of the filesystem holding `directory` (false when unknown), read on the fetch thread before a
+// disk cache write, at most every few seconds. Without one, or when it fails, writes are not held back.
+void set_disk_free_probe(bool (*probe)(const char* directory, std::uint64_t& free));
 // Counters since start() and the busiest origins, one line for the host's periodic memory log:
 // how loads were served (decoded cache, encoded cache, disk, network), decodes, cancellations,
 // retries and failures, and per origin its requests, failures, average latency and bytes.

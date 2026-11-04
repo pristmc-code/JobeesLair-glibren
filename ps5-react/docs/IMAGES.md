@@ -135,10 +135,12 @@ same line every two seconds while it changes. Hosts stop the image workers and f
 every image before shutting the runtime down.
 
 Fetched bytes are also kept on disk in the app's data directory
-(`FileSystem.dataDir` + `/.cache/images`, at most 256 MiB, least recently used
+(`FileSystem.dataDir` + `/.cache/images`, at most 2 GiB, least recently used
 first), so a relaunch decodes art without the network. Entries are fetched
-again after a week; responses over 16 MiB are not stored. Deleting the
-directory clears the cache.
+again after a week; responses over 16 MiB are not stored. While the drive
+holding the cache has less than 4 GiB free, nothing new is stored (checked at
+most every 10 seconds), so cached art never competes with a game download;
+entries already there are still read. Deleting the directory clears the cache.
 
 ## Hardware status
 

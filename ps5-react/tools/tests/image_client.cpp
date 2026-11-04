@@ -80,6 +80,12 @@ std::uint32_t load(const std::string& url, int w, int h, int fit, images::Result
 } // namespace
 
 int main(int argc, char** argv) {
+  // IMAGE_DISK_FREE: the free bytes the disk cache's drive reports (unset: no probe).
+  if (std::getenv("IMAGE_DISK_FREE"))
+    images::set_disk_free_probe([](const char*, std::uint64_t& free) {
+      free = std::strtoull(std::getenv("IMAGE_DISK_FREE"), nullptr, 10);
+      return true;
+    });
   if (argc < 3 || !network::start() || !images::start(std::getenv("IMAGE_CACHE") ? std::getenv("IMAGE_CACHE") : "")) return 3;
   const std::string mode = argv[1], url = argv[2];
   if (const char* fail = std::getenv("IMAGE_FAIL_LARGE_MS")) {

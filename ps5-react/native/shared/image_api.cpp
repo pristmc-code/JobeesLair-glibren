@@ -120,6 +120,13 @@ JSValue poll(JSContext* ctx, JSValueConst, int, JSValueConst*) {
 } // namespace
 
 bool ps5_react_start_images() {
+  // The disk cache stops storing while its drive runs low (image_loader.hpp kDiskCacheMinFreeBytes).
+  images::set_disk_free_probe([](const char* directory, std::uint64_t& free) {
+    double total = 0, available = 0;
+    if (!host::disk_usage(directory, total, available) || !(available >= 0)) return false;
+    free = static_cast<std::uint64_t>(available);
+    return true;
+  });
   char cache[PATH_MAX];
   return images::start(host::resolve_path("/cache0/images", cache, sizeof cache) ? cache : "");
 }

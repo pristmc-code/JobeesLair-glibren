@@ -4,6 +4,10 @@
 
 Native ABI v24.
 
+- **A bigger image disk cache that steps aside for downloads**: `.cache/images` keeps up to 2 GiB (was 256
+  MiB), counted in 64 bits, and stores nothing new while its drive has less than 4 GiB free (the host's
+  `disk_usage`, asked at most every 10 seconds), so cached art never takes the room a game download needs.
+  Not yet hardware-tested.
 - **The PS5's own keyboard** (`Keyboard`): `Keyboard.open({title, text, placeholder, maxLength, type, enter,
   multiline, password})` shows the system keyboard (libSceImeDialog) over the app, in the player's languages and
   input methods, and resolves with what was typed and how it closed. The host keeps the controller from the app

@@ -128,9 +128,10 @@ def main():
         directory = Path(temporary)
         binary = compile_client(directory)
 
-        def run(*arguments, cache="", fail_large_ms=0):
+        def run(*arguments, cache="", fail_large_ms=0, disk_free=None):
+            extra = {} if disk_free is None else {"IMAGE_DISK_FREE": str(disk_free)}
             result = subprocess.run([str(binary), *map(str, arguments)], capture_output=True, text=True, timeout=30,
-                                    env={**os.environ, "IMAGE_CACHE": cache, "IMAGE_FAIL_LARGE_MS": str(fail_large_ms)})
+                                    env={**os.environ, "IMAGE_CACHE": cache, "IMAGE_FAIL_LARGE_MS": str(fail_large_ms), **extra})
             if result.returncode or not result.stdout.strip():
                 raise AssertionError(result.stderr or f"client exited {result.returncode}")
             return json.loads(result.stdout)
@@ -209,9 +210,20 @@ def main():
         first = run("load", origin + "/photo.jpg?disk", 64, 64, COVER, directory / "pixels", cache=cache)
         again = run("load", origin + "/photo.jpg?disk", 32, 32, COVER, directory / "pixels", cache=cache)
         assert first["ready"] and again["ready"] and len(Handler.requests) == before + 1, (first, again)
+        # Under 4 GiB free on the cache's drive nothing new is stored (each launch fetches again); with room it is.
+        low = directory / "low-cache"
+        before = len(Handler.requests)
+        for _ in range(2):
+            assert run("load", origin + "/photo.jpg?low", 64, 64, COVER, directory / "pixels", cache=low,
+                       disk_free=1 << 30)["ready"]
+        assert len(Handler.requests) == before + 2 and not [p for p in low.iterdir() if p.is_file()], "stored while low"
+        for _ in range(2):
+            assert run("load", origin + "/photo.jpg?low", 64, 64, COVER, directory / "pixels", cache=low,
+                       disk_free=8 << 30)["ready"]
+        assert len(Handler.requests) == before + 3, "not stored with room"
         print("Remote images: cover/contain/stretch fitting without enlargement, box-filter quality, premultiplied "
               "alpha, error messages, allocation failure and recovery, shared fetches, cancellation, LRU eviction, memory holds, heap pressure, "
-              "a refused decode's trim and the disk cache passed.")
+              "a refused decode's trim, the disk cache and its low-space hold passed.")
     server.shutdown()
 
 
