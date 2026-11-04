@@ -136,6 +136,161 @@ const settle = (queue, id) => until(queue, id, (job) => !BUSY.includes(job.state
 const game = { id: 'PPSA01234', titleId: 'PPSA01234', title: 'Test Game' };
 const image = (name, url = `https://example.com/${name}`, sizeBytes = 1000, extra = {}) => ({ id: `${name}@${url}`, provider: 'host', url, filename: name, sizeBytes, ...extra });
 
+// A fake extractor: one image per archive (named after it), with its receipt. `gates` (promises, in order) hold
+// extractions until the test lets them end; `log.max` is the most extractions that ever ran at once.
+function extractor(fs, gates = []) {
+  const log = { max: 0, running: 0, started: [] };
+  return {
+    log,
+    streams: false,
+    inspect: ([p]) => ({ kind: /\.zip$/.test(p) ? 'zip' : null }),
+    extract(options) {
+      log.running++;
+      log.max = Math.max(log.max, log.running);
+      log.started.push(options.destination);
+      const gate = gates.shift() ?? tick();
+      let settled = false, cancel;
+      const done = new Promise((resolve, reject) => {
+        cancel = () => {
+          if (settled) return;
+          settled = true;
+          log.running--;
+          reject(Object.assign(new Error('Extraction cancelled.'), { name: 'AbortError' }));
+        };
+        gate.then(() => {
+          if (settled) return;
+          settled = true;
+          log.running--;
+          const name = `${options.destination.slice(options.destination.lastIndexOf('/') + 1).replace(/\.zip$/, '')}.exfat`;
+          fs.mkdir(options.destination);
+          fs.file(`${options.destination}/${name}`, 900);
+          fs.file(`${options.destination}/.ps5-react-extraction`, 0, `P5AR001:1:2\n${'a'.repeat(64)}|${name}\n`);
+          resolve({ artifacts: [name] });
+        });
+      });
+      return { subscribe: () => () => {}, done, cancel: () => cancel() };
+    },
+  };
+}
+const gated = () => {
+  let open;
+  const gate = new Promise((resolve) => { open = resolve; });
+  return { gate, open };
+};
+
+// ---- 2. Extraction beside the next download ----
+
+test('extraction: the next download starts while an archive extracts; one extraction at a time, in order', async () => {
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const first = gated(), second = gated();
+  const archives = extractor(fs, [first.gate, second.gate]);
+  const notices = [];
+  const queue = queueWith({ fs, downloads, archives, notices });
+  const a = queue.enqueue(game, image('Alpha.zip'), '/data');
+  const b = queue.enqueue({ ...game, id: 'PPSA05678', titleId: 'PPSA05678' }, image('Beta.zip'), '/data');
+  const c = queue.enqueue({ ...game, id: 'PPSA09999', titleId: 'PPSA09999' }, image('Gamma.exfat'), '/data');
+  // Alpha extracts; Beta and Gamma download meanwhile; Beta's extraction waits for Alpha's.
+  await until(queue, c, (job) => job.state === 'downloaded');
+  const [alpha, beta] = [a, b].map((id) => queue.snapshot().find((job) => job.id === id));
+  assert.equal(alpha.state, 'extracting');
+  assert.equal(alpha.phase, undefined, 'Alpha is the one extracting');
+  assert.equal(beta.state, 'extracting');
+  assert.equal(beta.phase, 'queued', 'Beta waits its turn');
+  const { shownState, stateLabel } = await load('app/downloads/labels.js');
+  assert.equal(stateLabel(shownState(beta)), 'Waiting to extract…');
+  assert.equal(downloads.requests.length, 3, 'every download ran while Alpha extracted');
+  assert.equal(archives.log.started.length, 1);
+  first.open();
+  await until(queue, b, (job) => job.state === 'extracting' && !job.phase);
+  second.open();
+  for (const id of [a, b]) assert.equal((await settle(queue, id)).state, 'downloaded');
+  assert.equal(archives.log.max, 1, 'never two extractions at once');
+  assert.deepEqual(archives.log.started, ['/data/downloads/extracted/Alpha.zip', '/data/downloads/extracted/Beta.zip']);
+  assert.ok(fs.exists('/data/homebrew/Alpha.exfat') && fs.exists('/data/homebrew/Beta.exfat'));
+  assert.ok(!fs.exists('/data/downloads/archives/Alpha.zip'), 'the archive goes once unpacked');
+  assert.equal(notices.filter((text) => text === 'Download complete').length, 3);
+});
+
+test('extraction: pausing, resuming and cancelling a waiting or running extraction', async () => {
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const first = gated();
+  const archives = extractor(fs, [first.gate]);
+  const queue = queueWith({ fs, downloads, archives, wait: tick });
+  const a = queue.enqueue(game, image('Alpha.zip'), '/data');
+  const b = queue.enqueue({ ...game, id: 'PPSA05678', titleId: 'PPSA05678' }, image('Beta.zip'), '/data');
+  await until(queue, b, (job) => job.phase === 'queued');
+  // Beta, waiting: paused at once, its archive kept; resumed, it takes the engine's receipt and waits again.
+  queue.pause(b);
+  let beta = queue.snapshot().find((job) => job.id === b);
+  assert.equal(beta.state, 'paused');
+  assert.ok(fs.exists('/data/downloads/archives/Beta.zip'));
+  queue.resume(b);
+  await until(queue, b, (job) => job.phase === 'queued');
+  // Alpha, extracting: cancelling stops it and deletes everything it put on the drive.
+  await queue.cancel(a);
+  assert.ok(!queue.snapshot().some((job) => job.id === a), 'Alpha is gone');
+  assert.ok(!fs.exists('/data/downloads/archives/Alpha.zip') && !fs.exists('/data/downloads/extracted/Alpha.zip'));
+  first.open();
+  // Beta goes on once the lane is free.
+  beta = await settle(queue, b);
+  assert.equal(beta.state, 'downloaded', beta.error);
+  assert.equal(archives.log.max, 1);
+});
+
+test('extraction: one cut off by closing the app queues again when it opens, from the downloaded archive', async () => {
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const queue = queueWith({ fs, downloads, archives: extractor(fs, [new Promise(() => {})]) });
+  const a = queue.enqueue(game, image('Alpha.zip'), '/data');
+  await until(queue, a, (job) => job.state === 'extracting' && !job.phase);
+  // The app closes now: a new queue reads what was saved.
+  const downloads2 = engine(fs);
+  const archives2 = extractor(fs);
+  const reopened = queueWith({ fs, downloads: downloads2, archives: archives2 });
+  const job = await settle(reopened, a);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(downloads2.requests[0].recoverCompleted, true, 'the finished archive is taken from its receipt');
+  assert.equal(archives2.log.started.length, 1);
+});
+
+test('extraction: a download that fits only once the extraction on its drive is done waits for it, then starts', async () => {
+  const fs = memoryFs();
+  // Alpha's download holds until the drive has filled up (below).
+  const alphaDownload = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: alphaDownload.gate } : null);
+  const first = gated();
+  const archives = extractor(fs, [first.gate]);
+  const queue = queueWith({ fs, downloads, archives });
+  const a = queue.enqueue(game, image('Alpha.zip', 'https://example.com/Alpha.zip', 100 * MiB), '/data');
+  const b = queue.enqueue({ ...game, id: 'PPSA05678', titleId: 'PPSA05678' }, image('Beta.zip', 'https://example.com/Beta.zip', 100 * MiB), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  // Now Alpha (100 MiB) will extract, and Beta (an archive of 100 MiB: 200 with its own extraction) fits only
+  // without what Alpha's extraction still has to write.
+  fs.free = 16 * MiB + 250 * MiB;
+  alphaDownload.open();
+  let beta = await until(queue, b, (job) => job.roomWait);
+  assert.equal(beta.state, 'queued');
+  assert.equal(beta.message, en['downloads.waitingForExtraction']);
+  assert.equal(downloads.requests.length, 1, 'Beta was not handed to the engine');
+  assert.equal(queue.snapshot().find((job) => job.id === a).state, 'extracting');
+  first.open();
+  beta = await settle(queue, b);
+  assert.equal(beta.state, 'downloaded', beta.error);
+  assert.ok(!String(beta.message).includes(en['downloads.waitingForExtraction']));
+  assert.equal(downloads.requests.length, 2);
+});
+
+test('extraction: the room an extraction still needs counts as taken for the space checks', async () => {
+  const { stillNeeded } = await load('app/state/space.js');
+  const release = { sizeBytes: 100 };
+  const artifact = { nextAction: 'extraction-required' };
+  assert.equal(stillNeeded({ state: 'downloading', release, artifact, total: 100, written: 40 }), 160, 'its file and its extraction');
+  assert.equal(stillNeeded({ state: 'extracting', phase: 'queued', release, artifact, total: 100, written: 100 }), 100, 'waiting: what it unpacks to, about its size');
+  assert.equal(stillNeeded({ state: 'extracting', release, artifact, total: 300, written: 120 }), 180, 'extracting: what is left of what it unpacks to');
+});
+
 // ---- 3. Connections and range size per host ----
 
 test('tuning: one table per host; unknown hosts keep 64 x 16 MiB; subdomains match; bad entries fall back', () => {

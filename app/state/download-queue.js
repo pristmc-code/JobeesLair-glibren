@@ -140,6 +140,7 @@ import { mirrorsFor } from './download-mirrors.js';
       delete job2.autoRetries;
       delete job2.networkRetries;
       delete job2.rateRetries;
+      delete job2.roomWait;
       if (job2.state === "installing") return { ...job2, state: "installer-required" };
       // An earlier build counted a title at rest (whose runtime ShadowMount mounts only at launch) as not
       // mounted; it is checked again.
@@ -204,6 +205,15 @@ import { mirrorsFor } from './download-mirrors.js';
     sources ?? (sources = createSourceResolver({ http }));
     let jobs = [];
     let active2 = null;
+    // Extraction runs beside the downloads, in a lane of its own: one archive at a time (the engine's archive task is
+    // one), while the next download already runs. { job, task } of the job being extracted, or null. A job waiting
+    // for its turn reads "extracting" with phase "queued"; one that was extracting when the app closed downloads its
+    // file again from its receipt (recoverCompleted, no network) and queues again (restore).
+    let extractor2 = null;
+    // A set extracting while its volumes download (streamSet) holds the archive task: { task, done } until it ends.
+    let streaming = null;
+    // That set's extraction, handed from its download to the extraction lane once its last volume is in.
+    let handoff = null;
     // Browser captures in progress, one at a time: job id -> { cancel, task, decide }.
     const captures = /* @__PURE__ */ new Map();
     // MODIFIED (0.5.0 Pre Release 3): a download in parts that reaches a part only the browser can fetch,
@@ -768,7 +778,7 @@ import { mirrorsFor } from './download-mirrors.js';
       job2.state = "queued";
       return true;
     }
-    async function install(job2) {
+    async function install(job2, lane = active2) {
       const paths = job2.packages ?? [job2.downloadDestination || job2.artifact.destination];
       const backport = (path) => /backport/i.test(path);
       try {
@@ -780,7 +790,7 @@ import { mirrorsFor } from './download-mirrors.js';
           job2.message = "";
           change();
           const task = packages.install({ path, name: job2.title });
-          active2.task = task;
+          lane.task = task;
           const off = task.subscribe((progress) => {
             job2.written = progress.written || 0;
             job2.total = progress.total ?? null;
@@ -874,6 +884,8 @@ import { mirrorsFor } from './download-mirrors.js';
         const signal = active2.cancel.signal;
         job2.state = "resolving";
         job2.error = "";
+        delete job2.roomWait;
+        if (job2.message === t("downloads.waitingForExtraction")) job2.message = "";
         change();
         if (job2.release.parts) {
           await executeSet(job2, signal);
@@ -923,8 +935,14 @@ import { mirrorsFor } from './download-mirrors.js';
           change();
         }
         const held = Math.max(job2.written, fs.stat(`${job2.downloadDestination}.part`)?.size || 0);
-        if (!fs.exists(job2.downloadDestination) && fs.diskUsage(job2.root).free < stillNeeded({ ...job2, written: held }) + MARGIN2)
-          throw new Error("Not enough space on the selected drive. Free space and retry.");
+        // Room for it beside what the extractions on the same drive will still write; when only they stand in the
+        // way, it waits for them (waitForRoom) instead of failing.
+        const fit = fs.exists(job2.downloadDestination) ? "fits" : room(job2, stillNeeded({ ...job2, written: held }));
+        if (fit === "no") throw new Error("Not enough space on the selected drive. Free space and retry.");
+        if (fit === "later") {
+          waitForRoom(job2);
+          return;
+        }
         // 0.5.4: a 7z's end, read before it downloads (checkEnd), once per file link. Refused before a byte was
         // written, it fails over to the game's next source like a dead link.
         if (job2.endChecked !== job2.options.url && (!job2.inspected || job2.inspected === "7z") && ["extraction-required", "downloaded", "shadowmount"].includes(job2.artifact.nextAction)) {
@@ -950,8 +968,9 @@ import { mirrorsFor } from './download-mirrors.js';
           if (!sized && job2.total && !noRoom) {
             sized = true;
             const held2 = Math.max(job2.written, fs.stat(`${job2.downloadDestination}.part`)?.size || 0);
-            if (fs.diskUsage(job2.root).free < stillNeeded({ ...job2, written: held2 }) + MARGIN2) {
-              noRoom = new Error("Not enough space on the selected drive. Free space and retry.");
+            const fits = room(job2, stillNeeded({ ...job2, written: held2 }));
+            if (fits !== "fits") {
+              noRoom = fits === "no" ? new Error("Not enough space on the selected drive. Free space and retry.") : Object.assign(new Error("Waiting for room"), { later: true });
               task.cancel();
               return;
             }
@@ -1016,11 +1035,20 @@ import { mirrorsFor } from './download-mirrors.js';
         job2.written = job2.total || job2.written;
         job2.bytesPerSecond = 0;
         delete job2.renewal;
-        if ((job2.artifact.nextAction === "extraction-required" || job2.output) && archives) await extract(job2, [job2.downloadDestination]);
         delete job2.reresolved;
+        // Its extraction waits its turn in the extraction lane; the next download starts meanwhile.
+        if ((job2.artifact.nextAction === "extraction-required" || job2.output) && archives) {
+          queueExtraction(job2);
+          return;
+        }
         notifications.show(t("downloads.notice.complete"), job2.title);
         if (job2.state === "installer-required" && canInstall() && !heldPackage(job2)) await install(job2);
       } catch (error2) {
+        // Only the extractions on its drive stand in the way: it waits for them, its partial kept.
+        if (noRoom?.later && job2.state !== "pausing" && !job2.cancelling) {
+          waitForRoom(job2);
+          return;
+        }
         if (noRoom) error2 = noRoom;
         console.log("[download-queue] transfer stopped:", error2.message);
         // Whether it failed before its file was handed to the engine: while its link was being resolved.
@@ -1330,7 +1358,7 @@ import { mirrorsFor } from './download-mirrors.js';
       delete part.options;
       return true;
     }
-    async function extract(job2, files, streamed) {
+    async function extract(job2, files, streamed, lane = active2) {
       // 0.5.4: the app closed while this extraction's images moved into homebrew/ (imageTargets): they go back, so
       // the extraction is found whole, checked and placed again.
       if (job2.placing) {
@@ -1381,10 +1409,13 @@ import { mirrorsFor } from './download-mirrors.js';
         } catch {
           return;
         }
-        noRoom = spaceShortfall(job2.root, Math.max(0, total - written), free, []);
+        // A download running beside it on the same drive still needs the rest of its file (only its file: its own
+        // extraction comes after this one, and this one's archive is deleted by then).
+        const beside = active2?.job && active2.job !== job2 && active2.job.root === job2.root ? [{ title: active2.job.title, state: "extracting", total: active2.job.total ?? active2.job.release?.sizeBytes ?? 0, written: active2.job.written || 0 }] : [];
+        noRoom = spaceShortfall(job2.root, Math.max(0, total - written), free, beside);
         if (!noRoom) return;
         console.log(`[download-queue] ${job2.id}: ${noRoom}; the extraction stops before it fills the drive`);
-        active2?.task?.cancel();
+        lane?.task?.cancel();
       };
       const follow = (progress) => {
         if (progress.total && progress.total !== job2.total) {
@@ -1404,7 +1435,7 @@ import { mirrorsFor } from './download-mirrors.js';
       let result;
       try {
         if (streamed) {
-          active2.task = streamed.task;
+          lane.task = streamed.task;
           samples = [{ at: Date.now(), bytes: streamed.written }];
           report(streamed.written);
           const off = streamed.task.subscribe(follow);
@@ -1430,7 +1461,7 @@ import { mirrorsFor } from './download-mirrors.js';
           const passwords = [listed, ...KNOWN_PASSWORDS.filter((password) => password !== listed)];
           for (let index = 0; !result; index++) {
             const task = archives.extract(passwords[index] === void 0 ? unlocked : { ...unlocked, password: passwords[index] });
-            active2.task = task;
+            lane.task = task;
             const off = task.subscribe(follow);
             try {
               result = await task.done;
@@ -1470,7 +1501,7 @@ import { mirrorsFor } from './download-mirrors.js';
         samples = [{ at: Date.now(), bytes: 0 }];
         change();
         const task = archives.extract({ sources: [`${job2.output}/${inner}`], destination, maxBytes: Math.min(1024 ** 4, Math.max(1, fs.diskUsage(job2.root).free - MARGIN2)) });
-        active2.task = task;
+        lane.task = task;
         const off = task.subscribe(follow);
         try {
           result = await task.done;
@@ -1571,6 +1602,8 @@ import { mirrorsFor } from './download-mirrors.js';
     function streamSet(job2) {
       const first = job2.parts[0].destination;
       if (!archives?.streams || job2.parts.length < 2 || archives.inspect([first]).kind !== "rar") return null;
+      // The archive task is one: not while the extraction lane works or has a job waiting (it goes first).
+      if (extractor2 || jobs.some((other) => other !== job2 && other.state === "extracting")) return null;
       let task;
       try {
         const options = extraction(job2, job2.parts.map((part) => part.destination));
@@ -1585,7 +1618,15 @@ import { mirrorsFor } from './download-mirrors.js';
       const off = task.subscribe((progress) => {
         streamed.written = progress.written || 0;
       });
-      streamed.done = task.done.then((result) => ({ result }), (error2) => ({ error: error2 })).finally(off);
+      streamed.done = task.done.then((result) => ({ result }), (error2) => ({ error: error2 })).finally(() => {
+        off();
+        // The archive task is free again: an extraction waiting for it may start.
+        if (streaming === streamed) {
+          streaming = null;
+          Promise.resolve().then(pumpExtract);
+        }
+      });
+      streaming = streamed;
       return streamed;
     }
     const setDirectory = (job2) => `${job2.root}/downloads/sets/${job2.release.filename}`;
@@ -1710,8 +1751,12 @@ import { mirrorsFor } from './download-mirrors.js';
           }
           if (job2.state === "pausing") return;
           storageIdentity(job2);
-          if (!fs.exists(part.destination) && fs.diskUsage(job2.root).free < setNeed(job2, streamed?.written) + MARGIN2)
-            throw new Error("Not enough space for the remaining volumes and their extraction. Free space and resume.");
+          const fits = fs.exists(part.destination) ? "fits" : room(job2, setNeed(job2, streamed?.written));
+          if (fits === "no") throw new Error("Not enough space for the remaining volumes and their extraction. Free space and resume.");
+          if (fits === "later") {
+            waitForRoom(job2);
+            return;
+          }
           active2.transferring = true;
           const task = downloads.enqueue({
             ...part.options,
@@ -1790,9 +1835,92 @@ import { mirrorsFor } from './download-mirrors.js';
         }
       }
       if (job2.state === "pausing") return;
-      await extract(job2, job2.parts.map((part) => part.destination), streamed);
-      notifications.show(t("downloads.notice.complete"), job2.title);
-      if (job2.state === "installer-required" && canInstall() && !heldPackage(job2)) await install(job2);
+      // Its extraction (or the rest of the one running while it downloaded) goes on in the extraction lane.
+      if (!archives) throw new Error("Archive extraction requires the updated PS5 React runtime.");
+      queueExtraction(job2, streamed);
+    }
+    // ---- The extraction lane ----
+    // The files an extraction unpacks: the set's volumes, or the one downloaded file.
+    const extractionFiles = (job2) => job2.release.parts ? job2.parts.map((part) => part.destination) : [job2.downloadDestination];
+    // A downloaded archive waits for its turn to be extracted; `streamed` is a set's extraction already running.
+    function queueExtraction(job2, streamed = null) {
+      job2.state = "extracting";
+      job2.phase = "queued";
+      job2.bytesPerSecond = 0;
+      if (streamed) handoff = { job: job2, streamed };
+      console.log(`[download-queue] ${job2.id}: downloaded; ${streamed ? "its extraction goes on" : extractor2 ? `extracts after ${extractor2.job.id}` : "extracting"} beside the next download`);
+    }
+    // Starts the next extraction when the lane is free: a set's handed over first, else the first waiting in the queue.
+    function pumpExtract() {
+      if (extractor2 || !archives) return;
+      let job2 = null, streamed = null;
+      if (handoff) {
+        if (jobs.includes(handoff.job) && handoff.job.state === "extracting") ({ job: job2, streamed } = handoff);
+        else handoff.streamed.task.cancel();
+        handoff = null;
+      }
+      if (!job2) {
+        if (streaming) return;
+        job2 = jobs.find((item) => item.state === "extracting" && item.phase === "queued");
+        if (!job2) return;
+      }
+      extractor2 = { job: job2, task: null };
+      void runExtraction(job2, streamed);
+    }
+    async function runExtraction(job2, streamed) {
+      const lane = extractor2;
+      delete job2.phase;
+      try {
+        await extract(job2, extractionFiles(job2), streamed, lane);
+        notifications.show(t("downloads.notice.complete"), job2.title);
+        if (job2.state === "installer-required" && canInstall() && !heldPackage(job2)) await install(job2, lane);
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: extraction stopped: ${error2.message}`);
+        if (job2.state !== "pausing") {
+          job2.state = "failed";
+          job2.error || (job2.error = error2.message);
+          if (!job2.cancelling) notifications.show(t("downloads.notice.failed"), job2.title);
+        }
+      } finally {
+        if (job2.state === "pausing") job2.state = "paused";
+        delete job2.phase;
+        if (COMPLETE.includes(job2.state)) delete job2.launches;
+        if (job2.cancelling) {
+          try {
+            await forget(job2);
+          } catch (error2) {
+            delete job2.cancelling;
+            job2.error = error2.message;
+          }
+        }
+        extractor2 = null;
+        // Downloads that waited for this extraction's room look again.
+        for (const other of jobs) if (other.roomWait) delete other.roomWait;
+        try {
+          change();
+        } catch (error2) {
+          job2.error = `Queue save failed: ${error2.message}`;
+          emit2();
+        }
+        pump();
+      }
+    }
+    // What the extractions on `job2`'s drive will still write (waiting or running), other than its own.
+    const extractionReserve = (job2) => jobs.filter((other) => other !== job2 && other.root === job2.root && other.state === "extracting").reduce((sum, other) => sum + stillNeeded(other), 0);
+    // Whether `need` bytes fit on the job's drive: "fits", "later" (only once the extractions there are done), or "no".
+    function room(job2, need) {
+      const free = fs.diskUsage(job2.root).free;
+      if (free >= need + MARGIN2 + extractionReserve(job2)) return "fits";
+      return free >= need + MARGIN2 ? "later" : "no";
+    }
+    // A download that only fits once the extractions on its drive are done goes back to the queue, its partial kept, and
+    // is passed over until an extraction ends (runExtraction) or none is left (pump).
+    function waitForRoom(job2) {
+      console.log(`[download-queue] ${job2.id}: waits for the extraction on ${job2.root} to finish, for room`);
+      job2.state = "queued";
+      job2.roomWait = true;
+      job2.bytesPerSecond = 0;
+      job2.message = t("downloads.waitingForExtraction");
     }
     function lostPartial(job2) {
       const kept = (path) => fs.exists(path) || fs.exists(`${path}.part`);
@@ -1807,9 +1935,13 @@ import { mirrorsFor } from './download-mirrors.js';
       return jobs.filter((job2) => job2.root === root2 && (BUSY.includes(job2.state) || job2.state === "paused") && !lost.includes(job2));
     }
     function pump(first) {
+      pumpExtract();
       // `holds`: ShadowMount is being asked something that cannot wait for a download (quietNetwork).
       if (active2 || holds) return;
-      const job2 = first?.state === "queued" ? first : jobs.find((item) => item.state === "queued");
+      // One waiting for an extraction's room is passed over while any extraction is left to run.
+      const extracting = Boolean(extractor2) || jobs.some((item) => item.state === "extracting");
+      const ready = (item) => item?.state === "queued" && (!item.roomWait || !extracting);
+      const job2 = ready(first) ? first : jobs.find(ready);
       if (!job2) return;
       // The gamer's download goes first: the borrower stops, and this runs again once it gave the network back.
       if (borrower) {
@@ -2069,6 +2201,13 @@ import { mirrorsFor } from './download-mirrors.js';
         job2.state = "pausing";
         active2.cancel?.cancel();
         active2.task?.cancel();
+      } else if (extractor2?.job === job2 && ACTIVE.includes(job2.state)) {
+        // Its extraction stops (it starts over on resume: the engine keeps no partial extraction).
+        job2.state = "pausing";
+        extractor2.task?.cancel();
+      } else if (job2.state === "extracting" && job2.phase === "queued") {
+        job2.state = "paused";
+        delete job2.phase;
       }
       change();
     }
@@ -2564,7 +2703,7 @@ import { mirrorsFor } from './download-mirrors.js';
         if (deletions.has(job2)) return deletions.get(job2);
         // A finished job, or one stopped part-way (paused, failed, waiting on a browser) whose partial and
         // extracted files would otherwise stay behind; one that is running is cancelled instead.
-        if (active2?.job === job2) throw new Error(t("downloads.deleteRunning"));
+        if (active2?.job === job2 || extractor2?.job === job2) throw new Error(t("downloads.deleteRunning"));
         if (!DELETABLE.includes(job2.state)) throw new Error(t("downloads.deleteBusy"));
         if (moves.has(job2)) throw new Error(t("move.busy"));
         // Resolves with { note } (what the gamer should know, or null) once the files are gone and the task
@@ -2602,7 +2741,8 @@ import { mirrorsFor } from './download-mirrors.js';
        * the network back; the queue starts nothing until then.
        */
       lendNetwork(onYield) {
-        if (borrower || active2 || holds || jobs.some((job2) => job2.state === "queued")) return null;
+        // A download waiting for an extraction's room does not need the network until that ends (pump asks it back).
+        if (borrower || active2 || holds || jobs.some((job2) => job2.state === "queued" && !job2.roomWait)) return null;
         const lease = { yield: () => {
           try {
             onYield();
@@ -2708,6 +2848,17 @@ import { mirrorsFor } from './download-mirrors.js';
           job2.cancelling = true;
           this.pause(id);
           return;
+        }
+        // Extracting in the extraction lane: stopped there first, then everything it put on the drive goes, as below.
+        if (extractor2?.job === job2) {
+          this.pause(id);
+          for (let tries = 0; tries < 600 && extractor2?.job === job2; tries++) await wait(100);
+          if (extractor2?.job === job2) throw new Error(t("downloads.deleteRunning"));
+        }
+        // Waiting for its turn to be extracted: it leaves that line, then goes as a stopped one.
+        if (job2.state === "extracting" && job2.phase === "queued") {
+          job2.state = "paused";
+          delete job2.phase;
         }
         // Stopped after its download finished (an extraction that failed, say): everything it put on the
         // drive goes, archive and extracted files included, where forgetting it would refuse ("A final
