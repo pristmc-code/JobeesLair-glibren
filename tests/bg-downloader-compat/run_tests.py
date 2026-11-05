@@ -461,6 +461,96 @@ def t18_downloads_simultaneos_config():
         assert sha(dest) == sha(full)
     stop(p)
 
+# glibren.5: a opcao "Pausar 30 s ao fechar o app" (POST /config "pauseOnClose") e o aviso do botao "Sair" (POST /bye).
+QUIET_ENV = {"BGDL_QUIET_MS": "3000", "BGDL_APP_SILENCE_MS": "600000"}
+
+def health(): return api("GET", "/health")[1]
+
+def log_text(): return open(f"{RUN}/state/bgdl.log").read()
+
+def queued_item(name, dest):
+    return {"key": "k-" + "".join(ch for ch in name if ch.isalnum()), "name": name, "total": os.path.getsize(f"{T}/srv/{name}"),
+            "job": {"url": f"{SRV}/f/{name}", "destination": dest, "storageRoot": f"{RUN}/disk", "connections": 2}}
+
+def t19_pausa_ao_fechar_opcao():
+    flag = f"{RUN}/app-running"
+    open(flag, "w").close()
+    env = dict(QUIET_ENV, BGDL_APP_RUNNING=flag)
+    p = start(env)
+    h = health()
+    assert h["pauseOnClose"] is True and h["quiet"] is False, ("padrao: ligada", h)
+    # Desligada: fechar o app nao deixa nada quieto.
+    s, c = api("POST", "/config", {"pauseOnClose": False})
+    assert s == 200 and c["pauseOnClose"] is False, c
+    assert json.load(open(f"{RUN}/state/config.json"))["pauseOnClose"] is False
+    os.remove(flag); time.sleep(1.8)
+    assert health()["quiet"] is False, "desligada: sem modo quieto ao fechar"
+    assert "app FECHOU (sceLncUtilGetAppId): sem modo quieto (pausa ao fechar desligada)" in log_text(), log_text()[-800:]
+    # Config sem o campo nao muda a opcao.
+    assert api("POST", "/config", {"concurrency": 1})[1]["pauseOnClose"] is False
+    # Ligada de novo: fechar deixa quieto pelo BGDL_QUIET_MS (3 s), nao pelos 30 s do console.
+    assert api("POST", "/config", {"pauseOnClose": True})[1]["pauseOnClose"] is True
+    open(flag, "w").close(); time.sleep(1.8)
+    os.remove(flag); time.sleep(1.8)
+    assert health()["quiet"] is True, "ligada: quieto depois de fechar"
+    # Desligar no meio do modo quieto: termina na hora.
+    api("POST", "/config", {"pauseOnClose": False})
+    assert health()["quiet"] is False, "desligar termina o modo quieto em andamento"
+    log = log_text()
+    for line in ["pausa ao fechar o app: desligada (modo quieto por 0 s)", "pausa ao fechar o app: ligada (modo quieto por 3 s)",
+                 "app FECHOU (sceLncUtilGetAppId): modo quieto por 3 s", "o modo quieto em andamento terminou agora"]:
+        assert line in log, (line, log[-1500:])
+    # A opcao volta com o payload (config.json).
+    stop(p)
+    p = start(env)
+    assert health()["pauseOnClose"] is False
+    assert "modo quieto ao fechar o app: 0 s" in log_text()
+    stop(p)
+
+def t20_bye_com_pausa():
+    p = start(QUIET_ENV)
+    assert api("POST", "/bye", tok="")[0] == 401, "token obrigatorio"
+    dest = f"{RUN}/disk/downloads/bye1.bin"
+    s, r = api("POST", "/queue", {"items": [queued_item("data10.bin", dest)]})
+    assert s == 200, r
+    time.sleep(1.5)
+    jobs = api("GET", "/jobs")[1]["jobs"]
+    assert len(jobs) == 1 and jobs[0]["state"] == "queued", ("com o app falando, a fila antecipada espera", jobs)
+    s, b = api("POST", "/bye")
+    assert s == 200 and b["quietMs"] == 3000, b
+    assert health()["quiet"] is True, "a pausa comeca no /bye"
+    time.sleep(1.5)
+    assert api("GET", "/jobs")[1]["jobs"][0]["state"] == "queued", "quieto: nada comeca"
+    j = wait(jobs[0]["id"], ["completed", "failed"], 30)
+    assert j["state"] == "completed", j
+    assert sha(dest) == sha(f"{T}/srv/data10.bin")
+    time.sleep(1.2)  # o fim do modo quieto e registrado no laco principal, a cada 1 s
+    log = log_text()
+    for line in ["app avisou que vai fechar (POST /bye): modo quieto por 3 s", "app fechando (POST /bye): a fila antecipada segue sozinha",
+                 "modo quieto terminou"]:
+        assert line in log, (line, log[-1500:])
+    assert "modo quieto pelo silencio" not in log, "o /bye nao e silencio"
+    stop(p)
+
+def t21_bye_sem_pausa_comeca_na_hora():
+    p = start(QUIET_ENV)
+    assert api("POST", "/config", {"pauseOnClose": False})[0] == 200
+    dest = f"{RUN}/disk/downloads/bye2.bin"
+    s, r = api("POST", "/queue", {"items": [queued_item("data10.bin", dest)]})
+    assert s == 200, r
+    time.sleep(1.2)
+    jid = api("GET", "/jobs")[1]["jobs"][0]["id"]
+    s, b = api("POST", "/bye")
+    assert s == 200 and b["quietMs"] == 0, b
+    assert health()["quiet"] is False
+    # Sem esperar os 15 s de silencio (aqui 600 s) nem a pausa: comeca em ~1 s.
+    j = wait(jid, ["downloading", "completed", "failed"], 4)
+    assert j["state"] != "failed", j
+    j = wait(jid, ["completed", "failed"], 30)
+    assert j["state"] == "completed", j
+    assert "app avisou que vai fechar (POST /bye): sem pausa (opcao desligada)" in log_text()
+    stop(p)
+
 if __name__ == "__main__":
     only = sys.argv[1:]
     for fn in [v for k, v in sorted(globals().items()) if k.startswith("t") and k[1:3].isdigit()]:
