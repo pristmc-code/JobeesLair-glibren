@@ -67,7 +67,7 @@ test('a game is matched by its code (PPSA-05132, PPSA_05132 too) or by every wor
 test('the account, the catalog and the search, as one list: .exfat first, pieces of a split archive last, nothing twice', async () => {
   const api = fakeClient();
   const updates = [];
-  const { files, sources } = await search.searchTorBox(GAME, { api, onUpdate: (update) => updates.push(update) });
+  const { files, sources } = await search.searchTorBox(GAME, { textSearch: true, api, onUpdate: (update) => updates.push(update) });
   assert.deepEqual(files.map((file) => [file.origin, file.type, file.name]), [
     ['account', 'EXFAT', 'PPSA05132.exfat'],
     ['search', 'EXFAT', 'PPSA05132-sifu.exfat'],
@@ -84,13 +84,13 @@ test('the account, the catalog and the search, as one list: .exfat first, pieces
 });
 
 test('the search API not answering only says so: the account and the catalog still come back', async () => {
-  const { files, sources } = await search.searchTorBox(GAME, { api: fakeClient({ searchFails: true }) });
+  const { files, sources } = await search.searchTorBox(GAME, { textSearch: true, api: fakeClient({ searchFails: true }) });
   assert.equal(sources.search.state, 'unavailable');
   assert.ok(files.length >= 4 && files.every((file) => file.origin !== 'search'));
 });
 
 test('a file picked is a TorBox download: its item and file kept for the resolver, the renewal and the payload', async () => {
-  const { files } = await search.searchTorBox(GAME, { api: fakeClient() });
+  const { files } = await search.searchTorBox(GAME, { textSearch: true, api: fakeClient() });
   // An account file: its own address stands for the link, and TorBox's item and file are kept under its hash.
   const account = search.releaseFor(files[0]);
   assert.equal(account.debrid.service, 'torbox');
@@ -115,7 +115,7 @@ test('a file picked is a TorBox download: its item and file kept for the resolve
 });
 
 test('a file is queued as it is, on the drive given; a piece of a split archive is refused before the queue', async () => {
-  const { files } = await search.searchTorBox(GAME, { api: fakeClient() });
+  const { files } = await search.searchTorBox(GAME, { textSearch: true, api: fakeClient() });
   const queued = [];
   const queue = { enqueue: (game, release, root, alternatives) => (queued.push({ game: game.id, release, root, alternatives }), `${game.id}/${release.id}`) };
   assert.equal(search.downloadFile(queue, GAME, files[0], '/mnt/ext0'), 'PPSA05132/torbox-webdl-2178351-0');
@@ -259,4 +259,11 @@ test("a PS5 game's .pkg is flagged on a console that won't launch fake packages;
   assert.equal(search.fakePackageWarning(pkg, MAFIA, true), false, 'at 11.60 or below it launches');
   assert.equal(search.fakePackageWarning({ format: 'exfat' }, MAFIA, false), false);
   assert.equal(search.fakePackageWarning(pkg, { id: 'CUSA12345' }, false), false);
+});
+
+test('the text search is off unless asked: search-api.torbox.app is gone, and asking it broke the next requests', async () => {
+  const api = fakeClient();
+  const { sources } = await search.searchTorBox(GAME, { api });
+  assert.equal(sources.search.state, 'absent');
+  assert.ok(!api.asked.some((line) => line.startsWith('search ')));
 });

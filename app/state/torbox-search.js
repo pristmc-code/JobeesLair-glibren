@@ -125,9 +125,9 @@ import { magnetHash } from '../services/torbox.js';
    * -> { files, sources }, `sources` saying for each of account, catalog, search and list how it went:
    * { state: "done" | "failed" | "unavailable" | "absent", count, error } ("absent": no list of hashes was found).
    */
-  async function searchTorBox(game, { api = torBoxApi(), signal, onUpdate = () => {}, hashList = null } = {}) {
+  async function searchTorBox(game, { api = torBoxApi(), signal, onUpdate = () => {}, hashList = null, textSearch = false } = {}) {
     const found = [];
-    const sources = { account: { state: "searching", count: 0 }, catalog: { state: "searching", count: 0 }, search: { state: "searching", count: 0 }, list: { state: hashList?.files ? "searching" : "absent", count: 0 } };
+    const sources = { account: { state: "searching", count: 0 }, catalog: { state: "searching", count: 0 }, search: { state: textSearch ? "searching" : "absent", count: 0 }, list: { state: hashList?.files ? "searching" : "absent", count: 0 } };
     const report = () => onUpdate({ files: unique(found), sources: { ...sources } });
     const run = async (name, work) => {
       try {
@@ -166,7 +166,10 @@ import { magnetHash } from '../services/torbox.js';
       return files;
     });
     // TorBox's search, by code and by name: torrents it holds whose title is the game's, with their files.
-    await run("search", async () => {
+    // Off unless asked (textSearch): search-api.torbox.app is gone (no address, 2026-11-05), and a request to a
+    // name that does not resolve leaves the console's HTTP transport refusing the next requests (the hash list's).
+    if (!textSearch) sources.search = { state: "absent", count: 0 };
+    else await run("search", async () => {
       const torrents = /* @__PURE__ */ new Map();
       let failure = null, answered = false;
       for (const text of searchTexts(game)) {
