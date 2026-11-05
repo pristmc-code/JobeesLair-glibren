@@ -16,6 +16,8 @@
 > exact image types (exFAT, FFPKG...) with an exFAT filter, "TorBox only" filter and "Find via TorBox / via the browser".
 > **glibren.3** fixes: closing the app with the background payload running could freeze the console. The payload now
 > goes quiet for 30 s when the app closes, caps connections at 32 in total and keeps a log at `/data/JobeesLair/bg/bgdl.log`.
+> **glibren.4** fixes: the TorBox/AllDebrid key could be lost if the console froze or lost power soon after a save;
+> debrid.json (and the feeds, mirrors and themes) are now written through to the disk like the settings.
 > Download it from this fork's [releases](https://github.com/pristmc-code/JobeesLair-glibren/releases/latest);
 > its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
 > the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
