@@ -20,6 +20,9 @@
 > debrid.json (and the feeds, mirrors and themes) are now written through to the disk like the settings.
 > **glibren.5** adds: an "Exit Jobee'sLair" button (Settings, below the categories) that tells the background payload
 > before closing, and a setting to turn off the 30 s pause when the app closes.
+> **glibren.6** adds: "Search TorBox" on each game's page (every file TorBox holds of the game, by code and by name,
+> .exfat first, one press to queue it), a default download drive, your own list of torrent hashes (`torbox-hashes.txt`),
+> and the TorBox key is no longer kept inside saved download links.
 > Download it from this fork's [releases](https://github.com/pristmc-code/JobeesLair-glibren/releases/latest);
 > its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
 > the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
