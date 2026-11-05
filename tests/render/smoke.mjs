@@ -137,8 +137,9 @@ const settingsHome = await screen('Settings', { type: SettingsScreen, props: { o
 assert.ok(settingsHome.includes('Settings') && settingsHome.includes('Downloads') && settingsHome.includes('About & credits'), settingsHome.join('|'));
 const settings = await screen('Settings (About)', { type: SettingsScreen, props: { onBack() {}, start: 'about' } });
 const settingsDownloads = await screen('Settings (Downloads)', { type: SettingsScreen, props: { onBack() {}, start: 'downloads' } });
-// glibren.5: the 30 s pause when the app closes (with background downloads on), and "Exit Jobee'sLair" under the categories.
-assert.ok(settingsDownloads.includes('Pause 30 s when the app closes'), settingsDownloads.join('|'));
+// glibren.5: the pause when the app closes, 0 (Off) to 30 s (with background downloads on), and "Exit Jobee'sLair" under the categories.
+assert.ok(settingsDownloads.includes('Pause when the app closes'), settingsDownloads.join('|'));
+for (const label of ['Off', '5 s', '10 s', '15 s', '20 s', '25 s', '30 s']) assert.ok(settingsDownloads.includes(label), label);
 assert.ok(settingsHome.includes("Exit Jobee'sLair"), settingsHome.join('|'));
 const { ExitSheet } = await load('app/ui/ExitSheet.jsx');
 const exitSheet = await screen('Exit (glibren.5)', { type: ExitSheet, props: { summary: { app: 1, background: 2 }, onClose() {}, onExit() {} } });

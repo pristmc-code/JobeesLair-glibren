@@ -11,7 +11,7 @@ import { DATA_DIR } from './data-dir.js';
 import { createDownloadQueue } from './download-queue.js';
 import { createSourceResolver } from './download-sources.js';
 import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
-import { createBackgroundDownloads, onPauseOnClose, pauseOnCloseOn } from './background-downloads.js';
+import { createBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from './background-downloads.js';
 import { onSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
 import { recordCapture } from './capture-hosts.js';
@@ -68,8 +68,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       monitor: () => ({ ...phoneMonitorConfig(), monitorText: t("downloads.background.monitorNotice", { address: "{address}" }) }),
       addressSeen: setPhoneMonitorAddress,
       onRemote: (destination, action) => instance?.remoteAction?.(destination, action),
-      // MODIFIED (glibren.5): a pausa de 30 s ao fechar o app (Configuracoes) vai ao payload no POST /config.
-      pauseOnClose: pauseOnCloseOn
+      // MODIFIED (glibren.5): a pausa ao fechar o app (0 a 30 s, Configuracoes) vai ao payload no POST /config.
+      pauseOnCloseSeconds
     }),
     // glibren: quantos downloads rodam ao mesmo tempo (Configuracoes).
     concurrency: simultaneousDownloads,
@@ -97,7 +97,7 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   // glibren: the phone page's switch or PIN reaches a payload already running; Settings asks it for the address.
   onPhoneMonitor(() => background?.refreshConfig?.());
   setPhoneMonitorProbe(() => background?.refreshConfig?.());
-  // MODIFIED (glibren.5): ligar ou desligar a pausa ao fechar o app chega ao payload no ar na hora.
+  // MODIFIED (glibren.5): mudar o tempo da pausa ao fechar o app chega ao payload no ar na hora.
   onPauseOnClose(() => background?.refreshConfig?.());
   // 0.5.4: the first time with stats on, the launches known from before go to the players' numbers too.
   function reportPastLaunches() {

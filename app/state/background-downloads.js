@@ -33,7 +33,7 @@
 //   - Settings.jsx (a opcao) e DownloadCard.jsx (o selo "segundo plano" e o botao "Baixar pelo app").
 //   - downloads simultaneos (state/simultaneous-downloads.js): setConcurrency(n) passa o numero ao motor nativo
 //     (Downloads.setConcurrency) e ao payload (POST /config), que entao baixa ate n jobs ao mesmo tempo.
-//   - glibren.5: a opcao "Pausar 30 s ao fechar o app" (pauseOnClose, abaixo) vai junto no POST /config; o botao "Sair"
+//   - glibren.5: a opcao "Pausa ao fechar o app" (0 a 30 s, abaixo) vai junto no POST /config; o botao "Sair"
 //     (state/exit-app.js) avisa o payload por POST /bye (sayByeToPayload) antes de fechar o app.
 
 import { useEffect, useState } from 'react';
@@ -69,33 +69,41 @@ import { loadList, saveList } from './saved.js';
     return on;
   }
 
-  // ---- glibren.5: a opcao "Pausar 30 s ao fechar o app" (ligada por padrao) ----
-  // Ao perceber que o app fechou, o payload fica 30 s sem rede e sem disco (modo quieto: protecao contra um travamento
-  // enquanto o PS5 desmonta o app). Desligada, ele continua baixando direto. Guardada em settings.json so quando
-  // desligada ("pauseOnClose": false); vai ao payload no POST /config.
-  var pauseOn = null;
+  // ---- glibren.5: a opcao "Pausa ao fechar o app" (0 a 30 s, de 5 em 5; padrao 30 s) ----
+  // Ao perceber que o app fechou, o payload fica esse tempo sem rede e sem disco (modo quieto: protecao contra um
+  // travamento enquanto o PS5 desmonta o app); 0 = sem pausa, ele continua baixando direto. O jogador escolhe o tempo
+  // para testar qual evita o travamento. Guardada em settings.json so quando diferente de 30 ("pauseOnCloseSeconds");
+  // vai ao payload no POST /config. Um valor fora da lista vale 30; o antigo "pauseOnClose": false (nunca publicado) vale 0.
+  var PAUSE_CHOICES = [0, 5, 10, 15, 20, 25, 30];
+  var PAUSE_DEFAULT = 30;
+  var pauseSeconds = null;
   var pauseListeners = /* @__PURE__ */ new Set();
-  function pauseOnCloseOn() {
-    if (pauseOn === null) pauseOn = loadList(SETTINGS, "settings").pauseOnClose !== false;
-    return pauseOn;
+  function pauseOnCloseSeconds() {
+    if (pauseSeconds === null) {
+      const saved = loadList(SETTINGS, "settings");
+      pauseSeconds = PAUSE_CHOICES.includes(saved.pauseOnCloseSeconds) ? saved.pauseOnCloseSeconds : saved.pauseOnClose === false ? 0 : PAUSE_DEFAULT;
+    }
+    return pauseSeconds;
   }
-  function setPauseOnClose(on) {
-    pauseOn = Boolean(on);
-    const { pauseOnClose: _old, ...settings } = loadList(SETTINGS, "settings");
-    saveList(SETTINGS, "settings", pauseOn ? settings : { ...settings, pauseOnClose: false });
-    for (const listener of [...pauseListeners]) listener(pauseOn);
+  /** Escolhe o tempo (um de PAUSE_CHOICES), grava e avisa quem ouve (o payload no ar recebe na hora). */
+  function setPauseOnCloseSeconds(value) {
+    if (!PAUSE_CHOICES.includes(value)) return;
+    pauseSeconds = value;
+    const { pauseOnCloseSeconds: _old, pauseOnClose: _older, ...settings } = loadList(SETTINGS, "settings");
+    saveList(SETTINGS, "settings", value === PAUSE_DEFAULT ? settings : { ...settings, pauseOnCloseSeconds: value });
+    for (const listener of [...pauseListeners]) listener(value);
   }
-  /** Chama `listener(on)` a cada mudanca; devolve a funcao que para. */
+  /** Chama `listener(segundos)` a cada mudanca; devolve a funcao que para. */
   function onPauseOnClose(listener) {
     pauseListeners.add(listener);
     return () => {
       pauseListeners.delete(listener);
     };
   }
-  function usePauseOnClose() {
-    const [on, setOn] = useState(pauseOnCloseOn);
-    useEffect(() => onPauseOnClose(setOn), []);
-    return on;
+  function usePauseOnCloseSeconds() {
+    const [value, setValue] = useState(pauseOnCloseSeconds);
+    useEffect(() => onPauseOnClose(setValue), []);
+    return value;
   }
   // O Downloads embrulhado em uso (o da fila), para o botao "Sair" avisar o payload.
   var current = null;
@@ -168,9 +176,9 @@ import { loadList, saveList } from './saved.js';
     // so comeca sozinho o que foi entregue depois de ~15 s sem noticias do app) e a espera antes de mandar a fila.
     heartbeatMs = 5e3,
     queueDelayMs = 300,
-    // glibren.5: a pausa ao fechar o app (true/false) que vai no POST /config; null (o padrao aqui) nao manda o campo, e o
-    // payload fica como esta (ligada, se ninguem mudou).
-    pauseOnClose = () => null
+    // glibren.5: a pausa ao fechar o app, em segundos (0 a 30), que vai no POST /config; null (o padrao aqui) nao manda o
+    // campo, e o payload fica como esta (30 s, se ninguem mudou).
+    pauseOnCloseSeconds = () => null
   }) {
     const base = `http://127.0.0.1:${port}`;
     let secretsFor = null; // pid do payload que ja recebeu a chave
@@ -243,8 +251,8 @@ import { loadList, saveList } from './saved.js';
     async function syncConcurrency(token) {
       if (!token) return;
       const count = concurrency();
-      const pause = pauseOnClose();
-      const body = { concurrency: count, ...typeof pause === "boolean" ? { pauseOnClose: pause } : {}, ...monitor() ?? {} };
+      const pause = pauseOnCloseSeconds();
+      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...monitor() ?? {} };
       const state = await health(token);
       const key = `${state?.pid}:${JSON.stringify(body)}`;
       if (!state || configFor === key) return;
@@ -598,4 +606,4 @@ import { loadList, saveList } from './saved.js';
     return wrapper;
   }
 
-export { backgroundDownloadsOn, createBackgroundDownloads, inBackground, onPauseOnClose, pauseOnCloseOn, sayByeToPayload, setBackgroundDownloads, setPauseOnClose, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnClose };
+export { backgroundDownloadsOn, createBackgroundDownloads, inBackground, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };

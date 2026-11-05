@@ -11,7 +11,7 @@
 // row only while it has focus, and the paragraphs (what debrid is, what feeds are, the credits, the legal
 // notice) are gone from view or folded behind a row.
 // MODIFIED (glibren.5): "Exit Jobee'sLair" at the end of the categories' column (ui/ExitSheet.jsx, state/exit-app.js), and
-// the "Pause 30 s when the app closes" switch under "Keep downloading when I close the app".
+// the "Pause when the app closes" choice (0 to 30 s) under "Keep downloading when I close the app".
 
 import '../assets/Exo2.ttf';
 import '../assets/JetBrainsMono-Regular.ttf';
@@ -29,7 +29,7 @@ import { debridStatus, setAllDebridKey, setTorBoxKey, testAllDebrid, testTorBox,
 import { HOMEBREW_ONLY } from '../edition.js';
 import { LIMITS as SPEED_LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
-import { setBackgroundDownloads, setPauseOnClose, useBackgroundDownloads, usePauseOnClose } from '../state/background-downloads.js';
+import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
 import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
@@ -343,13 +343,31 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       }, value)) })
     ] });
   }
+  // MODIFIED (glibren.5): how long the background helper pauses when the app closes (state/background-downloads.js), as
+  // the simultaneous downloads' row: one pill per choice, 0 ("Off") twice as wide, as the speed limit's "Unlimited".
+  function PauseOnCloseRow() {
+    const t2 = useT();
+    const seconds = usePauseOnCloseSeconds();
+    return jsxs(View, { style: { gap: 10 }, children: [
+      jsxs(View, { style: { gap: 3 }, children: [
+        jsx(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.pauseOnClose") }),
+        jsx(Text, { style: text(20, colors.muted), children: t2("settings.pauseOnCloseDetail") })
+      ] }),
+      jsx(View, { style: { flexDirection: "row", gap: 12 }, children: PAUSE_CHOICES.map((value) => jsx(View, {
+        focusKey: `settings:pauseOnClose:${value}`,
+        focusable: true,
+        onPress: () => setPauseOnCloseSeconds(value),
+        style: { position: "relative", flex: value ? 1 : 2, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: value === seconds ? colors.accent : colors.surface2 },
+        children: jsx(SpeedFace, { label: value ? t2("settings.pauseOnCloseValue", { n: String(value) }) : t2("settings.pauseOnCloseOff"), chosen: value === seconds })
+      }, value)) })
+    ] });
+  }
   // Drives, the speed limit and whether a download in parts opens the browser for its next part by itself.
   function DownloadsCard({ onPhonePin }) {
     const t2 = useT();
     const drives = useDrives();
     const autoParts = useAutoContinueParts();
     const background = useBackgroundDownloads();
-    const pauseOnClose = usePauseOnClose();
     const phone = usePhoneMonitor();
     const phoneHint = !phone.on ? t2("settings.phoneMonitorDetail") : phone.address ? t2("settings.phoneMonitorAddress", { url: phone.address }) : t2("settings.phoneMonitorNoAddress");
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
@@ -357,9 +375,9 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:autoParts", name: t2("settings.autoParts"), hint: t2("settings.autoPartsDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: autoParts }), onPress: () => setAutoContinueParts(!autoParts) }),
       // glibren-bg: downloads em segundo plano (state/background-downloads.js).
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:background", name: t2("settings.background"), hint: t2("settings.backgroundDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: background }), onPress: () => setBackgroundDownloads(!background) }),
-      // MODIFIED (glibren.5): the background helper's 30 s pause when the app closes (state/background-downloads.js), only
-      // with the background downloads on (without them nothing downloads while the app is closed).
-      background ? jsx(Row, { focusKey: "settings:pauseOnClose", name: t2("settings.pauseOnClose"), hint: t2("settings.pauseOnCloseDetail"), end: jsx(Switch, { on: pauseOnClose }), onPress: () => setPauseOnClose(!pauseOnClose) }) : null,
+      // MODIFIED (glibren.5): the background helper's pause when the app closes (0 to 30 s), only with the background
+      // downloads on (without them nothing downloads while the app is closed).
+      background ? jsx(View, { style: { paddingVertical: 8 }, children: jsx(PauseOnCloseRow, {}) }) : null,
       // glibren: a pagina do celular (state/phone-monitor.js): ver os downloads do segundo plano e, com o PIN, controla-los.
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitor", name: t2("settings.phoneMonitor"), hint: phoneHint, end: /* @__PURE__ */ (0, jsx)(Switch, { on: phone.on }), onPress: () => setPhoneMonitor(!phone.on) }),
       phone.on ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitorPin", name: t2(phone.hasPin ? "settings.phoneMonitorPinChange" : "settings.phoneMonitorPin"), hint: t2(phone.hasPin ? "settings.phoneMonitorPinDetail" : "settings.phoneMonitorNoPin"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", color: colors.muted }), onPress: () => onPhonePin(phone.hasPin ? "change" : "create") }) : null,

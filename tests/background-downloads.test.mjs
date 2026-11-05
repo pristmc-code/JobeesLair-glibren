@@ -323,18 +323,20 @@ test('fila inteira: ao comecar no app um job ja entregue com antecedencia, o app
   await assert.rejects(task.done, (error) => error.name === 'AbortError');
 });
 
-// ---- glibren.5: a pausa de 30 s ao fechar o app (POST /config "pauseOnClose") e o botao "Sair" (POST /bye) ----
+// ---- glibren.5: a pausa ao fechar o app (POST /config "pauseOnCloseSeconds", 0 a 30 s) e o botao "Sair" (POST /bye) ----
 
-test('pausa ao fechar: a opcao vai no POST /config junto com o resto, e a mudanca chega ao payload no ar', async () => {
+test('pausa ao fechar: o tempo vai no POST /config junto com o resto, e a mudanca chega ao payload no ar', async () => {
   const payload = fakePayload();
-  let pause = true;
-  const wrapper = make(payload, fakeEngine(), { pauseOnClose: () => pause });
+  let seconds = 30;
+  const wrapper = make(payload, fakeEngine(), { pauseOnCloseSeconds: () => seconds });
   wrapper.enqueue(queueOptions());
   await wait(30);
-  assert.deepEqual(payload.configs, [{ concurrency: 1, pauseOnClose: true }], 'ligada por padrao, junto com o primeiro job');
-  pause = false;
-  await wrapper.refreshConfig();
-  assert.deepEqual(payload.configs.at(-1), { concurrency: 1, pauseOnClose: false }, 'desligada: o payload no ar recebe na hora');
+  assert.deepEqual(payload.configs, [{ concurrency: 1, pauseOnCloseSeconds: 30 }], 'o padrao, junto com o primeiro job');
+  for (const value of [10, 0]) {
+    seconds = value;
+    await wrapper.refreshConfig();
+    assert.deepEqual(payload.configs.at(-1), { concurrency: 1, pauseOnCloseSeconds: value }, `${value} s: o payload no ar recebe na hora`);
+  }
   const count = payload.configs.length;
   await wrapper.refreshConfig();
   assert.equal(payload.configs.length, count, 'a mesma configuracao nao e mandada de novo');
@@ -344,7 +346,7 @@ test('pausa ao fechar: a opcao vai no POST /config junto com o resto, e a mudanc
 
 test('pausa ao fechar: sem a opcao (null), o POST /config sai sem o campo, como antes', async () => {
   const payload = fakePayload();
-  const wrapper = make(payload, fakeEngine(), { pauseOnClose: () => null });
+  const wrapper = make(payload, fakeEngine(), { pauseOnCloseSeconds: () => null });
   wrapper.enqueue(queueOptions());
   await wait(30);
   assert.deepEqual(payload.configs, [{ concurrency: 1 }]);
@@ -352,24 +354,32 @@ test('pausa ao fechar: sem a opcao (null), o POST /config sai sem o campo, como 
   await wait(30);
 });
 
-test('pausa ao fechar: guardada em settings.json (so quando desligada), lida de volta e avisada a quem ouve', async () => {
+test('pausa ao fechar: 0 a 30 s de 5 em 5, guardada em settings.json so quando diferente de 30, lida de volta e avisada', async () => {
   const FILE = '/download0/JobeesLair/settings.json';
+  const fresh = (tag) => import(`../app/state/background-downloads.js?pause=${Date.now()}-${tag}`);
   globalThis.__stubFiles = new Map([[FILE, JSON.stringify({ backgroundDownloads: true, simultaneousDownloads: 2 })]]);
   try {
-    const fresh = await import(`../app/state/background-downloads.js?pause=${Date.now()}`);
-    assert.equal(fresh.pauseOnCloseOn(), true, 'padrao: ligada');
+    const mod = await fresh('a');
+    assert.deepEqual(mod.PAUSE_CHOICES, [0, 5, 10, 15, 20, 25, 30]);
+    assert.equal(mod.pauseOnCloseSeconds(), 30, 'padrao: 30 s');
     const heard = [];
-    const stop = fresh.onPauseOnClose((on) => heard.push(on));
-    fresh.setPauseOnClose(false);
-    assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { backgroundDownloads: true, simultaneousDownloads: 2, pauseOnClose: false }, 'as outras opcoes ficam');
-    assert.equal(fresh.pauseOnCloseOn(), false);
-    const again = await import(`../app/state/background-downloads.js?pause=${Date.now()}-2`);
-    assert.equal(again.pauseOnCloseOn(), false, 'lida de volta do settings.json');
-    fresh.setPauseOnClose(true);
-    assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { backgroundDownloads: true, simultaneousDownloads: 2 }, 'ligada: o campo sai');
+    const stop = mod.onPauseOnClose((value) => heard.push(value));
+    mod.setPauseOnCloseSeconds(10);
+    assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { backgroundDownloads: true, simultaneousDownloads: 2, pauseOnCloseSeconds: 10 }, 'as outras opcoes ficam');
+    assert.equal((await fresh('b')).pauseOnCloseSeconds(), 10, 'lida de volta do settings.json');
+    mod.setPauseOnCloseSeconds(0);
+    assert.equal((await fresh('c')).pauseOnCloseSeconds(), 0, '0 = sem pausa, guardado');
+    for (const bad of [7, 31, -5, '10', null]) mod.setPauseOnCloseSeconds(bad);
+    assert.equal(mod.pauseOnCloseSeconds(), 0, 'um valor fora da lista nao muda nada');
+    mod.setPauseOnCloseSeconds(30);
+    assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { backgroundDownloads: true, simultaneousDownloads: 2 }, '30 s (o padrao): o campo sai');
     stop();
-    fresh.setPauseOnClose(false);
-    assert.deepEqual(heard, [false, true], 'quem parou de ouvir nao e chamado');
+    mod.setPauseOnCloseSeconds(5);
+    assert.deepEqual(heard, [10, 0, 30], 'quem parou de ouvir nao e chamado');
+    for (const [saved, expected] of [[{ pauseOnCloseSeconds: 12 }, 30], [{ pauseOnCloseSeconds: 'x' }, 30], [{ pauseOnClose: false }, 0], [{ pauseOnClose: true }, 30]]) {
+      globalThis.__stubFiles.set(FILE, JSON.stringify(saved));
+      assert.equal((await fresh(JSON.stringify(saved))).pauseOnCloseSeconds(), expected, JSON.stringify(saved));
+    }
   } finally {
     delete globalThis.__stubFiles;
   }

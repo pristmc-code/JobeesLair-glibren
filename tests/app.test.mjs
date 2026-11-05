@@ -3629,13 +3629,13 @@ test('settings: "Exit Jobee\'sLair" is focusable under the categories, asks firs
   const settings = readFileSync(path.join(repo, 'app/ui/Settings.jsx'), 'utf8');
   assert.match(settings, /focusKey: "settings:exit",\s*onPress: \(\) => setExiting\(exitSummary\(downloadQueue\(\)\.snapshot\?\.\(\) \?\? \[\]\)\)/);
   assert.match(settings, /exiting \? jsx\(ExitSheet, \{ summary: exiting, onExit: \(\) => leaveApp\(\), onClose: \(\) => \{\s*setExiting\(null\);\s*closed\("settings:exit"\);/, 'Circle gives focus back to the button');
-  assert.match(settings, /focusKey: "settings:pauseOnClose"/);
+  assert.match(settings, /focusKey: `settings:pauseOnClose:\$\{value\}`,\s*focusable: true,\s*onPress: \(\) => setPauseOnCloseSeconds\(value\)/, 'one pill per choice, X picks it');
   const sheet = readFileSync(path.join(repo, 'app/ui/ExitSheet.jsx'), 'utf8');
   assert.match(sheet, /focusKey: "exit:confirm", autoFocus: true/);
   assert.match(sheet, /if \(leaving\) return;\s*setLeaving\(true\);\s*onExit\(\);/, 'a second Cross does nothing');
   assert.match(sheet, /focusKey: "exit:stay"/);
   const exit = readFileSync(path.join(repo, 'app/state/exit-app.js'), 'utf8');
   assert.match(exit, /BackHandler\.exitApp\(\)/);
-  for (const key of ['settings.exit', 'settings.pauseOnClose', 'settings.pauseOnCloseDetail', 'exit.title', 'exit.appDownloads', 'exit.backgroundDownloads', 'exit.confirm', 'exit.stay'])
+  for (const key of ['settings.exit', 'settings.pauseOnClose', 'settings.pauseOnCloseDetail', 'settings.pauseOnCloseOff', 'settings.pauseOnCloseValue', 'exit.title', 'exit.appDownloads', 'exit.backgroundDownloads', 'exit.confirm', 'exit.stay'])
     assert.ok(en[key], key);
 });
