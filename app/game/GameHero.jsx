@@ -1,6 +1,7 @@
 // ../pub-game-store/native/game/GameHero.jsx
 // reconstructed from the esbuild bundle in eboot.bin
 // MODIFIED: a Videos button beside Favorite opens VideosSheet.jsx (a homebrew YouTube app on the game's videos).
+// MODIFIED (glibren.6): with a TorBox key, a TorBox button after it opens TorBoxSheet.jsx (the game's files in TorBox).
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
@@ -11,6 +12,7 @@ import { COVER, HERO, LOGO } from './art.js';
 import { canDownload } from './releases.js';
 import { readyLinks } from './sources.js';
 import { useHealthyReleases } from '../state/links.js';
+import { useDebrid } from '../state/debrid.js';
 import { deviceFacts } from '../state/device.js';
 import { SPAN_MAX, fitBytes } from '../i18n/fit.js';
 import { latin, useLocale, useT } from '../i18n/index.js';
@@ -94,6 +96,7 @@ import { Icon } from '../ui/Icon.jsx';
     const { rtl } = useLocale();
     const { toggleWish } = useStoreActions();
     const wished = useWishlist().includes(listedId(game.id));
+    const debrid = useDebrid();
     const nextDown = game.shots.length > 0 ? "game:shots" : void 0;
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: { position: "relative", overflow: "hidden", borderBottomWidth: 1, borderColor: colors.line }, children: [
       /* @__PURE__ */ (0, jsx)(Backdrop, { game }, game.id),
@@ -122,7 +125,9 @@ import { Icon } from '../ui/Icon.jsx';
                 }
               ),
               // Videos: a homebrew YouTube app opened on the game's gameplay or trailer (VideosSheet.jsx).
-              jsx(Button2, { variant: "outline", size: "lg", icon: "play", label: t2("game.videos"), onPress: () => onRequestDialog({ kind: "videos", title: game.title, from: `videos:${game.id}` }), nextFocusDown: nextDown, focusKey: `videos:${game.id}` })
+              jsx(Button2, { variant: "outline", size: "lg", icon: "play", label: t2("game.videos"), onPress: () => onRequestDialog({ kind: "videos", title: game.title, from: `videos:${game.id}` }), nextFocusDown: nextDown, focusKey: `videos:${game.id}` }),
+              // glibren.6: the game's files in TorBox, by code and by name (TorBoxSheet.jsx), with a TorBox key set.
+              debrid.active === "torbox" ? jsx(Button2, { variant: "outline", size: "lg", icon: "search", label: t2("game.torboxSearch"), onPress: () => onRequestDialog({ kind: "torbox", game, from: `torbox:${game.id}` }), nextFocusDown: nextDown, focusKey: `torbox:${game.id}` }) : null
             ] })
           ] })
         ] })

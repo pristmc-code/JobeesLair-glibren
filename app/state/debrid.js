@@ -429,10 +429,22 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
     const { names, removed } = await api.inspect(link, { password: source.archivePassword, signal, onProgress });
     return { names, removed, existing: false };
   }
+  /** glibren.6: the TorBox API with the saved key ("Search TorBox", state/torbox-search.js); throws without a key. */
+  function torBoxApi() {
+    if (activeService() !== "torbox") throw Object.assign(new Error("A TorBox key is needed."), { code: "NO_AUTH" });
+    return torbox();
+  }
+  /**
+   * glibren.6: `link`'s TorBox item and file ({ kind, id, fileId }) kept as a resolve keeps them, so the queue's
+   * resolver, its link renewal and the background payload's (debridHandoff) all ask TorBox for that file.
+   */
+  function rememberTorBoxItem(link, entry) {
+    remember(md5(link), entry);
+  }
   function torBoxFileNames(links) {
     if (!keyOf()) return null;
     const api = torbox();
     return typeof api.cachedFiles === "function" ? api.cachedFiles(links) : null;
   }
 
-export { activeService, askInstant as askTorBoxInstant, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };
+export { activeService, askInstant as askTorBoxInstant, rememberTorBoxItem, torBoxApi, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };

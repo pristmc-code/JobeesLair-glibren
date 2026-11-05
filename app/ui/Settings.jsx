@@ -38,6 +38,7 @@ import { setTypingChoice, useTypingChoice } from '../state/system-keyboard.js';
 import { useNavActions } from '../state/nav.jsx';
 import { downloadQueue, driveName } from '../state/downloads.js';
 import { useDrives } from '../state/drives.js';
+import { setDefaultDrive, useDefaultDrive } from '../state/last-drive.js';
 import { MAX_FEEDS, MAX_MIRRORS, addFeed, addMirror, refreshFeeds, removeFeed, removeMirror, useFeeds } from '../state/feeds.js';
 import { formatBytes } from '../state/size.js';
 import { canInstall, checkForUpdate, openUpdateDialog, setAutoInstall, updateDetail, useAutoInstall, useInstall, useUpdate } from '../state/update.js';
@@ -362,6 +363,26 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       }, value)) })
     ] });
   }
+  // glibren.6: the drive every download starts on (state/last-drive.js), as the rows above: "Automatic" (the last
+  // drive used, as before) and one pill per drive plugged in. A drive picked and unplugged reads as Automatic.
+  function DefaultDriveRow({ roots }) {
+    const t2 = useT();
+    const chosen = useDefaultDrive();
+    const auto = !chosen || !roots.includes(chosen);
+    return jsxs(View, { style: { gap: 10 }, children: [
+      jsxs(View, { style: { gap: 3 }, children: [
+        jsx(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.defaultDrive") }),
+        jsx(Text, { style: text(20, colors.muted), children: t2("settings.defaultDriveDetail") })
+      ] }),
+      jsx(View, { style: { flexDirection: "row", gap: 12 }, children: [null, ...roots].map((root) => jsx(View, {
+        focusKey: `settings:defaultDrive:${root ?? "auto"}`,
+        focusable: true,
+        onPress: () => setDefaultDrive(root),
+        style: { position: "relative", flex: 1, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: (root ? chosen === root : auto) ? colors.accent : colors.surface2 },
+        children: jsx(SpeedFace, { label: root ? driveName(root) : t2("settings.defaultDrive.auto"), chosen: root ? chosen === root : auto })
+      }, root ?? "auto")) })
+    ] });
+  }
   // Drives, the speed limit and whether a download in parts opens the browser for its next part by itself.
   function DownloadsCard({ onPhonePin }) {
     const t2 = useT();
@@ -385,6 +406,8 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       /* @__PURE__ */ (0, jsx)(SimultaneousRow, {}),
       /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
       /* @__PURE__ */ (0, jsx)(SpeedLimitRow, {}),
+      /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
+      jsx(DefaultDriveRow, { roots: drives.roots }),
       /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
       ...drives.roots.map((root) => /* @__PURE__ */ (0, jsx)(Drive, { root, usage: drives.usage[root] }, root))
     ] });

@@ -42,7 +42,10 @@ const files = [{ id: 0, name: 'readme.txt', size: 1200 }, { id: 3, name: 'Game.p
 
 test('md5 is RFC 1321 (a web download\'s hash), magnets give their info hash, keys are checked for shape', () => {
   for (const text of ['', FICHIER, `${FICHIER}&af=1`, 'x'.repeat(119), 'é ✓ 𝄞']) assert.equal(md5(text), createHash('md5').update(text).digest('hex'));
-  assert.deepEqual(linkHashes(`${FICHIER}&af=9`), [md5(`${FICHIER}&af=9`), md5('https://1fichier.com/')]);
+  // glibren.6: a link that is all query (1fichier) is asked as it is only: the bare host's hash matched every 1fichier file.
+  assert.deepEqual(linkHashes(`${FICHIER}&af=9`), [md5(`${FICHIER}&af=9`)]);
+  assert.deepEqual(linkHashes('https://host.example/f/abc?x=1'), [md5('https://host.example/f/abc?x=1'), md5('https://host.example/f/abc')]);
+  assert.deepEqual(linkHashes('https://host.example/f/abc'), [md5('https://host.example/f/abc')]);
   assert.equal(magnetHash('magnet:?xt=urn:btih:C12FE1C06BBA254A9DC9F519B335AA7C1367A88A&dn=x'), 'c12fe1c06bba254a9dc9f519b335aa7c1367a88a');
   assert.ok(validKey(KEY) && !validKey('my key') && !validKey(''));
   assert.equal(pickFile(files).id, 3, 'the largest');

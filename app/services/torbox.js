@@ -14,6 +14,9 @@
 //   POST /torrents/controltorrent   {torrent_id, operation: "delete"} (JSON)  "Find via TorBox" read its names)
 //   GET  /webdl/requestdl, /torrents/requestdl     a direct link to one of its files, open for 3 hours
 //                                                  (zip_link=true: a torrent's files as one zip)
+//   glibren.6 ("Search TorBox" on a game's page): GET /webdl/mylist, /torrents/mylist without an id (the whole
+//   account), checkcached with list_files (the files of what it holds), and the search API's
+//   GET https://search-api.torbox.app/torrents/search/<text>?check_cache=true&cached_only=true
 // Every call answers { success, error, detail, data }. The key goes in an Authorization header, except
 // on requestdl, which only takes it as a `token` query parameter: those URLs are built here, used once and
 // never returned, logged or saved, and no error message carries the key.
@@ -25,6 +28,8 @@
 import { parseStamp } from '../state/clock.js';
 
   var BASE = "https://api.torbox.app/v1/api";
+  // glibren.6: TorBox's search API (torrents by name), a service of its own.
+  var SEARCH_BASE = "https://search-api.torbox.app";
   var PLANS = ["free", "essential", "pro", "standard"];
   var HOSTERS_MS = 6 * 36e5;
   // How long a resolve waits for TorBox to finish fetching a file it did not hold, asking every POLL_MS.
@@ -110,7 +115,14 @@ import { parseStamp } from '../state/clock.js';
     return [a0, b0, c0, d0].map((word) => Array.from({ length: 4 }, (_, i) => (word >>> 8 * i & 255).toString(16).padStart(2, "0")).join("")).join("");
   }
   // The hashes TorBox may know a link by: the link as it is, and without its query (its own normalization).
-  var linkHashes = (link) => [...new Set([md5(link), md5(link.split(/[?#]/)[0])])];
+  // MODIFIED (glibren.6): without its query only when a path is left after the host. A 1fichier link is all query
+  // (https://1fichier.com/?f7gu1n...), and the bare host's hash answered for every 1fichier file TorBox holds
+  // (19,194 entries, 9 MB, on 2026-11-05): past the 4 MB answer limit, so the whole check failed, and any 1fichier
+  // link in it read as held by TorBox.
+  var linkHashes = (link) => {
+    const bare = String(link).split(/[?#]/)[0];
+    return [...new Set([md5(link), .../^[a-z][a-z0-9+.-]*:\/\/[^/]+\/./i.test(bare) ? [md5(bare)] : []])];
+  };
   var query = (params) => Object.entries(params).filter(([, value]) => value !== void 0 && value !== null).map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`).join("&");
   var sleep = (ms, signal) => new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(Object.assign(new Error("Stopped."), { name: "AbortError" }));
@@ -173,9 +185,9 @@ import { parseStamp } from '../state/clock.js';
     };
     // Whatever a failure says, never the key (a transport error can quote the URL it was asked for).
     const scrub = (message, value) => value ? String(message).split(value).join("…") : String(message);
-    async function call(path, { method = "GET", params, form, multipart, json, signal, token = false, auth = true } = {}) {
+    async function call(path, { method = "GET", params, form, multipart, json, signal, token = false, auth = true, base = BASE } = {}) {
       const value = auth || token ? secret() : null;
-      const url = `${BASE}${path}${params || token ? `?${query({ ...token ? { token: value } : {}, ...params })}` : ""}`;
+      const url = `${base}${path}${params || token ? `?${query({ ...token ? { token: value } : {}, ...params })}` : ""}`;
       const headers = {};
       if (auth && !token) headers.Authorization = `Bearer ${value}`;
       let body;
@@ -345,6 +357,52 @@ import { parseStamp } from '../state/clock.js';
           if (["ITEM_NOT_FOUND", "HTTP_404"].includes(error.code)) return null;
           throw error;
         }
+      },
+      /**
+       * glibren.6: everything in the account of `kind` ("webdl" or "torrent"; mylist without an id), newest first:
+       * the items as TorBox gives them ({ id, name, size, download_finished, files }). An empty account answers 404,
+       * read as an empty list.
+       */
+      async myList(kind, { signal } = {}) {
+        try {
+          const data = await call(kind === "torrent" ? "/torrents/mylist" : "/webdl/mylist", { params: { bypass_cache: true, limit: 1e3 }, signal });
+          return Array.isArray(data) ? data : data ? [data] : [];
+        } catch (error) {
+          if (["ITEM_NOT_FOUND", "HTTP_404"].includes(error.code)) return [];
+          throw error;
+        }
+      },
+      /**
+       * glibren.6: what TorBox holds of `links` (file host URLs or magnets), with its files: a Map of link -> { name,
+       * size, files: [{ id, name, size }] }. Like cachedFiles, nothing is added to the account.
+       */
+      async cachedEntries(links, { signal } = {}) {
+        const found = /* @__PURE__ */ new Map();
+        const ask = async (path, byHash) => {
+          const hashes = [...byHash.keys()];
+          for (let i = 0; i < hashes.length; i += 100) {
+            const data = await call(path, { params: { hash: hashes.slice(i, i + 100).join(","), format: "object", list_files: true }, signal });
+            for (const [hash, entry] of Object.entries(data || {})) {
+              const link = byHash.get(hash.toLowerCase());
+              if (link && entry && typeof entry === "object" && !found.has(link)) found.set(link, { name: entry.name || "", size: Number(entry.size) || 0, files: Array.isArray(entry.files) ? entry.files : [] });
+            }
+          }
+        };
+        const web = links.filter((link) => !isMagnet(link));
+        await ask("/webdl/checkcached", new Map(web.flatMap((link) => linkHashes(link).map((hash) => [hash, link]))));
+        const magnets = links.filter(isMagnet).map((link) => [magnetHash(link), link]).filter(([hash]) => hash);
+        if (magnets.length) await ask("/torrents/checkcached", new Map(magnets));
+        return found;
+      },
+      /**
+       * glibren.6: TorBox's torrent search (search-api.torbox.app/torrents/search/<text>), only what TorBox holds
+       * already (cached_only): [{ hash, title, magnet, size, seeders }]. The service was not answering on 2026-11-05
+       * (its name did not resolve); callers treat a failure as "search not available".
+       */
+      async searchTorrents(text, { signal } = {}) {
+        const data = await call(`/torrents/search/${encodeURIComponent(String(text || "").trim())}`, { base: SEARCH_BASE, params: { check_cache: true, cached_only: true }, signal });
+        const list = Array.isArray(data?.torrents) ? data.torrents : [];
+        return list.filter((entry) => entry && entry.magnet && entry.cached !== false).map((entry) => ({ hash: String(entry.hash || magnetHash(entry.magnet) || "").toLowerCase(), title: entry.raw_title || entry.title || "", magnet: entry.magnet, size: Number(entry.size) || 0, seeders: Number(entry.last_known_seeders) || 0 }));
       },
       /**
        * A direct link to file `fileId` of item `id` (or, `zip`, to all of a torrent's files as one zip), open

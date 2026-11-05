@@ -19,6 +19,7 @@ import { ShotViewer } from './ShotViewer.jsx';
 import { SourcePicker } from './SourcePicker.jsx';
 import { VersionSheet } from './VersionSheet.jsx';
 import { VideosSheet } from './VideosSheet.jsx';
+import { TorBoxSheet } from './TorBoxSheet.jsx';
 import { useT } from '../i18n/index.js';
 import { featureLabel, relatedGames } from '../state/catalog.js';
 import { downloadQueue } from '../state/downloads.js';
@@ -55,7 +56,7 @@ import { colors, radius } from '../ui/colors.js';
     const [toast, setToast] = (0, useState)(null);
     const [viewing, setViewing] = (0, useState)(null);
     const { focusLater } = useNavActions();
-    const Dialog = { source: SourcePicker, options: OptionsSheet, version: VersionSheet, diagnosis: DiagnosisSheet, makeRoom: MakeRoomSheet, videos: VideosSheet }[dialog?.kind] ?? URLDialog;
+    const Dialog = { source: SourcePicker, options: OptionsSheet, version: VersionSheet, diagnosis: DiagnosisSheet, makeRoom: MakeRoomSheet, videos: VideosSheet, torbox: TorBoxSheet }[dialog?.kind] ?? URLDialog;
     const related = relatedGames(game);
     const about = game.about.filter((text) => text.trim());
     // Its download links checked in the background while the page is open (state/links.js).
