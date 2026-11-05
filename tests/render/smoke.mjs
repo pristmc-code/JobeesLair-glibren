@@ -136,7 +136,17 @@ const { SettingsScreen } = await load('app/ui/Settings.jsx');
 const settingsHome = await screen('Settings', { type: SettingsScreen, props: { onBack() {} } });
 assert.ok(settingsHome.includes('Settings') && settingsHome.includes('Downloads') && settingsHome.includes('About & credits'), settingsHome.join('|'));
 const settings = await screen('Settings (About)', { type: SettingsScreen, props: { onBack() {}, start: 'about' } });
-await screen('Settings (Downloads)', { type: SettingsScreen, props: { onBack() {}, start: 'downloads' } });
+const settingsDownloads = await screen('Settings (Downloads)', { type: SettingsScreen, props: { onBack() {}, start: 'downloads' } });
+// glibren.5: the 30 s pause when the app closes (with background downloads on), and "Exit Jobee'sLair" under the categories.
+assert.ok(settingsDownloads.includes('Pause 30 s when the app closes'), settingsDownloads.join('|'));
+assert.ok(settingsHome.includes("Exit Jobee'sLair"), settingsHome.join('|'));
+const { ExitSheet } = await load('app/ui/ExitSheet.jsx');
+const exitSheet = await screen('Exit (glibren.5)', { type: ExitSheet, props: { summary: { app: 1, background: 2 }, onClose() {}, onExit() {} } });
+assert.ok(exitSheet.includes("Exit Jobee'sLair?") && exitSheet.includes('Exit') && exitSheet.includes('Stay'), exitSheet.join('|'));
+assert.ok(exitSheet.some((text) => /^Downloads in the app stop: 1 download\./.test(text)), exitSheet.join('|'));
+assert.ok(exitSheet.includes('Background downloads keep going: 2 downloads.'), exitSheet.join('|'));
+const quietSheet = await screen('Exit, nothing downloading', { type: ExitSheet, props: { summary: { app: 0, background: 0 }, onClose() {}, onExit() {} } });
+assert.ok(!quietSheet.some((text) => /Downloads|downloads keep/.test(text)), 'no download lines when nothing downloads');
 assert.ok(settings.includes('Support development') && settings.includes('Optional. Every feature stays free either way.'), settings.join('|'));
 assert.ok(!settings.some((text) => /buymeacoffee/.test(text)), 'the QR code and address show only once the row is opened');
 assert.ok(settings.includes("From Jobee'sLair: Fix it is in 0.5.2"), 'every announcement up, whole, in About');

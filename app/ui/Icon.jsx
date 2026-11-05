@@ -47,6 +47,8 @@ import { colors } from './colors.js';
     phone: ["M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z", "M12 18h.01"],
     focus: ["M3 7V5a2 2 0 0 1 2-2h2", "M17 3h2a2 2 0 0 1 2 2v2", "M21 17v2a2 2 0 0 1-2 2h-2", "M7 21H5a2 2 0 0 1-2-2v-2"],
     globe: [ring(12, 12, 10), "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20", "M2 12h20"],
+    // MODIFIED (glibren.5): lucide "power", the Settings' "Exit Jobee'sLair" (ui/ExitSheet.jsx).
+    power: ["M12 2v10", "M18.4 6.6a9 9 0 1 1-12.77.04"],
     // lucide "megaphone": the announcement bar's (AnnouncementBar.jsx).
     megaphone: ["M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14", "M8 6v8"],
     // lucide 0.462 "settings" and "languages", the set the rest of these come from.

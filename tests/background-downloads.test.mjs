@@ -322,3 +322,122 @@ test('fila inteira: ao comecar no app um job ja entregue com antecedencia, o app
   task.cancel();
   await assert.rejects(task.done, (error) => error.name === 'AbortError');
 });
+
+// ---- glibren.5: a pausa de 30 s ao fechar o app (POST /config "pauseOnClose") e o botao "Sair" (POST /bye) ----
+
+test('pausa ao fechar: a opcao vai no POST /config junto com o resto, e a mudanca chega ao payload no ar', async () => {
+  const payload = fakePayload();
+  let pause = true;
+  const wrapper = make(payload, fakeEngine(), { pauseOnClose: () => pause });
+  wrapper.enqueue(queueOptions());
+  await wait(30);
+  assert.deepEqual(payload.configs, [{ concurrency: 1, pauseOnClose: true }], 'ligada por padrao, junto com o primeiro job');
+  pause = false;
+  await wrapper.refreshConfig();
+  assert.deepEqual(payload.configs.at(-1), { concurrency: 1, pauseOnClose: false }, 'desligada: o payload no ar recebe na hora');
+  const count = payload.configs.length;
+  await wrapper.refreshConfig();
+  assert.equal(payload.configs.length, count, 'a mesma configuracao nao e mandada de novo');
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
+});
+
+test('pausa ao fechar: sem a opcao (null), o POST /config sai sem o campo, como antes', async () => {
+  const payload = fakePayload();
+  const wrapper = make(payload, fakeEngine(), { pauseOnClose: () => null });
+  wrapper.enqueue(queueOptions());
+  await wait(30);
+  assert.deepEqual(payload.configs, [{ concurrency: 1 }]);
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
+});
+
+test('pausa ao fechar: guardada em settings.json (so quando desligada), lida de volta e avisada a quem ouve', async () => {
+  const FILE = '/download0/JobeesLair/settings.json';
+  globalThis.__stubFiles = new Map([[FILE, JSON.stringify({ backgroundDownloads: true, simultaneousDownloads: 2 })]]);
+  try {
+    const fresh = await import(`../app/state/background-downloads.js?pause=${Date.now()}`);
+    assert.equal(fresh.pauseOnCloseOn(), true, 'padrao: ligada');
+    const heard = [];
+    const stop = fresh.onPauseOnClose((on) => heard.push(on));
+    fresh.setPauseOnClose(false);
+    assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { backgroundDownloads: true, simultaneousDownloads: 2, pauseOnClose: false }, 'as outras opcoes ficam');
+    assert.equal(fresh.pauseOnCloseOn(), false);
+    const again = await import(`../app/state/background-downloads.js?pause=${Date.now()}-2`);
+    assert.equal(again.pauseOnCloseOn(), false, 'lida de volta do settings.json');
+    fresh.setPauseOnClose(true);
+    assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { backgroundDownloads: true, simultaneousDownloads: 2 }, 'ligada: o campo sai');
+    stop();
+    fresh.setPauseOnClose(false);
+    assert.deepEqual(heard, [false, true], 'quem parou de ouvir nao e chamado');
+  } finally {
+    delete globalThis.__stubFiles;
+  }
+});
+
+test('sair: bye() avisa o payload no ar (POST /bye com o token); sem token ou sem payload, falso e nada trava', async () => {
+  const payload = fakePayload();
+  const wrapper = make(payload, fakeEngine());
+  payload.http.request = ((request) => async (url, options = {}) => {
+    if (url.endsWith('/bye') && payload.up) {
+      payload.calls.push({ method: options.method, path: '/bye', token: options.headers?.['X-Jobe-Token'] });
+      return { status: 200, ok: true, json: async () => ({ ok: true, quietMs: 30000 }) };
+    }
+    return request(url, options);
+  })(payload.http.request);
+  assert.equal(await wrapper.bye(), true);
+  assert.deepEqual(payload.calls.filter((call) => call.path === '/bye'), [{ method: 'POST', path: '/bye', token: TOKEN }]);
+  payload.tokenOnDisk = false;
+  assert.equal(await wrapper.bye(), false, 'sem payload (sem token): nada a avisar');
+  assert.equal(payload.calls.filter((call) => call.path === '/bye').length, 1);
+  payload.tokenOnDisk = true;
+  payload.up = false;
+  const down = make(payload, fakeEngine());
+  assert.equal(await down.bye(), false, 'payload fora do ar: falso, sem excecao');
+});
+
+test('sair: sayByeToPayload usa o Downloads embrulhado em uso', async () => {
+  const { sayByeToPayload } = await import('../app/state/background-downloads.js');
+  const payload = fakePayload();
+  make(payload, fakeEngine());
+  const answer = await sayByeToPayload();
+  assert.equal(answer, false, 'o payload falso responde 404 a /bye');
+  assert.ok(payload.calls.some((call) => call.method === 'POST' && call.path === '/bye'));
+});
+
+test('sair: leaveApp avisa o payload e so depois fecha o app; sem resposta em waitMs, fecha mesmo assim', async () => {
+  const { leaveApp, BYE_WAIT_MS } = await import('../app/state/exit-app.js');
+  assert.equal(BYE_WAIT_MS, 1000, 'espera no maximo ~1 s');
+  const order = [];
+  assert.equal(await leaveApp({ bye: async () => { order.push('bye'); return true; }, exit: () => order.push('exit'), log: () => {} }), 'told');
+  assert.deepEqual(order, ['bye', 'exit']);
+  let closed = 0;
+  const started = Date.now();
+  assert.equal(await leaveApp({ bye: () => new Promise(() => {}), exit: () => ++closed, waitMs: 60, log: () => {} }), 'no answer in time');
+  assert.equal(closed, 1);
+  assert.ok(Date.now() - started < 1000, 'nao espera alem do limite');
+  assert.equal(await leaveApp({ bye: () => { throw new Error('boom'); }, exit: () => ++closed, log: () => {} }), 'not told');
+  assert.equal(await leaveApp({ bye: async () => false, exit: () => ++closed, log: () => {} }), 'not told');
+  assert.equal(closed, 3, 'um aviso que falha nunca impede o app de fechar');
+  // O padrao fecha pelo BackHandler.exitApp do ps5-react (o stub conta em __stubExits).
+  const before = globalThis.__stubExits ?? 0;
+  await leaveApp({ bye: async () => true, log: () => {} });
+  assert.equal(globalThis.__stubExits, before + 1);
+});
+
+test('sair: a folha conta os downloads do app (param) e os do payload (continuam)', async () => {
+  const { exitSummary } = await import('../app/state/exit-app.js');
+  const jobs = [
+    { state: 'downloading', downloadDestination: '/d/a' },
+    { state: 'downloading', downloadDestination: '/d/b' },
+    { state: 'extracting', downloadDestination: '/d/c' },
+    { state: 'queued', downloadDestination: '/d/d' },
+    { state: 'queued', downloadDestination: '/d/e' },
+    { state: 'installed', downloadDestination: '/d/f' },
+    { state: 'failed', downloadDestination: '/d/g' }
+  ];
+  const owned = (destination) => destination === '/d/b' || destination === '/d/e';
+  assert.deepEqual(exitSummary(jobs, owned), { app: 2, background: 2 });
+  assert.deepEqual(exitSummary([], owned), { app: 0, background: 0 });
+  assert.deepEqual(exitSummary(undefined, owned), { app: 0, background: 0 });
+});

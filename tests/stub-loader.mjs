@@ -39,6 +39,8 @@ export const Http = {};
 export const Image = { warm() {}, prefetch: () => Promise.resolve(), setRouter() {} };
 export const Downloads = {};
 export const Payloads = { send: () => ({ ok: false, error: 'stub' }) };
+// glibren.5: the "Exit" button (app/state/exit-app.js); a test counts the closes in globalThis.__stubExits.
+export const BackHandler = { exitApp() { globalThis.__stubExits = (globalThis.__stubExits ?? 0) + 1; } };
 export const LocalServer = { token() { throw new Error('no server here'); } };
 export const DeviceInfo = { utcOffset: () => 0, get: () => ({}) };
 export default {};

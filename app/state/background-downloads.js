@@ -33,6 +33,8 @@
 //   - Settings.jsx (a opcao) e DownloadCard.jsx (o selo "segundo plano" e o botao "Baixar pelo app").
 //   - downloads simultaneos (state/simultaneous-downloads.js): setConcurrency(n) passa o numero ao motor nativo
 //     (Downloads.setConcurrency) e ao payload (POST /config), que entao baixa ate n jobs ao mesmo tempo.
+//   - glibren.5: a opcao "Pausar 30 s ao fechar o app" (pauseOnClose, abaixo) vai junto no POST /config; o botao "Sair"
+//     (state/exit-app.js) avisa o payload por POST /bye (sayByeToPayload) antes de fechar o app.
 
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
@@ -65,6 +67,41 @@ import { loadList, saveList } from './saved.js';
       };
     }, []);
     return on;
+  }
+
+  // ---- glibren.5: a opcao "Pausar 30 s ao fechar o app" (ligada por padrao) ----
+  // Ao perceber que o app fechou, o payload fica 30 s sem rede e sem disco (modo quieto: protecao contra um travamento
+  // enquanto o PS5 desmonta o app). Desligada, ele continua baixando direto. Guardada em settings.json so quando
+  // desligada ("pauseOnClose": false); vai ao payload no POST /config.
+  var pauseOn = null;
+  var pauseListeners = /* @__PURE__ */ new Set();
+  function pauseOnCloseOn() {
+    if (pauseOn === null) pauseOn = loadList(SETTINGS, "settings").pauseOnClose !== false;
+    return pauseOn;
+  }
+  function setPauseOnClose(on) {
+    pauseOn = Boolean(on);
+    const { pauseOnClose: _old, ...settings } = loadList(SETTINGS, "settings");
+    saveList(SETTINGS, "settings", pauseOn ? settings : { ...settings, pauseOnClose: false });
+    for (const listener of [...pauseListeners]) listener(pauseOn);
+  }
+  /** Chama `listener(on)` a cada mudanca; devolve a funcao que para. */
+  function onPauseOnClose(listener) {
+    pauseListeners.add(listener);
+    return () => {
+      pauseListeners.delete(listener);
+    };
+  }
+  function usePauseOnClose() {
+    const [on, setOn] = useState(pauseOnCloseOn);
+    useEffect(() => onPauseOnClose(setOn), []);
+    return on;
+  }
+  // O Downloads embrulhado em uso (o da fila), para o botao "Sair" avisar o payload.
+  var current = null;
+  /** glibren.5: avisa o payload no ar que o app vai fechar (POST /bye). Verdadeiro quando ele respondeu. */
+  function sayByeToPayload() {
+    return current?.bye ? current.bye() : Promise.resolve(false);
   }
 
   // ---- Quem baixa cada destino agora (para o cartao na tela de downloads) ----
@@ -130,7 +167,10 @@ import { loadList, saveList } from './saved.js';
     // glibren: a fila entregue com antecedencia (syncQueue): de quanto em quanto o app avisa que esta aberto (o payload
     // so comeca sozinho o que foi entregue depois de ~15 s sem noticias do app) e a espera antes de mandar a fila.
     heartbeatMs = 5e3,
-    queueDelayMs = 300
+    queueDelayMs = 300,
+    // glibren.5: a pausa ao fechar o app (true/false) que vai no POST /config; null (o padrao aqui) nao manda o campo, e o
+    // payload fica como esta (ligada, se ninguem mudou).
+    pauseOnClose = () => null
   }) {
     const base = `http://127.0.0.1:${port}`;
     let secretsFor = null; // pid do payload que ja recebeu a chave
@@ -203,7 +243,8 @@ import { loadList, saveList } from './saved.js';
     async function syncConcurrency(token) {
       if (!token) return;
       const count = concurrency();
-      const body = { concurrency: count, ...monitor() ?? {} };
+      const pause = pauseOnClose();
+      const body = { concurrency: count, ...typeof pause === "boolean" ? { pauseOnClose: pause } : {}, ...monitor() ?? {} };
       const state = await health(token);
       const key = `${state?.pid}:${JSON.stringify(body)}`;
       if (!state || configFor === key) return;
@@ -473,7 +514,26 @@ import { loadList, saveList } from './saved.js';
       return lanes;
     };
     // glibren: a pagina do celular mudou (ligada/desligada, PIN): o payload no ar recebe a configuracao de novo.
+    // glibren.5: e a pausa ao fechar o app tambem.
     wrapper.refreshConfig = () => syncConcurrency(readToken()).catch(() => {});
+    // glibren.5: o botao "Sair": o app vai fechar. O payload no ar passa a conta-lo como fechado ja (sem esperar ~15 s de
+    // silencio) e aplica a pausa conforme a opcao. O batimento para, para nao parecer que o app continua aberto.
+    wrapper.bye = async () => {
+      if (beat) {
+        clearInterval(beat);
+        beat = null;
+      }
+      const token = readToken();
+      if (!token) return false;
+      try {
+        const answer = await call(token, "POST", "/bye");
+        if (answer.status !== 200) log(`payload did not take the goodbye (HTTP ${answer.status})`);
+        return answer.status === 200;
+      } catch (problem) {
+        log(`payload not told the app is closing (${problem?.message ?? problem})`);
+        return false;
+      }
+    };
     // glibren: a fila inteira com antecedencia. `items` na ordem da fila: { key, name, total, request? }, `request` o
     // pedido de enqueue (com `background`) de um download que o payload baixa sozinho (link direto, ou TorBox ja
     // pedido); sem ele, so um marcador "waiting-app" para o celular. Com a opcao desligada (ou fora do PS5), uma fila
@@ -534,7 +594,8 @@ import { loadList, saveList } from './saved.js';
         beat = null;
       }
     }
+    current = wrapper;
     return wrapper;
   }
 
-export { backgroundDownloadsOn, createBackgroundDownloads, inBackground, setBackgroundDownloads, takeOverDownload, useBackgroundDownloads, useBackgroundOwner };
+export { backgroundDownloadsOn, createBackgroundDownloads, inBackground, onPauseOnClose, pauseOnCloseOn, sayByeToPayload, setBackgroundDownloads, setPauseOnClose, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnClose };

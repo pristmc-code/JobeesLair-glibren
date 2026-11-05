@@ -10,6 +10,8 @@
 // 0.5.1: far less text. A row shows its name and its state; what a setting does (its `hint`) shows under the
 // row only while it has focus, and the paragraphs (what debrid is, what feeds are, the credits, the legal
 // notice) are gone from view or folded behind a row.
+// MODIFIED (glibren.5): "Exit Jobee'sLair" at the end of the categories' column (ui/ExitSheet.jsx, state/exit-app.js), and
+// the "Pause 30 s when the app closes" switch under "Keep downloading when I close the app".
 
 import '../assets/Exo2.ttf';
 import '../assets/JetBrainsMono-Regular.ttf';
@@ -27,7 +29,8 @@ import { debridStatus, setAllDebridKey, setTorBoxKey, testAllDebrid, testTorBox,
 import { HOMEBREW_ONLY } from '../edition.js';
 import { LIMITS as SPEED_LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
-import { setBackgroundDownloads, useBackgroundDownloads } from '../state/background-downloads.js';
+import { setBackgroundDownloads, setPauseOnClose, useBackgroundDownloads, usePauseOnClose } from '../state/background-downloads.js';
+import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
 import { setScreenSaver, showScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
@@ -44,6 +47,7 @@ import { LongText } from './LongText.jsx';
 import { FocusRing } from './FocusRing.jsx';
 import { Icon } from './Icon.jsx';
 import { Menu, MenuDivider, MenuItem } from './Menu.jsx';
+import { ExitSheet } from './ExitSheet.jsx';
 import { PinDialog } from './PinDialog.jsx';
 import { ProgressBar } from './ProgressBar.jsx';
 import { QRCode } from './QRCode.jsx';
@@ -345,6 +349,7 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
     const drives = useDrives();
     const autoParts = useAutoContinueParts();
     const background = useBackgroundDownloads();
+    const pauseOnClose = usePauseOnClose();
     const phone = usePhoneMonitor();
     const phoneHint = !phone.on ? t2("settings.phoneMonitorDetail") : phone.address ? t2("settings.phoneMonitorAddress", { url: phone.address }) : t2("settings.phoneMonitorNoAddress");
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
@@ -352,6 +357,9 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:autoParts", name: t2("settings.autoParts"), hint: t2("settings.autoPartsDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: autoParts }), onPress: () => setAutoContinueParts(!autoParts) }),
       // glibren-bg: downloads em segundo plano (state/background-downloads.js).
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:background", name: t2("settings.background"), hint: t2("settings.backgroundDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: background }), onPress: () => setBackgroundDownloads(!background) }),
+      // MODIFIED (glibren.5): the background helper's 30 s pause when the app closes (state/background-downloads.js), only
+      // with the background downloads on (without them nothing downloads while the app is closed).
+      background ? jsx(Row, { focusKey: "settings:pauseOnClose", name: t2("settings.pauseOnClose"), hint: t2("settings.pauseOnCloseDetail"), end: jsx(Switch, { on: pauseOnClose }), onPress: () => setPauseOnClose(!pauseOnClose) }) : null,
       // glibren: a pagina do celular (state/phone-monitor.js): ver os downloads do segundo plano e, com o PIN, controla-los.
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitor", name: t2("settings.phoneMonitor"), hint: phoneHint, end: /* @__PURE__ */ (0, jsx)(Switch, { on: phone.on }), onPress: () => setPhoneMonitor(!phone.on) }),
       phone.on ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitorPin", name: t2(phone.hasPin ? "settings.phoneMonitorPinChange" : "settings.phoneMonitorPin"), hint: t2(phone.hasPin ? "settings.phoneMonitorPinDetail" : "settings.phoneMonitorNoPin"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", color: colors.muted }), onPress: () => onPhonePin(phone.hasPin ? "change" : "create") }) : null,
@@ -612,6 +620,8 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
     const [phonePinMode, setPhonePinMode] = (0, useState)(null);
     const [keying, setKeying] = (0, useState)(false);
     const [keyingAll, setKeyingAll] = (0, useState)(false);
+    // MODIFIED (glibren.5): the exit sheet, with the downloads as they were when it opened (state/exit-app.js).
+    const [exiting, setExiting] = (0, useState)(null);
     // Drawn again in a newly chosen accent while open; the rest of the store follows once it is left.
     useActiveTheme();
     (0, useEffect)(() => () => commitTheme(), []);
@@ -646,7 +656,17 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
             onPress: () => focusLater("settings:content"),
             style: (state) => [{ position: "relative", height: 64, flexDirection: "row", alignItems: "center", gap: 16, borderRadius: radius.md, paddingHorizontal: 14 }, category === item.id || state.focused ? { backgroundColor: colors.surface2 } : null],
             children: /* @__PURE__ */ (0, jsx)(CategoryFace, { icon: item.icon, label: t2(item.label), selected: category === item.id })
-          }, item.id)) })
+          }, item.id)).concat([
+            // MODIFIED (glibren.5): "Exit Jobee'sLair", under the categories and in their scope, so Down from the last one
+            // reaches it. Not a category: it shows no cards, and Cross asks first (ui/ExitSheet.jsx).
+            jsx(View, { style: { height: 1, marginVertical: 12, marginHorizontal: 14, backgroundColor: colors.line } }, "exit:line"),
+            jsx(View, {
+              focusKey: "settings:exit",
+              onPress: () => setExiting(exitSummary(downloadQueue().snapshot?.() ?? [])),
+              style: (state) => [{ position: "relative", height: 64, flexDirection: "row", alignItems: "center", gap: 16, borderRadius: radius.md, paddingHorizontal: 14 }, state.focused ? { backgroundColor: colors.surface2 } : null],
+              children: jsx(CategoryFace, { icon: "power", label: t2("settings.exit"), selected: false })
+            }, "exit")
+          ]) })
         ] }),
         /* @__PURE__ */ (0, jsx)(FocusScope, { focusKey: "settings:content", ends: ["down"], children: /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1, gap: 32, paddingTop: 18, paddingBottom: 72 }, children: cards[category] }, category) })
       ] }) }),
@@ -671,6 +691,10 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
         const mode = pinMode;
         setPinMode(null);
         closed(mode === "change" ? "settings:pin" : "settings:companion");
+      } }) : null,
+      exiting ? jsx(ExitSheet, { summary: exiting, onExit: () => leaveApp(), onClose: () => {
+        setExiting(null);
+        closed("settings:exit");
       } }) : null,
       phonePinMode ? /* @__PURE__ */ (0, jsx)(PinDialog, { mode: phonePinMode, onDone: (pin) => {
         // O mesmo cuidado do PIN do companion: nada de digitos repetidos ou em sequencia.
