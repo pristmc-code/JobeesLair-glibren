@@ -31,8 +31,8 @@
 // - Fechar a Jobe (glibren-fechar): o payload percebe o fechamento (sceLncUtilGetAppId a cada 1 s, como o
 //   sandbox-sweeper; ou o app calado) e fica QUIETO por um tempo (sem rede, sem disco, sem comecar job, sem mover
 //   imagem) enquanto o sistema desmonta o app, o sandbox-sweeper limpa o sandbox e o ShadowMount+ solta a imagem.
-//   Depois volta devagar (janela de conexoes recomeca em 2). glibren.5: a pausa e uma opcao do app ("pauseOnClose" no
-//   POST /config, ligada por padrao); desligada, nada fica quieto ao fechar. Sempre: no maximo CONN_BUDGET conexoes somando todos
+//   Depois volta devagar (janela de conexoes recomeca em 2). glibren.5: o tempo da pausa e uma opcao do app
+//   ("pauseOnCloseSeconds" no POST /config, 0 a 30 s, padrao 30); 0 = nada fica quieto ao fechar. Sempre: no maximo CONN_BUDGET conexoes somando todos
 //   os jobs, checkpoint (fsync) a cada 15 s com o app fechado, e pausas curtas na conferencia SHA-256 e nos lacos.
 // - Diario em <dir>/bgdl.log (girado para .old acima de 1 MiB), com fsync nas linhas importantes para sobreviver a
 //   um travamento: inicio (e se a sessao anterior terminou limpa), abrir/fechar do app, modo quieto, pulso a cada
@@ -744,15 +744,23 @@ static int64_t g_app_silence_ms = 15000;
 // imagem e movida. Liga quando o app fecha (ou se cala), por g_quiet_ms (30 s no console; BGDL_QUIET_MS nos testes).
 static volatile int64_t g_quiet_until;
 static int64_t g_quiet_ms = 30000;
-// glibren.5: a opcao "Pausar 30 s ao fechar o app" (POST /config "pauseOnClose", padrao ligada). Desligada, g_quiet_ms = 0
-// e nada fica quieto; ligada, g_quiet_ms volta a g_quiet_close_ms (30 s no console; BGDL_QUIET_MS nos testes).
+// glibren.5: a opcao "Pausa ao fechar o app" (POST /config "pauseOnCloseSeconds", 0 a 30 s): g_quiet_ms = s * 1000, e 0
+// nao deixa nada quieto. Enquanto o app nao mandar o campo (g_pause_seconds < 0), vale g_quiet_close_ms (30 s no
+// console; BGDL_QUIET_MS nos testes). g_quiet_from: quando o modo quieto atual comecou (para encurta-lo).
+#define MAX_PAUSE_SECONDS 30
 static int64_t g_quiet_close_ms = 30000;
-static int g_pause_on_close = 1;
+static int g_pause_seconds = -1;
+static volatile int64_t g_quiet_from;
 // glibren.5: quando o app avisou que vai fechar (POST /bye). Nos BYE_GRACE_MS seguintes, outras chamadas dele (um poll
 // que ja estava a caminho) nao contam como "o app esta falando".
 #define BYE_GRACE_MS 5000
 static volatile int64_t g_bye_ms = INT64_MIN / 2;
 static int quiet_now(void) { return mono_ms() < g_quiet_until; }
+// glibren.5: comeca o modo quieto agora, por g_quiet_ms.
+static void start_quiet(int64_t mono) {
+  g_quiet_from = mono;
+  g_quiet_until = mono + g_quiet_ms;
+}
 static int app_away(void) { return mono_ms() - g_last_app_ms >= g_app_silence_ms; }
 // Para testes: o espaco livre fingido (BGDL_FAKE_FREE_BYTES); 0 = o de verdade.
 static uint64_t g_fake_free;
@@ -2258,12 +2266,12 @@ static void* downloader_loop(void* arg) {
 }
 
 // config.json: { "concurrency": n, "monitor": bool, "pinSalt": hex, "pinHash": hex, "monitorText": "...", "powerTick": bool,
-// "pauseOnClose": bool }, para o payload voltar igual depois de reiniciar. POST /config aceita qualquer parte dele. "powerTick"
-// (padrao false) liga sceSystemServicePowerTick a cada 30 s enquanto baixa: so para testar no console, separado.
-// glibren.5: "pauseOnClose" (padrao true; sem o campo, como antes) liga ou desliga o modo quieto ao fechar o app.
+// "pauseOnCloseSeconds": 0..30 }, para o payload voltar igual depois de reiniciar. POST /config aceita qualquer parte dele.
+// "powerTick" (padrao false) liga sceSystemServicePowerTick a cada 30 s enquanto baixa: so para testar no console, separado.
+// glibren.5: "pauseOnCloseSeconds" (inteiro de 0 a 30; sem o campo, como antes) e o tempo do modo quieto ao fechar o app.
 typedef struct {
-  uint64_t concurrency;
-  int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text, has_power, power, has_pause, pause;
+  uint64_t concurrency, pause_seconds;
+  int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text, has_power, power, has_pause;
   char pin_salt[65], pin_hash[65], monitor_text[300];
 } ConfigBody;
 static int config_field(JP* jp, const char* key, void* ctx) {
@@ -2274,13 +2282,21 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "pinHash")) { c->found = c->has_pin_hash = 1; return jp_text(jp, c->pin_hash, sizeof c->pin_hash) ? 1 : -1; }
   if (!strcmp(key, "monitorText")) { c->found = c->has_text = 1; return jp_text(jp, c->monitor_text, sizeof c->monitor_text) ? 1 : -1; }
   if (!strcmp(key, "powerTick")) { c->found = c->has_power = 1; return jp_bool(jp, &c->power) ? 1 : -1; }
-  if (!strcmp(key, "pauseOnClose")) { c->found = c->has_pause = 1; return jp_bool(jp, &c->pause) ? 1 : -1; }
+  if (!strcmp(key, "pauseOnCloseSeconds")) {
+    // So um inteiro (nem null, nem fracao, nem negativo); o limite e conferido em config_valid.
+    double d;
+    int integer;
+    c->found = c->has_pause = 1;
+    jp_ws(jp);
+    return jp_number(jp, &d, &c->pause_seconds, &integer) && integer ? 1 : -1;
+  }
   return jp_skip(jp) ? 1 : -1;
 }
 // O que vale: concorrencia 1..MAX_WORKERS; o PIN vem inteiro (sal e hash, 64 hex cada) ou vazio (sem PIN).
 static int config_valid(const ConfigBody* c) {
   if (!c->found) return 0;
   if (c->has_concurrency && (c->concurrency < 1 || c->concurrency > MAX_WORKERS)) return 0;
+  if (c->has_pause && c->pause_seconds > MAX_PAUSE_SECONDS) return 0;
   if (c->has_pin_salt != c->has_pin_hash) return 0;
   if (c->has_pin_hash && !((is_hex64(c->pin_salt) && is_hex64(c->pin_hash)) || (!c->pin_salt[0] && !c->pin_hash[0]))) return 0;
   return 1;
@@ -2314,14 +2330,21 @@ static int config_apply_locked(const ConfigBody* c) {
     logk_("sceSystemServicePowerTick: %s", g_power_tick ? "LIGADO (teste)" : "desligado");
     changed = 1;
   }
-  // glibren.5: a pausa ao fechar o app. Desligada no meio de um modo quieto, ele termina na hora.
-  if (c->has_pause && g_pause_on_close != (c->pause ? 1 : 0)) {
-    g_pause_on_close = c->pause ? 1 : 0;
-    g_quiet_ms = g_pause_on_close ? g_quiet_close_ms : 0;
-    const int ended = !g_pause_on_close && quiet_now();
-    if (ended) g_quiet_until = 0;
-    logk_("pausa ao fechar o app: %s (modo quieto por %lld s)%s", g_pause_on_close ? "ligada" : "desligada",
-          (long long)(g_quiet_ms / 1000), ended ? "; o modo quieto em andamento terminou agora" : "");
+  // glibren.5: o tempo da pausa ao fechar o app. 0 no meio de um modo quieto o termina na hora; um tempo menor o encurta
+  // (contado de quando comecou); um maior vale so para o proximo.
+  if (c->has_pause && (g_pause_seconds != (int)c->pause_seconds || g_quiet_ms != (int64_t)c->pause_seconds * 1000)) {
+    const long long before = (long long)(g_quiet_ms / 1000);
+    g_pause_seconds = (int)c->pause_seconds;
+    g_quiet_ms = (int64_t)g_pause_seconds * 1000;
+    const char* now_quiet = "";
+    if (quiet_now()) {
+      if (!g_quiet_ms) { g_quiet_until = 0; now_quiet = "; o modo quieto em andamento terminou agora"; }
+      else if (g_quiet_from + g_quiet_ms < g_quiet_until) {
+        g_quiet_until = g_quiet_from + g_quiet_ms;
+        now_quiet = quiet_now() ? "; o modo quieto em andamento foi encurtado" : "; o modo quieto em andamento terminou agora";
+      }
+    }
+    logk_("pausa ao fechar o app: %lld s -> %d s%s%s", before, g_pause_seconds, g_pause_seconds ? "" : " (desligada)", now_quiet);
     changed = 1;
   }
   return changed;
@@ -2348,7 +2371,10 @@ static void save_config_locked(void) {
   buf_json(&b, g_pin_hash);
   buf_str(&b, ",\"monitorText\":");
   buf_json(&b, g_monitor_text);
-  buf_fmt(&b, ",\"powerTick\":%s,\"pauseOnClose\":%s}\n", g_power_tick ? "true" : "false", g_pause_on_close ? "true" : "false");
+  buf_fmt(&b, ",\"powerTick\":%s", g_power_tick ? "true" : "false");
+  // glibren.5: so quando o app mandou o tempo (sem ele, vale o padrao de quem roda: 30 s, ou BGDL_QUIET_MS nos testes).
+  if (g_pause_seconds >= 0) buf_fmt(&b, ",\"pauseOnCloseSeconds\":%d", g_pause_seconds);
+  buf_str(&b, "}\n");
   if (b.failed || !b.data || !save_atomic(path, b.data, b.size, 0600)) logf_("config.json nao gravado: %s", strerror(errno));
   free(b.data);
 }
@@ -2726,10 +2752,10 @@ static void route(int fd, Request* r) {
     pthread_mutex_lock(&g_lock);
     const Job* active = first_running_locked();
     snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
-             "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnClose\":%s,\"quiet\":%s}",
+             "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s}",
              BG_VERSION, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
              g_running_count, g_max_running, ip, g_monitor_on ? "true" : "false", g_monitor_port_now(), g_pin_hash[0] ? "true" : "false",
-             g_pause_on_close ? "true" : "false", quiet_now() ? "true" : "false");
+             (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false");
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
     return;
@@ -2754,14 +2780,14 @@ static void route(int fd, Request* r) {
     memset(&c, 0, sizeof c);
     JP jp = {r->body, r->body + r->content_length, 0};
     if (!jp_object(&jp, config_field, &c) || !config_valid(&c)) {
-      respond_error(fd, 400, "expected {concurrency: 1..4, monitor, pinSalt + pinHash, monitorText, pauseOnClose}");
+      respond_error(fd, 400, "expected {concurrency: 1..4, monitor, pinSalt + pinHash, monitorText, pauseOnCloseSeconds: 0..30}");
       return;
     }
     char body[200];
     pthread_mutex_lock(&g_lock);
     if (config_apply_locked(&c)) save_config_locked();
-    snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d,\"monitor\":%s,\"pinSet\":%s,\"pauseOnClose\":%s}", g_max_running,
-             g_monitor_on ? "true" : "false", g_pin_hash[0] ? "true" : "false", g_pause_on_close ? "true" : "false");
+    snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d,\"monitor\":%s,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld}", g_max_running,
+             g_monitor_on ? "true" : "false", g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000));
     pthread_cond_broadcast(&g_wake_downloader);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
@@ -2793,10 +2819,10 @@ static void route(int fd, Request* r) {
     g_bye_ms = mono;
     g_last_app_ms = mono - g_app_silence_ms;
     if (quiet_ms > 0) {
-      g_quiet_until = mono + quiet_ms;
+      start_quiet(mono);
       logk_("app avisou que vai fechar (POST /bye): modo quieto por %lld s; %d job(s) baixando", (long long)(quiet_ms / 1000), g_running_count);
     } else {
-      logk_("app avisou que vai fechar (POST /bye): sem pausa (opcao desligada); %d job(s) baixando", g_running_count);
+      logk_("app avisou que vai fechar (POST /bye): sem pausa (pausa ao fechar: 0 s); %d job(s) baixando", g_running_count);
     }
     char body[96];
     snprintf(body, sizeof body, "{\"ok\":true,\"quietMs\":%lld}", (long long)quiet_ms);
@@ -3357,7 +3383,7 @@ int main(void) {
   g_quiet_close_ms = atoi(env_or("BGDL_QUIET_MS", "0")); // nos testes, sem modo quieto a menos que pedido
   if (g_quiet_close_ms < 0) g_quiet_close_ms = 0;
 #endif
-  g_quiet_ms = g_quiet_close_ms; // glibren.5: a pausa ao fechar ligada (padrao); o config.json pode desliga-la
+  g_quiet_ms = g_quiet_close_ms; // glibren.5: a pausa padrao; o config.json (pauseOnCloseSeconds) pode muda-la
 #ifdef __PROSPERO__
   snprintf(g_cainfo, sizeof g_cainfo, "/system/common/cert/CA_LIST.cer");
 #else
@@ -3426,10 +3452,10 @@ int main(void) {
         if (!running_now) {
           last_close = mono;
           if (g_quiet_ms > 0) {
-            g_quiet_until = mono + g_quiet_ms;
+            start_quiet(mono);
             logk_("app FECHOU (sceLncUtilGetAppId): modo quieto por %lld s; %d job(s) baixando", (long long)(g_quiet_ms / 1000), g_running_count);
           } else {
-            logk_("app FECHOU (sceLncUtilGetAppId): sem modo quieto (pausa ao fechar desligada); %d job(s) baixando", g_running_count);
+            logk_("app FECHOU (sceLncUtilGetAppId): sem modo quieto (pausa ao fechar: 0 s); %d job(s) baixando", g_running_count);
           }
         } else {
           logk_("app abriu (sceLncUtilGetAppId)");
@@ -3444,7 +3470,7 @@ int main(void) {
           // glibren.5: depois de um POST /bye, nao e silencio: o app disse que fechou (e a pausa ja foi aplicada la).
           const int said_bye = mono - g_bye_ms < g_app_silence_ms + BYE_GRACE_MS;
           const int quiet_too = !said_bye && g_quiet_ms > 0 && mono - last_close > 2 * g_quiet_ms;
-          if (quiet_too) g_quiet_until = mono + g_quiet_ms;
+          if (quiet_too) start_quiet(mono);
           if (said_bye) logk_("app fechando (POST /bye): a fila antecipada segue sozinha");
           else logk_("app calado ha %lld s: a fila antecipada segue sozinha%s", (long long)(g_app_silence_ms / 1000), quiet_too ? "; modo quieto pelo silencio" : "");
         } else {
