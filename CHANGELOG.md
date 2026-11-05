@@ -6,6 +6,19 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **Closing the app with the background payload running is gentler** (a console froze once when the app was closed
+  with "keep downloading" on; the cause is not confirmed yet). When the app closes, the background payload goes
+  quiet for 30 seconds (no network, no disk, nothing started, no image moved into `homebrew/`) while the system takes
+  the app down, then resumes slowly (2 connections, growing again). All its downloads together now open at most 32
+  connections (4 at once could open 128), the partial file is synced every 15 s instead of 5 s while the app is
+  closed, the SHA-256 check yields the processor every 8 MiB, and its two servers no longer spin when the network
+  stack fails. It no longer calls `sceSystemServicePowerTick` (a system call never checked outside an app):
+  `"powerTick": true` in `config.json` turns it back on for a test.
+- **The background payload's log tells what happened** (`/data/JobeesLair/bg/bgdl.log`, kept to 1 MiB plus
+  `bgdl.log.old`): whether the previous run ended cleanly (and its last line when it did not, as after a freeze),
+  the app opening and closing, the quiet time, a pulse every minute while it works (app open or closed, downloads,
+  connections, speed), each download's start and end, and a fatal signal. Those lines are synced to disk at once,
+  so they outlive a frozen console.
 - **TorBox Instant links name their type by themselves.** When the source list opens, the links TorBox holds already
   with no format are asked of it in one call (checkcached with the file list: nothing is added to the account), so
   a VikingFile "Instant" link reads "exFAT image" without a press.
