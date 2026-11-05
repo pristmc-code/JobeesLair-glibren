@@ -95,6 +95,23 @@ import { mirrorsFor } from './download-mirrors.js';
   // RENEWALS_PER_HOUR renewals an hour, and renewals that bring no new bytes wait longer each time (RENEW_BACKOFF_MS)
   // until the download fails with the reason.
   var LINK_MAX_AGE_MS = 150 * 6e4;
+  // glibren.6: a debrid service's direct link carries the account's key (TorBox's `token=` is its API key, seen on
+  // 2026-11-05), and the key is kept sealed (state/debrid.js) so a copy of the data folder does not carry it. So
+  // downloads.json keeps no such link: a job fetched through one is saved without its resolved options (the link),
+  // and its link is asked for again when it starts after a restart, as a renewal is. A link kept for comparison
+  // (endChecked) loses its token.
+  var tokenless = (url) => typeof url === "string" ? url.replace(/([?&](?:token|apikey|api_key)=)[^&#]*/gi, "$1") : url;
+  var viaDebrid = (source) => Boolean(source?.debrid);
+  function forDisk(job2) {
+    const release = job2.release;
+    const debrid = viaDebrid(release) || Boolean(release?.parts?.some((part) => viaDebrid(part.sources?.[0])));
+    if (!debrid) return job2;
+    const { options: _link, ...kept } = job2;
+    if (!viaDebrid(release)) kept.options = job2.options;
+    if (typeof kept.endChecked === "string") kept.endChecked = tokenless(kept.endChecked);
+    if (Array.isArray(kept.parts)) kept.parts = kept.parts.map((part, index) => viaDebrid(release?.parts?.[index]?.sources?.[0]) && part?.options ? (({ options: _part, ...rest }) => rest)(part) : part);
+    return kept;
+  }
   var RENEWALS_PER_HOUR = 6;
   var RENEW_BACKOFF_MS = [0, 30e3, 2 * 6e4, 10 * 6e4];
   // The passwords the catalog's archives are published with. Some entries name none or the wrong one,
@@ -724,7 +741,7 @@ import { mirrorsFor } from './download-mirrors.js';
     };
     const save = ({ sync = true } = {}) => {
       fs.mkdir(directory, { recursive: true });
-      fs.writeFile(`${file}.tmp`, JSON.stringify({ version: 1, jobs }), { sync });
+      fs.writeFile(`${file}.tmp`, JSON.stringify({ version: 1, jobs: jobs.map(forDisk) }), { sync });
       fs.rename(`${file}.tmp`, file);
     };
     const change = () => {
@@ -1147,10 +1164,11 @@ import { mirrorsFor } from './download-mirrors.js';
         }
         // 0.5.4: a 7z's end, read before it downloads (checkEnd), once per file link. Refused before a byte was
         // written, it fails over to the game's next source like a dead link.
-        if (job2.endChecked !== job2.options.url && (!job2.inspected || job2.inspected === "7z") && ["extraction-required", "downloaded", "shadowmount"].includes(job2.artifact.nextAction)) {
+        if (job2.endChecked !== tokenless(job2.options.url) && (!job2.inspected || job2.inspected === "7z") && ["extraction-required", "downloaded", "shadowmount"].includes(job2.artifact.nextAction)) {
           const refusal = await checkEnd(job2, signal);
           if (job2.state === "pausing" || signal.aborted) return;
-          job2.endChecked = job2.options.url;
+          // glibren.6: without its token (a debrid link's is the account's key; forDisk).
+          job2.endChecked = tokenless(job2.options.url);
           if (refusal) throw new Error(refusal);
         }
         fs.mkdir(job2.artifact.directory, { recursive: true });

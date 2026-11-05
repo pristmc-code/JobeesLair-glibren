@@ -58,7 +58,8 @@ if (!skip) {
       const token = randomBytes(6).toString('hex');
       srv.tokens.add(token);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: true, data: `http://127.0.0.1:${port}/t/${token}/${url.searchParams.get('file_id')}.bin` }));
+      // glibren.6: como o TorBox de verdade (05/11/2026), o link leva a chave da conta em token=.
+      return res.end(JSON.stringify({ success: true, data: `http://127.0.0.1:${port}/t/${token}/${url.searchParams.get('file_id')}.bin?token=${KEY}` }));
     }
     const parts = url.pathname.split('/').filter(Boolean);
     let name = parts[parts.length - 1];
@@ -216,6 +217,35 @@ test('link vencido (403): pede outro ao TorBox com a chave e continua a mesma pa
   assert.ok(srv.served['a.bin'] - before < files['a.bin'].length + 2 * 16 * MiB, 'a parcial foi aproveitada');
   assert.ok(!readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').includes(KEY));
   assert.ok(!readFileSync(path.join(base, 'state/jobs.json'), 'utf8').includes(KEY));
+  await stop(child);
+});
+
+test('glibren.6: o jobs.json guarda o link do TorBox sem a chave (token=); ao reabrir, pede outro link e termina a parcial', { skip }, async () => {
+  const base = workspace();
+  writeFileSync(path.join(base, 'debrid.json'), JSON.stringify({ torbox: { key: KEY } }));
+  srv.tokens.add('second');
+  srv.rate = 3 * MiB;
+  const env = { BGDL_KEYFILE: path.join(base, 'debrid.json') };
+  let child = start(base, env);
+  await up(base);
+  const dest = path.join(base, 'disk/downloads/k.bin');
+  const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/t/second/a.bin?token=${KEY}`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 16 * MiB, connections: 2, sha256: sha(files['a.bin']), source: { provider: 'torbox', kind: 'webdl', id: 1, fileId: 'a' } });
+  await until(base, data.id, ['downloading'], (job) => job.written > 18 * MiB);
+  await stop(child);
+  const saved = readFileSync(path.join(base, 'state/jobs.json'), 'utf8');
+  assert.ok(!saved.includes(KEY), 'a chave nao fica no disco');
+  const kept = JSON.parse(saved).jobs.find((job) => job.id === data.id);
+  assert.match(kept.url, /\/t\/second\/a\.bin\?token=$/);
+  srv.rate = 0;
+  const asked = srv.requestdl;
+  child = start(base, env);
+  await up(base);
+  const job = await until(base, data.id, ['completed', 'failed', 'needs-app']);
+  assert.equal(job.state, 'completed', job.error);
+  assert.ok(srv.requestdl > asked, 'pediu um link novo ao TorBox');
+  assert.equal(sha(readFileSync(dest)), sha(files['a.bin']));
+  assert.ok(!readFileSync(path.join(base, 'state/jobs.json'), 'utf8').includes(KEY));
+  assert.ok(!readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').includes(KEY));
   await stop(child);
 });
 

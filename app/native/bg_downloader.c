@@ -57,6 +57,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -769,10 +770,30 @@ static int terminal(const char* state) {
   return !strcmp(state, "completed") || !strcmp(state, "failed") || !strcmp(state, "cancelled") || !strcmp(state, "needs-app");
 }
 
-static void job_json(Buf* b, const Job* j) {
+// glibren.6: o link do TorBox leva a chave da conta (o token= dele e a chave da API, visto em 05/11/2026). O jobs.json
+// guarda esse link sem o valor do token (e linkAt = 1, vencido): ao ler a fila de novo, o job pede outro link com a
+// chave que o app entrega (POST /secret), como numa renovacao. Fica so o que vem depois de token= ate o & ou #.
+static void tokenless(const char* url, char* out, size_t cap) {
+  size_t n = 0;
+  for (const char* p = url; *p && n + 1 < cap;) {
+    if ((*p == '?' || *p == '&') && !strncasecmp(p + 1, "token=", 6)) {
+      for (int k = 0; k < 7 && n + 1 < cap; ++k) out[n++] = p[k];
+      p += 7;
+      while (*p && *p != '&' && *p != '#') ++p;
+      continue;
+    }
+    out[n++] = *p++;
+  }
+  out[n] = 0;
+}
+
+static void job_json_as(Buf* b, const Job* j, int for_disk) {
+  const int hide = for_disk && !strcmp(j->provider, "torbox");
+  char safe[sizeof j->url];
+  if (hide) tokenless(j->url, safe, sizeof safe);
   buf_str(b, "{\"id\":"); buf_json(b, j->id);
   buf_str(b, ",\"state\":"); buf_json(b, j->state);
-  buf_str(b, ",\"url\":"); buf_json(b, j->url);
+  buf_str(b, ",\"url\":"); buf_json(b, hide ? safe : j->url);
   buf_str(b, ",\"destination\":"); buf_json(b, j->destination);
   buf_str(b, ",\"storageRoot\":"); buf_json(b, j->storage_root);
   buf_str(b, ",\"publishTo\":"); buf_json(b, j->publish_to);
@@ -794,17 +815,20 @@ static void job_json(Buf* b, const Job* j) {
   buf_str(b, ",\"fileId\":"); buf_json(b, j->file_id);
   buf_fmt(b, ",\"zip\":%s}", j->zip ? "true" : "false");
   buf_fmt(b, ",\"linkAt\":%lld,\"created\":%lld,\"updated\":%lld,\"awaitingApp\":%s,\"renewals\":%d",
-          (long long)j->link_at, (long long)j->created, (long long)j->updated, j->awaiting_app ? "true" : "false", j->renewals);
+          (long long)(hide && j->link_at ? 1 : j->link_at), (long long)j->created, (long long)j->updated, j->awaiting_app ? "true" : "false", j->renewals);
   buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u,\"retries\":%u,\"owner\":\"payload\"}",
           (unsigned long long)j->written, (unsigned long long)j->total, j->bytes_per_second, j->active_connections, j->retries);
 }
+
+// O job como a API local (127.0.0.1, com token de sessao) o mostra ao app: com o link inteiro.
+static void job_json(Buf* b, const Job* j) { job_json_as(b, j, 0); }
 
 static void save_jobs_locked(void) {
   Buf b = {0};
   buf_fmt(&b, "{\"version\":1,\"next\":%u,\"jobs\":[", g_next_id);
   for (int i = 0; i < g_job_count; ++i) {
     if (i) buf_str(&b, ",");
-    job_json(&b, g_jobs[i]);
+    job_json_as(&b, g_jobs[i], 1);
   }
   buf_str(&b, "]}\n");
   char path[600];

@@ -3148,6 +3148,37 @@ test('parts sent through TorBox never open the browser: no capture ahead, every 
   assert.ok(!states.has('awaiting-browser'));
 });
 
+// glibren.6: TorBox's direct link carries the account's key (token=, 2026-11-05). downloads.json keeps no such link:
+// a job through a debrid service is saved without its resolved options, and a restart asks for its link again.
+test("downloads.json never keeps a debrid service's link (it carries the key); a restart asks for a new one", async () => {
+  const fs = memoryFs();
+  const SECRET = '0123abcd-4567-89ef-0123-456789abcdef';
+  const requests = [];
+  const downloads = { requests, enqueue(options) {
+    requests.push(options);
+    return { subscribe: () => () => {}, done: new Promise(() => {}), cancel() {} };
+  } };
+  const resolved = [];
+  const make = () => createDownloadQueue({
+    fs, downloads, http: probe({}), formats: DownloadFormats, dataDir: '/data/app', platform: 'desktop',
+    notifications: { show() {} }, power: { keepAwake() {} }, linking: { openURL: () => true },
+    sources: { resolve: async (source) => {
+      resolved.push(source.url);
+      return { url: `https://nexus-1.cdn.example/dld/abc?token=${SECRET}` };
+    } }, archives: null, packages: null, wait: async () => {}
+  });
+  const queue = make();
+  const id = queue.enqueue(game, { ...image('Debrid.exfat', 500), id: 'debrid~torbox', debrid: { service: 'torbox' } }, '/data');
+  await untilTimed(queue, id, () => requests.length === 1);
+  assert.match(requests[0].url, /token=/, 'the download itself uses the link as TorBox gave it');
+  const saved = fs.readFile('/data/app/JobeesLair/downloads.json');
+  assert.ok(!saved.includes(SECRET), 'the key is not in downloads.json');
+  const job = JSON.parse(saved).jobs.find((item) => item.id === id);
+  assert.equal(job.options, undefined);
+  assert.ok(!String(job.endChecked ?? '').includes(SECRET));
+  assert.ok(make().snapshot().some((item) => item.id === id), 'the job is still there after a restart');
+});
+
 test('parts: "Wait" stops a capture ahead before its browser opens', async () => {
   const fs = memoryFs();
   const browserCapture = capturer([]);
