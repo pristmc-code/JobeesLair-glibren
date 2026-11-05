@@ -17,7 +17,10 @@ import { FileSystem } from '@ps5-react/core';
       (message) => console.log(`jobeeslair: ${what}: ${message}`)
     );
   }
-  var SYNCED = /* @__PURE__ */ new Set(["settings.json", "wishlist.json"]);
+  // MODIFIED (glibren.4): debrid.json (the TorBox/AllDebrid keys) and the files the gamer fills in by hand are written
+  // through to the disk too. Without it, a console that froze or lost power soon after a save (debrid.json is saved
+  // again on every TorBox check) came back with the file empty or gone, and the key had to be entered again.
+  var SYNCED = /* @__PURE__ */ new Set(["settings.json", "wishlist.json", "debrid.json", "feeds.json", "feed-mirrors.json", "themes.json"]);
   function saveList(name, what, list) {
     try {
       FileSystem.mkdir(dir, { recursive: true });
