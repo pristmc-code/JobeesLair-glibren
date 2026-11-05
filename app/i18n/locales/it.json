@@ -1489,5 +1489,10 @@
   "torboxSearch.sizeUnknown": "Dimensione sconosciuta",
   "settings.defaultDrive": "Unità di download predefinita",
   "settings.defaultDriveDetail": "Dove vanno i nuovi download. Automatico usa l'ultima unità usata.",
-  "settings.defaultDrive.auto": "Automatico"
+  "settings.defaultDrive.auto": "Automatico",
+  "torboxSearch.source.list": "La tua lista di hash",
+  "torboxSearch.origin.list": "La tua lista di hash",
+  "torboxSearch.backport": "{count, plural, one {# file} other {# file}}, {size}. Scaricalo con Tutto (il pacchetto intero): Jobee'sLair non scarica ancora solo la cartella del backport",
+  "torboxSearch.whole": "Il torrent intero, {count, plural, one {# file} other {# file}}, in un solo pacchetto",
+  "torboxSearch.wholeType": "TUTTO"
 }

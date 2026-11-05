@@ -1,6 +1,7 @@
 // glibren.6: "Search TorBox" on a game's page: every file TorBox has of the game (state/torbox-search.js), by its
 // code and by its name, with its size and type (.exfat first), and where it goes ("Save to", the default drive of
 // Settings > Downloads). A press queues that file at once, through TorBox, with no source list in between.
+// A torrent's "All" row queues it whole as one zip; its backport folder only says what it is (state/torbox-search.js).
 
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -10,11 +11,14 @@ import { cancellation } from '../state/download-sources.js';
 import { downloadQueue, driveName, freeBytes, storageRoots } from '../state/downloads.js';
 import { setDefaultDrive, startingDrive, useDefaultDrive } from '../state/last-drive.js';
 import { formatBytes } from '../state/size.js';
-import { downloadFile, searchTorBox } from '../state/torbox-search.js';
+import { downloadFile, fakePackageWarning, hashListPaths, readHashList, searchTorBox } from '../state/torbox-search.js';
+import { DATA_DIR } from '../state/data-dir.js';
+import { deviceFacts } from '../state/device.js';
+import { ps5FakePackagesLaunch } from '../state/firmware.js';
 import { FocusRing } from '../ui/FocusRing.jsx';
 import { SideSheet } from '../ui/SideSheet.jsx';
 import { colors, radius } from '../ui/colors.js';
-import { Text, View } from '@ps5-react/core';
+import { FileSystem, Text, View } from '@ps5-react/core';
 
   var GREEN = "#4ade80";
   var RED = "#f87171";
@@ -39,16 +43,28 @@ import { Text, View } from '@ps5-react/core';
     const tone = best ? GREEN : colors.muted;
     return jsx(View, { style: { width: 108, alignItems: "center", borderRadius: radius.xs, borderWidth: 1, borderColor: tone, paddingVertical: 2 }, children: jsx(Text, { style: { fontFamily: "Exo2", fontSize: 18, fontWeight: 700, color: tone, lineHeight: 24 }, children: type }) });
   }
-  function FileRow({ file, state, autoFocus, onPress }) {
+  // Whether this console launches a PS5 fake package (state/firmware.js; null when its firmware is not known).
+  var fakePackagesLaunch = () => {
+    try {
+      return ps5FakePackagesLaunch(deviceFacts().firmware);
+    } catch {
+      return null;
+    }
+  };
+  function FileRow({ file, game, state, autoFocus, onPress }) {
     const t2 = useT();
-    const where = file.origin === "account" ? t2("torboxSearch.origin.account") : file.origin === "catalog" ? t2("torboxSearch.origin.catalog", { host: file.host || "?" }) : t2("torboxSearch.origin.search");
+    const where = file.origin === "account" ? t2("torboxSearch.origin.account") : file.origin === "catalog" ? t2("torboxSearch.origin.catalog", { host: file.host || "?" }) : file.origin === "list" ? t2("torboxSearch.origin.list") : t2("torboxSearch.origin.search");
+    // glibren.6: a PS5 fake package this console won't launch says so, in the words of the source list.
+    const warning = fakePackageWarning(file, game, fakePackagesLaunch()) ? t2("release.compat.fpkg") : null;
+    const note = file.backport ? t2("torboxSearch.backport", { count: file.count, size: formatBytes(file.size || 0) }) : file.whole ? t2("torboxSearch.whole", { count: file.count }) : null;
     const status = state?.queued ? t2("torboxSearch.queued") : state?.error ? state.error : file.piece ? t2("torboxSearch.piece") : null;
+    const bad = Boolean(state?.error || file.piece || (!status && warning));
     return jsxs(View, { autoFocus, focusable: true, onPress, style: (_state) => [{ position: "relative", flexDirection: "row", alignItems: "center", gap: 18, borderRadius: radius.sm, paddingHorizontal: 18, paddingVertical: 12 }, _state.focused ? { backgroundColor: colors.surface2 } : null], children: [
       jsx(FocusRing, {}),
-      jsx(TypeBadge, { type: file.type, best: file.format === "exfat" }),
+      jsx(TypeBadge, { type: file.whole ? t2("torboxSearch.wholeType") : file.type, best: file.format === "exfat" }),
       jsxs(View, { style: { flex: 1, gap: 2 }, children: [
         jsx(Text, { style: [BODY, { fontSize: 22, fontWeight: 600, color: colors.fg, numberOfLines: 1, ellipsizeMode: "middle" }], children: file.name }),
-        jsx(Text, { style: [BODY, { color: status && (state?.error || file.piece) ? RED : status ? GREEN : colors.muted, numberOfLines: 1, ellipsizeMode: "tail" }], children: [file.size ? formatBytes(file.size) : t2("torboxSearch.sizeUnknown"), where, status].filter(Boolean).join(" \xB7 ") })
+        jsx(Text, { style: [BODY, { color: status && !bad ? GREEN : bad ? RED : colors.muted, numberOfLines: 2, ellipsizeMode: "tail" }], children: [note ?? (file.size ? formatBytes(file.size) : t2("torboxSearch.sizeUnknown")), where, warning, status].filter(Boolean).join(" \xB7 ") })
       ] })
     ] });
   }
@@ -69,7 +85,13 @@ import { Text, View } from '@ps5-react/core';
     useEffect(() => {
       let live = true;
       const run = cancellation();
-      quietly("TorBox search", () => searchTorBox(game, { signal: run.signal, onUpdate: (update) => live && setResult((before) => ({ ...before, ...update })) })).then((final) => live && setResult({ ...final, done: true, error: "" }), (error) => live && setResult((before) => ({ ...before, done: true, error: error?.message || String(error) })));
+      // glibren.6: the gamer's torbox-hashes.txt, in the app's data folder or at a drive's root, read now.
+      let hashList = null;
+      try {
+        hashList = readHashList(FileSystem, hashListPaths(DATA_DIR, roots));
+      } catch {
+      }
+      quietly("TorBox search", () => searchTorBox(game, { signal: run.signal, hashList, onUpdate: (update) => live && setResult((before) => ({ ...before, ...update })) })).then((final) => live && setResult({ ...final, done: true, error: "" }), (error) => live && setResult((before) => ({ ...before, done: true, error: error?.message || String(error) })));
       return () => {
         live = false;
         run.cancel();
@@ -105,9 +127,9 @@ import { Text, View } from '@ps5-react/core';
       ] }),
       jsxs(View, { style: { gap: 4, paddingHorizontal: 18 }, children: [
         jsx(Text, { style: [BODY, { fontSize: 22, color: error ? RED : colors.fg }], children: summary }),
-        jsx(Text, { style: [BODY, { color: colors.muted, numberOfLines: 2 }], children: ["account", "catalog", "search"].map(note).join(" \xB7 ") })
+        jsx(Text, { style: [BODY, { color: colors.muted, numberOfLines: 2 }], children: ["account", "catalog", "search", "list"].filter((name) => sources?.[name]?.state !== "absent").map(note).join(" \xB7 ") })
       ] }),
-      jsx(View, { style: { gap: 4 }, children: files.map((file, index) => jsx(FileRow, { file, state: states[file.key], autoFocus: index === 0, onPress: () => queue(file) }, file.key)) })
+      jsx(View, { style: { gap: 4 }, children: files.map((file, index) => jsx(FileRow, { file, game, state: states[file.key], autoFocus: index === 0, onPress: () => queue(file) }, file.key)) })
     ] }) });
   }
 

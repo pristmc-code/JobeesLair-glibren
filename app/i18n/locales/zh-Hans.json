@@ -1489,5 +1489,10 @@
   "torboxSearch.sizeUnknown": "大小未知",
   "settings.defaultDrive": "默认下载位置",
   "settings.defaultDriveDetail": "新下载保存的位置。自动会使用你上次下载时用的磁盘。",
-  "settings.defaultDrive.auto": "自动"
+  "settings.defaultDrive.auto": "自动",
+  "torboxSearch.source.list": "你的哈希列表",
+  "torboxSearch.origin.list": "你的哈希列表",
+  "torboxSearch.backport": "{count, plural, other {# 个文件}}，{size}。请用“全部”（整个包）下载：Jobee'sLair 还不能只下载 backport 文件夹",
+  "torboxSearch.whole": "整个种子，{count, plural, other {# 个文件}}，打成一个包",
+  "torboxSearch.wholeType": "全部"
 }

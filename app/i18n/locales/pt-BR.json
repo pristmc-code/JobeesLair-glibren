@@ -1489,5 +1489,10 @@
   "torboxSearch.sizeUnknown": "Tamanho desconhecido",
   "settings.defaultDrive": "Local padrão de download",
   "settings.defaultDriveDetail": "Para onde vão os novos downloads. Automático usa o último disco em que você baixou.",
-  "settings.defaultDrive.auto": "Automático"
+  "settings.defaultDrive.auto": "Automático",
+  "torboxSearch.source.list": "Sua lista de hashes",
+  "torboxSearch.origin.list": "Sua lista de hashes",
+  "torboxSearch.backport": "{count, plural, one {# arquivo} other {# arquivos}}, {size}. Baixe com Tudo (o pacote inteiro): a Jobe ainda não baixa só a pasta do backport",
+  "torboxSearch.whole": "O torrent inteiro, {count, plural, one {# arquivo} other {# arquivos}}, num pacote só",
+  "torboxSearch.wholeType": "TUDO"
 }

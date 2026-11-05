@@ -1489,5 +1489,10 @@
   "torboxSearch.sizeUnknown": "Размер неизвестен",
   "settings.defaultDrive": "Диск для загрузок по умолчанию",
   "settings.defaultDriveDetail": "Куда идут новые загрузки. Авто берёт последний использованный диск.",
-  "settings.defaultDrive.auto": "Авто"
+  "settings.defaultDrive.auto": "Авто",
+  "torboxSearch.source.list": "Ваш список хешей",
+  "torboxSearch.origin.list": "Ваш список хешей",
+  "torboxSearch.backport": "{count, plural, one {# файл} few {# файла} other {# файлов}}, {size}. Скачайте через «Всё» (весь пакет): Jobee'sLair пока не скачивает только папку бэкпорта",
+  "torboxSearch.whole": "Весь торрент, {count, plural, one {# файл} few {# файла} other {# файлов}}, одним пакетом",
+  "torboxSearch.wholeType": "ВСЁ"
 }

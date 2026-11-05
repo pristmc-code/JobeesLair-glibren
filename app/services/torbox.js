@@ -420,8 +420,9 @@ import { parseStamp } from '../state/clock.js';
        * (`filename`'s, else the largest) asked for. -> { url, kind, id, fileId, name, size }. A torrent of many
        * files (chooseFiles) comes as one zip: { url, kind, id, fileId: null, name: null, size: null, repacked: true }.
        * Past the wait it throws PENDING with `progress`; asking again later picks up the same item.
+       * glibren.6: `zip` asks for a torrent's files as one zip whatever they are ("All" in Search TorBox).
        */
-      async resolve(link, { known, filename, password, signal, onProgress, onItem, maxWaitMs = WAIT_MS, pollMs = POLL_MS } = {}) {
+      async resolve(link, { known, filename, password, signal, onProgress, onItem, maxWaitMs = WAIT_MS, pollMs = POLL_MS, zip = false } = {}) {
         let entry = known?.id !== void 0 && known?.id !== null ? { kind: known.kind || (isMagnet(link) ? "torrent" : "webdl"), id: known.id } : null;
         let item = entry ? await api.item(entry.kind, entry.id, { signal }) : null;
         if (!item) {
@@ -439,7 +440,7 @@ import { parseStamp } from '../state/clock.js';
           await wait(pollMs, signal);
           item = await api.item(entry.kind, entry.id, { signal });
         }
-        const choice = entry.kind === "torrent" ? chooseFiles(item.files, filename) : { file: pickFile(item.files, filename) };
+        const choice = entry.kind === "torrent" ? zip ? { zip: true } : chooseFiles(item.files, filename) : { file: pickFile(item.files, filename) };
         if (!choice || !choice.file && !choice.zip) throw new TorBoxError("NO_FILE", "TorBox fetched the link but found no file in it. Choose another source.");
         if (choice.zip) {
           const url2 = await api.getUnrestrictedLink(entry.kind, entry.id, null, { signal, zip: true });

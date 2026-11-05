@@ -77,7 +77,7 @@ test('the account, the catalog and the search, as one list: .exfat first, pieces
     ['account', 'RAR', 'sifu.part1.rar']
   ]);
   assert.ok(files.at(-1).piece, 'a .part1.rar is one piece of a set');
-  assert.deepEqual(Object.fromEntries(Object.entries(sources).map(([name, value]) => [name, value.state])), { account: 'done', catalog: 'done', search: 'done' });
+  assert.deepEqual(Object.fromEntries(Object.entries(sources).map(([name, value]) => [name, value.state])), { account: 'done', catalog: 'done', search: 'done', list: 'absent' });
   assert.equal(updates.length, 3, 'one update per part');
   assert.ok(api.asked.includes('cachedEntries 2'), 'the two single-file links of the catalog; the set in parts is left out');
   assert.ok(api.asked.includes('search PPSA05132') && api.asked.includes('search sifu'));
@@ -129,4 +129,134 @@ test('the default drive goes first while it is there and fits; Automatic is the 
   assert.equal(startingDrive(roots, () => true, '/mnt/usb0'), 2);
   assert.equal(startingDrive(roots, (root) => root !== '/mnt/usb0', '/mnt/usb0'), 0, 'no room there: the first that fits');
   assert.equal(startingDrive(roots, () => true, '/mnt/usb9'), 0, 'not plugged in: the first');
+});
+
+// ---- glibren.6: the gamer's list of hashes, a torrent's backport folder and "All", a PS5 fake package's warning ----
+const MAFIA = { id: 'PPSA14299', title: 'Mafia The Old Country', releases: [] };
+const H_CODED = 'a9da69905bdac2dc7eb9891bedf7c1a0720e646e';
+const H_NAMED = 'b6ab3cefe2357655b5061b5c704a141d3ecd26b4';
+const H_OTHER = 'c12fe1c06bba254a9dc9f519b335aa7c1367a88a';
+const H_ELSE = '0000000000000000000000000000000000000001';
+const TORRENT_DIR = '[PS5] Mafia The Old Country (Deluxe Edition) [EUR v01.011.000 fpkg exfat]';
+const mafiaFiles = [
+  { id: 0, name: `${TORRENT_DIR}/[PPSA14299]Mafia Domovina[01.011].exfat`, size: 63.31 * 2 ** 30 },
+  { id: 1, name: `${TORRENT_DIR}/[PPSA14299]Mafia Domovina[01.011].pkg`, size: 40.11 * 2 ** 30 },
+  { id: 2, name: `${TORRENT_DIR}/UPDATE 4xx-9xx.pkg`, size: 0.39 * 2 ** 30 },
+  { id: 3, name: `${TORRENT_DIR}/DLC Mafia1.pkg`, size: 3000 },
+  { id: 4, name: `${TORRENT_DIR}/backports/PPSA14299/eboot.bin`, size: 0.15 * 2 ** 30 },
+  { id: 5, name: `${TORRENT_DIR}/backports/PPSA14299/sce_module/libSceNpCppWebApi.prx`, size: 10e6 },
+  { id: 6, name: `${TORRENT_DIR}/backports/PPSA14299/fakelib/libScePsml.sprx`, size: 4000 }
+];
+function listClient() {
+  const asked = [];
+  const held = {
+    [H_CODED]: { name: TORRENT_DIR, size: 103.97 * 2 ** 30, files: mafiaFiles },
+    [H_NAMED]: { name: 'Mafia.The.Old.Country.PS5-GROUP', size: 60e9, files: [{ id: 0, name: 'Mafia.The.Old.Country.PS5-GROUP/game.exfat', size: 60e9 }] },
+    [H_OTHER]: { name: 'Some Other Game', size: 5e9, files: [{ id: 0, name: 'Some Other Game/other.exfat', size: 5e9 }] }
+  };
+  return {
+    asked,
+    async myList() { return []; },
+    async searchTorrents() { throw Object.assign(new Error('no search'), { code: 'NETWORK' }); },
+    async cachedEntries(links) {
+      asked.push(...links);
+      const found = new Map();
+      for (const link of links) {
+        const hash = /btih:([0-9a-f]{40})/i.exec(link)?.[1]?.toLowerCase();
+        if (hash && held[hash]) found.set(link, held[hash]);
+      }
+      return found;
+    }
+  };
+}
+const LIST_TEXT = [
+  '# my torrents',
+  '',
+  `PPSA14299 magnet:?xt=urn:btih:${H_CODED.toUpperCase()}&dn=Mafia`,
+  `${H_NAMED}   a note without a code`,
+  `${H_OTHER} PPSA99999 another game`,
+  `   ${H_ELSE}`,
+  'a line with nothing to read',
+  'CUSA-12345 MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U'
+].join('\n');
+
+test('torbox-hashes.txt: a magnet or a bare hash a line, any code on it; comments, blank and unreadable lines skipped', () => {
+  const entries = search.parseHashList(LIST_TEXT);
+  assert.deepEqual(entries.map((item) => [item.hash, item.code]), [
+    [H_CODED, 'PPSA14299'],
+    [H_NAMED, null],
+    [H_OTHER, 'PPSA99999'],
+    [H_ELSE, null],
+    ['6162636465666768696a6b6c6d6e6f7071727374', 'CUSA12345']
+  ], 'a base32 hash is turned to hex');
+  const fs = { exists: (p) => p === '/data/JobeesLair/torbox-hashes.txt' || p === '/mnt/usb0/torbox-hashes.txt', readFile: (p) => p.includes('usb0') ? `${H_CODED}\n` : LIST_TEXT };
+  const paths = search.hashListPaths('/data/JobeesLair', ['/data', '/mnt/usb0']);
+  assert.deepEqual(paths, ['/data/JobeesLair/torbox-hashes.txt', '/data/torbox-hashes.txt', '/mnt/usb0/torbox-hashes.txt']);
+  const list = search.readHashList(fs, paths);
+  assert.equal(list.files, 2);
+  assert.equal(list.entries.find((item) => item.hash === H_CODED).code, 'PPSA14299', 'a code on one line of a hash holds');
+  assert.deepEqual(search.readHashList({ exists: () => false }, paths), { files: 0, entries: [] });
+});
+
+test("the list: hashes of the game's code, and of no code when the torrent is the game's by name; asked once a session", async () => {
+  const api = listClient();
+  const hashList = { files: 1, entries: search.parseHashList(LIST_TEXT) };
+  const { files, sources } = await search.searchTorBox(MAFIA, { api, hashList });
+  assert.equal(sources.list.state, 'done');
+  assert.ok(!api.asked.some((link) => link.includes(H_OTHER)), "another game's coded hash is not even asked");
+  assert.deepEqual(files.map((file) => [file.origin, file.type, file.name]), [
+    ['list', 'EXFAT', '[PPSA14299]Mafia Domovina[01.011].exfat'],
+    ['list', 'EXFAT', 'game.exfat'],
+    ['list', 'PKG', '[PPSA14299]Mafia Domovina[01.011].pkg'],
+    ['list', 'PKG', 'UPDATE 4xx-9xx.pkg'],
+    ['list', 'PKG', 'DLC Mafia1.pkg'],
+    ['list', 'ZIP', TORRENT_DIR],
+    ['list', 'BACKPORT', 'backports/PPSA14299']
+  ], 'the backport files become one row; the torrent of many files gets an All row; the one-file torrent does not');
+  const backport = files.find((file) => file.backport);
+  assert.equal(backport.count, 3);
+  assert.throws(() => search.downloadFile({ enqueue() { throw new Error('not here'); } }, MAFIA, backport, '/data'), /backport/);
+  const before = api.asked.length;
+  await search.searchTorBox(MAFIA, { api, hashList });
+  assert.equal(api.asked.length, before, 'what TorBox said of each hash is kept for the session');
+  const { sources: none } = await search.searchTorBox(MAFIA, { api, hashList: { files: 0, entries: [] } });
+  assert.equal(none.list.state, 'absent');
+});
+
+test('"All" is the whole torrent as one zip: a link of its own, the zip kept for the renewal and the payload', async () => {
+  const { files } = await search.searchTorBox(MAFIA, { api: listClient(), hashList: { files: 1, entries: search.parseHashList(LIST_TEXT) } });
+  const all = search.releaseFor(files.find((file) => file.whole));
+  assert.equal(all.format, 'zip');
+  assert.equal(all.torboxZip, true);
+  assert.match(all.filename, /\.zip$/);
+  assert.equal(all.url, `magnet:?xt=urn:btih:${H_CODED}&x.glibren=all`);
+  assert.notEqual(all.url, search.releaseFor(files[0]).url, 'apart from the link of one of its files');
+  // An account torrent's All: TorBox's item kept as a zip, so the payload asks for the zip link again by itself.
+  const account = search.releaseFor({ origin: 'account', kind: 'torrent', id: 77, fileId: 'all', name: 'Big torrent', size: 9e9, whole: true, count: 4 });
+  assert.equal(account.url, 'https://torbox.app/torrents/77?all');
+  assert.deepEqual(debrid.debridHandoff(account), { provider: 'torbox', kind: 'torrent', id: 77, fileId: null, zip: true });
+});
+
+test("resolve with zip asks TorBox for the torrent's zip link even when a file is named like the release", async () => {
+  const { createTorBox } = await load('app/services/torbox.js');
+  const http = { async request(url) {
+    const { pathname, searchParams } = new URL(url);
+    const body = pathname.endsWith('/torrents/mylist') ? { success: true, data: { id: 5, download_finished: true, files: [{ id: 0, name: 'a.exfat', size: 9 }, { id: 1, name: 'b.pkg', size: 8 }] } }
+      : pathname.endsWith('/torrents/requestdl') ? { success: true, data: `https://cdn.example/${searchParams.get('zip_link') === 'true' ? 'zip' : searchParams.get('file_id')}` } : { success: false, error: 'HTTP_404' };
+    return { status: 200, ok: true, json: async () => body };
+  } };
+  const api = createTorBox({ http, key: () => '0123abcd-4567-89ef-0123-456789abcdef', wait: async () => {} });
+  const zip = await api.resolve(`magnet:?xt=urn:btih:${H_CODED}`, { known: { kind: 'torrent', id: 5 }, filename: 'a.exfat', zip: true });
+  assert.deepEqual([zip.url, zip.repacked, zip.fileId], ['https://cdn.example/zip', true, null]);
+  const one = await api.resolve(`magnet:?xt=urn:btih:${H_CODED}`, { known: { kind: 'torrent', id: 5 }, filename: 'a.exfat' });
+  assert.equal(one.url, 'https://cdn.example/0', 'without zip, the file named');
+});
+
+test("a PS5 game's .pkg is flagged on a console that won't launch fake packages; an .exfat and a PS4 game's are not", () => {
+  const pkg = { format: 'pkg' };
+  assert.equal(search.fakePackageWarning(pkg, MAFIA, false), true);
+  assert.equal(search.fakePackageWarning(pkg, MAFIA, null), true, 'firmware not known: said as the source list says it');
+  assert.equal(search.fakePackageWarning(pkg, MAFIA, true), false, 'at 11.60 or below it launches');
+  assert.equal(search.fakePackageWarning({ format: 'exfat' }, MAFIA, false), false);
+  assert.equal(search.fakePackageWarning(pkg, { id: 'CUSA12345' }, false), false);
 });

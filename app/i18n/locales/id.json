@@ -1489,5 +1489,10 @@
   "torboxSearch.sizeUnknown": "Ukuran tidak diketahui",
   "settings.defaultDrive": "Drive unduhan bawaan",
   "settings.defaultDriveDetail": "Ke mana unduhan baru disimpan. Otomatis memakai drive terakhir yang Anda pakai.",
-  "settings.defaultDrive.auto": "Otomatis"
+  "settings.defaultDrive.auto": "Otomatis",
+  "torboxSearch.source.list": "Daftar hash Anda",
+  "torboxSearch.origin.list": "Daftar hash Anda",
+  "torboxSearch.backport": "{count, plural, other {# file}}, {size}. Unduh dengan Semua (paket utuh): Jobee'sLair belum bisa mengunduh folder backport saja",
+  "torboxSearch.whole": "Seluruh torrent, {count, plural, other {# file}}, sebagai satu paket",
+  "torboxSearch.wholeType": "SEMUA"
 }

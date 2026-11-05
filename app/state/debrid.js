@@ -333,7 +333,8 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
       }
       if (!keyOf()) throw new Error("TorBox isn't set up any more. Add its API key in Settings, or choose another source.");
       const hash = md5(link);
-      const result = await torbox().resolve(link, { known: record().items?.[hash], filename: source.filename, signal, onItem: (entry) => remember(hash, entry) });
+      // glibren.6: `torboxZip` (Search TorBox's "All"): the torrent's files as one zip.
+      const result = await torbox().resolve(link, { known: record().items?.[hash], filename: source.filename, signal, onItem: (entry) => remember(hash, entry), zip: Boolean(source.torboxZip) });
       remember(hash, result);
       log("torbox", `${result.kind} ${result.id}: ${result.repacked ? "all files as one zip" : `file ${result.fileId}`} ready (${hash.slice(0, 8)})`);
       return torrent ? { url: result.url, expectedBytes: result.repacked ? null : result.size || null, repacked: Boolean(result.repacked) } : { url: result.url };

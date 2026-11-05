@@ -1489,5 +1489,10 @@
   "torboxSearch.sizeUnknown": "Größe unbekannt",
   "settings.defaultDrive": "Standard-Laufwerk für Downloads",
   "settings.defaultDriveDetail": "Wohin neue Downloads gehen. Automatisch nimmt das zuletzt benutzte Laufwerk.",
-  "settings.defaultDrive.auto": "Automatisch"
+  "settings.defaultDrive.auto": "Automatisch",
+  "torboxSearch.source.list": "Deine Hash-Liste",
+  "torboxSearch.origin.list": "Deine Hash-Liste",
+  "torboxSearch.backport": "{count, plural, one {# Datei} other {# Dateien}}, {size}. Mit Alles laden (das ganze Paket): Jobee'sLair lädt den Backport-Ordner noch nicht allein",
+  "torboxSearch.whole": "Der ganze Torrent, {count, plural, one {# Datei} other {# Dateien}}, als ein Paket",
+  "torboxSearch.wholeType": "ALLES"
 }
