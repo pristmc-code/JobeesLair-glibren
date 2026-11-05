@@ -463,3 +463,81 @@ test('fila entregue: sem espaco no disco vira needs-app; link vencido (403) vira
   assert.equal((await page('/api/status')).data.jobs[0].state, 'needs-app', 'sem repetir sozinho');
   await stop(child);
 });
+
+// glibren-fechar: fechar a Jobee'sLair com o payload baixando travou o console (relato de 04/11/2026, sem diario).
+// Defesa: ao perceber o fechamento o payload fica quieto (sem rede nem disco) por um tempo e volta devagar; o diario
+// registra o fechamento, o modo quieto, se a sessao anterior terminou limpa, e a saida limpa.
+test('fechar o app: modo quieto sem rede, volta sozinho e termina; diario com fechamento, sessao anterior e saida limpa', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const flag = path.join(base, 'app-running');
+  writeFileSync(flag, '');
+  small('close.bin', 12 * MiB);
+  srv.rate = 2 * MiB;
+  const env = { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_RUNNING: flag, BGDL_QUIET_MS: '3000', BGDL_APP_SILENCE_MS: '600000' };
+  let child = start(base, env);
+  await up(base);
+  const dest = path.join(base, 'disk/downloads/close.bin');
+  const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/close.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 4 * MiB, connections: 2, expectedBytes: files['close.bin'].length });
+  await until(base, data.id, ['downloading'], (job) => job.written > MiB);
+  // O app fecha: em ate ~1 s o payload solta as conexoes e para de baixar.
+  rmSync(flag);
+  await wait(1600);
+  const quietJob = (await call(base, 'GET', '/jobs')).data.jobs.find((job) => job.id === data.id);
+  assert.equal(quietJob.connectionsActive, 0, 'sem conexoes no modo quieto');
+  assert.notEqual(quietJob.state, 'completed', 'ainda nao terminou (estava quieto)');
+  const before = srv.served['close.bin'] || 0;
+  await wait(1000);
+  assert.ok((srv.served['close.bin'] || 0) - before < 512 * 1024, 'nada baixado no modo quieto');
+  srv.rate = 0;
+  const job = await until(base, data.id, ['completed', 'failed']);
+  assert.equal(job.state, 'completed', job.error);
+  assert.equal(sha(readFileSync(dest)), sha(files['close.bin']));
+  let log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+  for (const line of ['sessao anterior: nenhuma', 'app aberto ao iniciar', 'app FECHOU (sceLncUtilGetAppId): modo quieto por 3 s',
+    `job ${data.id}: quieto (o app fechou)`, 'modo quieto terminou', `job ${data.id}: saiu do modo quieto; recomecando com 2 conexao(oes)`, `job ${data.id}: concluido`])
+    assert.ok(log.includes(line), `diario sem "${line}":\n${log}`);
+  // Saida limpa marcada; a proxima sessao diz que a anterior terminou limpa. Morto com SIGKILL: a seguinte diz que nao.
+  await stop(child);
+  assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').trimEnd().split('\n').pop(), /parado \(saida limpa\)$/);
+  child = start(base, env);
+  await up(base);
+  child.kill('SIGKILL');
+  await new Promise((resolve) => child.once('exit', resolve));
+  child = start(base, env);
+  await up(base);
+  log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+  assert.ok(log.includes('sessao anterior: terminou limpa'), log);
+  assert.match(log, /sessao anterior: NAO terminou limpa \(morta, travamento do console ou energia\); ultima linha: .+/);
+  // powerTick (sceSystemServicePowerTick) desligado por padrao; so com o pedido explicito.
+  assert.match(log, /powerTick: desligado/);
+  assert.equal((await call(base, 'POST', '/config', { powerTick: true })).status, 200);
+  assert.match(readFileSync(path.join(base, 'state/config.json'), 'utf8'), /"powerTick":true/);
+  await stop(child);
+});
+
+test('varios jobs ao mesmo tempo dividem o limite de conexoes (nunca 4 x 32)', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  ['c1.bin', 'c2.bin', 'c3.bin', 'c4.bin'].forEach((name) => small(name, 24 * MiB));
+  srv.rate = 512 * 1024;
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  assert.equal((await call(base, 'POST', '/config', { concurrency: 4 })).status, 200);
+  const ids = [];
+  for (const name of ['c1.bin', 'c2.bin', 'c3.bin', 'c4.bin']) {
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/${name}`, destination: path.join(base, 'disk/downloads', name), storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 32 });
+    ids.push(data.id);
+  }
+  let most = 0;
+  for (const end = Date.now() + 8000; Date.now() < end; await wait(200)) {
+    let jobs;
+    try { jobs = (await call(base, 'GET', '/jobs')).data.jobs; } catch { continue; } // como until(): uma conexao reaproveitada pode cair
+    most = Math.max(most, jobs.reduce((sum, job) => sum + (job.connectionsActive || 0), 0));
+  }
+  assert.ok(most > 4, `baixou com varias conexoes (${most})`);
+  assert.ok(most <= 32, `no maximo 32 conexoes somadas (${most})`);
+  srv.rate = 0;
+  for (const id of ids) assert.equal((await until(base, id, ['completed', 'failed'])).state, 'completed');
+  await stop(child);
+});

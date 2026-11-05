@@ -21,11 +21,19 @@
 //   .part/.resume/.complete do motor nativo do ps5-react (native/shared/network.cpp): o app e o payload
 //   aproveitam as parciais um do outro. Offsets de 64 bits (arquivos > 4 GB).
 // - TorBox: link vencido (401/403 ou idade > 2h30) -> pede outro (requestdl) com a chave do app (debrid_key()).
-// - Repouso: SIGCONT e troca de IP (checada a cada 1 s) reabrem o servidor e reiniciam as conexoes;
-//   sceSystemServicePowerTick a cada 30 s enquanto baixa. Notificacao do sistema ao concluir/falhar.
+// - Repouso: SIGCONT e troca de IP (checada a cada 1 s) reabrem o servidor e reiniciam as conexoes.
+//   Notificacao do sistema ao concluir/falhar. sceSystemServicePowerTick so com "powerTick": true no config.json
+//   (desligado por padrao: chamada do sistema nunca validada fora de um app).
 // - Ao concluir: imagens .exfat/.ffpkg/.ffpfs/.ffpfsc vao para publishTo (<disco>/homebrew/<nome>) se o app nao
 //   estiver aberto; o resto fica "aguardando o app" (extrair/instalar quando a Jobe abrir).
-// - Diario em <dir>/bgdl.log, girado para .old acima de 1 MiB.
+// - Fechar a Jobe (glibren-fechar): o payload percebe o fechamento (sceLncUtilGetAppId a cada 1 s, como o
+//   sandbox-sweeper; ou o app calado) e fica QUIETO por um tempo (sem rede, sem disco, sem comecar job, sem mover
+//   imagem) enquanto o sistema desmonta o app, o sandbox-sweeper limpa o sandbox e o ShadowMount+ solta a imagem.
+//   Depois volta devagar (janela de conexoes recomeca em 2). Sempre: no maximo CONN_BUDGET conexoes somando todos
+//   os jobs, checkpoint (fsync) a cada 15 s com o app fechado, e pausas curtas na conferencia SHA-256 e nos lacos.
+// - Diario em <dir>/bgdl.log (girado para .old acima de 1 MiB), com fsync nas linhas importantes para sobreviver a
+//   um travamento: inicio (e se a sessao anterior terminou limpa), abrir/fechar do app, modo quieto, pulso a cada
+//   60 s enquanto ha trabalho, inicio/fim de job, sinais fatais e a saida limpa.
 //
 // Compila para o PS5 (prospero-clang, __PROSPERO__) e para Linux (testes: variaveis BGDL_* abaixo).
 #ifndef __PROSPERO__
@@ -71,6 +79,11 @@
 #define MAX_RENEWALS 6
 #define LOG_LIMIT (1024 * 1024)
 #define SAFE_INTEGER 9007199254740991ULL
+#define BG_BUILD "glibren-fechar"
+#define CONN_BUDGET 32           // conexoes somando todos os jobs (cada job tem no minimo 2)
+#define CHECKPOINT_MS 5000       // checkpoint (fsync da parcial) com o app aberto
+#define CHECKPOINT_AWAY_MS 15000 // com o app fechado: menos fsync no disco que o sistema esta usando
+#define HEARTBEAT_MS 60000       // "pulso" no diario enquanto ha trabalho
 
 #ifdef __PROSPERO__
 #include <sys/syscall.h>
@@ -118,18 +131,22 @@ static const char* env_or(const char* name, const char* fallback) {
 static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
 static char g_log_path[600];
 
-static void logf_(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
-static void logf_(const char* fmt, ...) {
+// Uma linha no diario. `critical`: fsync na hora (a linha sobrevive a um travamento do console); as outras fazem
+// fsync no maximo a cada 2 s, para um diario cheio de falhas de rede nao virar uma rajada de fsync.
+static int64_t g_log_synced_ms;
+static int64_t log_mono_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+static void log_line(int critical, const char* fmt, va_list args) {
   if (!g_log_path[0]) return;
   char line[1200];
   time_t now = time(NULL);
   struct tm tm;
   localtime_r(&now, &tm);
   size_t n = strftime(line, sizeof line, "%Y-%m-%d %H:%M:%S ", &tm);
-  va_list args;
-  va_start(args, fmt);
   vsnprintf(line + n, sizeof line - n - 2, fmt, args);
-  va_end(args);
   strcat(line, "\n");
   pthread_mutex_lock(&g_log_lock);
   struct stat st;
@@ -138,13 +155,105 @@ static void logf_(const char* fmt, ...) {
     snprintf(old, sizeof old, "%s.old", g_log_path);
     rename(g_log_path, old);
   }
-  FILE* file = fopen(g_log_path, "a");
-  if (file) {
-    fputs(line, file);
-    fflush(file);
-    fclose(file);
+  int fd = open(g_log_path, O_WRONLY | O_APPEND | O_CREAT, 0600);
+  if (fd >= 0) {
+    size_t size = strlen(line);
+    const char* p = line;
+    while (size) {
+      ssize_t w = write(fd, p, size);
+      if (w < 0 && errno == EINTR) continue;
+      if (w <= 0) break;
+      p += w;
+      size -= (size_t)w;
+    }
+    const int64_t mono = log_mono_ms();
+    if (critical || mono - g_log_synced_ms >= 2000) {
+      fsync(fd);
+      g_log_synced_ms = mono;
+    }
+    close(fd);
   }
   pthread_mutex_unlock(&g_log_lock);
+}
+static void logf_(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void logf_(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  log_line(0, fmt, args);
+  va_end(args);
+}
+// Linha importante: gravada no disco na hora (fsync).
+static void logk_(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+static void logk_(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  log_line(1, fmt, args);
+  va_end(args);
+}
+
+// A ultima linha do diario de uma sessao que terminou limpa.
+#define CLEAN_EXIT_MARK "parado (saida limpa)"
+
+// Ao iniciar: a sessao anterior terminou limpa? Sem a marca na ultima linha, o processo morreu (SIGKILL, travamento
+// do console, falta de energia...): a ultima linha diz onde estava. Lida antes de este processo escrever no diario.
+static char g_previous_last[320];
+static int g_previous_seen;
+static void read_previous_session(void) {
+  int fd = open(g_log_path, O_RDONLY);
+  if (fd < 0) return;
+  struct stat st;
+  if (fstat(fd, &st) || st.st_size <= 0) { close(fd); return; }
+  char tail[512];
+  off_t from = st.st_size > (off_t)sizeof tail - 1 ? st.st_size - (off_t)(sizeof tail - 1) : 0;
+  ssize_t n = pread(fd, tail, sizeof tail - 1, from);
+  close(fd);
+  if (n <= 0) return;
+  tail[n] = 0;
+  while (n > 0 && (tail[n - 1] == '\n' || tail[n - 1] == '\r')) tail[--n] = 0;
+  const char* last = strrchr(tail, '\n');
+  copy_text(g_previous_last, sizeof g_previous_last, last ? last + 1 : tail);
+  g_previous_seen = 1;
+}
+// `contended`: outra copia ainda segurava o lock (estava viva; nao e travamento).
+static void report_previous_session(int contended) {
+  if (!g_previous_seen) logk_("sessao anterior: nenhuma (diario novo)");
+  else if (strstr(g_previous_last, CLEAN_EXIT_MARK)) logk_("sessao anterior: terminou limpa");
+  else if (contended) logk_("sessao anterior: ainda rodava (substituida agora); ultima linha: %s", g_previous_last);
+  else logk_("sessao anterior: NAO terminou limpa (morta, travamento do console ou energia); ultima linha: %s", g_previous_last);
+}
+
+// Sinal fatal: uma linha no diario so com funcoes seguras dentro de um tratador de sinal, e o sinal segue adiante.
+static void write_text(int fd, const char* text) {
+  size_t size = strlen(text);
+  while (size) {
+    ssize_t w = write(fd, text, size);
+    if (w <= 0) return;
+    text += w;
+    size -= (size_t)w;
+  }
+}
+static void on_fatal(int sig) {
+  const char* name = sig == SIGSEGV ? "SIGSEGV" : sig == SIGBUS ? "SIGBUS" : sig == SIGILL ? "SIGILL" : sig == SIGFPE ? "SIGFPE" :
+                     sig == SIGABRT ? "SIGABRT" : sig == SIGSYS ? "SIGSYS" : sig == SIGTRAP ? "SIGTRAP" : "sinal";
+  if (g_log_path[0]) {
+    int fd = open(g_log_path, O_WRONLY | O_APPEND | O_CREAT, 0600);
+    if (fd >= 0) {
+      char number[24];
+      int i = (int)sizeof number - 1;
+      number[i] = 0;
+      unsigned long long t = (unsigned long long)time(NULL);
+      do { number[--i] = (char)('0' + t % 10); t /= 10; } while (t && i > 0);
+      write_text(fd, "(epoch ");
+      write_text(fd, number + i);
+      write_text(fd, ") FATAL: ");
+      write_text(fd, name);
+      write_text(fd, " no bg-downloader; o processo vai morrer\n");
+      fsync(fd);
+      close(fd);
+    }
+  }
+  signal(sig, SIG_DFL);
+  raise(sig);
 }
 
 // So o host de uma URL vai para o diario: links assinados levam tokens na query.
@@ -182,9 +291,15 @@ static void set_process_name(void) {
 #endif
 }
 
+// Desligado por padrao ("powerTick" no config.json): nenhum payload de referencia chama o SystemService de fora de
+// um app, e uma chamada do sistema nao validada pode travar o console. Ligado, o diario registra a resposta.
+static volatile int g_power_tick;
 static void power_tick(void) {
+  if (!g_power_tick) return;
 #ifdef __PROSPERO__
-  if (sceSystemServicePowerTick) sceSystemServicePowerTick();
+  static int last = 1;
+  int result = sceSystemServicePowerTick ? sceSystemServicePowerTick() : -1;
+  if (result != last) { logk_("sceSystemServicePowerTick = 0x%08x", (unsigned)result); last = result; }
 #endif
 }
 
@@ -622,6 +737,12 @@ static int g_monitor_port_now(void);
 // um payload recem-subido esperar o app mandar a fila antes de comecar o que ficou no jobs.json.
 static int64_t g_last_app_ms;
 static int64_t g_app_silence_ms = 15000;
+// Modo quieto (glibren-fechar): ate g_quiet_until (mono_ms) nenhum job usa rede nem disco, nenhum comeca e nenhuma
+// imagem e movida. Liga quando o app fecha (ou se cala), por g_quiet_ms (30 s no console; BGDL_QUIET_MS nos testes).
+static volatile int64_t g_quiet_until;
+static int64_t g_quiet_ms = 30000;
+static int quiet_now(void) { return mono_ms() < g_quiet_until; }
+static int app_away(void) { return mono_ms() - g_last_app_ms >= g_app_silence_ms; }
 // Para testes: o espaco livre fingido (BGDL_FAKE_FREE_BYTES); 0 = o de verdade.
 static uint64_t g_fake_free;
 
@@ -1641,6 +1762,16 @@ static void drop_all(Engine* e) {
   }
 }
 
+// Quantas conexoes este job pode abrir agora: a janela AIMD, limitada a sua parte de CONN_BUDGET entre os jobs que
+// baixam ao mesmo tempo (no minimo 2). Ate 4 jobs x 32 conexoes TLS com 2 MiB de buffer cada era possivel antes.
+static unsigned connection_cap(const Engine* e) {
+  int running = __atomic_load_n(&g_running_count, __ATOMIC_RELAXED);
+  if (running < 1) running = 1;
+  unsigned share = CONN_BUDGET / (unsigned)running;
+  if (share < 2) share = 2;
+  return e->window < share ? e->window : share;
+}
+
 // Baixa as faixas que faltam com varias conexoes (janela AIMD). 1 = todas completas.
 static int transfer_ranges(Engine* e) {
   Job* j = e->job;
@@ -1660,8 +1791,31 @@ static int transfer_ranges(Engine* e) {
   if (!e->ranged) { // sem faixas: uma conexao, do zero
     if (ftruncate(e->fd, 0)) { engine_fail(e, "truncate partial file: %s", strerror(errno)); return 0; }
   }
+  int was_quiet = 0;
   for (;;) {
     if (stopping(e) || !storage_matches(e)) { drop_all(e); return 0; }
+    // Modo quieto (o app acabou de fechar): solta as conexoes, nao grava nada e espera. As faixas em andamento sao
+    // refeitas depois (o checkpoint so marca faixas inteiras); ao voltar, a janela recomeca pequena.
+    if (quiet_now()) {
+      if (!was_quiet) {
+        unsigned open_conns = 0;
+        for (unsigned i = 0; i < MAX_CONNS; ++i) open_conns += e->conns[i].in_use;
+        logf_("job %s: quieto (o app fechou); %u conexao(oes) soltas", j->id, open_conns);
+        drop_all(e);
+        pthread_mutex_lock(&g_lock); j->bytes_per_second = 0; j->active_connections = 0; pthread_mutex_unlock(&g_lock);
+        was_quiet = 1;
+      }
+      sleep_ms(500);
+      last_pass = mono_ms();
+      last_wall = time(NULL);
+      continue;
+    }
+    if (was_quiet) {
+      was_quiet = 0;
+      e->window = e->max_window < 2 ? e->max_window : 2;
+      e->success_streak = 0;
+      logf_("job %s: saiu do modo quieto; recomecando com %u conexao(oes)", j->id, e->window);
+    }
     int64_t now = mono_ms();
     time_t wall = time(NULL);
     // Processo suspenso (repouso, ou outro app na frente): as conexoes que atravessaram a suspensao caem sem
@@ -1680,15 +1834,16 @@ static int transfer_ranges(Engine* e) {
     if (now - last_tick >= 30000) { power_tick(); last_tick = now; }
     // TorBox: link perto de vencer -> renova entre as faixas.
     if (!strcmp(j->provider, "torbox") && j->link_at && now_s() - j->link_at > RENEW_AGE_S) { e->needs_renew = 1; drop_all(e); return 0; }
-    // Dispara faixas ate encher a janela.
+    // Dispara faixas ate encher a janela, sem passar da parte deste job em CONN_BUDGET (todos os jobs somados).
     unsigned active = 0;
     for (unsigned i = 0; i < MAX_CONNS; ++i) active += e->conns[i].in_use;
+    const unsigned cap = connection_cap(e);
     int pending = 0;
     for (uint32_t i = 0; i < count; ++i) {
       if (e->ranged && e->completed[i]) continue;
       if (!e->ranged && e->committed == e->total && e->known && e->total) continue;
       pending = 1;
-      if (e->inflight[i] || active >= e->window || e->retry_at[i] > now) continue;
+      if (e->inflight[i] || active >= cap || e->retry_at[i] > now) continue;
       Conn* c = free_conn(e);
       if (!c) break;
       c->index = (int)i; c->probe = 0; c->sample = NULL;
@@ -1754,7 +1909,8 @@ static int transfer_ranges(Engine* e) {
       pthread_mutex_lock(&g_lock); j->retries += 1; pthread_mutex_unlock(&g_lock);
       if (!e->ranged) { e->committed = 0; if (ftruncate(e->fd, 0)) {} }
     }
-    if (e->ranged && mono_ms() - e->last_checkpoint >= 5000 && !write_checkpoint(e)) { drop_all(e); return 0; }
+    const int64_t every = app_away() ? CHECKPOINT_AWAY_MS : CHECKPOINT_MS;
+    if (e->ranged && mono_ms() - e->last_checkpoint >= every && !write_checkpoint(e)) { drop_all(e); return 0; }
     update_progress(e, 0);
     curl_multi_poll(e->multi, NULL, 0, 100, NULL);
   }
@@ -1770,8 +1926,12 @@ static int verify_file(Engine* e) {
   size_t size = 1024 * 1024;
   char* buffer = malloc(size);
   if (!buffer) { engine_fail(e, "out of memory"); return 0; }
+  logf_("job %s: conferindo SHA-256 (%llu bytes)", e->job->id, (unsigned long long)e->total);
   for (uint64_t offset = 0; offset < e->total;) {
     if (stopping(e)) { free(buffer); EVP_MD_CTX_free(h.ctx); return 0; }
+    // Laco so de CPU e disco por minutos num arquivo grande: cede a vez a cada 8 MiB e para no modo quieto.
+    if (offset && offset % (8u * 1024 * 1024) == 0) sleep_ms(2);
+    while (quiet_now() && !stopping(e)) sleep_ms(500);
     size_t wanted = e->total - offset < size ? (size_t)(e->total - offset) : size;
     ssize_t n = pread(e->fd, buffer, wanted, (off_t)offset);
     if (n < 0 && errno == EINTR) continue;
@@ -1825,6 +1985,8 @@ static int looks_archive(const char* path) {
 
 // Imagem pronta: vai para homebrew/ (o ShadowMount+ monta) se o app nao estiver aberto para fazer isso ele mesmo.
 static void place_image(Job* j) {
+  // Logo depois de o app fechar o ShadowMount+ esta soltando a imagem do app: nada aparece em homebrew/ agora.
+  while (quiet_now() && !g_stop) sleep_ms(500);
   if (!j->publish_to[0] || !image_name(j->publish_to) || app_running() || looks_archive(j->destination)) { j->awaiting_app = 1; return; }
   struct stat st;
   if (!lstat(j->publish_to, &st)) { j->awaiting_app = 1; logf_("job %s: %s ja existe; fica para o app", j->id, j->publish_to); return; }
@@ -1907,7 +2069,7 @@ static void run_job(Job* j) {
   e->fd = -1;
   char host[200];
   url_host(j->url, host, sizeof host);
-  logf_("job %s: iniciando %s (%s) -> %s", j->id, j->name, host, j->destination);
+  logk_("job %s: iniciando %s (%s) -> %s%s", j->id, j->name, host, j->destination, j->ahead && !j->followed ? " [fila antecipada, app fechado]" : "");
   set_state(j, "connecting");
   e->multi = curl_multi_init();
   for (unsigned i = 0; i < MAX_CONNS && e->multi; ++i) { e->conns[i].e = e; e->conns[i].curl = curl_easy_init(); if (!e->conns[i].curl) break; }
@@ -1974,7 +2136,7 @@ static void run_job(Job* j) {
   if (!verify_file(e) || !publish_file(e)) goto done;
   pthread_mutex_lock(&g_lock); j->written = j->total = e->total; pthread_mutex_unlock(&g_lock);
   place_image(j);
-  logf_("job %s: concluido (%llu bytes)%s", j->id, (unsigned long long)e->total, j->awaiting_app ? "; aguardando o app" : "");
+  logk_("job %s: concluido (%llu bytes)%s", j->id, (unsigned long long)e->total, j->awaiting_app ? "; aguardando o app" : "");
   finish(j, "completed", NULL);
   notify_job(j, 1);
   goto out;
@@ -2001,7 +2163,7 @@ done:
     pthread_mutex_unlock(&g_lock);
     logf_("job %s: sem rede (%s); tenta de novo em 30 s", j->id, e->fail + 9);
   } else {
-    logf_("job %s: falhou: %s", j->id, e->fail[0] ? e->fail : "?");
+    logk_("job %s: falhou: %s", j->id, e->fail[0] ? e->fail : "?");
     finish(j, "failed", e->fail[0] ? e->fail : "download failed");
     notify_job(j, 0);
   }
@@ -2036,13 +2198,14 @@ static void* downloader_loop(void* arg) {
   while (!g_stop) {
     Job* next = NULL;
     int64_t now = now_s(), soonest = 0;
-    const int app_away = mono_ms() - g_last_app_ms >= g_app_silence_ms;
-    for (int i = 0; i < g_job_count && g_running_count < g_max_running; ++i) {
+    const int away = app_away();
+    // Modo quieto (o app acabou de fechar): nenhum job comeca agora.
+    for (int i = 0; !quiet_now() && i < g_job_count && g_running_count < g_max_running; ++i) {
       Job* j = g_jobs[i];
       // `running` ja vale antes do estado mudar (run_job o muda sem a trava): sem ele, dois trabalhadores pegariam o mesmo job.
       if (strcmp(j->state, "queued") || j->running || j->placeholder) continue;
       // Entregue com antecedencia: com o app aberto, so quando ele o comeca (follow); fechado, segue a fila sozinho.
-      if (j->ahead && !j->followed && !app_away) continue;
+      if (j->ahead && !j->followed && !away) continue;
       if (j->retry_at > now) { if (!soonest || j->retry_at < soonest) soonest = j->retry_at; continue; }
       const int rank = j->ahead && !j->followed ? j->order : 0, best = next ? (next->ahead && !next->followed ? next->order : 0) : 0;
       if (!next || rank < best) next = j;
@@ -2083,11 +2246,12 @@ static void* downloader_loop(void* arg) {
   return NULL;
 }
 
-// config.json: { "concurrency": n, "monitor": bool, "pinSalt": hex, "pinHash": hex, "monitorText": "..." }, para o
-// payload voltar igual depois de reiniciar. POST /config aceita qualquer parte dele.
+// config.json: { "concurrency": n, "monitor": bool, "pinSalt": hex, "pinHash": hex, "monitorText": "...", "powerTick": bool },
+// para o payload voltar igual depois de reiniciar. POST /config aceita qualquer parte dele. "powerTick" (padrao false) liga
+// sceSystemServicePowerTick a cada 30 s enquanto baixa: so para testar no console, separado.
 typedef struct {
   uint64_t concurrency;
-  int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text;
+  int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text, has_power, power;
   char pin_salt[65], pin_hash[65], monitor_text[300];
 } ConfigBody;
 static int config_field(JP* jp, const char* key, void* ctx) {
@@ -2097,6 +2261,7 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "pinSalt")) { c->found = c->has_pin_salt = 1; return jp_text(jp, c->pin_salt, sizeof c->pin_salt) ? 1 : -1; }
   if (!strcmp(key, "pinHash")) { c->found = c->has_pin_hash = 1; return jp_text(jp, c->pin_hash, sizeof c->pin_hash) ? 1 : -1; }
   if (!strcmp(key, "monitorText")) { c->found = c->has_text = 1; return jp_text(jp, c->monitor_text, sizeof c->monitor_text) ? 1 : -1; }
+  if (!strcmp(key, "powerTick")) { c->found = c->has_power = 1; return jp_bool(jp, &c->power) ? 1 : -1; }
   return jp_skip(jp) ? 1 : -1;
 }
 // O que vale: concorrencia 1..MAX_WORKERS; o PIN vem inteiro (sal e hash, 64 hex cada) ou vazio (sem PIN).
@@ -2131,6 +2296,11 @@ static int config_apply_locked(const ConfigBody* c) {
     snprintf(g_monitor_text, sizeof g_monitor_text, "%s", c->monitor_text);
     changed = 1;
   }
+  if (c->has_power && g_power_tick != (c->power ? 1 : 0)) {
+    g_power_tick = c->power ? 1 : 0;
+    logk_("sceSystemServicePowerTick: %s", g_power_tick ? "LIGADO (teste)" : "desligado");
+    changed = 1;
+  }
   return changed;
 }
 static void load_config(void) {
@@ -2155,7 +2325,7 @@ static void save_config_locked(void) {
   buf_json(&b, g_pin_hash);
   buf_str(&b, ",\"monitorText\":");
   buf_json(&b, g_monitor_text);
-  buf_str(&b, "}\n");
+  buf_fmt(&b, ",\"powerTick\":%s}\n", g_power_tick ? "true" : "false");
   if (b.failed || !b.data || !save_atomic(path, b.data, b.size, 0600)) logf_("config.json nao gravado: %s", strerror(errno));
   free(b.data);
 }
@@ -2661,11 +2831,13 @@ static void* server_loop(void* arg) {
     }
     struct pollfd p = {server, POLLIN, 0};
     int ready = poll(&p, 1, 500);
+    if (ready < 0 && errno != EINTR) sleep_ms(100); // poll que falha na hora nao vira laco ocupado
     if (ready <= 0) continue;
     int client = accept(server, NULL, NULL);
     if (client < 0) {
       if (errno == EINTR) continue;
       if (++failures >= 5) { close(server); server = -1; next_try = mono_ms() + 2000; } // acontece depois do repouso
+      else sleep_ms(50);
       continue;
     }
     failures = 0;
@@ -2680,12 +2852,14 @@ static void* server_loop(void* arg) {
 static void on_stop(int sig) { (void)sig; g_stop = 1; }
 static void on_continue(int sig) { (void)sig; g_wake = 1; }
 
+static int g_lock_contended;
 static int take_lock(void) {
   char path[600];
   snprintf(path, sizeof path, "%s/bgdl.pid", g_dir);
   int fd = open(path, O_RDWR | O_CREAT, 0600);
   if (fd < 0) return -1;
   if (flock(fd, LOCK_EX | LOCK_NB)) {
+    g_lock_contended = 1;
     char text[32] = {0};
     if (pread(fd, text, sizeof text - 1, 0) < 0) text[0] = 0;
     int old = atoi(text);
@@ -3079,11 +3253,14 @@ static void* monitor_loop(void* arg) {
       failures = 0;
     }
     struct pollfd p = {server, POLLIN, 0};
-    if (poll(&p, 1, 500) <= 0) continue;
+    const int ready = poll(&p, 1, 500);
+    if (ready < 0 && errno != EINTR) sleep_ms(100); // poll que falha na hora nao vira laco ocupado
+    if (ready <= 0) continue;
     int client = accept(server, NULL, NULL);
     if (client < 0) {
       if (errno == EINTR) continue;
       if (++failures >= 5) { close(server); server = -1; next_try = mono_ms() + 2000; }
+      else sleep_ms(50);
       continue;
     }
     failures = 0;
@@ -3109,6 +3286,13 @@ int main(void) {
   signal(SIGTERM, on_stop);
   signal(SIGINT, on_stop);
   signal(SIGCONT, on_continue);
+  // Sinais fatais: uma linha no diario antes de morrer (sem ela, um crash nao deixaria rastro).
+  signal(SIGSEGV, on_fatal);
+  signal(SIGBUS, on_fatal);
+  signal(SIGILL, on_fatal);
+  signal(SIGFPE, on_fatal);
+  signal(SIGABRT, on_fatal);
+  signal(SIGSYS, on_fatal);
   snprintf(g_dir, sizeof g_dir, "%s", env_or("BGDL_DIR", "/data/JobeesLair/bg"));
   g_port = atoi(env_or("BGDL_PORT", "34200"));
   if (g_port <= 0 || g_port > 65535) g_port = DEFAULT_PORT;
@@ -3121,6 +3305,12 @@ int main(void) {
   g_session_seconds = atoi(env_or("BGDL_SESSION_SECONDS", "43200"));
   if (g_session_seconds <= 0) g_session_seconds = 12 * 3600;
 #ifdef __PROSPERO__
+  g_quiet_ms = 30000;
+#else
+  g_quiet_ms = atoi(env_or("BGDL_QUIET_MS", "0")); // nos testes, sem modo quieto a menos que pedido
+  if (g_quiet_ms < 0) g_quiet_ms = 0;
+#endif
+#ifdef __PROSPERO__
   snprintf(g_cainfo, sizeof g_cainfo, "/system/common/cert/CA_LIST.cer");
 #else
   snprintf(g_cainfo, sizeof g_cainfo, "%s", env_or("BGDL_CAINFO", ""));
@@ -3129,9 +3319,20 @@ int main(void) {
   if (mkdir_p(g_dir)) return 1;
   snprintf(g_log_path, sizeof g_log_path, "%s/bgdl.log", g_dir);
   set_process_name();
-  logf_("iniciando bg-downloader %s (pid %d)", BG_VERSION, (int)getpid());
+  read_previous_session();
+  logk_("==== iniciando bg-downloader %s (%s), pid %d, pai %d", BG_VERSION, BG_BUILD, (int)getpid(), (int)getppid());
   g_lock_fd = take_lock();
-  if (g_lock_fd < 0) { logf_("outra copia segura o lock; saindo"); printf("busy\n"); fflush(stdout); return 1; }
+  if (g_lock_fd < 0) { logk_("outra copia segura o lock; saindo"); printf("busy\n"); fflush(stdout); return 1; }
+  report_previous_session(g_lock_contended);
+  {
+    int policy = 0;
+    struct sched_param param;
+    memset(&param, 0, sizeof param);
+    const int got = pthread_getschedparam(pthread_self(), &policy, &param);
+    // So registra: a classe e a prioridade que o loader deu ao processo (evidencia para decidir se precisa baixar).
+    if (got == 0) logk_("agendamento da thread principal: politica %d, prioridade %d", policy, param.sched_priority);
+    else logk_("agendamento da thread principal: indisponivel (%d)", got);
+  }
   load_token();
   printf("ready\n");
   fflush(stdout);
@@ -3148,7 +3349,8 @@ int main(void) {
   load_jobs();
   load_config();
   pthread_mutex_unlock(&g_lock);
-  logf_("downloads simultaneos: %d", g_max_running);
+  logk_("downloads simultaneos: %d; ate %d conexoes somadas; modo quieto ao fechar o app: %lld s; powerTick: %s; %d job(s) no jobs.json",
+        g_max_running, CONN_BUDGET, (long long)(g_quiet_ms / 1000), g_power_tick ? "ligado" : "desligado", g_job_count);
   pthread_t server, monitor, workers[MAX_WORKERS];
   if (spawn_thread(server_loop, NULL, &server)) { logf_("threads nao criadas"); return 1; }
   const int monitor_started = !spawn_thread(monitor_loop, NULL, &monitor);
@@ -3161,8 +3363,59 @@ int main(void) {
   current_ip(last_ip, sizeof last_ip);
   int64_t last_save = mono_ms();
   time_t last_wall = time(NULL);
+  // O app aberto? (sceLncUtilGetAppId, a mesma consulta que o sandbox-sweeper faz em laco) e falando com o payload?
+  int app_seen = app_running(), app_talking = 1, was_quiet = 0;
+  int64_t last_close = INT64_MIN / 2, last_event = mono_ms(), last_beat = mono_ms();
+  logk_("app %s ao iniciar", app_seen ? "aberto" : "fechado");
   while (!g_stop) {
     sleep_ms(1000);
+    {
+      const int64_t mono = mono_ms();
+      const int running_now = app_running();
+      if (running_now != app_seen) {
+        app_seen = running_now;
+        last_event = mono;
+        if (!running_now) {
+          last_close = mono;
+          if (g_quiet_ms > 0) g_quiet_until = mono + g_quiet_ms;
+          logk_("app FECHOU (sceLncUtilGetAppId): modo quieto por %lld s; %d job(s) baixando", (long long)(g_quiet_ms / 1000), g_running_count);
+        } else {
+          logk_("app abriu (sceLncUtilGetAppId)");
+        }
+      }
+      const int talking = !app_away();
+      if (talking != app_talking) {
+        app_talking = talking;
+        last_event = mono;
+        if (!talking) {
+          // Sem a consulta do sistema (ou ela falhou): o silencio tambem conta como fechar.
+          const int quiet_too = g_quiet_ms > 0 && mono - last_close > 2 * g_quiet_ms;
+          if (quiet_too) g_quiet_until = mono + g_quiet_ms;
+          logk_("app calado ha %lld s: a fila antecipada segue sozinha%s", (long long)(g_app_silence_ms / 1000), quiet_too ? "; modo quieto pelo silencio" : "");
+        } else {
+          logk_("app voltou a falar com o payload");
+        }
+      }
+      const int quiet = quiet_now();
+      if (was_quiet && !quiet) logk_("modo quieto terminou: retomando devagar");
+      was_quiet = quiet;
+      // Pulso: a ultima linha antes de um travamento mostra o que o payload fazia.
+      if (mono - last_beat >= HEARTBEAT_MS && (g_running_count > 0 || quiet || mono - last_event < 5 * 60000)) {
+        last_beat = mono;
+        unsigned conns = 0, queued = 0;
+        double rate = 0;
+        pthread_mutex_lock(&g_lock);
+        const int running = g_running_count;
+        for (int i = 0; i < g_job_count; ++i) {
+          const Job* j = g_jobs[i];
+          if (j->running) { conns += j->active_connections; rate += j->bytes_per_second; }
+          else if (!strcmp(j->state, "queued")) ++queued;
+        }
+        pthread_mutex_unlock(&g_lock);
+        logk_("pulso: app %s, falou ha %llds, %d baixando (%u conexoes, %.1f MB/s), %u na fila%s", app_seen ? "aberto" : "fechado",
+              (long long)((mono - g_last_app_ms) / 1000), running, conns, rate / 1e6, queued, quiet ? ", QUIETO" : "");
+      }
+    }
     time_t wall = time(NULL);
     current_ip(ip, sizeof ip);
     int woke = g_wake || wall - last_wall > 10 || wall < last_wall;
@@ -3176,7 +3429,7 @@ int main(void) {
       last_save = mono_ms();
     }
   }
-  logf_("parando: gravando o checkpoint");
+  logk_("parando: gravando o checkpoint");
   pthread_mutex_lock(&g_lock);
   stop_running_locked();
   pthread_cond_broadcast(&g_wake_downloader);
@@ -3188,7 +3441,7 @@ int main(void) {
   save_jobs_locked();
   pthread_mutex_unlock(&g_lock);
   curl_global_cleanup();
-  logf_("parado");
+  logk_(CLEAN_EXIT_MARK);
   flock(g_lock_fd, LOCK_UN);
   close(g_lock_fd);
   return 0;
