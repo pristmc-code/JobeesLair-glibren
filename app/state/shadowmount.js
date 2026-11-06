@@ -69,14 +69,43 @@
   // ShadowMount refuses mounts, uninstalls and source deletes while a game is running (HTTP 409, EBUSY), and
   // Jobee'sLair is itself the running game whenever it asks: only after it closes can ShadowMount do them.
   var busyWhileOpen = (error2) => error2?.httpStatus === 409 || error2?.status === 16 || /\bEBUSY\b|game is active|awaiting exit/i.test(error2?.message ?? "");
-  function within2(path, paths, root2) {
-    const target = path?.replace(/\/+$/, "");
-    if (!target) return false;
-    return paths.some((base) => {
-      const tail = base.startsWith(`${root2}/`) ? base.slice(root2.length) : null;
-      return target === base || target.startsWith(`${base}/`) || tail && (target.endsWith(tail) || target.includes(`${tail}/`));
-    });
+  // MODIFIED (glibren.12): paths are compared whole, never by their ending alone. The original matched any
+  // path ending like `base` below its drive root ("/homebrew/JobeesLair.exfat"), on whatever drive: deleting
+  // a copy of an image on /mnt/usb1 in the Files tab found the image of the same name ShadowMount runs from
+  // /mnt/usb0 (Jobee'sLair's own, PPSA99471) and asked ShadowMount to uninstall that title, and the gamer
+  // lost the app and its settings. The one alias the console really has for the same place is the internal
+  // drive: the app's /data is a nullfs view of /user/data, and ShadowMount (realpath, AppInstUtil) may
+  // answer with either; canonicalPath folds it. /mnt/usbN and /mnt/extN are separate drives, never aliases.
+  // A path on none of these drives (an alias not known here) only "may be" the same place: within2 says no
+  // (nothing is uninstalled or unmounted on a guess), mayBeWithin says yes (a file that may be mounted is
+  // kept). Tests: tests/shadowmount-paths.test.mjs.
+  var DRIVE_ROOT = /^\/(?:data|mnt\/(?:usb|ext)\d+)(?=\/|$)/;
+  function canonicalPath(path) {
+    if (typeof path !== "string") return "";
+    let value = path.replace(/\/{2,}/g, "/").replace(/\/\.(?=\/|$)/g, "").replace(/\/+$/, "");
+    if (value === "/user/data" || value.startsWith("/user/data/")) value = value.slice("/user".length);
+    return value;
   }
+  // "same" (`path` is `base` or lies in it), "maybe" (a path on no known drive that ends like `base` below
+  // its drive root `root2`), or null.
+  function placeOf(path, base, root2) {
+    const target = canonicalPath(path);
+    const home = canonicalPath(base);
+    if (!target || !home) return null;
+    if (target === home || target.startsWith(`${home}/`)) return "same";
+    if (DRIVE_ROOT.test(target)) return null;
+    const root = canonicalPath(root2);
+    const tail = root && home.startsWith(`${root}/`) ? home.slice(root.length) : null;
+    return tail && (target.endsWith(tail) || target.includes(`${tail}/`)) ? "maybe" : null;
+  }
+  function within2(path, paths, root2) {
+    return (paths ?? []).some((base) => placeOf(path, base, root2) === "same");
+  }
+  function mayBeWithin(path, paths, root2) {
+    return (paths ?? []).some((base) => placeOf(path, base, root2) !== null);
+  }
+  // MODIFIED (glibren.12): an image that only may be among `paths` (see within2) comes back with
+  // `uncertain: true`: it still keeps the files (they may be mounted), but nobody unmounts it.
   async function mountedImages(request, paths, root2) {
     let reply;
     try {
@@ -85,7 +114,7 @@
       if (error2.unreachable) return null;
       throw error2;
     }
-    return (reply.images ?? []).filter((image) => image.mounted && within2(image.path, paths, root2));
+    return (reply.images ?? []).filter((image) => image.mounted && mayBeWithin(image.path, paths, root2)).map((image) => within2(image.path, paths, root2) ? image : { ...image, uncertain: true });
   }
 
   // ShadowMount answers one request at a time, and the runtime runs one network task at a time behind any
@@ -189,4 +218,4 @@
     return { steps, failed };
   }
 
-export { busyWhileOpen, createShadowClient, createShadowMountProbe, launchedAt, mountedImages, reregister, scanCovers, shadowRequest, within2 };
+export { busyWhileOpen, canonicalPath, createShadowClient, createShadowMountProbe, launchedAt, mayBeWithin, mountedImages, reregister, scanCovers, shadowRequest, within2 };

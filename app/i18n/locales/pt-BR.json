@@ -297,6 +297,7 @@
   "files.byShadowMount": "O ShadowMount instala",
   "files.confirmDelete": "Aperte de novo para apagar · {size}",
   "files.deleteDownloading": "Ainda está baixando. Cancele primeiro em Downloads.",
+  "files.delete.selfKept": "Apagado. A própria Jobee'sLair não foi desinstalada: isso precisa de uma confirmação só para ela.",
   "files.deleteFailed": "Não deu para apagar este arquivo. Tente de novo.",
   "files.deleted": "{name} apagado",
   "files.drives": "Discos",

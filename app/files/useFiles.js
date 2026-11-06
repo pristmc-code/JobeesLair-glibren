@@ -8,6 +8,7 @@ import { t } from '../i18n/core.js';
 import { BUSY, DELETABLE } from '../state/download-queue.js';
 import { downloadQueue, shadowMountUp } from '../state/downloads.js';
 import { busyWhileOpen, mountedImages, reregister, shadowRequest, within2 } from '../state/shadowmount.js';
+import { EDITIONS } from '../edition.js';
 import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
 
   function installedTitles() {
@@ -39,11 +40,21 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
       return [];
     }
   }
+  // MODIFIED (glibren.12): Jobee'sLair's own titles (either edition). A delete in the Files tab never asks
+  // ShadowMount to uninstall one of them unless the caller confirmed exactly that title
+  // (deleteFile's `confirmUninstallSelf`): a wrong match there (shadowmount.js within2) cost a gamer the app
+  // and its settings.
+  var OWN_TITLES = new Set(Object.values(EDITIONS).map((edition) => edition.titleId));
   // After its files went: ShadowMount uninstalls the titles, or (while Jobee'sLair is open, the game it
   // counts as running) drops them at its next scan after the app closes. Returns a note, or null.
-  async function uninstallTitles(file, titles) {
+  async function uninstallTitles(file, titles, confirmUninstallSelf = null) {
     let note = null;
     for (const title of titles) {
+      if (OWN_TITLES.has(title) && confirmUninstallSelf !== title) {
+        console.log(`[files] ${file.path}: ${title} is Jobee'sLair itself, so it was not uninstalled (not confirmed)`);
+        note = t("files.delete.selfKept");
+        continue;
+      }
       try {
         await shadowRequest(Http, "games/uninstall", { title_id: title });
         console.log(`[files] ${file.path}: ShadowMount uninstalled ${title}`);
@@ -74,7 +85,7 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
    * same way: checked not mounted, deleted with its sidecar files, then uninstalled. A download in progress
    * is paused meanwhile, or ShadowMount's answers would wait for its whole file.
    */
-  async function deleteFile(file, root2) {
+  async function deleteFile(file, root2, { confirmUninstallSelf = null } = {}) {
     const { queue, jobs } = ownersOf(file.path);
     console.log(`[files] delete ${file.path}: requested (${jobs.length ? jobs.map((job2) => `${job2.id} ${job2.state}`).join(", ") : "no download owns it"})`);
     if (jobs.some((job2) => BUSY.includes(job2.state))) throw new Error(t("files.deleteDownloading"));
@@ -107,7 +118,7 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
         }
         console.log(`[files] deleted ${path}`);
       }
-      return titles?.length ? quiet(`uninstall ${file.path}`, () => uninstallTitles(file, titles)) : uninstallTitles(file, titles);
+      return titles?.length ? quiet(`uninstall ${file.path}`, () => uninstallTitles(file, titles, confirmUninstallSelf)) : uninstallTitles(file, titles, confirmUninstallSelf);
     };
     note = await sweep() ?? note;
     return { note };

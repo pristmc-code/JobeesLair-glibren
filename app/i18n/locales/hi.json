@@ -297,6 +297,7 @@
   "files.byShadowMount": "ShadowMount इंस्टॉल करेगा",
   "files.confirmDelete": "हटाने के लिए फिर दबाएँ · {size}",
   "files.deleteDownloading": "यह अभी डाउनलोड हो रहा है। पहले इसे डाउनलोड में रद्द करें।",
+  "files.delete.selfKept": "हटा दिया गया। Jobee'sLair खुद अनइंस्टॉल नहीं हुआ: इसके लिए अलग पुष्टि चाहिए।",
   "files.deleteFailed": "यह फ़ाइल हटाई नहीं जा सकी। दोबारा कोशिश करें।",
   "files.deleted": "{name} हटा दिया गया",
   "files.drives": "ड्राइव",

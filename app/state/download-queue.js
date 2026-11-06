@@ -2507,6 +2507,8 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       const listed2 = await gameInfo(job2.consoleTitleId ?? job2.titleId);
       if (within2(listed2?.path, paths, job2.root)) return listed2;
       for (const image of await mountedImages(shadowRequest2, paths, job2.root).catch(() => null) ?? []) {
+        // MODIFIED (glibren.12): an image only maybe among the job's files names no title of it.
+        if (image.uncertain) continue;
         const title = mountedTitle(image);
         if (!title || title === listed2?.title_id) continue;
         const game = await gameInfo(title);
@@ -2583,7 +2585,9 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
           log2(game ? `ShadowMount game ${game.title_id} at ${game.path}, runtime ${game.runtime_path || "none"}, installed ${game.installed}, managed ${game.managed}, mounted ${game.mounted}` : `ShadowMount ${game === null ? "has no game" : "was not asked about the game"} of ${job2.titleId}`);
           log2(mounted.length ? `mounted: ${mounted.map((image) => image.path).join(", ")}` : "none of its files is mounted");
           if (mounted.length) {
-            const titles = new Set(mounted.map((image) => game && within2(game.path, [image.path], job2.root) ? game.title_id : mountedTitle(image)));
+            // MODIFIED (glibren.12): only images surely among the job's files are unmounted; one that only may be
+            // (shadowmount.js within2) stays mounted, so the files are kept below.
+            const titles = new Set(mounted.filter((image) => !image.uncertain).map((image) => game && within2(game.path, [image.path], job2.root) ? game.title_id : mountedTitle(image)));
             titles.delete(null);
             let released = false;
             for (const title of titles) {

@@ -297,6 +297,7 @@
   "files.byShadowMount": "Lo installa ShadowMount",
   "files.confirmDelete": "Premi di nuovo per eliminare · {size}",
   "files.deleteDownloading": "È ancora in download. Annullalo prima in Download.",
+  "files.delete.selfKept": "Eliminato. Jobee'sLair non è stata disinstallata: serve una conferma apposita.",
   "files.deleteFailed": "Impossibile eliminare questo file. Riprova.",
   "files.deleted": "{name} eliminato",
   "files.drives": "Unità",

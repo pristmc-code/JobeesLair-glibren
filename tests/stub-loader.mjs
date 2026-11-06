@@ -43,6 +43,18 @@ export const Payloads = { send: () => ({ ok: false, error: 'stub' }) };
 export const BackHandler = { exitApp() { globalThis.__stubExits = (globalThis.__stubExits ?? 0) + 1; } };
 export const LocalServer = { token() { throw new Error('no server here'); } };
 export const DeviceInfo = { utcOffset: () => 0, get: () => ({}) };
+// glibren.12: runtime objects that modules behind the Files tab (app/files/useFiles.js) import; nothing is behind
+// them, a test puts what it needs on them (tests/shadowmount-paths.test.mjs).
+export const Archives = {};
+export const Packages = {};
+export const Notifications = {};
+export const SelfUpdate = {};
+export const Power = {};
+export const Users = {};
+export const ReleaseImages = {};
+export const BrowserCapture = {};
+export const DownloadFormats = {};
+export const Linking = {};
 export default {};
 `;
 const app = new URL('../app/', import.meta.url).pathname;
