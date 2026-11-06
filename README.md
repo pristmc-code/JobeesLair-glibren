@@ -23,6 +23,8 @@
 > **glibren.6** adds: "Search TorBox" on each game's page (every file TorBox holds of the game, by code and by name,
 > .exfat first, one press to queue it), a default download drive, your own list of torrent hashes (`torbox-hashes.txt`),
 > and the TorBox key is no longer kept inside saved download links.
+> **glibren.7** limits TorBox downloads to 8 connections in all (its CDN answered HTTP 429 to more), shared by the
+> downloads running side by side.
 > Download it from this fork's [releases](https://github.com/pristmc-code/JobeesLair-glibren/releases/latest);
 > its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
 > the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
