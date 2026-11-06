@@ -811,11 +811,46 @@ test('handoff: the queue not started goes to the payload in order; a host page o
   await queue.cancel(d);
   await later();
   last = handed.at(-1);
-  assert.deepEqual(last.map((item) => item.key), [c], 'paused and cancelled here leave the payload');
+  // glibren.8: paused here it stays (paused, with its progress) so the phone page still shows it; cancelled leaves.
+  assert.deepEqual(last.map((item) => [item.key, Boolean(item.paused)]), [[b, true], [c, false]], 'paused stays (marked), cancelled leaves the payload');
+  assert.equal(last[0].written, 0);
+  assert.ok(last[0].request, 'with its job, so the payload can resume it alone when the app is closed');
   ahead = false;
   queue.resume(b);
   await later();
   assert.deepEqual(handed.at(-1), [], 'with the background off nothing is handed');
+  first.open();
+  for (const id of [a, b]) assert.equal((await settle(queue, id)).state, 'downloaded');
+});
+
+test('handoff (glibren.8): the phone pauses, resumes and cancels queue items here by key; a waiting item (no path) too', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  const handed = [];
+  downloads.queueAhead = () => true;
+  downloads.syncQueue = (items) => handed.push(items);
+  const queue = queueWith({ fs, downloads });
+  const a = queue.enqueue(other(1), image('Alpha.exfat'), '/data');
+  const b = queue.enqueue(other(2), image('Beta.exfat'), '/data');
+  const c = queue.enqueue(other(3), page('Gamma.exfat'), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  const state = (id) => queue.snapshot().find((job) => job.id === id)?.state;
+  queue.remoteAction('', 'pause', c);
+  assert.equal(state(c), 'paused', 'a waiting item, by its key');
+  queue.remoteAction('', 'pause', 'nope');
+  queue.remoteAction('', 'resume');
+  assert.equal(state(b), 'queued', 'no key and no path: nothing (an empty path matches no job)');
+  queue.pause(b);
+  await later();
+  assert.deepEqual(handed.at(-1).map((item) => [item.key, Boolean(item.paused)]), [[b, true], [c, true]], 'both shown paused on the phone');
+  const destination = handed.at(-1)[0].request.destination;
+  queue.remoteAction(destination, 'resume', b);
+  assert.equal(state(b), 'queued', 'resumed on the phone: back in the queue here');
+  queue.remoteAction('', 'cancel', c);
+  await later();
+  assert.ok(!queue.snapshot().some((job) => job.id === c), 'cancelled on the phone: gone here too');
+  assert.deepEqual(handed.at(-1).map((item) => [item.key, Boolean(item.paused)]), [[b, false]]);
   first.open();
   for (const id of [a, b]) assert.equal((await settle(queue, id)).state, 'downloaded');
 });

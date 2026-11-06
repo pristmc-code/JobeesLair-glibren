@@ -364,6 +364,24 @@ import { loadList, saveList } from './saved.js';
         }
         return false;
       }
+      // MODIFIED (glibren.8): a pausa (no app, ou a do celular repetida pela fila) nao libera mais o job: "park" o para
+      // com o checkpoint e o deixa "paused" no payload, de volta a fila entregue, para ele continuar na pagina do celular
+      // (Pausado, com o progresso) e poder ser retomado de la. Espera ele parar antes de a tarefa terminar. Um payload
+      // antigo, sem "park", libera como antes.
+      async function park() {
+        try {
+          const answer = await call(token, "POST", `/jobs/${jobId}/park`);
+          if (answer.status === 404 && answer.data?.error === "unknown action") return release();
+          if (answer.status !== 200) return false;
+          for (let i = 0; i < 150; ++i) {
+            const job = (await call(token, "GET", "/jobs")).data?.jobs?.find((item) => item.id === jobId);
+            if (!job || !["queued", "connecting", "downloading", "verifying"].includes(job.state)) return true;
+            await wait(100);
+          }
+        } catch {
+        }
+        return false;
+      }
       function runNative() {
         mode = "native";
         if (owners.get(destination)?.task === task) setOwner(destination, null);
@@ -440,7 +458,7 @@ import { loadList, saveList } from './saved.js';
         // Um payload que voltou (e perdeu o "follow" da memoria) espera o app: avisa de novo.
         if (job.ahead && !job.followed) follow(job);
         // Pausado pelo payload (troca de rede, repouso): retoma. Pausado no celular: fica pausado, e a fila do app
-        // passa a mostra-lo pausado (onRemote -> pausa -> o job volta ao app com a parcial).
+        // passa a mostra-lo pausado (onRemote -> pausa -> park: glibren.8, o job fica pausado no payload, com a parcial).
         if (job.state === "paused" && !cancelled && job.by !== "remote") call(token, "POST", `/jobs/${jobId}/resume`).catch(() => {});
         else if (job.state === "paused" && job.by === "remote" && !remoteAsked && onRemote) {
           remoteAsked = true;
@@ -517,6 +535,16 @@ import { loadList, saveList } from './saved.js';
             release().finally(() => finish(false, error("cancelled", "AbortError")));
           }
         },
+        // MODIFIED (glibren.8): pausar (download-queue.js pauseJob): no payload, park (o job fica pausado la); no motor
+        // do app, ou ainda comecando, e o cancel de antes.
+        pause() {
+          if (settled || cancelled) return;
+          if (mode !== "payload") return task.cancel();
+          cancelled = true;
+          mode = "handing";
+          clearTimeout(timer);
+          park().finally(() => finish(false, error("paused", "AbortError")));
+        },
         get snapshot() {
           return snapshot;
         },
@@ -591,6 +619,38 @@ import { loadList, saveList } from './saved.js';
       queueTimer = null;
       await (queueBusy = (queueBusy || Promise.resolve()).then(sendQueue, sendQueue));
     };
+    // MODIFIED (glibren.8): o que o celular pediu (by "remote") para um item da fila entregue que o app nao acompanha
+    // (os pausados e os que ainda nao comecaram): retomar um pausado no app, pausar um que o app tem na fila, cancelar.
+    // Vai a fila do app (onRemote, com a chave do item) uma vez por pedido; o payload tira a marca quando a fila do app
+    // concorda (POST /queue). Visto ao mandar a fila e a cada batimento.
+    const phoneAsked = /* @__PURE__ */ new Map(); // chave -> acao ja entregue a fila
+    let reconciling = false;
+    async function reconcile(token) {
+      if (!onRemote || reconciling || !queueItems?.length) return;
+      reconciling = true;
+      try {
+        const answer = await call(token, "GET", "/jobs");
+        const jobs = answer.status === 200 ? answer.data?.jobs ?? [] : [];
+        for (const item of queueItems) {
+          const key = String(item.key);
+          const destination = item.request?.destination || "";
+          const job = jobs.find((entry) => !entry.followed && (entry.key === key || destination && entry.destination === destination));
+          if (!job || job.by !== "remote") {
+            phoneAsked.delete(key);
+            continue;
+          }
+          const paused = job.state === "paused";
+          const action = job.state === "cancelled" ? "cancel" : paused && !item.paused ? "pause" :
+            !paused && item.paused && ["queued", "waiting-app", "connecting", "downloading", "verifying"].includes(job.state) ? "resume" : null;
+          if (!action || phoneAsked.get(key) === action) continue;
+          phoneAsked.set(key, action);
+          log(`${item.name || key}: ${action} asked on the phone`);
+          onRemote(destination, action, key);
+        }
+      } finally {
+        reconciling = false;
+      }
+    }
     async function sendQueue() {
       const ahead = wrapper.queueAhead();
       const list = ahead ? queueItems ?? [] : [];
@@ -599,7 +659,9 @@ import { loadList, saveList } from './saved.js';
         const source = item.request && eligible({ ...options, background }) ? handoff(background.source) || { provider: "direct" } : null;
         // So o que o payload sabe baixar sozinho e renovar: link direto, ou o TorBox (com o pedido); o resto espera o app.
         const job = source && ["direct", "torbox"].includes(source.provider) ? jobBody(options, background, source) : null;
-        return { key: String(item.key), name: String(item.name || ""), total: Math.max(0, Math.round(Number(item.total) || 0)), ...job ? { job } : {} };
+        // MODIFIED (glibren.8): o pausado no app vai junto (paused, com o progresso), para nao sumir da pagina do celular.
+        const paused = item.paused ? { paused: true, written: Math.max(0, Math.round(Number(item.written) || 0)) } : {};
+        return { key: String(item.key), name: String(item.name || ""), total: Math.max(0, Math.round(Number(item.total) || 0)), ...paused, ...job ? { job } : {} };
       });
       const body = JSON.stringify({ items });
       if (body === queueSent) return;
@@ -609,6 +671,7 @@ import { loadList, saveList } from './saved.js';
         if (!items.length) queueSent = body;
         return;
       }
+      await reconcile(token).catch(() => {});
       for (const item of items) if (item.job?.source?.provider === "torbox") await handSecret(token, "torbox").catch(() => {});
       await syncConcurrency(token).catch(() => {});
       const answer = await call(token, "POST", "/queue", { items });
@@ -622,7 +685,7 @@ import { loadList, saveList } from './saved.js';
       if (items.length && !beat) {
         beat = setInterval(() => {
           const now = readToken();
-          if (now) health(now).catch(() => {});
+          if (now) health(now).then((alive) => alive && reconcile(now)).catch(() => {});
         }, heartbeatMs);
         beat?.unref?.();
       } else if (!items.length && beat) {
