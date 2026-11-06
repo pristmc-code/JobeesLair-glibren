@@ -13,7 +13,8 @@
 //     GET  /health                 {ok, version, pid, active}
 //     GET  /jobs                   {jobs:[...]}
 //     POST /jobs                   cria (corpo JSON, ver parse_job_body); 409 {id} se o destino ja tem job ativo
-//     POST /jobs/<id>/pause|resume|cancel|release|forget
+//     POST /jobs/<id>/pause|resume|cancel|release|forget|park
+//                                  (glibren.8: park = a pausa do app; o job fica, pausado, na fila entregue)
 //     POST /secret                 {service:"torbox", key} -> chave so em memoria (nunca gravada nem registrada)
 //     POST /quit                   encerra limpo (checkpoint gravado)
 //     POST /bye                    glibren.5: o app avisa que vai fechar (botao "Sair"): conta como fechado ja, sem
@@ -941,7 +942,8 @@ static int validate_job(Job* j, char* error, size_t cap) {
     if (!j->key[0] || !safe_token_text(j->key)) { snprintf(error, cap, "a waiting item needs its key"); return 0; }
     j->url[0] = j->destination[0] = j->storage_root[0] = j->publish_to[0] = 0;
     j->ahead = 0;
-    snprintf(j->state, sizeof j->state, "waiting-app");
+    // MODIFIED (glibren.8): um marcador pausado (no app ou no celular) volta pausado ao reabrir o payload.
+    if (strcmp(j->state, "paused") && strcmp(j->state, "cancelled")) snprintf(j->state, sizeof j->state, "waiting-app");
     return 1;
   }
   if (j->key[0] && !safe_token_text(j->key)) { snprintf(error, cap, "invalid key"); return 0; }
@@ -2583,13 +2585,17 @@ static void handle_create(int fd, Request* r) {
 // "job" (link direto ou TorBox, que o payload baixa sozinho) o item vira um job antecipado; sem, um marcador
 // "waiting-app" (so o app sabe baixa-lo). O que sumiu da lista sai: antecipado parado (a parcial fica), rodando sem o
 // app acompanhar (para, gravando o checkpoint, e sai), marcador. Terminados ficam para o app conferir ao abrir.
-typedef struct { char key[40], name[256]; uint64_t total; Job* job; int has_job; } QueueItem;
+// MODIFIED (glibren.8): "paused" (pausado no app) e "written" (o progresso dele) tambem vem: o pausado continua na
+// fila entregue (Pausado na pagina do celular, com o progresso) em vez de sumir dela.
+typedef struct { char key[40], name[256]; uint64_t total, written; Job* job; int has_job, paused; } QueueItem;
 typedef struct { QueueItem* item; } QueueItemCtx;
 static int queue_item_field(JP* jp, const char* key, void* ctx) {
   QueueItem* q = ((QueueItemCtx*)ctx)->item;
   if (!strcmp(key, "key")) return jp_text(jp, q->key, sizeof q->key) ? 1 : -1;
   if (!strcmp(key, "name")) return jp_text(jp, q->name, sizeof q->name) ? 1 : -1;
   if (!strcmp(key, "total")) return jp_uint(jp, &q->total) ? 1 : -1;
+  if (!strcmp(key, "written")) return jp_uint(jp, &q->written) ? 1 : -1;
+  if (!strcmp(key, "paused")) return jp_bool(jp, &q->paused) ? 1 : -1;
   if (!strcmp(key, "job")) {
     jp_ws(jp);
     if (jp_literal(jp, "null")) return 1;
@@ -2681,8 +2687,19 @@ static void handle_queue(int fd, Request* r) {
       g_jobs[g_job_count++] = j;
     }
     if (!j) continue;
-    if (j->placeholder) { snprintf(j->name, sizeof j->name, "%s", q->name); j->total = q->total; ++waiting; }
+    if (j->placeholder) { snprintf(j->name, sizeof j->name, "%s", q->name); j->total = q->total; j->written = q->written; ++waiting; }
     if (j->ahead) snprintf(j->key, sizeof j->key, "%s", q->key);
+    // MODIFIED (glibren.8): pausado no app fica pausado aqui (e nao some da pagina do celular); retomado no app volta a
+    // fila. Um pedido do celular (by "remote") vale ate a fila do app concordar com ele (o app ja o repetiu): so entao
+    // a marca sai. Rodando, ou acompanhado pelo app (follow), quem manda e o job.
+    if (!j->running && !j->followed) {
+      const int paused = !strcmp(j->state, "paused");
+      const int waiting_state = !strcmp(j->state, j->placeholder ? "waiting-app" : "queued");
+      if (!strcmp(j->by, "remote")) { if (paused == !!q->paused && (paused || waiting_state)) j->by[0] = 0; }
+      else if (q->paused && waiting_state) snprintf(j->state, sizeof j->state, "paused");
+      else if (!q->paused && paused) snprintf(j->state, sizeof j->state, "%s", j->placeholder ? "waiting-app" : "queued");
+      if (!j->placeholder && !j->written && q->written) j->written = q->written;
+    }
     j->order = i + 1;
     j->updated = now_s();
     for (int k = 0; k < g_job_count; ++k) if (g_jobs[k] == j) seen[k] = 1;
@@ -2714,19 +2731,27 @@ static void handle_queue(int fd, Request* r) {
 static int job_action_locked(Job* j, const char* action, int remote, int* removed) {
   *removed = 0;
   const char* by = remote ? "remote" : "";
+  // MODIFIED (glibren.8): um marcador (so o app baixa) tambem pausa, retoma (volta a "waiting-app": o app retoma) e
+  // cancela pelo celular, so na marca: quem age e o app, que ve o "by" no GET /jobs. A retomada do celular tambem fica
+  // marcada (by "remote"), para o app saber que tem de retomar um que ele tinha pausado.
   if (!strcmp(action, "pause")) {
     if (j->running) { j->ctl = CTL_PAUSE; snprintf(j->by, sizeof j->by, "%s", by); }
-    else if (!strcmp(j->state, "queued")) { snprintf(j->state, sizeof j->state, "paused"); snprintf(j->by, sizeof j->by, "%s", by); }
+    else if (!strcmp(j->state, "queued") || (j->placeholder && !strcmp(j->state, "waiting-app"))) {
+      snprintf(j->state, sizeof j->state, "paused"); snprintf(j->by, sizeof j->by, "%s", by);
+    }
   } else if (!strcmp(action, "resume")) {
     if (!strcmp(j->state, "paused") || !strcmp(j->state, "failed") || !strcmp(j->state, "needs-app")) {
-      snprintf(j->state, sizeof j->state, "queued");
+      snprintf(j->state, sizeof j->state, "%s", j->placeholder ? "waiting-app" : "queued");
       j->error[0] = 0;
       j->retry_at = 0;
-      j->by[0] = 0;
-    } else if (j->running && j->ctl == CTL_PAUSE) { j->ctl = CTL_NONE; j->by[0] = 0; }
+      snprintf(j->by, sizeof j->by, "%s", by);
+    } else if (j->running && j->ctl == CTL_PAUSE) { j->ctl = CTL_NONE; snprintf(j->by, sizeof j->by, "%s", by); }
   } else if (!strcmp(action, "cancel")) {
     if (j->running) { j->ctl = CTL_CANCEL; snprintf(j->by, sizeof j->by, "%s", by); }
-    else if (strcmp(j->state, "completed")) { remove_partials(j); snprintf(j->state, sizeof j->state, "cancelled"); snprintf(j->by, sizeof j->by, "%s", by); }
+    else if (strcmp(j->state, "completed")) {
+      if (!j->placeholder) remove_partials(j); // um marcador nao tem arquivo (destino vazio)
+      snprintf(j->state, sizeof j->state, "cancelled"); snprintf(j->by, sizeof j->by, "%s", by);
+    }
   } else if (remote) {
     return 404;
   } else if (!strcmp(action, "follow")) {
@@ -2737,6 +2762,17 @@ static int job_action_locked(Job* j, const char* action, int remote, int* remove
     // Devolve o arquivo ao app: para (gravando o checkpoint) e esquece o job, mantendo .part/.resume.
     if (j->running) j->ctl = CTL_RELEASE;
     else { remove_job_locked(j); *removed = 1; }
+  } else if (!strcmp(action, "park")) {
+    // MODIFIED (glibren.8): a pausa no app (ou a do celular, repetida pelo app). Antes o app liberava o job (release) e
+    // ele sumia da pagina do celular. Agora para (gravando o checkpoint) e fica "paused", de volta a fila entregue
+    // (ahead, sem follow): a fila do app (POST /queue) o mantem enquanto estiver pausado la, ou o tira (a parcial
+    // fica); retomado no celular, o app retoma; com o app fechado, o payload segue sozinho.
+    if (j->placeholder) return 404;
+    j->ahead = 1;
+    j->followed = 0;
+    j->by[0] = 0;
+    if (j->running) j->ctl = CTL_PAUSE;
+    else if (!strcmp(j->state, "queued")) snprintf(j->state, sizeof j->state, "paused");
   } else if (!strcmp(action, "forget")) {
     if (j->running) return 409;
     remove_job_locked(j);
@@ -3248,7 +3284,8 @@ static void monitor_action(int fd, Request* r) {
   pthread_mutex_lock(&g_lock);
   Job* j = find_job_locked(id);
   int status = 404, removed = 0;
-  if (j && strcmp(j->state, "cancelled") && !j->placeholder) status = job_action_locked(j, action, 1, &removed);
+  // MODIFIED (glibren.8): os marcadores tambem (um pausado so do app aparece "Pausado" e tem Retomar/Cancelar).
+  if (j && strcmp(j->state, "cancelled")) status = job_action_locked(j, action, 1, &removed);
   pthread_mutex_unlock(&g_lock);
   if (status != 200) { monitor_json(fd, 404, "{\"error\":\"no such job\"}"); return; }
   logf_("celular: job %s %s", id, action);

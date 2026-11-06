@@ -36,6 +36,11 @@ function fakePayload({ up = true, pid = 7 } = {}) {
         if (action[2] === 'release' || action[2] === 'forget') state.jobs = state.jobs.filter((item) => item !== job);
         if (action[2] === 'resume') job.state = 'queued';
         if (action[2] === 'follow') job.followed = true;
+        // glibren.8: "park" pausa e devolve o job a fila entregue (ahead, sem follow); um payload antigo nao conhece.
+        if (action[2] === 'park') {
+          if (state.noPark) return respond(404, { error: 'unknown action' });
+          Object.assign(job, { state: 'paused', ahead: true, followed: false, by: '' });
+        }
         return respond(200, { ok: true });
       }
       return respond(404, {});
@@ -321,6 +326,100 @@ test('fila inteira: ao comecar no app um job ja entregue com antecedencia, o app
   assert.equal(payload.calls.filter((call) => call.method === 'POST' && call.path === '/jobs').length, 0, 'nada baixa duas vezes');
   task.cancel();
   await assert.rejects(task.done, (error) => error.name === 'AbortError');
+});
+
+// ---- glibren.8: um download pausado (no celular, na web ou no app) continua na lista do celular ----
+// Antes: a fila pausava a tarefa com cancel() -> release, o payload esquecia o job, e a fila do app so mandava os
+// "queued" no POST /queue: o pausado sumia da pagina do celular.
+
+const DEST = '/mnt/ext0/downloads/images/Game.exfat';
+// A fila do app de mentira: a pausa vinda do celular pausa a tarefa como pauseJob (pause(), ou cancel() sem ele).
+const pausingQueue = (holder, remote) => (destination, action, key) => {
+  remote.push([destination, action, key]);
+  if (action === 'pause' && holder.task) (holder.task.pause ?? holder.task.cancel)();
+};
+
+test('glibren.8: pausa no celular com o app aberto: o job fica no payload, pausado (park), e nao e esquecido', async () => {
+  const payload = fakePayload();
+  const remote = [], holder = {};
+  holder.task = make(payload, fakeEngine(), { onRemote: pausingQueue(holder, remote) }).enqueue(queueOptions());
+  await wait(30);
+  Object.assign(payload.jobs[0], { state: 'downloading', written: 60, total: 123 });
+  await wait(20);
+  Object.assign(payload.jobs[0], { state: 'paused', by: 'remote' });
+  await assert.rejects(holder.task.done, (error) => error.name === 'AbortError');
+  assert.deepEqual(remote.map(([, action]) => action), ['pause']);
+  assert.ok(payload.calls.some((call) => call.path === '/jobs/b1/park'), 'pausa: park, nao release');
+  assert.ok(!payload.calls.some((call) => /\/jobs\/b1\/(release|forget)$/.test(call.path)), 'o payload nao esquece o job');
+  assert.equal(payload.jobs.length, 1, 'continua na lista do celular');
+  assert.deepEqual([payload.jobs[0].state, payload.jobs[0].written, payload.jobs[0].ahead], ['paused', 60, true], 'pausado, com o progresso');
+});
+
+test('glibren.8: pausa no proprio app de um download do payload: park; payload antigo (sem park) cai no release de antes', async () => {
+  for (const noPark of [false, true]) {
+    const payload = fakePayload();
+    payload.noPark = noPark;
+    const task = make(payload, fakeEngine()).enqueue(queueOptions());
+    await wait(30);
+    task.pause();
+    await assert.rejects(task.done, (error) => error.name === 'AbortError');
+    assert.equal(payload.jobs.length, noPark ? 0 : 1, noPark ? 'sem park: release, como antes' : 'com park: fica pausado no payload');
+  }
+  // No motor do app (sem payload), pausar e cancelar a tarefa nativa, como antes.
+  const engine = fakeEngine();
+  const native = make(fakePayload({ up: false }), engine, { startWaitMs: 5 }).enqueue(queueOptions());
+  for (let i = 0; i < 50 && !engine.started.length; i++) await wait(10);
+  native.pause();
+  assert.equal(engine.started[0].task.cancelled, true);
+});
+
+test('glibren.8: a fila manda os pausados (paused, written), com o job quando o payload sabe baixa-lo', async () => {
+  const payload = fakePayload();
+  const wrapper = make(payload, fakeEngine(), { queueDelayMs: 0 });
+  wrapper.syncQueue([
+    { key: 'j1', name: 'Pausado', total: 100, paused: true, written: 40, request: queueOptions({ destination: '/mnt/ext0/downloads/images/A.exfat' }) },
+    { key: 'j2', name: 'Pausado de site', total: 50, paused: true, written: 5 },
+    { key: 'j3', name: 'Na fila', total: 10 }
+  ]);
+  await wrapper.flushQueue();
+  const sent = payload.queues.at(-1).items;
+  assert.deepEqual(sent.map((item) => [item.key, item.paused, item.written, Boolean(item.job)]), [['j1', true, 40, true], ['j2', true, 5, false], ['j3', undefined, undefined, false]]);
+  assert.deepEqual(sent[2], { key: 'j3', name: 'Na fila', total: 10 }, 'o que nao esta pausado vai como antes');
+});
+
+test('glibren.8: retomar, pausar e cancelar no celular um item da fila do app chegam a fila (onRemote com a chave), uma vez so', async () => {
+  const payload = fakePayload();
+  const remote = [];
+  const wrapper = make(payload, fakeEngine(), { queueDelayMs: 0, heartbeatMs: 10, onRemote: (destination, action, key) => remote.push([destination, action, key]) });
+  payload.jobs.push(
+    { id: 'b1', key: 'j1', ahead: true, followed: false, state: 'queued', by: 'remote', destination: '/mnt/ext0/downloads/images/A.exfat' }, // retomado no celular
+    { id: 'b2', key: 'j2', placeholder: true, state: 'paused', by: 'remote', destination: '' }, // pausado no celular (so o app baixa)
+    { id: 'b3', key: 'j3', placeholder: true, state: 'cancelled', by: 'remote', destination: '' }, // cancelado no celular
+    { id: 'b4', key: 'j4', ahead: true, state: 'paused', by: '', destination: '/mnt/ext0/downloads/images/D.exfat' } // pausado no app: nada
+  );
+  wrapper.syncQueue([
+    { key: 'j1', name: 'A', total: 1, paused: true, request: queueOptions({ destination: '/mnt/ext0/downloads/images/A.exfat' }) },
+    { key: 'j2', name: 'B', total: 1 },
+    { key: 'j3', name: 'C', total: 1, paused: true },
+    { key: 'j4', name: 'D', total: 1, paused: true, request: queueOptions({ destination: '/mnt/ext0/downloads/images/D.exfat' }) }
+  ]);
+  await wrapper.flushQueue();
+  await wait(60); // alguns batimentos: nada repete
+  assert.deepEqual(remote, [['/mnt/ext0/downloads/images/A.exfat', 'resume', 'j1'], ['', 'pause', 'j2'], ['', 'cancel', 'j3']]);
+  wrapper.syncQueue([]);
+  await wrapper.flushQueue();
+});
+
+test('glibren.8: ao retomar no app um job pausado no payload (park), ele e acompanhado e retomado ali mesmo', async () => {
+  const payload = fakePayload();
+  payload.jobs.push({ id: 'b9', key: 'j1', ahead: true, followed: false, state: 'paused', by: '', destination: DEST, written: 70 });
+  const task = make(payload, fakeEngine()).enqueue(queueOptions());
+  await wait(40);
+  assert.ok(payload.calls.some((call) => call.path === '/jobs/b9/follow'));
+  assert.ok(payload.calls.some((call) => call.path === '/jobs/b9/resume'), 'continua da parcial no payload');
+  assert.equal(payload.calls.filter((call) => call.method === 'POST' && call.path === '/jobs').length, 0);
+  payload.jobs[0].state = 'completed';
+  assert.equal((await task.done).state, 'completed');
 });
 
 // ---- glibren.5: a pausa ao fechar o app (POST /config "pauseOnCloseSeconds", 0 a 30 s) e o botao "Sair" (POST /bye) ----

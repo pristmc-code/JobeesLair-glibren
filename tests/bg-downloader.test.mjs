@@ -347,7 +347,7 @@ test('pagina do celular: a tela embutida inteira (leitura lenta), status sem seg
   assert.equal(job.by, 'remote', 'o app sabe que a pausa veio do celular');
   assert.equal((await page(`/api/jobs/${data.id}/resume`, { method: 'POST', session: ok.data.session })).status, 200);
   job = await until(base, data.id, ['downloading', 'queued', 'connecting']);
-  assert.equal(job.by, '');
+  assert.equal(job.by, 'remote', 'glibren.8: a retomada do celular tambem fica marcada, ate o app confirmar');
   assert.equal((await page(`/api/jobs/${data.id}/cancel`, { method: 'POST', session: ok.data.session })).status, 200);
   job = await until(base, data.id, ['cancelled']);
   assert.equal(job.by, 'remote');
@@ -569,5 +569,137 @@ test('varios jobs ao mesmo tempo dividem o limite de conexoes (nunca 4 x 32)', {
   assert.ok(most <= 32, `no maximo 32 conexoes somadas (${most})`);
   srv.rate = 0;
   for (const id of ids) assert.equal((await until(base, id, ['completed', 'failed'])).state, 'completed');
+  await stop(child);
+});
+
+// ---- glibren.8: um download pausado (no celular, na web ou no app) continua na pagina do celular ----
+// Antes: a pausa no app (e a do celular, que o app repete) liberava o job (release: o payload o esquecia) e a fila do
+// app so mandava os "queued" no POST /queue: o pausado sumia da lista do celular.
+
+async function unlocked(base) {
+  assert.equal((await call(base, 'POST', '/config', pinConfig())).status, 200);
+  return (await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data.session;
+}
+const shown = async (id) => (await page('/api/status')).data.jobs.find((job) => job.id === id);
+const stateBy = (jobs, id) => ((job) => [job?.state, job?.by])(jobs.find((job) => job.id === id));
+
+test('glibren.8: app aberto: pausado no app (park) fica na pagina com o progresso; a fila o mantem; o celular retoma e o app termina da parcial', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  small('p1.bin', 8 * MiB);
+  srv.rate = 2 * MiB;
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '2000' });
+  await up(base);
+  await pageUp();
+  const session = await unlocked(base);
+  const item = queued(base, 'p1.bin', { rangeBytes: MiB }); // faixas de 1 MiB: a parcial guarda as que vieram
+  const { data } = await call(base, 'POST', '/jobs', item.job);
+  await call(base, 'POST', `/jobs/${data.id}/follow`);
+  await until(base, data.id, ['downloading'], (job) => job.written > 0);
+  // A pausa no app (ou a do celular repetida pelo app): park, e nao release.
+  assert.equal((await call(base, 'POST', `/jobs/${data.id}/park`)).status, 200);
+  let job = await until(base, data.id, ['paused']);
+  assert.ok(job.ahead && !job.followed, 'volta para a fila entregue (o app nao o acompanha mais)');
+  const written = job.written;
+  assert.ok(written > 0);
+  const mine = await shown(data.id);
+  assert.deepEqual([mine?.state, mine?.written], ['paused', written], 'a pagina mostra Pausado, com o progresso');
+  // A fila do app manda o pausado: ele fica, ganha a chave e continua pausado.
+  await call(base, 'POST', '/queue', { items: [{ ...item, paused: true, written }] });
+  job = (await call(base, 'GET', '/jobs')).data.jobs.find((entry) => entry.id === data.id);
+  assert.deepEqual([job?.state, job?.key], ['paused', item.key]);
+  assert.equal((await shown(data.id))?.state, 'paused');
+  // Retomado no celular com o app aberto: vai para a fila, marcado (by remote) para o app retomar; nao comeca sozinho.
+  assert.equal((await page(`/api/jobs/${data.id}/resume`, { method: 'POST', session })).status, 200);
+  for (let i = 0; i < 6; i++) { await wait(100); await call(base, 'GET', '/health'); }
+  assert.deepEqual(stateBy((await call(base, 'GET', '/jobs')).data.jobs, data.id), ['queued', 'remote']);
+  // Uma fila do app que ainda nao soube (pausado) nao desfaz o pedido do celular.
+  await call(base, 'POST', '/queue', { items: [{ ...item, paused: true, written }] });
+  assert.deepEqual(stateBy((await call(base, 'GET', '/jobs')).data.jobs, data.id), ['queued', 'remote'], 'o celular vale ate o app confirmar');
+  // O app retoma (follow): continua da parcial e termina.
+  const before = srv.served['p1.bin'] || 0;
+  await call(base, 'POST', `/jobs/${data.id}/follow`);
+  srv.rate = 0;
+  await until(base, data.id, ['completed']);
+  assert.equal(sha(readFileSync(item.job.destination)), sha(files['p1.bin']));
+  assert.ok((srv.served['p1.bin'] || 0) - before < files['p1.bin'].length, 'so o que faltava');
+  await stop(child);
+});
+
+test('glibren.8: app fechado: o celular pausa e retoma um da fila entregue; um pausado so do app aparece e aceita os botoes; a fila do app confirma', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  small('p2.bin', 8 * MiB);
+  srv.rate = 2 * MiB;
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '600' });
+  await up(base);
+  await pageUp();
+  const session = await unlocked(base);
+  const item = queued(base, 'p2.bin');
+  const site = (extra = {}) => ({ key: 'kpg', name: 'Jogo do site', total: 5000, ...extra });
+  await call(base, 'POST', '/queue', { items: [item, site({ paused: true, written: 1000 })] });
+  // O "app" fica calado (fechado): so a pagina do celular.
+  let status = await statusUntil((s) => s.jobs.some((job) => job.name === 'p2.bin' && job.state === 'downloading' && job.written > 0));
+  const p2 = status.jobs.find((job) => job.name === 'p2.bin').id;
+  const pg = status.jobs.find((job) => job.name === 'Jogo do site');
+  assert.deepEqual([pg.state, pg.written, pg.total], ['paused', 1000, 5000], 'o pausado so do app aparece Pausado, com o progresso');
+  assert.equal((await page(`/api/jobs/${p2}/pause`, { method: 'POST', session })).status, 200);
+  status = await statusUntil((s) => s.jobs.some((job) => job.id === p2 && job.state === 'paused'));
+  assert.ok(status.jobs.find((job) => job.id === p2).written > 0, 'pausado no celular com o app fechado: fica, com o progresso');
+  await wait(800);
+  assert.equal((await shown(p2))?.state, 'paused', 'e continua pausado');
+  srv.rate = 0;
+  assert.equal((await page(`/api/jobs/${p2}/resume`, { method: 'POST', session })).status, 200);
+  await statusUntil((s) => s.jobs.some((job) => job.id === p2 && job.state === 'completed'));
+  assert.equal(sha(readFileSync(item.job.destination)), sha(files['p2.bin']));
+  // O pausado so do app: retomar vira "aguardando o app" (o app retoma ao abrir); pausar e cancelar tambem valem.
+  assert.equal((await page(`/api/jobs/${pg.id}/resume`, { method: 'POST', session })).status, 200);
+  assert.equal((await shown(pg.id))?.state, 'waiting-app');
+  // O app abre ainda achando que esta pausado: o pedido do celular fica ate o app confirmar.
+  await call(base, 'POST', '/queue', { items: [site({ paused: true, written: 1000 })] });
+  assert.deepEqual(stateBy((await call(base, 'GET', '/jobs')).data.jobs, pg.id), ['waiting-app', 'remote']);
+  // O app retomou (manda sem "paused"): confirmado, a marca sai.
+  await call(base, 'POST', '/queue', { items: [site()] });
+  assert.deepEqual(stateBy((await call(base, 'GET', '/jobs')).data.jobs, pg.id), ['waiting-app', '']);
+  // Pausado no app: a fila manda paused e o marcador fica Pausado.
+  await call(base, 'POST', '/queue', { items: [site({ paused: true, written: 1000 })] });
+  assert.equal((await shown(pg.id))?.state, 'paused');
+  assert.equal((await page(`/api/jobs/${pg.id}/cancel`, { method: 'POST', session })).status, 200);
+  assert.ok(!(await shown(pg.id)), 'cancelado no celular: sai da pagina');
+  assert.deepEqual(stateBy((await call(base, 'GET', '/jobs')).data.jobs, pg.id), ['cancelled', 'remote'], 'o app ve o cancelamento');
+  // O app cancelou: a fila vem sem ele, e o marcador sai.
+  await call(base, 'POST', '/queue', { items: [] });
+  assert.ok(!(await call(base, 'GET', '/jobs')).data.jobs.some((job) => job.id === pg.id));
+  await stop(child);
+});
+
+test('glibren.8: um da fila entregue pausado no celular com o app aberto fica pausado ate o app confirmar; pausados sobrevivem a reinicio', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  small('p3.bin', MiB);
+  let child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '1500' });
+  await up(base);
+  await pageUp();
+  const session = await unlocked(base);
+  const item = queued(base, 'p3.bin');
+  const other = { key: 'kpz', name: 'Outro', total: 9, paused: true, written: 3 };
+  await call(base, 'POST', '/queue', { items: [item, other] });
+  const p3 = (await call(base, 'GET', '/jobs')).data.jobs.find((job) => job.key === item.key).id;
+  assert.equal((await page(`/api/jobs/${p3}/pause`, { method: 'POST', session })).status, 200);
+  // A fila do app ainda acha que esta na fila: o pedido do celular vale.
+  await call(base, 'POST', '/queue', { items: [item, other] });
+  assert.deepEqual(stateBy((await call(base, 'GET', '/jobs')).data.jobs, p3), ['paused', 'remote']);
+  // O app pausou tambem (confirmou): a marca sai e ele continua pausado.
+  await call(base, 'POST', '/queue', { items: [{ ...item, paused: true }, other] });
+  assert.deepEqual(stateBy((await call(base, 'GET', '/jobs')).data.jobs, p3), ['paused', '']);
+  // O payload reinicia (e o app fica fechado): os dois continuam pausados; o marcador nao volta a "aguardando o app".
+  await stop(child);
+  child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '300' });
+  await up(base);
+  await pageUp();
+  await wait(800);
+  const status = (await page('/api/status')).data;
+  assert.deepEqual(status.jobs.map((job) => [job.name, job.state]).sort(), [['Outro', 'paused'], ['p3.bin', 'paused']]);
+  assert.ok(!existsSync(item.job.destination), 'pausado nao baixa sozinho');
   await stop(child);
 });

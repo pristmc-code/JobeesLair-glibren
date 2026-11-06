@@ -798,9 +798,13 @@ import { mirrorsFor } from './download-mirrors.js';
     function handQueueToPayload() {
       if (typeof downloads.syncQueue !== "function") return;
       const ahead = downloads.queueAhead?.() ?? false;
-      const items = !ahead ? [] : jobs.filter((job2) => job2.state === "queued" && !lanes.has(job2) && !job2.install).map((job2) => {
+      // MODIFIED (glibren.8): os pausados tambem vao (paused, com o progresso): continuam na pagina do celular como
+      // "Pausado" (antes sumiam dela) e, retomados la, voltam para ca (remoteAction "resume"); o payload so os baixa
+      // sozinho se forem retomados com o app fechado.
+      const items = !ahead ? [] : jobs.filter((job2) => ["queued", "paused"].includes(job2.state) && !lanes.has(job2) && !job2.install).map((job2) => {
         const request = handoffRequest(job2);
-        return { key: job2.id, name: job2.title, total: job2.release?.sizeBytes || job2.total || 0, ...request ? { request } : {} };
+        const paused = job2.state === "paused" ? { paused: true, written: job2.written || 0 } : {};
+        return { key: job2.id, name: job2.title, total: job2.release?.sizeBytes || job2.total || 0, ...paused, ...request ? { request } : {} };
       });
       downloads.syncQueue(items);
       if (ahead) void resolveForHandoff();
@@ -2437,7 +2441,10 @@ import { mirrorsFor } from './download-mirrors.js';
         const lane = lanes.get(job2);
         job2.state = "pausing";
         lane.cancel?.cancel();
-        lane.task?.cancel();
+        // MODIFIED (glibren.8): a tarefa do payload sabe pausar (pause: o job fica pausado la, sem sumir da pagina do
+        // celular); as outras param como antes.
+        if (typeof lane.task?.pause === "function") lane.task.pause();
+        else lane.task?.cancel();
       } else if (extractor2?.job === job2 && ACTIVE.includes(job2.state)) {
         // Its extraction stops (it starts over on resume: the engine keeps no partial extraction).
         job2.state = "pausing";
@@ -2830,12 +2837,15 @@ import { mirrorsFor } from './download-mirrors.js';
       /**
        * glibren: a pause or a cancel asked on the phone page (the background payload, port 34201), by the file's
        * path: the job is paused or cancelled here as if the gamer had asked (background-downloads.js onRemote).
+       * MODIFIED (glibren.8): also by the queue key (a waiting item has no path), and "resume": a job paused here and
+       * resumed on the phone goes back to the queue here, as if the gamer had resumed it.
        */
-      remoteAction(destination, action) {
-        const job2 = jobs.find((item) => [item.downloadDestination, item.artifact?.destination].includes(destination));
+      remoteAction(destination, action, key) {
+        const job2 = (key && jobs.find((item) => item.id === key)) || (destination && jobs.find((item) => [item.downloadDestination, item.artifact?.destination].includes(destination)));
         if (!job2) return;
         console.log(`[download-queue] ${job2.id}: ${action} asked on the phone`);
         if (action === "pause") this.pause(job2.id);
+        else if (action === "resume") this.resume(job2.id);
         else if (action === "cancel") this.cancel(job2.id).catch((error2) => console.log(`[download-queue] ${job2.id}: not cancelled (${error2.message})`));
       },
       /** Installs a downloaded PKG again, after the console refused it or the app closed while installing. */

@@ -67,7 +67,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       concurrency: simultaneousDownloads,
       monitor: () => ({ ...phoneMonitorConfig(), monitorText: t("downloads.background.monitorNotice", { address: "{address}" }) }),
       addressSeen: setPhoneMonitorAddress,
-      onRemote: (destination, action) => instance?.remoteAction?.(destination, action),
+      // MODIFIED (glibren.8): com a chave do item da fila (um marcador nao tem caminho) e a acao "resume".
+      onRemote: (destination, action, key) => instance?.remoteAction?.(destination, action, key),
       // MODIFIED (glibren.5): a pausa ao fechar o app (0 a 30 s, Configuracoes) vai ao payload no POST /config.
       pauseOnCloseSeconds
     }),
