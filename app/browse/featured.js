@@ -4,6 +4,7 @@
 
 import { games, hasArt } from '../data/catalog-index.js';
 import { oneEach, ratingScore, sortGames } from '../state/catalog.js';
+import { onStoreMode } from '../state/store-mode.js';
 
   var SLIDES = 5;
   // The pool: games with a banner and a logo, the most rated on the PlayStation Store first, 4.3 stars or more
@@ -46,5 +47,9 @@ import { oneEach, ratingScore, sortGames } from '../state/catalog.js';
     return shuffle(picks);
   }
   var featured = pickFeatured();
+  // glibren.9: picked again from the TorBox store's games when the store's version changes (state/store-mode.js).
+  onStoreMode(() => {
+    featured = pickFeatured();
+  });
 
 export { SLIDES, TOP_POOL, featured, pickFeatured, studioOf };

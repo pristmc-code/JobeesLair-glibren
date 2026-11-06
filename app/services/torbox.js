@@ -395,6 +395,21 @@ import { parseStamp } from '../state/clock.js';
         return found;
       },
       /**
+       * glibren.9: what TorBox holds under any of `hashes` (other MD5s it knows a file by besides its link's: the
+       * file's name, "<code>.exfat"; the TorBox library, state/torbox-library.js), up to 100 a call, with the files:
+       * [{ hash, name, size, files }]. `hash` is the key TorBox answers with (the MD5 of the link the file was first
+       * fetched from), not one of those asked: the caller tells the entries apart by their names.
+       */
+      async cachedByHash(hashes, { signal } = {}) {
+        const list = [...new Set(hashes.map((hash) => String(hash).toLowerCase()))].filter(Boolean);
+        const found = [];
+        for (let i = 0; i < list.length; i += 100) {
+          const data = await call("/webdl/checkcached", { params: { hash: list.slice(i, i + 100).join(","), format: "object", list_files: true }, signal });
+          for (const [hash, entry] of Object.entries(data || {})) if (entry && typeof entry === "object") found.push({ hash: hash.toLowerCase(), name: entry.name || "", size: Number(entry.size) || 0, files: Array.isArray(entry.files) ? entry.files : [] });
+        }
+        return found;
+      },
+      /**
        * glibren.6: TorBox's torrent search (search-api.torbox.app/torrents/search/<text>), only what TorBox holds
        * already (cached_only): [{ hash, title, magnet, size, seeders }]. The service was not answering on 2026-11-05
        * (its name did not resolve); callers treat a failure as "search not available".

@@ -10,6 +10,7 @@
 // 0.5.1: far less text. A row shows its name and its state; what a setting does (its `hint`) shows under the
 // row only while it has focus, and the paragraphs (what debrid is, what feeds are, the credits, the legal
 // notice) are gone from view or folded behind a row.
+// MODIFIED (glibren.9): the TorBox library (its own category): build it, pick its sources, use its store version.
 // MODIFIED (glibren.5): "Exit Jobee'sLair" at the end of the categories' column (ui/ExitSheet.jsx, state/exit-app.js), and
 // the "Pause when the app closes" choice (0 to 30 s) under "Keep downloading when I close the app".
 
@@ -17,7 +18,7 @@ import '../assets/Exo2.ttf';
 import '../assets/JetBrainsMono-Regular.ttf';
 import supportQr from '../assets/support-qr.png';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CREATOR, choosePin, pinProblem, setCompanion, setCompanionAway, useCompanion } from '../companion/service.js';
 import { URLDialog } from '../downloads/URLDialog.jsx';
 import { formatDate2, formatNumber2 } from '../i18n/core.js';
@@ -41,6 +42,8 @@ import { useDrives } from '../state/drives.js';
 import { setDefaultDrive, useDefaultDrive } from '../state/last-drive.js';
 import { MAX_FEEDS, MAX_MIRRORS, addFeed, addMirror, refreshFeeds, removeFeed, removeMirror, useFeeds } from '../state/feeds.js';
 import { formatBytes } from '../state/size.js';
+import { applyStoreMode, useStoreMode } from '../state/store-mode.js';
+import { cancelLibrary, librarySources, librarySummary, startLibrary, useLibraryProgress } from '../state/torbox-library-run.js';
 import { canInstall, checkForUpdate, openUpdateDialog, setAutoInstall, updateDetail, useAutoInstall, useInstall, useUpdate } from '../state/update.js';
 import { REPO, VERSION_LABEL } from '../version.js';
 import { JLMark } from './JLMark.jsx';
@@ -471,6 +474,73 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       all.configured && debrid.configured ? jsx(Callout, { children: t2("settings.alldebrid.both") }) : null
     ] });
   }
+  // glibren.9: the TorBox library (state/torbox-library.js): built only when the gamer presses the button, over the
+  // sources picked here (all by default), and it keeps going with the app on another page. Its store version is
+  // switched here or at the top of Discover (browse/StoreModeBar.jsx).
+  function sourceLabel(t2, source) {
+    if (source.kind === "bundled") return t2("tblib.source.bundled");
+    if (source.kind === "live") return t2("tblib.source.live");
+    return source.name || hostOf(source.id);
+  }
+  var minutesOf = (ms) => String(Math.max(1, Math.round(ms / 6e4)));
+  function libraryDetail(t2, run, summary) {
+    if (run.state === "running") {
+      if (run.waitingUntil) return t2("tblib.waiting", { seconds: String(Math.max(1, Math.round((run.waitingUntil - Date.now()) / 1e3))) });
+      if (run.phase === "account") return t2("tblib.phase.account");
+      if (run.phase === "list") return t2("tblib.phase.list");
+      const base = t2("tblib.running", { done: formatNumber2(run.done), total: formatNumber2(run.total), found: formatNumber2(run.found) });
+      return run.etaMs ? `${base} · ${t2("tblib.eta", { minutes: minutesOf(run.etaMs) })}` : base;
+    }
+    if (run.state === "done") return t2("tblib.done", { found: formatNumber2(run.found), total: formatNumber2(run.total), calls: formatNumber2(run.calls) });
+    if (run.state === "cancelled") return t2("tblib.cancelled", { done: formatNumber2(run.done), total: formatNumber2(run.total) });
+    if (run.state === "failed") return t2("tblib.failed", { error: run.error });
+    if (summary.open) return t2("tblib.status.open", { done: formatNumber2(summary.open.done), total: formatNumber2(summary.open.total) });
+    if (summary.builtAt) return t2("tblib.status.built", { confirmed: formatNumber2(summary.confirmed), games: formatNumber2(summary.games), date: formatDate2(summary.builtAt.slice(0, 10)) });
+    return t2("tblib.status.never");
+  }
+  function TorBoxLibraryCard() {
+    const t2 = useT();
+    const debrid = useDebrid();
+    const run = useLibraryProgress();
+    const store = useStoreMode();
+    const [sources] = (0, useState)(() => librarySources());
+    const [off, setOff] = (0, useState)([]);
+    const [notice, setNotice] = (0, useState)("");
+    // Read again whenever the run's state changes (a run that ends writes the file).
+    const summary = (0, useMemo)(() => librarySummary(), [run.state]);
+    const running = run.state === "running";
+    const picked = sources.filter((source) => !off.includes(source.id)).map((source) => source.id);
+    const chosen = off.length ? picked : null;
+    const start = (fresh) => {
+      if (!debrid.configured) return setNotice(t2("tblib.needKey"));
+      if (!picked.length) return setNotice(t2("tblib.noSource"));
+      setNotice("");
+      void startLibrary({ sources: fresh ? chosen : summary.open?.sources ?? chosen, fresh });
+    };
+    const resumable = !running && summary.open;
+    const fraction = run.total ? run.done / run.total : 0;
+    return jsxs(View, { scrollAnchor: true, style: CARD, children: [
+      jsx(CardHead, { icon: "grid", title: t2("settings.card.torboxLibrary") }),
+      jsx(Callout, { children: libraryDetail(t2, run, summary) }),
+      running ? jsx(ProgressBar, { fraction, width: 760, active: true }) : null,
+      !debrid.configured ? jsx(Callout, { tone: "warn", children: t2("tblib.needKey") }) : null,
+      notice ? jsx(Callout, { tone: "warn", children: notice }) : null,
+      running
+        ? jsx(Row, { focusKey: "settings:tblib:build", name: t2("tblib.cancel"), hint: t2("tblib.cancelHint"), end: jsx(Icon, { name: "x", color: colors.muted }), onPress: cancelLibrary })
+        : jsx(Row, { focusKey: "settings:tblib:build", name: resumable ? t2("tblib.continue", { done: formatNumber2(summary.open.done), total: formatNumber2(summary.open.total) }) : t2("tblib.build"), hint: t2("tblib.hint"), end: jsx(Icon, { name: "play", color: colors.muted }), onPress: () => start(false) }),
+      resumable ? jsx(Row, { focusKey: "settings:tblib:fresh", name: t2("tblib.rebuild"), hint: t2("tblib.rebuildHint"), end: jsx(Icon, { name: "restart", color: colors.muted }), onPress: () => start(true) }) : null,
+      jsx(Row, { focusKey: "settings:tblib:store", name: t2("tblib.useStore"), detail: store.count ? t2("tblib.storeCount", { count: formatNumber2(store.count) }) : null, hint: t2("tblib.useStoreHint"), end: jsx(Switch, { on: store.mode === "torbox" }), onPress: () => {
+        const { ok, reason } = applyStoreMode(store.mode === "torbox" ? "full" : "torbox");
+        setNotice(ok ? "" : reason === "empty" ? t2("storeMode.empty") : t2("storeMode.never"));
+      } }),
+      jsx(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
+      jsx(Text, { style: text(20, colors.muted, { fontWeight: 600, letterSpacing: 1 }), children: t2("tblib.sources") }),
+      ...sources.map((source) => jsx(Row, { focusKey: `settings:tblib:src:${source.id}`, name: sourceLabel(t2, source), detail: t2("tblib.sourceGames", { count: source.count }), end: jsx(Switch, { on: !off.includes(source.id) }), onPress: () => {
+        if (running) return;
+        setOff((list) => list.includes(source.id) ? list.filter((id) => id !== source.id) : [...list, source.id]);
+      } }, source.id))
+    ] });
+  }
   // The Source Addition Guide: how a catalog feed gets into the store, step by step. One row until opened;
   // then each step is focusable, so the controller walks down it and the page scrolls along.
   var STEP = (_state) => [{ position: "relative", flexDirection: "row", alignItems: "flex-start", gap: 20, paddingHorizontal: 20, paddingVertical: 14, marginHorizontal: -20, borderRadius: radius.md }, _state.focused ? { backgroundColor: colors.surface3 } : null];
@@ -635,6 +705,7 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
     { id: "downloads", icon: "download", label: "settings.card.downloads" },
     { id: "feeds", icon: "layers", label: "settings.card.feeds" },
     { id: "debrid", icon: "zap", label: "settings.card.debrid" },
+    { id: "torboxLibrary", icon: "grid", label: "settings.card.torboxLibrary" },
     { id: "look", icon: "disc", label: "settings.card.look" },
     { id: "guide", icon: "list", label: "settings.card.guide" },
     { id: "about", icon: "star", label: "settings.card.about" }
@@ -673,6 +744,7 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       downloads: [/* @__PURE__ */ (0, jsx)(DownloadsCard, { onPhonePin: setPhonePinMode }, "downloads")],
       feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onMirror: setMirrorOf }, "feeds")],
       debrid: [/* @__PURE__ */ (0, jsx)(DebridCard, { onKey: () => setKeying(true), onAllDebridKey: () => setKeyingAll(true) }, "debrid")],
+      torboxLibrary: [jsx(TorBoxLibraryCard, {}, "torboxLibrary")],
       look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver")],
       guide: [/* @__PURE__ */ (0, jsx)(GuideCard, {}, "guide")],
       about: [/* @__PURE__ */ (0, jsx)(AboutCard, {}, "about"), /* @__PURE__ */ (0, jsx)(NoticeCard, {}, "notice")]

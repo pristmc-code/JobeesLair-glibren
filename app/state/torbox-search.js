@@ -310,4 +310,5 @@ import { magnetHash } from '../services/torbox.js';
    */
   var fakePackageWarning = (file, game, launches) => (file.format === "pkg" || file.format === "fpkg") && /^PPSA/i.test(String(game?.id || "")) && launches !== true;
 
-export { codePattern, downloadFile, fakePackageWarning, hashListPaths, matchesGame, parseHashList, readHashList, releaseFor, searchTexts, searchTorBox, sortFiles, typeLabel };
+// glibren.9: the TorBox library builder (state/torbox-library.js) matches every game the same way, in one pass.
+export { FORMAT_RANK, baseName, catalogLinks, codePattern, downloadFile, fakePackageWarning, filesOf, hashListPaths, isBackportFile, isPiece, magnetOf, matchesGame, parseHashList, plain, readHashList, releaseFor, searchTexts, searchTorBox, sortFiles, titleWords, typeLabel, worthShowing };

@@ -48,6 +48,7 @@ import { HOMEBREW_ONLY } from './edition.js';
 import { deviceFacts } from './state/device.js';
 import { NavProvider, useIsImmersive, useNavActions, useNavState } from './state/nav.jsx';
 import { StoreFreeze, StoreProvider } from './state/store.jsx';
+import { useStoreMode } from './state/store-mode.js';
 import { Header } from './ui/Header.jsx';
 import { Legend } from './ui/Legend.jsx';
 import { Splash } from './ui/Splash.jsx';
@@ -76,7 +77,8 @@ import './state/picture-route.js';
     if (screen2.name === "homebrew") return /* @__PURE__ */ (0, jsx)(HomebrewScreen, { onBack: pop, onOpenApp: (id, from) => push({ name: "homebrew-app", id }, from) });
     if (screen2.name === "homebrew-app") return /* @__PURE__ */ (0, jsx)(HomebrewApp, { id: screen2.id, onBack: pop });
     // Settings, a section since 0.5.0 Pre Release 3.
-    if (screen2.name === "settings") return /* @__PURE__ */ (0, jsx)(SettingsScreen, { onBack: pop });
+    // glibren.9: a screen can open Settings on a category (the TorBox store's "build the library first").
+    if (screen2.name === "settings") return /* @__PURE__ */ (0, jsx)(SettingsScreen, { onBack: pop, ...screen2.start ? { start: screen2.start } : {} });
     return /* @__PURE__ */ (0, jsx)(SearchScreen, { onBack: pop, onOpenGame: openCard });
   }
   // Pages start under the top island (Header.jsx: 24 from the top, 80 tall) with a gap, and end above
@@ -92,10 +94,12 @@ import './state/picture-route.js';
   var SCREEN_FADE = { type: "tween", duration: 0.32, ease: [0.22, 1, 0.36, 1] };
   // While another page is up, the store's art goes (ReleaseImages): the engine registers at most 256
   // images, and the Homebrew section alone draws a few dozen.
+  // glibren.9: the store is built again when its version changes (state/store-mode.js: the full store or the TorBox one).
   function BrowseLayer({ shown }) {
     const glide = usePageGlide();
+    const { epoch } = useStoreMode();
     const top = PAGE_TOP + glide.top;
-    return /* @__PURE__ */ (0, jsx)(motion.View, { initial: false, animate: { y: glide.y }, transition: { y: glide.transition }, style: shown ? { position: "absolute", left: 0, right: 0, top, bottom: PAGE_BOTTOM } : { position: "absolute", left: 0, right: 0, top, bottom: PAGE_BOTTOM, display: "none" }, children: /* @__PURE__ */ (0, jsx)(ReleaseImages, { when: !shown, children: /* @__PURE__ */ (0, jsx)(StoreFreeze, { frozen: !shown, children: /* @__PURE__ */ (0, jsx)(FocusScope, { focusKey: "page", autoFocus: true, inert: !shown, children: /* @__PURE__ */ (0, jsx)(BrowsePage, {}) }) }) }) });
+    return /* @__PURE__ */ (0, jsx)(motion.View, { initial: false, animate: { y: glide.y }, transition: { y: glide.transition }, style: shown ? { position: "absolute", left: 0, right: 0, top, bottom: PAGE_BOTTOM } : { position: "absolute", left: 0, right: 0, top, bottom: PAGE_BOTTOM, display: "none" }, children: /* @__PURE__ */ (0, jsx)(ReleaseImages, { when: !shown, children: /* @__PURE__ */ (0, jsx)(StoreFreeze, { frozen: !shown, children: /* @__PURE__ */ (0, jsx)(FocusScope, { focusKey: "page", autoFocus: true, inert: !shown, children: /* @__PURE__ */ (0, jsx)(BrowsePage, {}, `store:${epoch}`) }) }) }) });
   }
   // Any other page. It slides in over the one it replaces, and glides with the announcement bar; an immersive one
   // covers the whole screen (the bar is not shown then) and stays put.

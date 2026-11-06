@@ -71,6 +71,8 @@ import { FileSystem, Http } from '@ps5-react/core';
         loaded.set(url, cache.hash);
         meta.set(url, summary(cache));
         setIndex(url, feed.games);
+        // glibren.9: each game says which feed it came from (the TorBox library's sources, state/torbox-library.js).
+        for (const item of feed.games) item.feed = url;
         out.push(...feed.games);
         for (const [id, pair] of Object.entries(feed.ratings ?? {})) if (!feedRatings[id]) feedRatings[id] = pair;
       } catch (error2) {
@@ -337,4 +339,7 @@ import { FileSystem, Http } from '@ps5-react/core';
     return feedsSnapshot(urls);
   }
 
-export { LIVE_FEED, MAX_FEEDS, MAX_MIRRORS, addFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };
+/** glibren.9: a feed's name as its last good copy says (null when none is cached). */
+var feedName = (url) => meta.get(url)?.name ?? null;
+
+export { LIVE_FEED, MAX_FEEDS, feedName, MAX_MIRRORS, addFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };
