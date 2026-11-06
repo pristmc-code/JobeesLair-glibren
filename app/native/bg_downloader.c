@@ -24,7 +24,7 @@
 //     POST /api/jobs/<id>/connections  glibren.8: {connections: 1..64 | 0/null = as do app} -> {ok, connections, connectionsSet}
 //     POST /api/config             glibren.8: {concurrency: 1..4} -> {ok, limit, limitSet}; o app adota o numero
 //     GET  /api/library[?filtros]  glibren: a Biblioteca TorBox (torbox-lista.json) resumida, filtrada e paginada; ver
-//     GET  /api/library/game?id=   "Biblioteca TorBox na pagina do celular" abaixo
+//     GET  /api/library/game?id=   "Biblioteca TorBox na pagina do celular" abaixo (glibren.9: com a ficha: fotos, videos)
 //     POST /api/library/add        {id, file?} com a sessao: o jogo entra na fila (pedido que o app poe na fila dele)
 //     POST /jobs/<id>/refuse       glibren: {error} o app nao conseguiu por na fila um pedido do celular (fica "failed")
 //     POST /secret                {service:"torbox", key} -> chave so em memoria (nunca gravada nem registrada)
@@ -3561,13 +3561,17 @@ static void monitor_status(Buf* b) {
 static void monitor_send(int fd, int status, const char* type, const void* body, size_t size) {
   const char* reason = status == 200 ? "OK" : status == 400 ? "Bad Request" : status == 401 ? "Unauthorized" : status == 403 ? "Forbidden" :
                        status == 404 ? "Not Found" : status == 413 ? "Payload Too Large" : "Error";
-  char head[512];
+  char head[1024];
   const int html = !strncmp(type, "text/html", 9);
+  // glibren.9: a Biblioteca TorBox mostra as capas e fotos direto dos enderecos do catalogo (https, o celular tem
+  // internet) e os videos no player do YouTube sem cookies (frame-src). Scripts, estilos e dados continuam so desta
+  // pagina e do payload.
   int n = snprintf(head, sizeof head,
                    "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
                    "Referrer-Policy: no-referrer\r\n%sConnection: close\r\n\r\n",
                    status, reason, type, size,
-                   html ? "Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data:\r\n" : "");
+                   html ? "Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; "
+                          "img-src data: https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com\r\n" : "");
   if (send_all(fd, head, (size_t)n) && size) send_all(fd, body, size);
 }
 static void monitor_json(int fd, int status, const char* body) { monitor_send(fd, status, "application/json", body, strlen(body)); }
@@ -3783,8 +3787,15 @@ static void monitor_power(int fd, Request* r) {
 //    "formats":[...], "hash", "files":[{"name", "size", "format"}], "cover"}]}
 // Campos ausentes ou de outro tipo sao tolerados (um jogo sem id usa o hash; sem os dois, fica de fora; sem tamanho, a
 // soma dos arquivos; sem formatos, os dos arquivos; sem plataforma, a do codigo PPSA/CUSA). Na memoria fica so um indice
-// compacto (sem os nomes dos arquivos nem a capa), relido quando o arquivo muda; os arquivos de um jogo sao lidos do
-// disco so quando pedidos.
+// compacto (sem os nomes dos arquivos; glibren.9: com a capa, so https e ate LIB_COVER), relido quando o arquivo muda; os
+// arquivos de um jogo sao lidos do disco so quando pedidos.
+// glibren.9: a ficha de cada jogo (capa, fotos, videos do YouTube, texto e detalhes da loja) fica em torbox-fichas.json
+// ao lado da lista (BGDL_LIBRARY_DETAILS nos testes; formato em app/state/torbox-library.js DETAILS_FORMAT):
+//   {"version":1, "builtAt", "games":[{"id", "summary", "about":[...], "shots":[{"url","thumb"}], "videos":["<id>"],
+//    "cover", "coverFallbacks":[...], "hero", "developer", "publisher", "releaseDate", "metacritic", "stars",
+//    "ratingCount", "features":[...]}]}
+// Lida inteira so quando o celular abre um jogo (/api/library/game), parando no jogo pedido; so enderecos https e ids de
+// video de 11 caracteres passam, o resto da ficha e texto cortado.
 //   GET  /api/library?q=&platform=ps5|ps4&format=exfat,pkg&genre=A,B&minSize=&maxSize=&sort=title|big|small&offset=&limit=
 //        -> {ok, builtAt, partial, total, count, offset, limit, games:[{id, title, code, platform, sizeBytes, formats,
 //            genres, files, queued}], facets:{platforms:{ps5, ps4, other}, sizes:{lt10, 10to30, 30to60, gt60, unknown},
@@ -3792,8 +3803,9 @@ static void monitor_power(int fd, Request* r) {
 //        Tamanhos em bytes (minSize inclusivo, maxSize exclusivo; GiB nas faixas). As contagens de cada filtro valem com os
 //        outros filtros aplicados. Sem sessao, como /api/status: nada de segredo sai (nem hash, nem caminho).
 //        404 {"error":"no-library"} sem o arquivo; 500 {"error":"bad-library"} quando nada se aproveita dele.
-//   GET  /api/library/game?id=  -> {ok, game:{...}, files:[{name, size, format, piece}], suggested:"<arquivo>"|""}
-//        ("" = o torrent inteiro, como um zip).
+//        glibren.9: cada jogo leva "cover" (https) quando a lista tem.
+//   GET  /api/library/game?id=  -> {ok, game:{...}, files:[{name, size, format, piece}], suggested:"<arquivo>"|"",
+//        details?:{...a ficha...}} ("" = o torrent inteiro, como um zip; sem a ficha do jogo, sem "details").
 //   POST /api/library/add {id, file?, whole?} (sessao do PIN) -> {ok, id, appOpen} | {ok, already, id}
 //        Vira um marcador "waiting-app" pedido pelo celular (requested), que a fila do app (POST /queue) nao tira.
 //        Quem baixa e o app: aberto (ou ao abrir) ele le os pedidos no GET /jobs ("library"), poe o jogo na fila dele pelo
@@ -3806,9 +3818,10 @@ static void monitor_power(int fd, Request* r) {
 #define LIB_FILES 256
 #define LIB_PAGE 200
 #define LIB_GIB (1024ull * 1024 * 1024)
+#define LIB_COVER 240 // uma capa mais longa que isso fica de fora (as do catalogo tem ~130)
 
 typedef struct {
-  char id[96], title[160], code[16], hash[72];
+  char id[96], title[160], code[16], hash[72], cover[LIB_COVER];
   uint64_t size, genres;
   uint32_t formats;
   uint8_t platform; // 0 nao sabido, 1 ps5, 2 ps4
@@ -3921,6 +3934,26 @@ static int lib_list(JP* j, ItemFn item, void* ctx) {
   if (j->p < j->end && *j->p == '"') return item(j, ctx);
   return jp_array(j, item, ctx);
 }
+// glibren.9: um endereco de imagem para a pagina: so https, sem espaco, aspas, <, > ou barra invertida, e inteiro (um
+// endereco maior que `cap` fica vazio, nunca cortado). 0 so quando o JSON e invalido.
+static int lib_https_ok(const char* url) {
+  if (strncmp(url, "https://", 8) || !url[8]) return 0;
+  for (const unsigned char* c = (const unsigned char*)url; *c; ++c) if (*c <= 0x20 || *c == 0x7f || strchr("\"'<>\\`", *c)) return 0;
+  return 1;
+}
+static int lib_https(JP* j, char* out, size_t cap) {
+  out[0] = 0;
+  jp_ws(j);
+  if (j->p >= j->end || *j->p != '"') return jp_skip(j);
+  const char* start = j->p;
+  if (!jp_string(j, out, cap)) {
+    out[0] = 0;
+    j->p = start;
+    return jp_string(j, NULL, 0);
+  }
+  if (!lib_https_ok(out)) out[0] = 0;
+  return 1;
+}
 static int lib_file_item_field(JP* jp, const char* key, void* ctx) {
   LibFile* f = ctx;
   if (!strcmp(key, "kind")) return lib_text(jp, f->item_kind, sizeof f->item_kind) ? 1 : -1;
@@ -3991,6 +4024,7 @@ static int lib_game_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "genres")) return lib_list(jp, lib_genre_item, p) ? 1 : -1;
   if (!strcmp(key, "formats")) return lib_list(jp, lib_format_item, p) ? 1 : -1;
   if (!strcmp(key, "files")) return jp_array(jp, lib_file_item, p) ? 1 : -1;
+  if (!strcmp(key, "cover")) return lib_https(jp, g->cover, sizeof g->cover) ? 1 : -1;
   return 0;
 }
 static int lib_game_item(JP* j, void* ctx) {
@@ -4228,6 +4262,7 @@ static void lib_game_json(Buf* b, const LibIndex* x, const LibGame* g, int queue
   lib_names_json(b, &x->formats[0][0], sizeof x->formats[0], x->format_count, g->formats);
   buf_str(b, ",\"genres\":");
   lib_names_json(b, &x->genres[0][0], sizeof x->genres[0], x->genre_count, g->genres);
+  if (g->cover[0]) { buf_str(b, ",\"cover\":"); buf_json(b, g->cover); }
   buf_str(b, "}");
 }
 // Contagens de um filtro (formatos ou generos), da maior para a menor.
@@ -4368,6 +4403,200 @@ static int lib_suggest(const LibParse* p) {
   if (best < 0 && p->file_count == 1 && !p->files[0].piece && lib_file_ok(&p->files[0], &p->game)) best = 0;
   return best;
 }
+// ---- glibren.9: a ficha de um jogo (torbox-fichas.json), so quando o celular abre o jogo ----
+#define LIB_SHOTS 8
+#define LIB_ABOUT 4
+#define LIB_VIDEOS 6
+#define LIB_FEATURES 12
+#define LIB_URL 400
+static char g_lib_details_path[640];
+typedef struct { char url[LIB_URL], thumb[LIB_URL]; } LibShot;
+typedef struct {
+  const char* want;
+  char id[96];
+  int found, dirty;
+  char summary[1024], about[LIB_ABOUT][1200];
+  int about_count;
+  LibShot shots[LIB_SHOTS];
+  int shot_count;
+  char videos[LIB_VIDEOS][12];
+  int video_count;
+  char cover[LIB_URL], fallbacks[2][LIB_URL], hero[LIB_URL];
+  int fallback_count;
+  char developer[128], publisher[128], release_date[16];
+  char features[LIB_FEATURES][48];
+  int feature_count;
+  uint64_t metacritic, ratings;
+  double stars;
+} LibDetails;
+static int det_about_item(JP* j, void* ctx) {
+  LibDetails* d = ctx;
+  if (d->about_count >= LIB_ABOUT) return jp_skip(j);
+  char* slot = d->about[d->about_count];
+  if (!lib_text(j, slot, sizeof d->about[0])) return 0;
+  if (slot[0]) ++d->about_count;
+  return 1;
+}
+static int det_shot_field(JP* jp, const char* key, void* ctx) {
+  LibShot* s = ctx;
+  if (!strcmp(key, "url")) return lib_https(jp, s->url, sizeof s->url) ? 1 : -1;
+  if (!strcmp(key, "thumb")) return lib_https(jp, s->thumb, sizeof s->thumb) ? 1 : -1;
+  return 0;
+}
+// Uma foto: {url, thumb} ou so o endereco.
+static int det_shot_item(JP* j, void* ctx) {
+  LibDetails* d = ctx;
+  LibShot s;
+  memset(&s, 0, sizeof s);
+  jp_ws(j);
+  if (j->p < j->end && *j->p == '"') { if (!lib_https(j, s.url, sizeof s.url)) return 0; }
+  else if (j->p < j->end && *j->p == '{') { if (!jp_object(j, det_shot_field, &s)) return 0; }
+  else return jp_skip(j);
+  if (s.url[0] && d->shot_count < LIB_SHOTS) d->shots[d->shot_count++] = s;
+  return 1;
+}
+// Um video do YouTube: so o id (11 letras, digitos, - e _).
+static int det_video_item(JP* j, void* ctx) {
+  LibDetails* d = ctx;
+  char id[64];
+  if (!lib_text(j, id, sizeof id)) return 0;
+  if (strlen(id) != 11 || d->video_count >= LIB_VIDEOS) return 1;
+  for (const char* c = id; *c; ++c) if (!isalnum((unsigned char)*c) && *c != '-' && *c != '_') return 1;
+  for (int i = 0; i < d->video_count; ++i) if (!strcmp(d->videos[i], id)) return 1;
+  memcpy(d->videos[d->video_count++], id, 12);
+  return 1;
+}
+static int det_fallback_item(JP* j, void* ctx) {
+  LibDetails* d = ctx;
+  char url[LIB_URL];
+  if (!lib_https(j, url, sizeof url)) return 0;
+  if (url[0] && d->fallback_count < 2) memcpy(d->fallbacks[d->fallback_count++], url, sizeof url);
+  return 1;
+}
+static int det_feature_item(JP* j, void* ctx) {
+  LibDetails* d = ctx;
+  char name[48];
+  if (!lib_text(j, name, sizeof name)) return 0;
+  if (name[0] && d->feature_count < LIB_FEATURES) memcpy(d->features[d->feature_count++], name, sizeof name);
+  return 1;
+}
+static int det_field(JP* jp, const char* key, void* ctx) {
+  LibDetails* d = ctx;
+  if (!strcmp(key, "id")) return lib_text(jp, d->id, sizeof d->id) ? 1 : -1;
+  // O app grava o id primeiro: a ficha de outro jogo e so pulada.
+  if (d->id[0] && strcmp(d->id, d->want)) return 0;
+  d->dirty = 1;
+  if (!strcmp(key, "summary")) return lib_text(jp, d->summary, sizeof d->summary) ? 1 : -1;
+  if (!strcmp(key, "about")) return lib_list(jp, det_about_item, d) ? 1 : -1;
+  if (!strcmp(key, "shots")) return jp_array(jp, det_shot_item, d) ? 1 : -1;
+  if (!strcmp(key, "videos")) return lib_list(jp, det_video_item, d) ? 1 : -1;
+  if (!strcmp(key, "cover")) return lib_https(jp, d->cover, sizeof d->cover) ? 1 : -1;
+  if (!strcmp(key, "coverFallbacks")) return lib_list(jp, det_fallback_item, d) ? 1 : -1;
+  if (!strcmp(key, "hero")) return lib_https(jp, d->hero, sizeof d->hero) ? 1 : -1;
+  if (!strcmp(key, "developer")) return lib_text(jp, d->developer, sizeof d->developer) ? 1 : -1;
+  if (!strcmp(key, "publisher")) return lib_text(jp, d->publisher, sizeof d->publisher) ? 1 : -1;
+  if (!strcmp(key, "features")) return lib_list(jp, det_feature_item, d) ? 1 : -1;
+  if (!strcmp(key, "metacritic")) { if (!lib_uint(jp, &d->metacritic)) return -1; if (d->metacritic > 100) d->metacritic = 0; return 1; }
+  if (!strcmp(key, "ratingCount")) return lib_uint(jp, &d->ratings) ? 1 : -1;
+  if (!strcmp(key, "releaseDate")) {
+    char date[32];
+    if (!lib_text(jp, date, sizeof date)) return -1;
+    int ok = strlen(date) == 10 && date[4] == '-' && date[7] == '-';
+    for (int i = 0; ok && i < 10; ++i) if (i != 4 && i != 7 && !isdigit((unsigned char)date[i])) ok = 0;
+    if (ok) memcpy(d->release_date, date, 11);
+    return 1;
+  }
+  if (!strcmp(key, "stars")) {
+    jp_ws(jp);
+    if (jp->p >= jp->end || (*jp->p != '-' && !isdigit((unsigned char)*jp->p))) return jp_skip(jp) ? 1 : -1;
+    double v; uint64_t u; int integer;
+    if (!jp_number(jp, &v, &u, &integer)) return -1;
+    if (integer) v = (double)u;
+    d->stars = v > 0 && v <= 5 ? v : 0;
+    return 1;
+  }
+  return 0;
+}
+static int det_game_item(JP* j, void* ctx) {
+  LibDetails* d = ctx;
+  jp_ws(j);
+  if (j->p >= j->end || *j->p != '{') return jp_skip(j);
+  if (d->dirty) {
+    const char* want = d->want;
+    memset(d, 0, sizeof *d);
+    d->want = want;
+  }
+  d->id[0] = 0;
+  if (!jp_object(j, det_field, d)) return 0;
+  if (!strcmp(d->id, d->want)) { d->found = 1; return 0; } // achou: o resto do arquivo nao interessa
+  return 1;
+}
+static int det_top_field(JP* jp, const char* key, void* ctx) {
+  if (!strcmp(key, "games")) return jp_array(jp, det_game_item, ctx) ? 1 : -1;
+  return 0;
+}
+// A ficha do jogo `d->want` -> 1 achou (d preenchido), 0 sem o arquivo, sem a ficha ou arquivo invalido antes dela.
+static int lib_details_read(LibDetails* d) {
+  if (!g_lib_details_path[0] || !d->want[0]) return 0;
+  size_t size = 0;
+  char* text = read_text(g_lib_details_path, LIB_MAX_BYTES, &size);
+  if (!text) return 0;
+  JP jp = {text, text + size, 0};
+  jp_object(&jp, det_top_field, d);
+  free(text);
+  return d->found;
+}
+static void det_key(Buf* b, int* first, const char* key) {
+  buf_str(b, *first ? "\"" : ",\"");
+  *first = 0;
+  buf_str(b, key);
+  buf_str(b, "\":");
+}
+static void det_text(Buf* b, int* first, const char* key, const char* value) {
+  if (!value[0]) return;
+  det_key(b, first, key);
+  buf_json(b, value);
+}
+static void det_list(Buf* b, int* first, const char* key, const char* table, size_t width, int count) {
+  if (!count) return;
+  det_key(b, first, key);
+  buf_str(b, "[");
+  for (int i = 0; i < count; ++i) {
+    if (i) buf_str(b, ",");
+    buf_json(b, table + (size_t)i * width);
+  }
+  buf_str(b, "]");
+}
+static void lib_details_json(Buf* b, const LibDetails* d) {
+  int first = 1;
+  buf_str(b, ",\"details\":{");
+  det_text(b, &first, "summary", d->summary);
+  det_list(b, &first, "about", &d->about[0][0], sizeof d->about[0], d->about_count);
+  if (d->shot_count) {
+    det_key(b, &first, "shots");
+    buf_str(b, "[");
+    for (int i = 0; i < d->shot_count; ++i) {
+      buf_str(b, i ? ",{\"url\":" : "{\"url\":");
+      buf_json(b, d->shots[i].url);
+      if (d->shots[i].thumb[0]) { buf_str(b, ",\"thumb\":"); buf_json(b, d->shots[i].thumb); }
+      buf_str(b, "}");
+    }
+    buf_str(b, "]");
+  }
+  det_list(b, &first, "videos", &d->videos[0][0], sizeof d->videos[0], d->video_count);
+  det_text(b, &first, "cover", d->cover);
+  det_list(b, &first, "coverFallbacks", &d->fallbacks[0][0], sizeof d->fallbacks[0], d->fallback_count);
+  det_text(b, &first, "hero", d->hero);
+  det_text(b, &first, "developer", d->developer);
+  det_text(b, &first, "publisher", d->publisher);
+  det_text(b, &first, "releaseDate", d->release_date);
+  if (d->metacritic) { det_key(b, &first, "metacritic"); buf_fmt(b, "%llu", (unsigned long long)d->metacritic); }
+  if (d->stars > 0) { det_key(b, &first, "stars"); buf_fmt(b, "%.2f", d->stars); }
+  if (d->ratings) { det_key(b, &first, "ratingCount"); buf_fmt(b, "%llu", (unsigned long long)d->ratings); }
+  det_list(b, &first, "features", &d->features[0][0], sizeof d->features[0], d->feature_count);
+  buf_str(b, "}");
+}
+
 static void monitor_library_game(int fd, const char* query) {
   char id[96] = "";
   for (const char* p = query ? query : ""; *p;) {
@@ -4403,6 +4632,13 @@ static void monitor_library_game(int fd, const char* query) {
   }
   buf_fmt(&b, "],\"wholeOk\":%s,\"suggested\":", lib_whole_source(&p) >= 0 ? "true" : "false");
   buf_json(&b, suggested >= 0 ? p.files[suggested].name : "");
+  // glibren.9: a ficha (fotos, videos, texto e detalhes), quando o app gravou uma para este jogo.
+  LibDetails* d = calloc(1, sizeof *d);
+  if (d) {
+    d->want = p.game.id;
+    if (lib_details_read(d)) lib_details_json(&b, d);
+    free(d);
+  }
   buf_str(&b, "}");
   lib_find_free(&p);
   if (b.failed || !b.data) monitor_json(fd, 500, "{\"error\":\"out of memory\"}");
@@ -4670,6 +4906,13 @@ int main(void) {
   snprintf(g_dir, sizeof g_dir, "%s", env_or("BGDL_DIR", "/data/JobeesLair/bg"));
   // glibren: a Biblioteca TorBox que o app grava (Configuracoes); outro caminho so nos testes.
   snprintf(g_lib_path, sizeof g_lib_path, "%s", env_or("BGDL_LIBRARY", "/data/JobeesLair/torbox-lista.json"));
+  // glibren.9: as fichas dos jogos ao lado da lista (outro caminho so nos testes).
+  if (env_or("BGDL_LIBRARY_DETAILS", "")[0]) snprintf(g_lib_details_path, sizeof g_lib_details_path, "%s", env_or("BGDL_LIBRARY_DETAILS", ""));
+  else {
+    const char* slash = strrchr(g_lib_path, '/');
+    const int dir = slash ? (int)(slash - g_lib_path) : 0;
+    snprintf(g_lib_details_path, sizeof g_lib_details_path, "%.*s%storbox-fichas.json", dir, g_lib_path, slash ? "/" : "");
+  }
   g_port = atoi(env_or("BGDL_PORT", "34200"));
   if (g_port <= 0 || g_port > 65535) g_port = DEFAULT_PORT;
   g_monitor_port = atoi(env_or("BGDL_MONITOR_PORT", "34201"));

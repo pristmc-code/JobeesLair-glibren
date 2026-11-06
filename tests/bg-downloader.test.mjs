@@ -294,7 +294,7 @@ async function page(route, { method = 'GET', body, session } = {}) {
   const text = await res.text();
   let data = {};
   try { data = JSON.parse(text); } catch {}
-  return { status: res.status, data, text, type: res.headers.get('content-type'), length: Number(res.headers.get('content-length')) };
+  return { status: res.status, data, text, type: res.headers.get('content-type'), length: Number(res.headers.get('content-length')), csp: res.headers.get('content-security-policy') || '', referrer: res.headers.get('referrer-policy') || '' };
 }
 async function pageUp() {
   for (let i = 0; i < 100; i++) { try { if ((await page('/api/status')).status === 200) return; } catch {} await wait(50); }
@@ -936,8 +936,12 @@ test('biblioteca TorBox: lista resumida, filtros com contagens, paginacao, campo
   assert.equal(first.data.partial, false);
   const titles = first.data.games.map((game) => game.title);
   assert.deepEqual(titles, [...titles].sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0), 'em ordem de titulo');
-  for (const secret of ['ab'.repeat(20), '0101010101', 'example.invalid', base]) assert.ok(!first.text.includes(secret), `a lista nao mostra ${secret}`);
-  assert.deepEqual(Object.keys(first.data.games[0]).sort(), ['code', 'files', 'formats', 'genres', 'id', 'platform', 'queued', 'sizeBytes', 'title']);
+  for (const secret of ['ab'.repeat(20), '0101010101', base]) assert.ok(!first.text.includes(secret), `a lista nao mostra ${secret}`);
+  // glibren.9: a capa (https) vai junto, para a pagina mostrar.
+  const g0 = first.data.games.find((game) => game.id === 'g0');
+  assert.deepEqual(Object.keys(g0).sort(), ['code', 'cover', 'files', 'formats', 'genres', 'id', 'platform', 'queued', 'sizeBytes', 'title']);
+  assert.equal(g0.cover, 'https://example.invalid/c.jpg');
+  assert.equal('cover' in first.data.games.find((game) => game.id === 'num'), false, 'sem capa: sem o campo');
   const rest = await lib('?offset=200&limit=200');
   assert.equal(rest.data.games.length, 63);
   const all = [...first.data.games, ...rest.data.games];
@@ -1003,6 +1007,72 @@ test('biblioteca TorBox: lista resumida, filtros com contagens, paginacao, campo
   rmSync(file);
   await wait(2100);
   assert.equal((await lib()).status, 404);
+  await stop(child);
+});
+
+// glibren.9: as capas na lista e a ficha de cada jogo (torbox-fichas.json ao lado da lista): fotos, videos e detalhes.
+test('biblioteca TorBox: capa na lista, ficha do jogo com fotos e videos (so https e ids do YouTube), CSP da pagina', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const file = path.join(base, 'torbox-lista.json');
+  const fichas = path.join(base, 'torbox-fichas.json'); // o caminho padrao: ao lado da lista
+  const data = library(8);
+  data.games[1].cover = 'http://sem-tls.example/c.jpg';
+  data.games[2].cover = 'https://aspas.example/"onerror=x.jpg';
+  data.games[3].cover = `https://longa.example/${'a'.repeat(300)}.jpg`;
+  data.games[4].cover = { url: 'https://objeto.example/c.jpg' };
+  writeFileSync(file, JSON.stringify(data));
+  const shot = (n) => ({ url: `https://shots.example/${n}.1920x1080.jpg`, thumb: `https://shots.example/${n}.600x338.jpg` });
+  const rich = { id: 'g0', summary: 'Resumo curto.', about: ['Primeiro.', 'x'.repeat(3000), 'Terceiro.', 'Quarto.', 'Quinto.'],
+    shots: [...Array.from({ length: 10 }, (_, i) => shot(i)), 'https://shots.example/texto.jpg', { url: 'javascript:alert(1)' }],
+    videos: ['M7lc1UVf-VE', 'M7lc1UVf-VE', 'curto', '<script>xx', 'abcdefghij_'], cover: 'https://img.example/c.png?w=384',
+    coverFallbacks: ['https://steam.example/c.jpg', 'http://x.example/c.jpg', 'https://outra.example/c.jpg', 'https://terceira.example/c.jpg'],
+    hero: 'https://steam.example/hero.jpg', developer: 'Estudio', publisher: 'Editora', releaseDate: '2024-03-01', metacritic: 88, stars: 4.567,
+    ratingCount: 1200, features: ['Single-player', 'Co-op'], extra: { ignorado: [1, 2, 3] } };
+  writeFileSync(fichas, JSON.stringify({ version: 1, builtAt: '2026-11-06T10:00:00Z', games: [
+    { id: 'outro', summary: 'nao e este', shots: [shot(99)] },
+    rich,
+    { summary: 'campos antes do id', releaseDate: 'ontem', metacritic: 500, stars: 9, id: 'g1' },
+    { id: 'g0', summary: 'repetido: vale o primeiro' }
+  ] }));
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file });
+  await up(base);
+  await pageUp();
+  // A pagina: imagens https e o player do YouTube sem cookies; o resto continua so daqui.
+  const html = await page('/');
+  assert.match(html.csp, /img-src data: https:;/);
+  assert.match(html.csp, /frame-src https:\/\/www\.youtube-nocookie\.com https:\/\/www\.youtube\.com/);
+  assert.match(html.csp, /default-src 'none'.*script-src 'unsafe-inline'.*connect-src 'self'/);
+  assert.equal(html.referrer, 'no-referrer');
+  assert.equal((await page('/api/status')).csp, '', 'o JSON nao leva CSP');
+  const list = (await lib('?limit=50')).data.games;
+  const cover = Object.fromEntries(list.map((game) => [game.id, game.cover]));
+  assert.equal(cover.g0, 'https://example.invalid/c.jpg');
+  assert.deepEqual([cover.g1, cover.g2, cover.g3, cover.g4], [undefined, undefined, undefined, undefined], 'sem https, com aspas, longa demais ou objeto: sem capa');
+  const g0 = await page('/api/library/game?id=g0');
+  assert.equal(g0.status, 200);
+  assert.equal(g0.data.game.cover, 'https://example.invalid/c.jpg');
+  const d = g0.data.details;
+  assert.equal(d.summary, 'Resumo curto.');
+  assert.equal(d.about.length, 4, 'ate 4 paragrafos');
+  assert.ok(d.about[1].length < 1200 && d.about[1].startsWith('xxx'), 'paragrafo longo cortado');
+  assert.equal(d.shots.length, 8, 'ate 8 fotos');
+  assert.deepEqual(d.shots[0], shot(0));
+  assert.deepEqual(d.videos, ['M7lc1UVf-VE', 'abcdefghij_'], 'so ids de 11 caracteres, uma vez cada');
+  assert.equal(d.cover, 'https://img.example/c.png?w=384');
+  assert.deepEqual(d.coverFallbacks, ['https://steam.example/c.jpg', 'https://outra.example/c.jpg']);
+  assert.deepEqual([d.hero, d.developer, d.publisher, d.releaseDate, d.metacritic, d.stars, d.ratingCount], ['https://steam.example/hero.jpg', 'Estudio', 'Editora', '2024-03-01', 88, 4.57, 1200]);
+  assert.deepEqual(d.features, ['Single-player', 'Co-op']);
+  assert.ok(!g0.text.includes('nao e este') && !g0.text.includes('ignorado') && !g0.text.includes('javascript'), 'so a ficha do jogo, so os campos conhecidos');
+  const g1 = (await page('/api/library/game?id=g1')).data.details;
+  assert.deepEqual(g1, { summary: 'campos antes do id' }, 'id no fim tambem vale; data, nota e estrelas fora da faixa ficam de fora');
+  const g5 = await page('/api/library/game?id=g5');
+  assert.equal(g5.status, 200);
+  assert.equal('details' in g5.data, false, 'sem ficha: sem details');
+  writeFileSync(fichas, '{ "games": [ {"id": "g0", "summary": ');
+  assert.equal('details' in (await page('/api/library/game?id=g0')).data, false, 'ficha cortada: o jogo continua abrindo');
+  rmSync(fichas);
+  assert.equal((await page('/api/library/game?id=g0')).status, 200, 'sem o arquivo das fichas tambem');
   await stop(child);
 });
 

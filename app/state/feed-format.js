@@ -8,6 +8,7 @@
 // data/releases/*.json hold.
 
 import { isMagnetLink, sourceKind, webURL } from './download-sources.js';
+import { youtubeId } from './youtube.js';
 
   // MAX_TOTAL_RELEASES bounds a whole feed: 1500 games × 64 releases would be ~96 000 records, far
   // more than the 32 MiB JS heap holds beside the catalog; real feeds list a few per game.
@@ -179,6 +180,9 @@ import { isMagnetLink, sourceKind, webURL } from './download-sources.js';
       shots: list(raw.shots, 12, httpURL),
       summary: text(raw.summary, 600)
     };
+    // glibren.9: "videos" (YouTube ids or addresses) for the TorBox library on the phone; kept only when there are some.
+    const videos = [...new Set(list(raw.videos, 6, youtubeId))];
+    if (videos.length) page.videos = videos;
     return { game: record, page, releases };
   }
   // MODIFIED (0.5.1): the "Pegasus standard" catalogs (pegasus-dl.dev/catalogs/<name>.json) read as feeds too:

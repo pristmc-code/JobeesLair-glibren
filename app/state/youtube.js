@@ -59,6 +59,16 @@ export const utf8Length = (text) => {
   return used;
 };
 
+// glibren.9: a YouTube video's id (11 letters, digits, - and _) from the id itself or from a youtube.com/watch?v=,
+// youtu.be/, /embed/, /shorts/ or /live/ address; null for anything else. The phone page (TorBox library) plays these.
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+export function youtubeId(value) {
+  const text = typeof value === "string" ? value.trim() : typeof value?.id === "string" ? value.id.trim() : typeof value?.url === "string" ? value.url.trim() : "";
+  if (VIDEO_ID.test(text)) return text;
+  const match = /^https?:\/\/(?:www\.|m\.)?(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})(?:[?&#/]|$)/i.exec(text);
+  return match ? match[1] : null;
+}
+
 // "<name> gameplay" (or trailer), at most MAX_SEARCH_BYTES: a long name is cut, the kind is kept. "" without a name.
 export function searchText(name, kind = "gameplay") {
   const suffix = ` ${KINDS.includes(kind) ? kind : "gameplay"}`;

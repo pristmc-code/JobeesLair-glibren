@@ -438,7 +438,9 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
 })();
 </script>
 <!-- glibren: Biblioteca TorBox (a lista de jogos confirmados no TorBox que o app monta): ver, filtrar e incluir downloads.
-     Bloco separado; usa o api/guarded/openPin/session da pagina. Sem capas (a pagina so aceita imagens data:). -->
+     Bloco separado; usa o api/guarded/openPin/session da pagina. glibren.9: capas e fotos direto dos enderecos do catalogo
+     (o celular tem internet; a CSP do payload libera img-src https:), ficha do jogo ao tocar (fotos, videos do YouTube,
+     detalhes e arquivos), lista simples com o celular em pe e detalhada deitado. -->
 <style>
 .tabs{display:flex;gap:4px;margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));padding:3px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
 .tabs button{flex:1;min-width:0;min-height:36px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-weight:600;font-size:14.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -459,17 +461,28 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
 .sel select:last-child{grid-column:1/-1}
 .libhead{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 10px;color:var(--subtle);font-size:13px}
 .libhead b{color:var(--fg);font-weight:600}
-.glist{display:grid;grid-template-columns:1fr;gap:8px}
-.game{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;min-width:0;content-visibility:auto;contain-intrinsic-size:auto 76px}
-.game .info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+/* Lista: em pe, simples (capa pequena, titulo, PS5/PS4, tamanho, formato); deitado, detalhada (abaixo) */
+.glist{display:grid;grid-template-columns:minmax(0,1fr);gap:6px}
+.game{display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:11px;padding:7px 10px 7px 7px;background:var(--panel);border:1px solid var(--line);border-radius:10px;min-width:0;cursor:pointer;content-visibility:auto;contain-intrinsic-size:auto 80px;-webkit-tap-highlight-color:transparent}
+.game:active{background:var(--panel2)}
+.cv{position:relative;width:100%;aspect-ratio:3/4;border-radius:6px;overflow:hidden;background:linear-gradient(160deg,var(--raise),var(--deep));flex:none}
+.cv .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:4px;color:var(--subtle);font-weight:700;font-size:15px;letter-spacing:.04em;text-align:center}
+.cv img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .25s}
+.cv.ok img{opacity:1}
+.game .info{min-width:0;display:flex;flex-direction:column;gap:4px}
 .game .t{font-weight:600;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
-.game .m{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:0}
-.game .m span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.game .m,.game .det{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:0}
+.game .m span,.game .det span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.game .det{display:none;color:var(--subtle);font-size:12.5px}
 .pf{font-weight:700;font-size:11.5px;padding:0 6px;border-radius:4px;border:1px solid;line-height:17px}
 .pf.ps5{color:var(--ice);border-color:rgba(76,201,240,.5)}
 .pf.ps4{color:#c4b5fd;border-color:rgba(196,181,253,.5)}
-.game .m .best{color:var(--good)}
+.best{color:var(--good)!important}
+.qd{color:var(--good);font-weight:600}
+.chev{color:var(--subtle);display:flex}
+.chev svg{width:18px;height:18px}
 .btn.get{flex:none;min-height:38px;padding:6px 14px}
+.game .btn.get{display:none}
 .btn.get.inq{color:var(--good);border-color:rgba(74,222,128,.5);background:transparent;opacity:1}
 .more{display:flex;justify-content:center;min-height:44px;align-items:center}
 .more .btn{flex:none;min-width:180px}
@@ -481,11 +494,95 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
 .fopt input{flex:none;accent-color:var(--accent);margin:0}
 .fopt span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
 .fopt small{flex:none;color:var(--subtle);font-size:12.5px}
+.fopt em{flex:none;font-style:normal;font-size:11px;font-weight:700;color:var(--good);border:1px solid rgba(74,222,128,.5);border-radius:4px;padding:0 5px;text-transform:uppercase;letter-spacing:.03em}
 .toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:30;width:max-content;max-width:calc(100% - 32px);padding:10px 14px;background:var(--panel2);border:1px solid var(--line-hi);border-radius:10px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
 .toast.ok{border-color:rgba(74,222,128,.55)}
 .toast.bad{border-color:rgba(248,113,113,.6)}
-@media (orientation:landscape) and (max-height:520px){ .glist{grid-template-columns:1fr 1fr} .tabs{margin-bottom:6px} .tabs button{min-height:30px} .filters{max-height:60vh} }
-@media (min-width:900px) and (min-height:521px){ .glist{grid-template-columns:1fr 1fr} }
+/* Ficha do jogo (tela inteira por cima da lista; o voltar do celular/navegador fecha) */
+body.fopen{overflow:hidden}
+.ficha{position:fixed;inset:0;z-index:15;background:var(--ink);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+.fbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;padding:calc(8px + env(safe-area-inset-top)) max(var(--pad),env(safe-area-inset-right)) 8px max(var(--pad),env(safe-area-inset-left));background:rgba(5,7,13,.92);border-bottom:1px solid var(--line);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.fbar b{flex:1;min-width:0;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fbar .lock svg{width:18px;height:18px}
+.fhero{position:relative;height:clamp(110px,30vw,240px);overflow:hidden;background:var(--deep)}
+.fhero img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s}
+.fhero.ok img{opacity:.55}
+.fhero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(5,7,13,0) 30%,var(--ink))}
+.fbody{max-width:1100px;margin:0 auto;padding:12px max(var(--pad),env(safe-area-inset-right)) calc(28px + env(safe-area-inset-bottom)) max(var(--pad),env(safe-area-inset-left))}
+.fhero:not([hidden])+.fbody{margin-top:-64px;position:relative}
+.fgrid{display:flex;flex-direction:column;gap:16px;min-width:0}
+.fcol{display:contents}
+.ftop{order:1;display:grid;grid-template-columns:clamp(104px,32vw,150px) minmax(0,1fr);gap:14px;align-items:end;min-width:0}
+.ftop .cv{border-radius:10px;box-shadow:0 10px 26px rgba(0,0,0,.55)}
+.ftop .cv .ph{font-size:24px}
+.fmeta{min-width:0;display:flex;flex-direction:column;gap:7px}
+.fmeta h2{margin:0;font-size:21px;line-height:1.25;word-break:break-word}
+.fmeta .m{display:flex;flex-wrap:wrap;align-items:center;gap:4px 9px;font-size:14px;color:var(--muted);font-variant-numeric:tabular-nums}
+.fmeta .sub{font-size:13px;color:var(--subtle)}
+.score{display:inline-flex;align-items:center;gap:4px}
+.score i{font-style:normal;color:var(--warn)}
+.mc{font-weight:700;font-size:12px;padding:0 6px;border-radius:4px;background:#14532d;color:#bbf7d0;line-height:18px}
+.mc.mid{background:#713f12;color:#fde68a}
+.mc.low{background:#7f1d1d;color:#fecaca}
+.fget{order:2;display:flex;flex-direction:column;gap:6px}
+.fget .btn{min-height:46px;font-size:16px}
+.fget small{color:var(--subtle);font-size:12.5px;text-align:center;word-break:break-word}
+.fsec{display:flex;flex-direction:column;gap:8px;min-width:0}
+.fsec h3{margin:0;font-size:13px;letter-spacing:.07em;text-transform:uppercase;color:var(--subtle);font-weight:700}
+.fs-shots{order:3}.fs-vids{order:4}.fs-files{order:5}.fs-about{order:6}.fs-facts{order:7}
+.shots{display:flex;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;scrollbar-width:none;margin:0 calc(-1 * var(--pad));padding:0 var(--pad) 2px}
+.shots::-webkit-scrollbar{display:none}
+.shot{flex:0 0 84%;max-width:460px;aspect-ratio:16/9;border:0;padding:0;border-radius:8px;overflow:hidden;scroll-snap-align:center;background:var(--raise);cursor:zoom-in;position:relative}
+.shot img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .25s}
+.shot.ok img{opacity:1}
+.shot.bad{display:none}
+.vids{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.vid{display:flex;flex-direction:column;gap:6px;min-width:0}
+.vbox{position:relative;width:100%;aspect-ratio:16/9;border-radius:8px;overflow:hidden;background:#000}
+.vbox button{position:absolute;inset:0;width:100%;height:100%;border:0;padding:0;background:transparent;cursor:pointer}
+.vbox img{width:100%;height:100%;object-fit:cover;display:block}
+.vbox .play{position:absolute;left:50%;top:50%;width:64px;height:44px;transform:translate(-50%,-50%);border-radius:12px;background:rgba(220,38,38,.92);display:flex;align-items:center;justify-content:center}
+.vbox .play svg{width:22px;height:22px;color:#fff}
+.vbox iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.ylinks{display:flex;flex-wrap:wrap;gap:8px}
+.ylinks a,.vid a{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:7px 12px;border:1px solid var(--line-hi);border-radius:8px;background:var(--raise);color:var(--fg);font-size:14px;font-weight:600;text-decoration:none}
+.ylinks a{flex:1 1 150px}
+.ylinks svg,.vid a svg{width:16px;height:16px;color:#ef4444}
+.vid a{align-self:flex-start;min-height:32px;padding:4px 10px;font-size:13px}
+.hint{color:var(--subtle);font-size:12.5px}
+.about{color:var(--muted);font-size:14.5px;line-height:1.55}
+.about p{margin:0 0 8px}
+.about.cut{max-height:9.6em;overflow:hidden;-webkit-mask-image:linear-gradient(180deg,#000 60%,transparent);mask-image:linear-gradient(180deg,#000 60%,transparent)}
+.linkbtn{align-self:flex-start;border:0;background:none;color:var(--ice);padding:2px 0;font-size:14px;font-weight:600;cursor:pointer}
+.facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 14px;margin:0;font-size:14px}
+.facts dt{color:var(--subtle)}
+.facts dd{margin:0;color:var(--fg);min-width:0;word-break:break-word}
+.fmsg{color:var(--muted);font-size:14px}
+.fmsg .btn{margin-top:8px;flex:none}
+.ficha .files{max-height:none}
+/* Fotos em tela cheia (deslizar) */
+.lbox{position:fixed;inset:0;z-index:25;background:#000;display:flex;flex-direction:column}
+.lstrip{flex:1;display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior:contain}
+.lstrip::-webkit-scrollbar{display:none}
+.lstrip div{flex:0 0 100%;height:100%;display:flex;align-items:center;justify-content:center;scroll-snap-align:center}
+.lstrip img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.lbar{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:calc(8px + env(safe-area-inset-top)) max(var(--pad),env(safe-area-inset-right)) 8px max(var(--pad),env(safe-area-inset-left));background:linear-gradient(180deg,rgba(0,0,0,.7),transparent);font-variant-numeric:tabular-nums;color:#e5e7eb;font-size:14px}
+/* Deitado (ou tela larga): lista detalhada em grade, com o codigo, os formatos, o genero, os arquivos e o Baixar */
+@media (orientation:landscape){
+  .glist{grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:8px}
+  .game{grid-template-columns:72px minmax(0,1fr) auto;padding:8px 10px 8px 8px;contain-intrinsic-size:auto 112px}
+  .game .det{display:flex}
+  .game .m .fb{display:none}
+  .game .btn.get{display:inline-flex}
+  .game .chev{display:none}
+  .fgrid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:18px;align-items:start}
+  .fcol{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .ftop{grid-template-columns:clamp(110px,18vw,180px) minmax(0,1fr)}
+  .vids{grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))}
+  .shot{flex-basis:70%}
+}
+@media (orientation:landscape) and (max-height:520px){ .tabs{margin-bottom:6px} .tabs button{min-height:30px} .filters{max-height:60vh} .fhero{display:none} .fhero:not([hidden])+.fbody{margin-top:0} }
+@media (prefers-reduced-motion:reduce){ .cv img,.shot img,.fhero img{transition:none} }
 </style>
 <div class="sheet" id="fileSheet" hidden>
   <div class="dialog" role="dialog" aria-labelledby="fsTitle">
@@ -494,6 +591,15 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
     <div class="files" id="fsList"></div>
     <div class="row"><button class="btn" type="button" id="fsBack"></button><button class="btn primary" type="button" id="fsOk"></button></div>
   </div>
+</div>
+<section class="ficha" id="ficha" hidden role="dialog" aria-modal="true" aria-labelledby="fTitle">
+  <div class="fbar"><button class="lock" type="button" id="fBack"></button><b id="fTitle"></b></div>
+  <div class="fhero" id="fHero" hidden></div>
+  <div class="fbody" id="fBody"></div>
+</section>
+<div class="lbox" id="lbox" hidden role="dialog" aria-modal="true">
+  <div class="lstrip" id="lstrip"></div>
+  <div class="lbar"><span id="lcount"></span><button class="lock" type="button" id="lclose"></button></div>
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
 <script>
@@ -510,7 +616,14 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
       badLib: "A lista da Biblioteca TorBox está com problema. Monte de novo em Configurações da Jobee'sLair.",
       offline: "O PS5 não respondeu.", addedOpen: "{t}: na fila. A Jobee'sLair já começa.", addedClosed: "{t}: na fila. Começa quando você abrir a Jobee'sLair.",
       already: "{t} já está na fila.", fail: "Não deu para incluir. Tente de novo.", full: "A fila do PS5 está cheia.", noHash: "Este jogo não tem o torrent na lista.", noSource: "Não há como baixar esse arquivo pela lista. Abra o jogo na Jobee'sLair.",
-      chooseTitle: "Qual arquivo baixar?", chooseText: "O recomendado já vem marcado.", whole: "Tudo (o torrent inteiro, como .zip)", back: "Voltar", files: "{n} arquivos" },
+      chooseTitle: "Qual arquivo baixar?", chooseText: "O recomendado já vem marcado.", whole: "Tudo (o torrent inteiro, como .zip)", back: "Voltar", files: "{n} arquivos",
+      open: "Abrir a ficha de {t}", close: "Fechar", photos: "Fotos", videos: "Vídeos", about: "Sobre", facts: "Detalhes", filesH: "Arquivos no TorBox",
+      recommended: "Recomendado", willGet: "Vai baixar: {f}", ytTrailer: "Trailer no YouTube", ytGameplay: "Gameplay no YouTube", ytOpen: "Abrir no YouTube",
+      watch: "Assistir: {t}", ytHint: "Os vídeos tocam pelo YouTube (precisa de internet no celular).", readMore: "Ler mais", readLess: "Ler menos",
+      code: "Código", platform: "Plataforma", sizeL: "Tamanho", formatsL: "Formatos", genresL: "Gêneros", released: "Lançamento", developer: "Desenvolvedora",
+      publisher: "Editora", metacritic: "Metacritic", stars: "Nota na PS Store", ratings: "{n} avaliações", features: "Recursos",
+      loadingGame: "Carregando a ficha…", gameFail: "Não deu para abrir a ficha deste jogo.", noDetails: "O app ainda não gravou a ficha deste jogo (fotos e textos): monte a Biblioteca TorBox de novo na Jobee'sLair.",
+      photoOf: "{i} de {n}", photo: "Foto {i} de {n} de {t}" },
     en: { tabDl: "Downloads", tabLib: "TorBox library", search: "Search a game or code", filters: "Filters",
       allP: "PS5 and PS4", anySize: "Any size", lt10: "up to 10 GB", s10: "10–30 GB", s30: "30–60 GB", gt60: "60 GB or more",
       allFmt: "Any file type", allGenre: "All genres", sortTitle: "Sort: title", sortBig: "Largest first", sortSmall: "Smallest first",
@@ -521,25 +634,79 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
       badLib: "The TorBox library list has a problem. Build it again in Jobee'sLair's Settings.",
       offline: "The PS5 did not answer.", addedOpen: "{t}: queued. Jobee'sLair starts it now.", addedClosed: "{t}: queued. It starts when you open Jobee'sLair.",
       already: "{t} is already queued.", fail: "Couldn't add it. Try again.", full: "The PS5 queue is full.", noHash: "This game has no torrent in the list.", noSource: "That file can't be fetched from the list. Open the game in Jobee'sLair.",
-      chooseTitle: "Which file?", chooseText: "The recommended one is already picked.", whole: "Everything (the whole torrent, as a .zip)", back: "Back", files: "{n} files" }
+      chooseTitle: "Which file?", chooseText: "The recommended one is already picked.", whole: "Everything (the whole torrent, as a .zip)", back: "Back", files: "{n} files",
+      open: "Open {t}", close: "Close", photos: "Photos", videos: "Videos", about: "About", facts: "Details", filesH: "Files on TorBox",
+      recommended: "Recommended", willGet: "Will get: {f}", ytTrailer: "Trailer on YouTube", ytGameplay: "Gameplay on YouTube", ytOpen: "Open on YouTube",
+      watch: "Watch: {t}", ytHint: "Videos play from YouTube (the phone needs internet).", readMore: "Read more", readLess: "Read less",
+      code: "Code", platform: "Platform", sizeL: "Size", formatsL: "Formats", genresL: "Genres", released: "Released", developer: "Developer",
+      publisher: "Publisher", metacritic: "Metacritic", stars: "PS Store rating", ratings: "{n} ratings", features: "Features",
+      loadingGame: "Loading the details…", gameFail: "Couldn't open this game's details.", noDetails: "The app hasn't saved this game's details (photos and text) yet: build the TorBox library again in Jobee'sLair.",
+      photoOf: "{i} of {n}", photo: "Photo {i} of {n} of {t}" }
   }[L === T.pt ? "pt" : "en"];
   const GiB = 1024 ** 3, PAGE = 40, WHOLE = "\u0000whole";
   const SIZES = { lt10: [0, 10 * GiB], "10to30": [10 * GiB, 30 * GiB], "30to60": [30 * GiB, 60 * GiB], gt60: [60 * GiB, 0] };
   const SIZE_LABEL = { lt10: B.lt10, "10to30": B.s10, "30to60": B.s30, gt60: B.gt60 };
   const RANK = ["exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip", "tar"];
+  const lang = () => document.documentElement.lang;
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
   const base = (name) => String(name).slice(String(name).lastIndexOf("/") + 1);
+  const ranked = (formats) => [...(formats || [])].sort((a, b) => (RANK.indexOf(a) + 1 || 99) - (RANK.indexOf(b) + 1 || 99));
+  const SVG = {
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+    yt: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M23 12s0-3.6-.5-5.3a2.8 2.8 0 0 0-2-2C18.8 4.2 12 4.2 12 4.2s-6.8 0-8.5.5a2.8 2.8 0 0 0-2 2C1 8.4 1 12 1 12s0 3.6.5 5.3a2.8 2.8 0 0 0 2 2c1.7.5 8.5.5 8.5.5s6.8 0 8.5-.5a2.8 2.8 0 0 0 2-2c.5-1.7.5-5.3.5-5.3zM9.8 15.5v-7l6 3.5z"/></svg>'
+  };
 
-  // ---- Modo demo: uma lista falsa, filtrada aqui como o payload faz ----
+  // ---- Imagens: direto do catalogo (https), carregadas so quando aparecem, com o lugar ja reservado ----
+  // As capas da PlayStation Store aceitam a largura no endereco (?w=): a lista pede uma menor.
+  const okURL = (url) => typeof url === "string" && (/^https:\/\/[^\s"'<>\\`]+$/i.test(url) || /^data:image\//.test(url));
+  const sized = (url, w) => /^https:\/\/image\.api\.playstation\.com\//.test(url) ? (/[?&]w=\d+/.test(url) ? url.replace(/([?&]w=)\d+/, `$1${w}`) : `${url}${url.includes("?") ? "&" : "?"}w=${w}`) : url;
+  const initials = (title) => String(title || "?").replace(/[^\p{L}\p{N} ]+/gu, " ").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+  // Uma imagem que tenta os enderecos em ordem; sem nenhum, fica o que estiver por baixo (as iniciais).
+  function picture(box, urls, { lazy = true } = {}) {
+    const list = [...new Set(urls.filter(okURL))];
+    if (!list.length) return null;
+    const img = el("img"); img.alt = ""; img.decoding = "async"; img.referrerPolicy = "no-referrer";
+    if (lazy) img.loading = "lazy";
+    let at = 0;
+    img.onload = () => box.classList.add("ok");
+    img.onerror = () => { if (++at < list.length) img.src = list[at]; else { img.remove(); box.classList.add("bad"); } };
+    img.src = list[0];
+    box.append(img);
+    return img;
+  }
+  function coverBox(g, width, extra = [], lazy = true) {
+    const box = el("div", "cv"); box.append(el("span", "ph", initials(g.title)));
+    picture(box, [g.cover ? sized(g.cover, width) : "", ...extra], { lazy });
+    return box;
+  }
+
+  // ---- Modo demo: uma lista falsa, filtrada aqui como o payload faz; capas e fotos desenhadas aqui (SVG) ----
   const DEMO_TITLES = ["Astro Bot", "Gran Turismo 7", "Demon's Souls", "Returnal", "Ratchet & Clank: Rift Apart", "Ghost of Tsushima Director's Cut", "Horizon Forbidden West", "Stellar Blade", "Marvel's Spider-Man 2", "God of War Ragnarök", "The Last of Us Part I", "Bloodborne", "Uncharted: Legacy of Thieves", "Days Gone", "Persona 5 Royal", "Elden Ring", "Final Fantasy XVI", "Hogwarts Legacy", "Cyberpunk 2077", "Resident Evil 4", "Dead Space", "Death Stranding", "Sackboy: A Big Adventure", "Gravity Rush 2", "Crash Bandicoot 4", "Tekken 8", "Street Fighter 6", "Mortal Kombat 1", "Hades", "Celeste"];
   const DEMO_GENRES = ["Ação", "Aventura", "RPG", "Corrida", "Luta", "Plataforma", "Terror"];
+  const xml = (text) => String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const demoArt = (w, h, hue, big, small) => "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue},70%,46%)"/><stop offset="1" stop-color="hsl(${(hue + 70) % 360},65%,14%)"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${w * .78}" cy="${h * .28}" r="${h * .2}" fill="rgba(255,255,255,.12)"/><text x="${w / 2}" y="${h * .54}" font-family="sans-serif" font-weight="700" font-size="${Math.round(h / 7)}" fill="#fff" text-anchor="middle">${xml(big)}</text><text x="${w / 2}" y="${h * .68}" font-family="sans-serif" font-size="${Math.round(h / 14)}" fill="rgba(255,255,255,.75)" text-anchor="middle">${xml(small)}</text></svg>`);
   const demoGames = DEMO_TITLES.flatMap((title, i) => [0, 1].map((k) => {
     const ps5 = (i + k) % 3 !== 0, n = i * 2 + k, fmt = ["exfat", "pkg", "rar", "exfat", "ffpkg"][n % 5];
     const size = Math.round((3 + (n * 37) % 110) * GiB * (0.9 + (n % 7) / 30));
-    return { id: `demo${n}`, title: k ? `${title} (${ps5 ? "PS5" : "PS4"} Deluxe)` : title, code: `${ps5 ? "PPSA" : "CUSA"}${String(1000 + n * 37).padStart(5, "0")}`, platform: ps5 ? "ps5" : "ps4",
-      sizeBytes: size, formats: [fmt], genres: [DEMO_GENRES[n % 7], ...n % 4 ? [] : [DEMO_GENRES[(n + 3) % 7]]], files: fmt === "rar" ? 3 : n % 3 ? 1 : 2, queued: false };
+    const name = k ? `${title} (${ps5 ? "PS5" : "PS4"} Deluxe)` : title, hue = (n * 47) % 360;
+    // Alguns sem capa: aparecem as iniciais, como quando a imagem nao carrega.
+    return { id: `demo${n}`, title: name, code: `${ps5 ? "PPSA" : "CUSA"}${String(1000 + n * 37).padStart(5, "0")}`, platform: ps5 ? "ps5" : "ps4",
+      sizeBytes: size, formats: [fmt], genres: [DEMO_GENRES[n % 7], ...n % 4 ? [] : [DEMO_GENRES[(n + 3) % 7]]], files: fmt === "rar" ? 3 : n % 3 ? 1 : 2, queued: false,
+      ...n % 11 === 5 ? {} : { cover: demoArt(300, 400, hue, initials(name), ps5 ? "PS5" : "PS4") } };
   })).sort((a, b) => a.title.localeCompare(b.title));
+  function demoDetails(g) {
+    const n = Number(g.id.slice(4)), hue = (n * 47) % 360;
+    const shots = Array.from({ length: 3 + n % 4 }, (_, i) => ({ url: demoArt(1280, 720, (hue + i * 40) % 360, g.title, `${i + 1}`), thumb: demoArt(480, 270, (hue + i * 40) % 360, g.title, `${i + 1}`) }));
+    return { summary: `${g.title}: texto de exemplo do modo demo, no lugar do resumo da loja.`, about: ["Na página de verdade, aqui vem a descrição da loja (PlayStation Store/Steam) gravada pela Jobee'sLair junto com a Biblioteca TorBox.", "As fotos vêm direto do endereço do catálogo; no modo demo elas são desenhadas aqui mesmo, sem internet.", "Toque numa foto para ver em tela cheia e deslize para o lado."],
+      shots, ...n % 11 === 5 ? {} : { cover: g.cover }, hero: demoArt(1600, 600, (hue + 20) % 360, "", ""), developer: "Estúdio Exemplo", publisher: "Editora Exemplo",
+      releaseDate: `20${String(18 + n % 7)}-0${1 + n % 9}-1${n % 9}`, metacritic: 60 + (n * 7) % 40, stars: Math.round((3.4 + (n % 16) / 10) * 100) / 100, ratingCount: 1000 + n * 431,
+      features: ["Um jogador", ...n % 2 ? ["Online"] : [], "Recursos do DualSense"],
+      // Um video de exemplo (o do guia da API do YouTube); a miniatura no demo e desenhada aqui.
+      ...n % 5 === 0 ? { videos: ["M7lc1UVf-VE"] } : {} };
+  }
   function demoApi(method, path, body) {
     const [pathname, search = ""] = path.split("?"), p = new URLSearchParams(search);
     if (path === "/api/library/add") {
@@ -557,7 +724,7 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
       const stem = g.title.replace(/[^\w]+/g, ".");
       const files = g.formats[0] === "rar" ? [1, 2, 3].map((k) => ({ name: `${stem}/${stem}.part${k}.rar`, size: g.sizeBytes / 3, format: "rar", piece: true }))
         : [{ name: `${stem}/${stem}.${g.formats[0]}`, size: g.sizeBytes, format: g.formats[0], piece: false }, ...g.files > 1 ? [{ name: `${stem}/${stem}-update.pkg`, size: 2 * GiB, format: "pkg", piece: false }] : []];
-      return { status: 200, data: { ok: true, game: g, files, wholeOk: true, suggested: g.formats[0] === "rar" ? "" : files[0].name } };
+      return { status: 200, data: { ok: true, game: { ...g }, files, wholeOk: true, suggested: g.formats[0] === "rar" ? "" : files[0].name, details: demoDetails(g) } };
     }
     const q = (p.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean), plat = p.get("platform") || "";
     const fmts = (p.get("format") || "").split(",").filter(Boolean), gens = (p.get("genre") || "").split(",").filter(Boolean);
@@ -598,13 +765,14 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
   $("libF").querySelector("span").textContent = B.filters;
 
   const lib = { q: "", platform: "", size: "", format: "", genre: "", sort: "title", games: [], count: 0, total: 0, done: false, loading: false, seq: 0, state: "", facets: null, built: "", partial: false, loaded: false };
-  const rows = new Map(); // id -> botao Baixar
-  function show(tab) {
+  const rows = new Map(); // id -> { button, game, badge }
+  // `keepHash`: a ficha aberta pelo endereco (#jogo=...) fica no endereco.
+  function show(tab, keepHash) {
     const isLib = tab === "lib";
     document.body.classList.toggle("lib", isLib);
     tabDl.className = isLib ? "" : "on"; tabLib.className = isLib ? "on" : "";
     tabDl.setAttribute("aria-selected", String(!isLib)); tabLib.setAttribute("aria-selected", String(isLib));
-    try { history.replaceState(null, "", isLib ? "#biblioteca" : location.pathname + location.search); } catch {}
+    if (!keepHash) try { history.replaceState(null, "", isLib ? "#biblioteca" : location.pathname + location.search); } catch {}
     if (isLib && !lib.loaded) load(true);
   }
   tabDl.onclick = () => show("dl");
@@ -682,11 +850,11 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
   function head() {
     const h = $("libHead"); h.textContent = "";
     if (lib.state !== "ok") return;
-    const left = el("span"); left.append(el("b", "", fill(lib.count === lib.total ? B.count : B.countOf, { n: lib.count.toLocaleString(document.documentElement.lang), t: lib.total.toLocaleString(document.documentElement.lang) })));
+    const left = el("span"); left.append(el("b", "", fill(lib.count === lib.total ? B.count : B.countOf, { n: lib.count.toLocaleString(lang()), t: lib.total.toLocaleString(lang()) })));
     h.append(left);
     const notes = [];
     const when = lib.built ? new Date(lib.built) : null;
-    if (when && !isNaN(when)) notes.push(fill(B.built, { d: when.toLocaleDateString(document.documentElement.lang) }));
+    if (when && !isNaN(when)) notes.push(fill(B.built, { d: when.toLocaleDateString(lang()) }));
     if (lib.partial) notes.push(B.partial);
     if (notes.length) h.append(el("span", "", notes.join(" · ")));
   }
@@ -707,30 +875,42 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
   }
   if ("IntersectionObserver" in window) new IntersectionObserver((seen) => { if (seen.some((x) => x.isIntersecting) && document.body.classList.contains("lib")) load(false); }, { rootMargin: "600px 0px" }).observe($("libMore"));
 
+  // Uma linha: em pe so capa, titulo, PS5/PS4, tamanho e o melhor formato; deitado tambem codigo, formatos, generos,
+  // arquivos e o Baixar (CSS). Tocar abre a ficha.
   function row(g) {
-    const r = el("article", "game");
-    const info = el("div", "info"), meta = el("div", "m");
-    info.append(el("div", "t", g.title), meta);
+    const r = el("article", "game"); r.tabIndex = 0; r.setAttribute("role", "button"); r.setAttribute("aria-label", fill(B.open, { t: g.title }));
+    const info = el("div", "info"), meta = el("div", "m"), det = el("div", "det");
+    info.append(el("div", "t", g.title), meta, det);
     if (g.platform) meta.append(el("span", `pf ${g.platform}`, g.platform.toUpperCase()));
-    if (g.code && g.code !== g.title) meta.append(el("span", "", g.code));
     if (g.sizeBytes) meta.append(el("span", "", size(g.sizeBytes)));
-    const formats = [...(g.formats || [])].sort((a, b) => (RANK.indexOf(a) + 1 || 99) - (RANK.indexOf(b) + 1 || 99));
-    if (formats.length) meta.append(el("span", formats[0] === "exfat" ? "best" : "", formats.map((f) => f.toUpperCase()).join(" · ")));
-    if (g.files > 1) meta.append(el("span", "", fill(B.files, { n: g.files })));
-    if (g.genres?.length) meta.append(el("span", "", g.genres.slice(0, 2).join(", ")));
+    const formats = ranked(g.formats);
+    if (formats.length) meta.append(el("span", formats[0] === "exfat" ? "fb best" : "fb", formats[0].toUpperCase()));
+    const badge = el("span", "qd", B.queued); badge.hidden = !g.queued; meta.append(badge);
+    if (g.code && g.code !== g.title) det.append(el("span", "", g.code));
+    if (formats.length) det.append(el("span", formats[0] === "exfat" ? "best" : "", formats.map((f) => f.toUpperCase()).join(" · ")));
+    if (g.genres?.length) det.append(el("span", "", g.genres.slice(0, 2).join(", ")));
+    if (g.files > 1) det.append(el("span", "", fill(B.files, { n: g.files })));
     const b = el("button", "btn get"); b.type = "button";
-    rows.set(g.id, { button: b, game: g });
+    const chev = el("span", "chev"); chev.innerHTML = SVG.chev;
+    rows.set(g.id, { button: b, game: g, badge });
+    b.onclick = (e) => { e.stopPropagation(); if (!g.queued) guarded(() => pick(g)); };
+    r.onclick = () => openFicha(g.id);
+    r.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFicha(g.id); } };
+    r.append(coverBox(g, 160), info, b, chev);
     paint(g);
-    b.onclick = () => { if (!g.queued) guarded(() => pick(g)); };
-    r.append(info, b);
     return r;
   }
+  // O botao Baixar do jogo (na linha e na ficha aberta) e o selo "Na fila".
   function paint(g, busy) {
-    const b = rows.get(g.id)?.button;
-    if (!b) return;
-    b.className = g.queued ? "btn get inq" : "btn get";
-    b.disabled = Boolean(g.queued || busy);
-    b.textContent = busy ? B.adding : g.queued ? B.queued : B.get;
+    const known = rows.get(g.id);
+    if (known && known.game !== g) known.game.queued = g.queued;
+    if (known) known.badge.hidden = !g.queued;
+    const buttons = [known?.button, fx.id === g.id ? fx.button : null].filter(Boolean);
+    for (const b of buttons) {
+      b.className = `${b === fx.button ? "btn primary get" : "btn get"}${g.queued ? " inq" : ""}`;
+      b.disabled = Boolean(g.queued || busy);
+      b.textContent = busy ? B.adding : g.queued ? B.queued : B.get;
+    }
   }
 
   // ---- Incluir: um arquivo so vai direto; varios, escolhe (o recomendado ja marcado) ----
@@ -739,27 +919,36 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
     const t = $("toast"); t.textContent = text; t.className = `toast ${tone || ""}`; t.hidden = false;
     clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 4200);
   }
+  // Os arquivos que se pode escolher de um jogo (resposta de /api/library/game), com o recomendado.
+  function choicesOf(data) {
+    const files = (data.files || []).filter((f) => !f.piece && f.ok !== false && (f.format || f.size >= 1e6));
+    return [...files.map((f) => ({ value: f.name, label: base(f.name), note: [f.format ? f.format.toUpperCase() : "", f.size ? size(f.size) : ""].filter(Boolean).join(" · "), best: f.name === data.suggested })),
+      ...data.wholeOk === false ? [] : [{ value: WHOLE, label: B.whole, note: "", best: !data.suggested }]];
+  }
+  function radios(list, choices, chosen, onpick) {
+    list.textContent = "";
+    for (const c of choices) {
+      const o = el("label", "fopt"), input = el("input");
+      input.type = "radio"; input.name = list.id; input.checked = c.value === chosen;
+      input.onchange = () => { onpick(c.value); for (const x of list.children) x.classList.toggle("on", x.firstChild.checked); };
+      const name = el("span", "", c.label); name.title = c.value === WHOLE ? c.label : c.value;
+      o.append(input, name);
+      if (c.best) o.append(el("em", "", B.recommended));
+      if (c.note) o.append(el("small", "", c.note));
+      o.classList.toggle("on", input.checked);
+      list.append(o);
+    }
+  }
   async function pick(g) {
     if (g.files <= 1) return add(g, {});
     paint(g, true);
     const r = await libApi("GET", `/api/library/game?id=${encodeURIComponent(g.id)}`);
     paint(g);
     if (r.status !== 200 || !Array.isArray(r.data.files)) { toast(B.fail, "bad"); return; }
-    const files = r.data.files.filter((f) => !f.piece && f.ok !== false && (f.format || f.size >= 1e6));
-    if (!files.length && r.data.wholeOk === false) { toast(B.noSource, "bad"); return; }
+    const choices = choicesOf(r.data);
+    if (!choices.length) { toast(B.noSource, "bad"); return; }
     let chosen = r.data.suggested || WHOLE;
-    const list = $("fsList"); list.textContent = "";
-    const choices = [...files.map((f) => ({ value: f.name, label: base(f.name), note: [f.format ? f.format.toUpperCase() : "", f.size ? size(f.size) : ""].filter(Boolean).join(" · ") })), ...r.data.wholeOk === false ? [] : [{ value: WHOLE, label: B.whole, note: "" }]];
-    for (const c of choices) {
-      const o = el("label", "fopt"), input = el("input");
-      input.type = "radio"; input.name = "fs"; input.checked = c.value === chosen;
-      input.onchange = () => { chosen = c.value; for (const x of list.children) x.classList.toggle("on", x.firstChild.checked); };
-      const name = el("span", "", c.label); name.title = c.value === WHOLE ? c.label : c.value;
-      o.append(input, name);
-      if (c.note) o.append(el("small", "", c.note));
-      o.classList.toggle("on", input.checked);
-      list.append(o);
-    }
+    radios($("fsList"), choices, chosen, (v) => { chosen = v; });
     $("fsTitle").textContent = B.chooseTitle; $("fsText").textContent = `${g.title} · ${B.chooseText}`;
     $("fsBack").textContent = B.back; $("fsOk").textContent = B.get;
     $("fsBack").onclick = () => { $("fileSheet").hidden = true; };
@@ -782,7 +971,217 @@ body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
     toast(r.data?.error === "no-hash" ? B.noHash : r.data?.error === "no-source" ? B.noSource : r.data?.error === "full" ? B.full : B.fail, "bad");
   }
 
-  if (location.hash === "#biblioteca") show("lib");
+  // ---- Ficha do jogo: #jogo=<id> no endereco (voltar do celular/navegador fecha); fotos em tela cheia: #jogo=<id>/fotos/<n> ----
+  const fx = { id: "", game: null, data: null, button: null, chosen: "", shots: [], seq: 0 };
+  const VIDEO = /^[A-Za-z0-9_-]{11}$/;
+  const cleanTitle = (t) => String(t || "").replace(/[™®©]/g, " ").replace(/\s+/g, " ").trim();
+  const ytSearch = (title, kind) => `https://www.youtube.com/results?search_query=${encodeURIComponent(`${cleanTitle(title)} ${kind}`)}`;
+  $("fBack").innerHTML = SVG.back + `<span>${B.back}</span>`;
+  $("fBack").onclick = () => closeTop();
+  $("lclose").textContent = B.close;
+  $("lclose").onclick = () => closeTop();
+  function parseHash() {
+    const m = /^#jogo=([^/]+)(\/fotos(?:\/(\d+))?)?$/.exec(location.hash);
+    if (!m) return null;
+    try { return { id: decodeURIComponent(m[1]), photos: Boolean(m[2]), at: Number(m[3]) || 0 }; } catch { return null; }
+  }
+  const gameHash = (id) => `#jogo=${encodeURIComponent(id)}`;
+  function openFicha(id) {
+    try { history.pushState({ jl: "ficha" }, "", gameHash(id)); } catch {}
+    route();
+  }
+  function openPhotos(at) {
+    try { history.pushState({ jl: "fotos" }, "", `${gameHash(fx.id)}/fotos/${at}`); } catch {}
+    route();
+  }
+  // Fecha o que estiver por cima (fotos, depois a ficha): pelo historico quando foi a pagina que abriu.
+  function closeTop() {
+    if (history.state && history.state.jl) { history.back(); return; }
+    try { history.replaceState(null, "", $("lbox").hidden ? "#biblioteca" : gameHash(fx.id)); } catch {}
+    route();
+  }
+  function route() {
+    const h = parseHash();
+    if (!h) { closeLightbox(); closeFicha(); return; }
+    if (!document.body.classList.contains("lib")) show("lib", true);
+    if (fx.id !== h.id || $("ficha").hidden) openFichaView(h.id);
+    if (h.photos && fx.shots.length) openLightbox(Math.min(h.at, fx.shots.length - 1)); else closeLightbox();
+  }
+  addEventListener("popstate", route);
+  addEventListener("keydown", (e) => { if (e.key === "Escape" && (!$("lbox").hidden || !$("ficha").hidden) && $("sheet").hidden && $("fileSheet").hidden) closeTop(); });
+  // Voltar do APK Jobe Controle: fecha a janela ou a ficha aberta; false = nada aberto (o app decide).
+  window.jobeVoltar = () => {
+    if (!$("sheet").hidden) { $("pinCancel").click(); return true; }
+    if (!$("powerSheet").hidden) { $("powerSheet").hidden = true; return true; }
+    if (!$("fileSheet").hidden) { $("fileSheet").hidden = true; return true; }
+    if (!$("lbox").hidden || !$("ficha").hidden) { closeTop(); return true; }
+    return false;
+  };
+  function closeFicha() {
+    if ($("ficha").hidden) return;
+    $("ficha").hidden = true; document.body.classList.remove("fopen");
+    $("fBody").textContent = ""; $("fHero").textContent = ""; $("fHero").hidden = true;
+    const from = fx.id; Object.assign(fx, { id: "", game: null, data: null, button: null, shots: [], seq: fx.seq + 1 });
+    // De volta na lista, no jogo que estava aberto.
+    const r = rows.get(from)?.button?.closest(".game"); if (r) r.focus({ preventScroll: true });
+  }
+  async function openFichaView(id) {
+    const seq = ++fx.seq;
+    const known = rows.get(id)?.game || lib.games.find((g) => g.id === id) || null;
+    Object.assign(fx, { id, game: known, data: null, button: null, chosen: "", shots: [] });
+    $("ficha").hidden = false; $("ficha").scrollTop = 0; document.body.classList.add("fopen");
+    $("fTitle").textContent = known ? known.title : "";
+    $("fHero").hidden = true; $("fHero").textContent = "";
+    renderFicha(known ? "loading" : "loading-blank");
+    const r =await libApi("GET", `/api/library/game?id=${encodeURIComponent(id)}`);
+    if (seq !== fx.seq) return;
+    if (r.status !== 200 || !r.data.game) { renderFicha("fail"); return; }
+    fx.game = known ? Object.assign(known, { queued: known.queued || r.data.game.queued }) : r.data.game;
+    fx.data = r.data;
+    $("fTitle").textContent = fx.game.title;
+    renderFicha("ok");
+    const h = parseHash();
+    if (h && h.photos && fx.shots.length) openLightbox(Math.min(h.at, fx.shots.length - 1));
+  }
+  function section(cls, title) { const s = el("section", `fsec ${cls}`); if (title) s.append(el("h3", "", title)); return s; }
+  function renderFicha(state) {
+    const body = $("fBody"); body.textContent = "";
+    const g = fx.game || { title: "", id: fx.id };
+    const d = (fx.data && fx.data.details) || {};
+    if (state === "loading-blank" || state === "fail") {
+      const box = el("div", "fmsg", state === "fail" ? B.gameFail : B.loadingGame);
+      if (state === "fail") { box.append(el("br")); const again = el("button", "btn", B.retry); again.type = "button"; again.onclick = () => openFichaView(fx.id); box.append(again); }
+      body.append(box); return;
+    }
+    // Banner (a arte larga da loja), quando ha.
+    if (okURL(d.hero)) { $("fHero").hidden = false; picture($("fHero"), [d.hero], { lazy: false }); }
+    const grid = el("div", "fgrid"), left = el("div", "fcol"), right = el("div", "fcol");
+    grid.append(left, right); body.append(grid);
+    // Capa grande + titulo e o essencial.
+    const top = el("div", "ftop"), meta = el("div", "fmeta");
+    top.append(coverBox({ ...g, cover: d.cover || g.cover }, 440, (d.coverFallbacks || []).map((u) => sized(u, 440)), false), meta);
+    meta.append(el("h2", "", g.title));
+    const m = el("div", "m");
+    if (g.platform) m.append(el("span", `pf ${g.platform}`, g.platform.toUpperCase()));
+    if (g.sizeBytes) m.append(el("span", "", size(g.sizeBytes)));
+    const formats = ranked(g.formats);
+    if (formats.length) m.append(el("span", formats[0] === "exfat" ? "best" : "", formats.map((f) => f.toUpperCase()).join(" · ")));
+    meta.append(m);
+    const sub = [g.code && g.code !== g.title ? g.code : "", d.releaseDate ? d.releaseDate.slice(0, 4) : "", (g.genres || []).slice(0, 3).join(", ")].filter(Boolean);
+    if (sub.length) meta.append(el("div", "sub", sub.join(" · ")));
+    const rating = el("div", "m");
+    if (d.stars) { const s = el("span", "score"); s.append(el("i", "", "★"), document.createTextNode(` ${nf(d.stars, 1)}`)); s.title = B.stars; rating.append(s); }
+    if (d.metacritic) { const mc = el("span", `mc${d.metacritic < 50 ? " low" : d.metacritic < 75 ? " mid" : ""}`, String(d.metacritic)); mc.title = B.metacritic; rating.append(mc); }
+    if (rating.children.length) meta.append(rating);
+    left.append(top);
+    // Baixar (fluxo de sempre, com o PIN), com o arquivo escolhido abaixo.
+    const get = el("div", "fget"), b = el("button", "btn primary get"); b.type = "button";
+    const note = el("small");
+    get.append(b, note); left.append(get);
+    fx.button = b; paint(g, state === "loading");
+    if (state === "loading") { left.append(el("div", "fmsg", B.loadingGame)); return; }
+    const data = fx.data;
+    const choices = choicesOf(data);
+    const multi = choices.length > 1 && (g.files > 1 || choices.filter((c) => c.value !== WHOLE).length > 1);
+    fx.chosen = data.suggested || (choices.some((c) => c.value === WHOLE) ? WHOLE : choices[0]?.value || "");
+    const say = () => { const c = choices.find((x) => x.value === fx.chosen); note.textContent = c && multi ? fill(B.willGet, { f: c.label }) : ""; };
+    say();
+    b.onclick = () => {
+      if (g.queued) return;
+      if (!choices.length) { toast(B.noSource, "bad"); return; }
+      guarded(() => add(g, fx.chosen === WHOLE ? { whole: true } : fx.chosen ? { file: fx.chosen } : {}));
+    };
+    // Fotos (deslizar; tocar abre em tela cheia).
+    fx.shots = (d.shots || []).filter((s) => okURL(s.url));
+    if (fx.shots.length) {
+      const s = section("fs-shots", B.photos), strip = el("div", "shots");
+      fx.shots.forEach((shot, i) => {
+        const t = el("button", "shot"); t.type = "button"; t.setAttribute("aria-label", fill(B.photo, { i: i + 1, n: fx.shots.length, t: g.title }));
+        picture(t, [shot.thumb || shot.url, shot.url]);
+        t.onclick = () => openPhotos(i);
+        strip.append(t);
+      });
+      s.append(strip); right.append(s);
+    }
+    // Videos: os do catalogo (player do YouTube sem cookies, so ao tocar) e a busca no YouTube pelo nome.
+    const vids = section("fs-vids", B.videos), list = el("div", "vids");
+    for (const id of (d.videos || []).filter((v) => VIDEO.test(v))) {
+      const v = el("div", "vid"), box = el("div", "vbox"), play = el("button");
+      play.type = "button"; play.setAttribute("aria-label", fill(B.watch, { t: g.title }));
+      picture(play, [DEMO ? demoArt(480, 270, 0, "▶", g.title) : `https://i.ytimg.com/vi/${id}/hqdefault.jpg`]);
+      const icon = el("span", "play"); icon.innerHTML = SVG.play; play.append(icon);
+      play.onclick = () => {
+        const f = document.createElement("iframe");
+        f.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&playsinline=1&rel=0`;
+        f.title = fill(B.watch, { t: g.title }); f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+        f.referrerPolicy = "strict-origin-when-cross-origin";
+        box.textContent = ""; box.append(f);
+      };
+      box.append(play);
+      const link = el("a"); link.href = `https://www.youtube.com/watch?v=${id}`; link.target = "_blank"; link.rel = "noopener noreferrer";
+      link.innerHTML = SVG.yt; link.append(document.createTextNode(B.ytOpen));
+      v.append(box, link); list.append(v);
+    }
+    if (list.children.length) vids.append(list);
+    const links = el("div", "ylinks");
+    for (const [kind, label] of [["trailer", B.ytTrailer], ["gameplay", B.ytGameplay]]) {
+      const a = el("a"); a.href = ytSearch(g.title, kind); a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.innerHTML = SVG.yt; a.append(document.createTextNode(label)); links.append(a);
+    }
+    vids.append(links, el("div", "hint", B.ytHint));
+    right.append(vids);
+    // Arquivos no TorBox (o recomendado ja marcado), quando ha escolha de verdade (um arquivo so vai direto, como na lista).
+    if (multi) {
+      const s = section("fs-files", B.filesH), box = el("div", "files"); box.id = "fFiles";
+      radios(box, choices, fx.chosen, (v) => { fx.chosen = v; say(); });
+      s.append(box); left.append(s);
+    }
+    // Sobre (o resumo e o texto da loja; longo, abre em "Ler mais").
+    const paragraphs = [d.summary, ...(d.about || [])].filter((p, i, all) => p && all.indexOf(p) === i);
+    if (paragraphs.length) {
+      const s = section("fs-about", B.about), text = el("div", "about");
+      for (const p of paragraphs) text.append(el("p", "", p));
+      s.append(text);
+      if (paragraphs.join(" ").length > 360) {
+        text.classList.add("cut");
+        const more = el("button", "linkbtn", B.readMore); more.type = "button";
+        more.onclick = () => { const cut = text.classList.toggle("cut"); more.textContent = cut ? B.readMore : B.readLess; };
+        s.append(more);
+      }
+      right.append(s);
+    } else if (!fx.data.details) right.append(el("div", "hint", B.noDetails));
+    // Detalhes.
+    const facts = [[B.code, g.code], [B.platform, g.platform ? g.platform.toUpperCase() : ""], [B.sizeL, g.sizeBytes ? size(g.sizeBytes) : ""],
+      [B.formatsL, formats.map((f) => f.toUpperCase()).join(", ")], [B.genresL, (g.genres || []).join(", ")],
+      [B.released, d.releaseDate ? new Date(`${d.releaseDate}T12:00:00`).toLocaleDateString(lang()) : ""], [B.developer, d.developer], [B.publisher, d.publisher],
+      [B.stars, d.stars ? `${nf(d.stars, 2)} / 5${d.ratingCount ? ` · ${fill(B.ratings, { n: d.ratingCount.toLocaleString(lang()) })}` : ""}` : ""],
+      [B.metacritic, d.metacritic ? String(d.metacritic) : ""], [B.features, (d.features || []).join(", ")]].filter(([, v]) => v);
+    if (facts.length) {
+      const s = section("fs-facts", B.facts), dl = el("dl", "facts");
+      for (const [k, v] of facts) dl.append(el("dt", "", k), el("dd", "", v));
+      s.append(dl); left.append(s);
+    }
+  }
+  // Fotos em tela cheia: deslizar para o lado; o contador acompanha.
+  function openLightbox(at) {
+    const strip = $("lstrip");
+    if ($("lbox").hidden) {
+      strip.textContent = "";
+      for (const shot of fx.shots) { const cell = el("div"); picture(cell, [shot.url, shot.thumb || ""]); strip.append(cell); }
+      $("lbox").hidden = false;
+    }
+    requestAnimationFrame(() => { strip.scrollLeft = at * strip.clientWidth; count(); });
+  }
+  function count() { const strip = $("lstrip"); $("lcount").textContent = fill(B.photoOf, { i: Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth)) + 1, n: fx.shots.length }); }
+  $("lstrip").addEventListener("scroll", count, { passive: true });
+  function closeLightbox() { if ($("lbox").hidden) return; $("lbox").hidden = true; $("lstrip").textContent = ""; }
+
+  // Endereco com a ficha (#jogo=<id>, ex.: recarregar a pagina): a biblioteca embaixo, para o voltar cair nela.
+  const start = parseHash();
+  if (start) {
+    try { history.replaceState(null, "", "#biblioteca"); history.pushState({ jl: "ficha" }, "", gameHash(start.id)); } catch {}
+    show("lib", true); route();
+  } else if (location.hash === "#biblioteca") show("lib");
 })();
 </script>
 </body>

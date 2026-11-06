@@ -83,6 +83,10 @@ import { noteRow, warmAtStart } from './cover-warm.js';
     get shortDescription() {
       return pageOf(this).summary;
     },
+    // glibren.9: YouTube ids (a feed's "videos"; the bundled pages have none), for the TorBox library on the phone.
+    get videos() {
+      return pageOf(this).videos ?? [];
+    },
     get titleId() {
       return this.id;
     }
@@ -94,6 +98,9 @@ import { noteRow, warmAtStart } from './cover-warm.js';
     } },
     shots: { get() {
       return this.feedPage.shots;
+    } },
+    videos: { get() {
+      return this.feedPage.videos ?? [];
     } },
     shortDescription: { get() {
       return this.feedPage.summary;

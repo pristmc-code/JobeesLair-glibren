@@ -196,8 +196,8 @@ test('the library and the payload list are written and read back; the list has o
   const files = new Map();
   const fs = { exists: (p) => files.has(p), readFile: (p) => files.get(p), writeFile: (p, text) => files.set(p, String(text)), mkdir() {}, rename: (a, b) => { files.set(b, files.get(a)); files.delete(a); } };
   const ps5 = lib.libraryPaths('/download0/JobeesLair', true);
-  assert.deepEqual(ps5, { library: '/download0/JobeesLair/torbox-biblioteca.json', backup: '/data/JobeesLair/torbox-biblioteca.json', list: '/data/JobeesLair/torbox-lista.json', ids: '/download0/JobeesLair/torbox-loja.json' });
-  assert.deepEqual(lib.libraryPaths('/home/x/JobeesLair', false), { library: '/home/x/JobeesLair/torbox-biblioteca.json', backup: null, list: '/home/x/JobeesLair/torbox-lista.json', ids: '/home/x/JobeesLair/torbox-loja.json' });
+  assert.deepEqual(ps5, { library: '/download0/JobeesLair/torbox-biblioteca.json', backup: '/data/JobeesLair/torbox-biblioteca.json', list: '/data/JobeesLair/torbox-lista.json', ids: '/download0/JobeesLair/torbox-loja.json', details: '/data/JobeesLair/torbox-fichas.json' });
+  assert.deepEqual(lib.libraryPaths('/home/x/JobeesLair', false), { library: '/home/x/JobeesLair/torbox-biblioteca.json', backup: null, list: '/home/x/JobeesLair/torbox-lista.json', ids: '/home/x/JobeesLair/torbox-loja.json', details: '/home/x/JobeesLair/torbox-fichas.json' });
   assert.equal(lib.readConfirmedIds(fs, ps5), null, 'never built');
   const { library } = await lib.buildLibrary({ entries: entriesOf([game(1), game(2), game(4)]), api: fakeApi(), ...quiet, ...clock() });
   lib.writeLibrary(fs, ps5, library, { backup: true });
@@ -220,6 +220,58 @@ test('the library and the payload list are written and read back; the list has o
   files.set(ps5.library, '{not json');
   files.delete(ps5.backup);
   assert.deepEqual(lib.readLibrary(fs, ps5), lib.emptyLibrary(), 'unreadable: an empty one');
+  assert.ok(!files.has(ps5.details), 'no details without the catalog games');
+});
+
+test('glibren.9: the phone details (torbox-fichas.json): cover, photos, videos and store facts of the listed games, https only', async () => {
+  const files = new Map();
+  const fs = { exists: (p) => files.has(p), readFile: (p) => files.get(p), writeFile: (p, text) => files.set(p, String(text)), mkdir() {}, rename: (a, b) => { files.set(b, files.get(a)); files.delete(a); } };
+  const ps5 = lib.libraryPaths('/download0/JobeesLair', true);
+  const shot = (n) => ({ url: `https://shots.example/${n}.1920x1080.jpg`, thumb: `https://shots.example/${n}.600x338.jpg` });
+  const rich = game(2, {
+    developer: 'Studio\nTwo', publisher: 'Pub', releaseDate: '2024-03-01', metacritic: 88, stars: 4.567, ratingCount: 1200, features: ['Single-player', 'Co-op'],
+    art: { cover: 'https://img/2.png?w=384', coverFallbacks: ['https://img/2.png?w=384', 'https://steam/2.jpg', 'http://plain/2.jpg'], hero: 'https://steam/2-hero.jpg' },
+    shortDescription: 'Short\ttext.', about: ['First paragraph.', '', 'x'.repeat(5000), 'Third.', 'Fourth.', 'Fifth.'],
+    shots: [...Array.from({ length: 10 }, (_, i) => shot(i)), 'javascript:alert(1)', shot(1)],
+    videos: ['dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=M7lc1UVf-VE&t=3', 'https://youtu.be/M7lc1UVf-VE', 'not a video', 'https://evil.example/watch?v=aaaaaaaaaaa']
+  });
+  // A página do jogo que não lê (getter que falha) só deixa a ficha mais curta.
+  const broken = Object.defineProperty(game(4, { shots: 'nope' }), 'about', { get() { throw new Error('no page'); } });
+  const { library } = await lib.buildLibrary({ entries: entriesOf([game(1), rich, broken]), api: fakeApi(), ...quiet, ...clock() });
+  const byId = new Map([rich, broken].map((g) => [g.id, g]));
+  lib.writeList(fs, ps5, library, undefined, (id) => byId.get(id) ?? null);
+  const details = JSON.parse(files.get(ps5.details));
+  assert.equal(details.version, 1);
+  assert.deepEqual(details.games.map((g) => g.id), JSON.parse(files.get(ps5.list)).games.map((g) => g.id), 'the same games as the list, in its order');
+  const two = details.games.find((g) => g.id === 'PPSA00002');
+  assert.equal(Object.keys(two)[0], 'id', 'the id first (the payload looks for it)');
+  assert.equal(two.summary, 'Short text.');
+  assert.deepEqual(two.about.slice(0, 1), ['First paragraph.']);
+  assert.equal(two.about.length, 4);
+  assert.ok(two.about[1].length <= 900);
+  assert.equal(two.shots.length, 8, 'at most 8 photos, no repeats, nothing but https');
+  assert.deepEqual(two.shots[0], shot(0));
+  assert.deepEqual(two.videos, ['dQw4w9WgXcQ', 'M7lc1UVf-VE'], 'YouTube ids from ids and addresses, once each');
+  assert.equal(two.cover, 'https://img/2.png?w=384');
+  assert.deepEqual(two.coverFallbacks, ['https://steam/2.jpg'], 'the cover itself and http left out');
+  assert.equal(two.hero, 'https://steam/2-hero.jpg');
+  assert.deepEqual([two.developer, two.publisher, two.releaseDate, two.metacritic, two.stars, two.ratingCount], ['Studio Two', 'Pub', '2024-03-01', 88, 4.57, 1200]);
+  assert.deepEqual(two.features, ['Single-player', 'Co-op']);
+  const four = details.games.find((g) => g.id === 'PPSA00004');
+  assert.deepEqual(four, { id: 'PPSA00004', cover: 'https://img/4.png' });
+  assert.ok(!files.get(ps5.details).includes('host.example'), 'no download links in the details');
+  assert.deepEqual(lib.exportDetails({ builtAt: 'x', games: [{ id: 'A' }] }, () => null), { version: 1, builtAt: 'x', games: [{ id: 'A' }] }, 'a game the catalog lost: just the id');
+});
+
+test('glibren.9: youtubeId takes ids and YouTube addresses only; a feed keeps its "videos"', async () => {
+  const { youtubeId } = await load('app/state/youtube.js');
+  for (const [value, id] of [['M7lc1UVf-VE', 'M7lc1UVf-VE'], ['https://www.youtube.com/watch?v=M7lc1UVf-VE', 'M7lc1UVf-VE'], ['https://m.youtube.com/watch?feature=x&v=M7lc1UVf-VE', 'M7lc1UVf-VE'],
+    ['https://youtu.be/M7lc1UVf-VE?t=9', 'M7lc1UVf-VE'], ['https://www.youtube-nocookie.com/embed/M7lc1UVf-VE', 'M7lc1UVf-VE'], ['https://www.youtube.com/shorts/M7lc1UVf-VE', 'M7lc1UVf-VE'], [{ id: 'M7lc1UVf-VE' }, 'M7lc1UVf-VE'],
+    ['https://evil.example/watch?v=M7lc1UVf-VE', null], ['https://www.youtube.com/watch?v=short', null], ['<script>', null], [null, null], ['M7lc1UVf-VE1', null]]) assert.equal(youtubeId(value), id, String(value?.id ?? value));
+  const { parseFeed } = await load('app/state/feed-format.js');
+  const feed = (videos) => parseFeed({ version: 1, name: 'T', games: [{ id: 'PPSA01234', title: 'Game', releases: [{ url: 'https://host.example/a.exfat' }], ...(videos ? { videos } : {}) }] }, 'https://example.com/f.json');
+  assert.deepEqual(feed(['https://youtu.be/M7lc1UVf-VE', 'M7lc1UVf-VE', 'nope']).games[0].page.videos, ['M7lc1UVf-VE']);
+  assert.equal('videos' in feed(null).games[0].page, false, 'no videos: no field');
 });
 
 test('the TorBox store: the store list narrowed in place, the rows and search worked out again, back to full', async () => {

@@ -61,16 +61,19 @@ import { FileSystem, Platform } from '@ps5-react/core';
     }
     const library = readLibrary(FileSystem, where);
     set({ ...IDLE, state: "running", phase: "account" });
+    const entries = catalogEntries();
+    // As fichas do celular (torbox-fichas.json) saem dos jogos do catálogo: capa, fotos, texto e detalhes da loja.
+    const byId = new Map(entries.map(({ game }) => [game.id, game]));
     const save = (value, { final }) => {
       try {
         writeLibrary(FileSystem, where, value, { backup: final });
-        if (final) writeList(FileSystem, where, value);
+        if (final) writeList(FileSystem, where, value, void 0, (id) => byId.get(id) ?? null);
       } catch (error) {
         log(`not saved: ${error?.message || error}`);
       }
     };
     const promise = buildLibrary({
-      entries: catalogEntries(),
+      entries,
       api: torBoxApi(),
       hashList,
       library,

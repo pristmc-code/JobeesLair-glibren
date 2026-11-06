@@ -29,9 +29,13 @@
 //   - a lista para o payload/celular, `torbox-lista.json` em /data/JobeesLair no PS5 (na pasta de dados do app
 //     no PC), só com os jogos confirmados;
 //   - e só os ids confirmados, `torbox-loja.json` na pasta de dados do app (~10 KB): o que a loja TorBox lê ao abrir
-//     o app (state/store-mode.js), sem ler a lista inteira (~600 KB para ~950 jogos).
+//     o app (state/store-mode.js), sem ler a lista inteira (~600 KB para ~950 jogos);
+//   - glibren.9: as fichas dos confirmados para o celular, `torbox-fichas.json` ao lado da lista (DETAILS_FORMAT):
+//     resumo, fotos, vídeos e detalhes da loja. Fica à parte porque é bem maior que a lista: o payload indexa só a
+//     lista e lê a ficha de um jogo quando o celular a abre.
 
 import { isoStamp } from './clock.js';
+import { youtubeId } from './youtube.js';
 import { formatFromName } from './link-formats.js';
 import { isMagnet, linkHashes, magnetHash, md5 } from '../services/torbox.js';
 import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFile, isPiece, magnetOf, matchesGame, plain, titleWords, worthShowing } from './torbox-search.js';
@@ -39,6 +43,7 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
   var LIBRARY_FILE = "torbox-biblioteca.json";
   var LIST_FILE = "torbox-lista.json";
   var IDS_FILE = "torbox-loja.json";
+  var DETAILS_FILE = "torbox-fichas.json";
   var PS5_DIR = "/data/JobeesLair";
   /**
    * O banco (torbox-biblioteca.json):
@@ -69,6 +74,17 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
    * ou no feed), via "account" é o hash do item que já está na conta (`item`: { kind, id }, `file`: id do arquivo).
    */
   var LIST_FORMAT = 1;
+  /**
+   * As fichas para o celular (torbox-fichas.json), dos mesmos jogos da lista e na mesma ordem:
+   * { version: 1, builtAt: iso, games: [{ id,                     // sempre o primeiro campo (o payload procura por ele)
+   *   summary?, about?: ["parágrafo", ...], shots?: [{ url, thumb? }], videos?: ["<id do YouTube>", ...],
+   *   cover?, coverFallbacks?: [...], hero?, developer?, publisher?, releaseDate?: "AAAA-MM-DD", metacritic?, stars?,
+   *   ratingCount?, features?: [...] }] }
+   * Só endereços https; campos vazios ficam de fora. As fotos e o texto vêm da página do jogo na loja (data/pages ou
+   * o feed), os vídeos do feed ("videos"; o catálogo embutido não tem: o celular busca no YouTube pelo nome).
+   */
+  var DETAILS_FORMAT = 1;
+  var MAX_SHOTS = 8, MAX_ABOUT = 4, MAX_PARAGRAPH = 900, MAX_SUMMARY = 600, MAX_VIDEOS = 6;
   // Um jogo guarda no máximo estes arquivos (um torrent de pasta pode ter centenas).
   var MAX_FILES = 40;
   // Os links de um pedido: um link web vira até 2 hashes, e o GET leva 100 hashes.
@@ -89,7 +105,8 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
       library: `${dataDir}/${LIBRARY_FILE}`,
       backup: ps5 ? `${PS5_DIR}/${LIBRARY_FILE}` : null,
       list: ps5 ? `${PS5_DIR}/${LIST_FILE}` : `${dataDir}/${LIST_FILE}`,
-      ids: `${dataDir}/${IDS_FILE}`
+      ids: `${dataDir}/${IDS_FILE}`,
+      details: ps5 ? `${PS5_DIR}/${DETAILS_FILE}` : `${dataDir}/${DETAILS_FILE}`
     };
   }
   function writeAtomic(fs, path, text) {
@@ -141,11 +158,79 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
     }));
     return { version: LIST_FORMAT, builtAt: library.builtAt ?? isoStamp(now), games };
   }
-  function writeList(fs, paths, library, now) {
+  // ---- As fichas (torbox-fichas.json) ----
+  var httpsURL = (value) => typeof value === "string" && value.length <= 600 && /^https:\/\/[^\s"'<>\\]+$/i.test(value) ? value : null;
+  var oneLine = (value, max) => typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "";
+  // Um campo do jogo do catálogo; um getter que falha (página que não lê) conta como vazio.
+  function field(game, name) {
+    try {
+      return game?.[name];
+    } catch {
+      return void 0;
+    }
+  }
+  /** A ficha de um jogo do catálogo para o celular (DETAILS_FORMAT), sem o id. */
+  function gameDetails(game) {
+    if (!game || typeof game !== "object") return {};
+    const art = field(game, "art") || {};
+    const out = {};
+    const summary = oneLine(field(game, "shortDescription"), MAX_SUMMARY);
+    if (summary) out.summary = summary;
+    const about = (Array.isArray(field(game, "about")) ? field(game, "about") : []).map((text) => oneLine(text, MAX_PARAGRAPH)).filter(Boolean).slice(0, MAX_ABOUT);
+    if (about.length) out.about = about;
+    const shots = [];
+    for (const shot of Array.isArray(field(game, "shots")) ? field(game, "shots") : []) {
+      const url = httpsURL(typeof shot === "string" ? shot : shot?.url);
+      if (!url || shots.some((kept) => kept.url === url)) continue;
+      const thumb = httpsURL(shot?.thumb);
+      shots.push(thumb && thumb !== url ? { url, thumb } : { url });
+      if (shots.length >= MAX_SHOTS) break;
+    }
+    if (shots.length) out.shots = shots;
+    const videos = [...new Set((Array.isArray(field(game, "videos")) ? field(game, "videos") : []).map(youtubeId).filter(Boolean))].slice(0, MAX_VIDEOS);
+    if (videos.length) out.videos = videos;
+    const cover = httpsURL(art.cover);
+    if (cover) out.cover = cover;
+    const fallbacks = (Array.isArray(art.coverFallbacks) ? art.coverFallbacks : []).map(httpsURL).filter((url) => url && url !== cover).slice(0, 2);
+    if (fallbacks.length) out.coverFallbacks = fallbacks;
+    const hero = httpsURL(art.hero);
+    if (hero) out.hero = hero;
+    for (const name of ["developer", "publisher"]) {
+      const text = oneLine(field(game, name), 120);
+      if (text) out[name] = text;
+    }
+    const date = field(game, "releaseDate");
+    if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) out.releaseDate = date;
+    const metacritic = field(game, "metacritic");
+    if (Number.isInteger(metacritic) && metacritic > 0 && metacritic <= 100) out.metacritic = metacritic;
+    const stars = field(game, "stars");
+    if (Number.isFinite(stars) && stars > 0 && stars <= 5) out.stars = Math.round(stars * 100) / 100;
+    const ratings = field(game, "ratingCount");
+    if (Number.isInteger(ratings) && ratings > 0) out.ratingCount = ratings;
+    const features = (Array.isArray(field(game, "features")) ? field(game, "features") : []).map((text) => oneLine(text, 40)).filter(Boolean).slice(0, 12);
+    if (features.length) out.features = features;
+    return out;
+  }
+  /** As fichas da lista: `detailsOf(id)` dá o jogo do catálogo (null: sem ficha, só o id). */
+  function exportDetails(list, detailsOf) {
+    return { version: DETAILS_FORMAT, builtAt: list.builtAt, games: list.games.map((game) => ({ id: game.id, ...gameDetails(detailsOf(game.id)) })) };
+  }
+  /**
+   * Grava a lista do payload e os ids da loja; com `gameOf(id)` (o jogo do catálogo), também as fichas do celular.
+   * Uma ficha que falha não impede a lista.
+   */
+  function writeList(fs, paths, library, now, gameOf = null) {
     const list = exportList(library, now);
     writeAtomic(fs, paths.list, JSON.stringify(list));
     // { version: 1, builtAt, ids: ["PPSA01234", ...] }
     writeAtomic(fs, paths.ids, JSON.stringify({ version: LIST_FORMAT, builtAt: list.builtAt, ids: list.games.map((game) => game.id) }));
+    if (gameOf && paths.details) {
+      try {
+        writeAtomic(fs, paths.details, JSON.stringify(exportDetails(list, gameOf)));
+      } catch (error) {
+        console.log(`[torbox-library] details not written to ${paths.details}: ${error?.message || error}`);
+      }
+    }
   }
   /** Os ids confirmados da lista gravada (a loja TorBox, state/store-mode.js): null quando não há lista. */
   function readConfirmedIds(fs, paths) {
@@ -474,4 +559,4 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
     return { library, progress: progress() };
   }
 
-export { LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, emptyLibrary, exportList, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };
+export { DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };

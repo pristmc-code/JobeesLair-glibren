@@ -21,10 +21,13 @@ test('bg_monitor_html.h esta em dia com bg_monitor.html (rode tools/bg-monitor/e
 test('a pagina embutida: fala so com a mesma origem, tem o aviso de PIN e o modo demo', () => {
   const page = readFileSync(embed.PAGE, 'utf8');
   for (const route of ['/api/status', '/api/unlock', '/api/power', '`/api/jobs/${id}/${what}`', '/api/library?', '/api/library/game?id=', '/api/library/add']) assert.ok(page.includes(route), route);
-  // glibren: a Biblioteca TorBox tambem no modo demo, e sem imagem de fora (a pagina so aceita imagens data:).
+  // glibren: a Biblioteca TorBox tambem no modo demo. glibren.9: as capas e fotos vem dos enderecos do catalogo (que o
+  // payload manda); de endereco fixo, so o YouTube (player sem cookies, miniatura e os links de busca).
   assert.match(page, /demoApi/);
-  assert.ok(!/<img/i.test(page));
-  assert.ok(!/https?:\/\//.test(page.replace(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, '')), 'nada de outro site');
+  const fixed = page.replace(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, '').match(/https?:\/\/[^`'"\s$]+/g) || [];
+  assert.deepEqual([...new Set(fixed)].sort(), ['https://i.ytimg.com/vi/', 'https://www.youtube-nocookie.com/embed/', 'https://www.youtube.com/results?search_query=', 'https://www.youtube.com/watch?v='], 'nada de outro site');
+  assert.ok(!/\.innerHTML\s*=\s*[^;]*\b(d|g|shot|data)\./.test(page), 'texto e enderecos do jogo nunca por innerHTML');
+  for (const piece of ['loading = "lazy"', 'aspect-ratio:3/4', 'aspect-ratio:16/9', 'onerror', '@media (orientation:landscape)', 'history.pushState', 'popstate', 'window.jobeVoltar', 'referrerPolicy = "strict-origin-when-cross-origin"', '#jogo=']) assert.ok(page.includes(piece), piece);
   assert.match(page, /noPin/);
   assert.match(page, /has\("demo"\)/);
 });
