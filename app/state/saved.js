@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import { SAVED_FILES, isRecord, isStringList, readJSON } from './read-json.js';
-import { DATA_DIR, readPath } from './data-dir.js';
+import { DATA_DIR, backupDir, readPath } from './data-dir.js';
 import { FileSystem } from '@ps5-react/core';
 
   var dir = DATA_DIR;
@@ -21,13 +21,27 @@ import { FileSystem } from '@ps5-react/core';
   // through to the disk too. Without it, a console that froze or lost power soon after a save (debrid.json is saved
   // again on every TorBox check) came back with the file empty or gone, and the key had to be entered again.
   var SYNCED = /* @__PURE__ */ new Set(["settings.json", "wishlist.json", "debrid.json", "feeds.json", "feed-mirrors.json", "themes.json"]);
+  // MODIFIED (glibren.8): those same files also get a copy on /data (data-dir.js backupDir), which an uninstall
+  // of the title does not take with its download0; readPath reads it when the data folder came back empty.
+  // The copy is written on its own: a full or missing download0 does not keep it from being saved.
   function saveList(name, what, list) {
+    const text = JSON.stringify(list);
+    const sync = SYNCED.has(name);
     try {
       FileSystem.mkdir(dir, { recursive: true });
-      FileSystem.writeFile(`${dir}/${name}.tmp`, JSON.stringify(list), { sync: SYNCED.has(name) });
+      FileSystem.writeFile(`${dir}/${name}.tmp`, text, { sync });
       FileSystem.rename(`${dir}/${name}.tmp`, `${dir}/${name}`);
     } catch (error2) {
       console.log(`jobeeslair: ${what} not saved: ${error2.message}`);
+    }
+    const backup = sync ? backupDir() : null;
+    if (!backup) return;
+    try {
+      FileSystem.mkdir(backup, { recursive: true });
+      FileSystem.writeFile(`${backup}/${name}.tmp`, text, { sync: true });
+      FileSystem.rename(`${backup}/${name}.tmp`, `${backup}/${name}`);
+    } catch (error2) {
+      console.log(`jobeeslair: ${what} not copied to ${backup}: ${error2.message}`);
     }
   }
   function savedList(name, what) {
