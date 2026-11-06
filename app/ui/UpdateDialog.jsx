@@ -15,10 +15,14 @@ import { VERSION_LABEL } from '../version.js';
 import { Button2 } from './Button.jsx';
 import { ProgressBar } from './ProgressBar.jsx';
 import { colors, radius } from './colors.js';
+import { logical } from './scale.js';
 import { FocusScope, Linking, Text, View, motion } from '@ps5-react/core';
 
   var ENTER = { type: "tween", duration: 0.24, ease: [0.22, 1, 0.36, 1] };
-  var BAR = 756;
+  // MODIFIED (glibren.8): the dialog is laid out in screen pixels (860 wide, 52 of padding: 756 inside), but
+  // ProgressBar scales its width by px() (screen.width / 1280); at 1920 the bar came out 1134 px, past the dialog's
+  // edge. logical() undoes that scale, so the bar is exactly the dialog's inside width.
+  var BAR = logical(756);
   var sans = (size, color, extra) => ({ fontFamily: "Exo2", fontSize: size, lineHeight: Math.round(size * 1.42), color, ...extra });
   var fractionOf = (install) => install.total ? Math.min(1, install.written / install.total) : 0;
   // What the install says under the notes, and in which color, for each phase.

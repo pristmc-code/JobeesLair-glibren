@@ -317,7 +317,8 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
         store.set({});
       }
       const current = run = { version: release.version, cancelled: false, task: null };
-      publish({ phase: "waiting", version: release.version, written: 0, total: release.assets.zip.size + release.assets.image.size, file: "", error: "", outcome: null });
+      // MODIFIED (glibren.8): with verifyZip off only the image is downloaded, so the bar runs 0-100% over it alone.
+      publish({ phase: "waiting", version: release.version, written: 0, total: (verifyZip ? release.assets.zip.size : 0) + release.assets.image.size, file: "", error: "", outcome: null });
       void pipeline(current, release).catch((error) => {
         if (error.name === "AbortError" || current.cancelled) return;
         log(`${release.version}: ${error.message}`);

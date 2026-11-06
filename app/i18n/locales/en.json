@@ -1098,7 +1098,7 @@
     "update.install.applied": "Updated to version {version}.",
     "update.install.armed": "It installs the next time Jobee'sLair closes.",
     "update.install.cancel": "Cancel download",
-    "update.install.checking": "Checking the update\u2026",
+    "update.install.checking": "Unpacking the update\u2026",
     "update.install.consoleOnly": "Updates install on the PS5 only.",
     "update.install.download": "Download and install",
     "update.install.downloading": "Downloading {done} of {total}",
