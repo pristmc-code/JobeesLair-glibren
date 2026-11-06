@@ -151,7 +151,9 @@ const T = {
     pinBack: "Voltar", pinOk: "Liberar", pinWrong: "PIN errado. Tente de novo.", pinBlocked: "Muitas tentativas. Espere {s} s.",
     noPin: "Defina um PIN nas configurações da Jobee'sLair para usar os controles.",
     limit: "Downloads simultâneos", connsLbl: "Conexões", connsHint: "ativas / alvo", connsWait: "o app decide", auto: "auto", manual: "manual",
-    backToAuto: "Voltar ao número do app", less: "Menos", more: "Mais", setOnPhone: "celular" },
+    backToAuto: "Voltar ao número do app", less: "Menos", more: "Mais", setOnPhone: "celular",
+    requestedWait: "Pedido pelo celular (Biblioteca TorBox): entra na fila de downloads quando a Jobee'sLair estiver aberta.",
+    confirmReq: "Tirar este pedido da fila?", yesReq: "Sim, tirar" },
   en: { sub: "Background downloads", online: "PS5 connected", offline: "PS5 not answering", connecting: "Connecting…",
     locked: "Controls", unlocked: "Unlocked", active: "Downloading", speed: "Speed", left: "Left",
     states: { downloading: "Downloading", connecting: "Connecting", verifying: "Verifying", queued: "Queued", paused: "Paused", completed: "Done", failed: "Failed", "needs-app": "Open the app", "waiting-app": "Waiting for app" },
@@ -163,7 +165,9 @@ const T = {
     pinBack: "Back", pinOk: "Unlock", pinWrong: "Wrong PIN. Try again.", pinBlocked: "Too many tries. Wait {s} s.",
     noPin: "Set a PIN in Jobee'sLair's settings to use the controls.",
     limit: "Simultaneous downloads", connsLbl: "Connections", connsHint: "active / target", connsWait: "the app decides", auto: "auto", manual: "manual",
-    backToAuto: "Back to the app's number", less: "Fewer", more: "More", setOnPhone: "phone" }
+    backToAuto: "Back to the app's number", less: "Fewer", more: "More", setOnPhone: "phone",
+    requestedWait: "Requested from the phone (TorBox library): joins the download queue when Jobee'sLair is open.",
+    confirmReq: "Remove this request from the queue?", yesReq: "Yes, remove" }
 };
 const L = T[(navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en"];
 document.documentElement.lang = L === T.pt ? "pt-BR" : "en";
@@ -253,15 +257,16 @@ function render() {
     el.querySelector(".name").textContent = j.name;
     if (j.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = j.error; el.append(e); }
     // So o app sabe baixar este (pagina de site, navegador...): sem botoes aqui; cancelar fica no app.
-    if (j.state === "waiting-app") { const w = document.createElement("div"); w.className = "wait"; w.textContent = L.waitingApp; el.append(w); }
+    // glibren: um pedido da Biblioteca TorBox feito aqui espera o app abrir; ele sim pode ser pausado ou tirado da fila.
+    if (j.state === "waiting-app") { const w = document.createElement("div"); w.className = "wait"; w.textContent = j.requested ? L.requestedWait : L.waitingApp; el.append(w); }
     // glibren.8: as conexoes, em todo download que nao terminou (inclusive os que esperam o app).
-    if (j.state !== "completed") el.append(connRow(j, running));
-    if (j.state === "waiting-app" || j.state === "completed") { /* sem pausar/cancelar aqui */ }
+    if (j.state !== "completed" && !j.requested) el.append(connRow(j, running));
+    if ((j.state === "waiting-app" && !j.requested) || j.state === "completed") { /* sem pausar/cancelar aqui */ }
     else {
       if (confirming === j.id) {
         const c = document.createElement("div"); c.className = "confirm";
-        c.innerHTML = `<div></div><div class="row"><button class="btn" type="button" data-no>${L.no}</button><button class="btn solid-danger" type="button" data-yes>${L.yes}</button></div>`;
-        c.firstChild.textContent = L.confirm;
+        c.innerHTML = `<div></div><div class="row"><button class="btn" type="button" data-no>${L.no}</button><button class="btn solid-danger" type="button" data-yes>${j.requested ? L.yesReq : L.yes}</button></div>`;
+        c.firstChild.textContent = j.requested ? L.confirmReq : L.confirm;
         c.querySelector("[data-no]").onclick = () => { confirming = null; render(); };
         c.querySelector("[data-yes]").onclick = () => act(j.id, "cancel");
         el.append(c);
@@ -430,6 +435,354 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
   $("powerBack").onclick = () => { $("powerSheet").hidden = true; };
   $("powerRest").onclick = () => send("rest");
   $("powerOff").onclick = () => send("off");
+})();
+</script>
+<!-- glibren: Biblioteca TorBox (a lista de jogos confirmados no TorBox que o app monta): ver, filtrar e incluir downloads.
+     Bloco separado; usa o api/guarded/openPin/session da pagina. Sem capas (a pagina so aceita imagens data:). -->
+<style>
+.tabs{display:flex;gap:4px;margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));padding:3px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.tabs button{flex:1;min-width:0;min-height:36px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-weight:600;font-size:14.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tabs button.on{background:var(--raise);color:var(--fg);box-shadow:inset 0 0 0 1px var(--line-hi)}
+body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
+.libbar{margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));display:flex;flex-direction:column;gap:8px;min-width:0}
+.srch{display:flex;gap:8px;min-width:0}
+.srch input{flex:1;min-width:0;min-height:40px;padding:8px 12px;border:1px solid var(--line-hi);border-radius:8px;background:var(--deep);color:var(--fg);font:inherit;font-size:16px;outline:none}
+.srch input:focus{border-color:var(--ice)}
+.lock b.n{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:12px;line-height:18px;text-align:center}
+.filters{display:flex;flex-direction:column;gap:8px;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;max-height:52vh;overflow-y:auto}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{min-height:34px;padding:5px 11px;border:1px solid var(--line-hi);border-radius:999px;background:transparent;color:var(--muted);font-size:13.5px;cursor:pointer;white-space:nowrap}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip small{opacity:.75;margin-inline-start:4px}
+.sel{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-width:0}
+.sel select{min-width:0;width:100%;min-height:38px;padding:6px 8px;border:1px solid var(--line-hi);border-radius:8px;background:var(--deep);color:var(--fg);font:inherit;font-size:14px}
+.sel select:last-child{grid-column:1/-1}
+.libhead{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 10px;color:var(--subtle);font-size:13px}
+.libhead b{color:var(--fg);font-weight:600}
+.glist{display:grid;grid-template-columns:1fr;gap:8px}
+.game{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;min-width:0;content-visibility:auto;contain-intrinsic-size:auto 76px}
+.game .info{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.game .t{font-weight:600;line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
+.game .m{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:0}
+.game .m span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.pf{font-weight:700;font-size:11.5px;padding:0 6px;border-radius:4px;border:1px solid;line-height:17px}
+.pf.ps5{color:var(--ice);border-color:rgba(76,201,240,.5)}
+.pf.ps4{color:#c4b5fd;border-color:rgba(196,181,253,.5)}
+.game .m .best{color:var(--good)}
+.btn.get{flex:none;min-height:38px;padding:6px 14px}
+.btn.get.inq{color:var(--good);border-color:rgba(74,222,128,.5);background:transparent;opacity:1}
+.more{display:flex;justify-content:center;min-height:44px;align-items:center}
+.more .btn{flex:none;min-width:180px}
+.libmsg{padding:24px 16px;text-align:center;color:var(--muted);background:var(--panel);border:1px dashed var(--line-hi);border-radius:10px}
+.libmsg .btn{margin-top:10px}
+.files{display:flex;flex-direction:column;gap:6px;max-height:45vh;overflow-y:auto}
+.fopt{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;min-width:0}
+.fopt.on{border-color:var(--accent)}
+.fopt input{flex:none;accent-color:var(--accent);margin:0}
+.fopt span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.fopt small{flex:none;color:var(--subtle);font-size:12.5px}
+.toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:30;width:max-content;max-width:calc(100% - 32px);padding:10px 14px;background:var(--panel2);border:1px solid var(--line-hi);border-radius:10px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.toast.ok{border-color:rgba(74,222,128,.55)}
+.toast.bad{border-color:rgba(248,113,113,.6)}
+@media (orientation:landscape) and (max-height:520px){ .glist{grid-template-columns:1fr 1fr} .tabs{margin-bottom:6px} .tabs button{min-height:30px} .filters{max-height:60vh} }
+@media (min-width:900px) and (min-height:521px){ .glist{grid-template-columns:1fr 1fr} }
+</style>
+<div class="sheet" id="fileSheet" hidden>
+  <div class="dialog" role="dialog" aria-labelledby="fsTitle">
+    <h2 id="fsTitle"></h2>
+    <p id="fsText"></p>
+    <div class="files" id="fsList"></div>
+    <div class="row"><button class="btn" type="button" id="fsBack"></button><button class="btn primary" type="button" id="fsOk"></button></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script>
+"use strict";
+(() => {
+  const B = {
+    pt: { tabDl: "Downloads", tabLib: "Biblioteca TorBox", search: "Buscar jogo ou código", filters: "Filtros",
+      allP: "PS5 e PS4", anySize: "Qualquer tamanho", lt10: "até 10 GB", s10: "10–30 GB", s30: "30–60 GB", gt60: "60 GB ou mais",
+      allFmt: "Todo tipo de arquivo", allGenre: "Todos os gêneros", sortTitle: "Ordem: título", sortBig: "Maiores primeiro", sortSmall: "Menores primeiro",
+      count: "{n} jogos", countOf: "{n} de {t} jogos", built: "lista de {d}", partial: "lista incompleta (lido o que deu)",
+      get: "Baixar", queued: "Na fila", adding: "Incluindo…", more: "Carregar mais", loading: "Carregando…",
+      none: "Nenhum jogo com esses filtros.", clear: "Limpar filtros", retry: "Tentar de novo",
+      noLib: "A Biblioteca TorBox ainda não foi montada. Monte em Configurações da Jobee'sLair e volte aqui.",
+      badLib: "A lista da Biblioteca TorBox está com problema. Monte de novo em Configurações da Jobee'sLair.",
+      offline: "O PS5 não respondeu.", addedOpen: "{t}: na fila. A Jobee'sLair já começa.", addedClosed: "{t}: na fila. Começa quando você abrir a Jobee'sLair.",
+      already: "{t} já está na fila.", fail: "Não deu para incluir. Tente de novo.", full: "A fila do PS5 está cheia.", noHash: "Este jogo não tem o torrent na lista.", noSource: "Não há como baixar esse arquivo pela lista. Abra o jogo na Jobee'sLair.",
+      chooseTitle: "Qual arquivo baixar?", chooseText: "O recomendado já vem marcado.", whole: "Tudo (o torrent inteiro, como .zip)", back: "Voltar", files: "{n} arquivos" },
+    en: { tabDl: "Downloads", tabLib: "TorBox library", search: "Search a game or code", filters: "Filters",
+      allP: "PS5 and PS4", anySize: "Any size", lt10: "up to 10 GB", s10: "10–30 GB", s30: "30–60 GB", gt60: "60 GB or more",
+      allFmt: "Any file type", allGenre: "All genres", sortTitle: "Sort: title", sortBig: "Largest first", sortSmall: "Smallest first",
+      count: "{n} games", countOf: "{n} of {t} games", built: "list from {d}", partial: "incomplete list (read what it could)",
+      get: "Get", queued: "Queued", adding: "Adding…", more: "Load more", loading: "Loading…",
+      none: "No game with these filters.", clear: "Clear filters", retry: "Try again",
+      noLib: "The TorBox library hasn't been built yet. Build it in Jobee'sLair's Settings and come back.",
+      badLib: "The TorBox library list has a problem. Build it again in Jobee'sLair's Settings.",
+      offline: "The PS5 did not answer.", addedOpen: "{t}: queued. Jobee'sLair starts it now.", addedClosed: "{t}: queued. It starts when you open Jobee'sLair.",
+      already: "{t} is already queued.", fail: "Couldn't add it. Try again.", full: "The PS5 queue is full.", noHash: "This game has no torrent in the list.", noSource: "That file can't be fetched from the list. Open the game in Jobee'sLair.",
+      chooseTitle: "Which file?", chooseText: "The recommended one is already picked.", whole: "Everything (the whole torrent, as a .zip)", back: "Back", files: "{n} files" }
+  }[L === T.pt ? "pt" : "en"];
+  const GiB = 1024 ** 3, PAGE = 40, WHOLE = "\u0000whole";
+  const SIZES = { lt10: [0, 10 * GiB], "10to30": [10 * GiB, 30 * GiB], "30to60": [30 * GiB, 60 * GiB], gt60: [60 * GiB, 0] };
+  const SIZE_LABEL = { lt10: B.lt10, "10to30": B.s10, "30to60": B.s30, gt60: B.gt60 };
+  const RANK = ["exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip", "tar"];
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+  const base = (name) => String(name).slice(String(name).lastIndexOf("/") + 1);
+
+  // ---- Modo demo: uma lista falsa, filtrada aqui como o payload faz ----
+  const DEMO_TITLES = ["Astro Bot", "Gran Turismo 7", "Demon's Souls", "Returnal", "Ratchet & Clank: Rift Apart", "Ghost of Tsushima Director's Cut", "Horizon Forbidden West", "Stellar Blade", "Marvel's Spider-Man 2", "God of War Ragnarök", "The Last of Us Part I", "Bloodborne", "Uncharted: Legacy of Thieves", "Days Gone", "Persona 5 Royal", "Elden Ring", "Final Fantasy XVI", "Hogwarts Legacy", "Cyberpunk 2077", "Resident Evil 4", "Dead Space", "Death Stranding", "Sackboy: A Big Adventure", "Gravity Rush 2", "Crash Bandicoot 4", "Tekken 8", "Street Fighter 6", "Mortal Kombat 1", "Hades", "Celeste"];
+  const DEMO_GENRES = ["Ação", "Aventura", "RPG", "Corrida", "Luta", "Plataforma", "Terror"];
+  const demoGames = DEMO_TITLES.flatMap((title, i) => [0, 1].map((k) => {
+    const ps5 = (i + k) % 3 !== 0, n = i * 2 + k, fmt = ["exfat", "pkg", "rar", "exfat", "ffpkg"][n % 5];
+    const size = Math.round((3 + (n * 37) % 110) * GiB * (0.9 + (n % 7) / 30));
+    return { id: `demo${n}`, title: k ? `${title} (${ps5 ? "PS5" : "PS4"} Deluxe)` : title, code: `${ps5 ? "PPSA" : "CUSA"}${String(1000 + n * 37).padStart(5, "0")}`, platform: ps5 ? "ps5" : "ps4",
+      sizeBytes: size, formats: [fmt], genres: [DEMO_GENRES[n % 7], ...n % 4 ? [] : [DEMO_GENRES[(n + 3) % 7]]], files: fmt === "rar" ? 3 : n % 3 ? 1 : 2, queued: false };
+  })).sort((a, b) => a.title.localeCompare(b.title));
+  function demoApi(method, path, body) {
+    const [pathname, search = ""] = path.split("?"), p = new URLSearchParams(search);
+    if (path === "/api/library/add") {
+      if (!session) return { status: 401, data: { error: "pin" } };
+      const g = demoGames.find((x) => x.id === body.id);
+      if (!g) return { status: 404, data: { error: "not-found" } };
+      if (g.queued) return { status: 200, data: { ok: true, already: true, id: "b99" } };
+      g.queued = true;
+      demo.jobs.push({ id: `b${100 + demo.jobs.length}`, name: g.title, state: "waiting-app", requested: true, via: "TorBox", written: 0, total: g.sizeBytes, bytesPerSecond: 0, connectionsActive: 0, connections: 0, connectionsSet: false });
+      return { status: 200, data: { ok: true, id: "b100", appOpen: false } };
+    }
+    if (pathname === "/api/library/game") {
+      const g = demoGames.find((x) => x.id === p.get("id"));
+      if (!g) return { status: 404, data: { error: "not-found" } };
+      const stem = g.title.replace(/[^\w]+/g, ".");
+      const files = g.formats[0] === "rar" ? [1, 2, 3].map((k) => ({ name: `${stem}/${stem}.part${k}.rar`, size: g.sizeBytes / 3, format: "rar", piece: true }))
+        : [{ name: `${stem}/${stem}.${g.formats[0]}`, size: g.sizeBytes, format: g.formats[0], piece: false }, ...g.files > 1 ? [{ name: `${stem}/${stem}-update.pkg`, size: 2 * GiB, format: "pkg", piece: false }] : []];
+      return { status: 200, data: { ok: true, game: g, files, wholeOk: true, suggested: g.formats[0] === "rar" ? "" : files[0].name } };
+    }
+    const q = (p.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean), plat = p.get("platform") || "";
+    const fmts = (p.get("format") || "").split(",").filter(Boolean), gens = (p.get("genre") || "").split(",").filter(Boolean);
+    const min = Number(p.get("minSize")) || 0, max = Number(p.get("maxSize")) || 0;
+    const ok = (g, skip) => (skip === "p" || !plat || g.platform === plat) && (skip === "f" || !fmts.length || g.formats.some((f) => fmts.includes(f))) &&
+      (skip === "g" || !gens.length || g.genres.some((x) => gens.includes(x))) && (skip === "s" || (!min && !max) || (g.sizeBytes >= min && (!max || g.sizeBytes < max)));
+    const hit = demoGames.filter((g) => q.every((w) => `${g.title} ${g.code}`.toLowerCase().includes(w)));
+    let list = hit.filter((g) => ok(g));
+    if (p.get("sort") === "big") list = [...list].sort((a, b) => b.sizeBytes - a.sizeBytes); else if (p.get("sort") === "small") list = [...list].sort((a, b) => a.sizeBytes - b.sizeBytes);
+    const tally = (skip, keys) => { const c = {}; for (const g of hit) if (ok(g, skip)) for (const k of keys(g)) c[k] = (c[k] || 0) + 1; return c; };
+    const bucket = (s) => s < 10 * GiB ? "lt10" : s < 30 * GiB ? "10to30" : s < 60 * GiB ? "30to60" : "gt60";
+    const pc = tally("p", (g) => [g.platform]), sc = tally("s", (g) => [bucket(g.sizeBytes)]), fc = tally("f", (g) => g.formats), gc = tally("g", (g) => g.genres);
+    const facet = (c, all) => all.map((name) => ({ name, count: c[name] || 0 })).sort((a, b) => b.count - a.count);
+    const offset = Number(p.get("offset")) || 0, limit = Number(p.get("limit")) || PAGE;
+    return { status: 200, data: { ok: true, builtAt: "2026-11-06T10:00:00Z", partial: false, total: demoGames.length, count: list.length, offset, limit, games: list.slice(offset, offset + limit).map((g) => ({ ...g })),
+      facets: { platforms: { ps5: pc.ps5 || 0, ps4: pc.ps4 || 0, other: 0 }, sizes: { lt10: sc.lt10 || 0, "10to30": sc["10to30"] || 0, "30to60": sc["30to60"] || 0, gt60: sc.gt60 || 0, unknown: 0 },
+        formats: facet(fc, ["exfat", "pkg", "rar", "ffpkg"]), genres: facet(gc, DEMO_GENRES) } } };
+  }
+  const libApi = (method, path, body) => DEMO ? Promise.resolve(demoApi(method, path, body)) : api(method, path, body).catch(() => ({ status: 0, data: {} }));
+
+  // ---- Abas ----
+  const tabs = el("nav", "tabs"); tabs.setAttribute("role", "tablist");
+  const tabDl = el("button", "on", B.tabDl), tabLib = el("button", "", B.tabLib);
+  for (const b of [tabDl, tabLib]) { b.type = "button"; b.setAttribute("role", "tab"); tabs.append(b); }
+  const pinned = document.querySelector(".pinned");
+  pinned.insertBefore(tabs, pinned.querySelector(".summary"));
+  for (const id of ["list", "foot", "ctlbar"]) $(id).classList.add("dlonly");
+  pinned.querySelector(".summary").classList.add("dlonly");
+  // A barra da biblioteca (busca e filtros) fica presa no topo; a lista, no main.
+  const bar = el("div", "libbar libonly");
+  bar.innerHTML = `<div class="srch"><input id="libQ" type="search" enterkeyhint="search" autocomplete="off" spellcheck="false"><button class="lock" type="button" id="libF"><span></span><b class="n" hidden></b></button></div>
+    <div class="filters" id="libFilters" hidden><div class="chips" id="fPlat"></div><div class="chips" id="fSize"></div><div class="sel"><select id="fFormat"></select><select id="fGenre"></select><select id="fSort"></select></div></div>`;
+  pinned.append(bar);
+  const view = el("section", "libonly"); view.id = "libView";
+  view.innerHTML = `<div class="libhead" id="libHead"></div><div class="glist" id="glist"></div><div class="more" id="libMore"></div>`;
+  $("list").after(view);
+  $("libQ").placeholder = B.search; $("libQ").setAttribute("aria-label", B.search);
+  $("libF").querySelector("span").textContent = B.filters;
+
+  const lib = { q: "", platform: "", size: "", format: "", genre: "", sort: "title", games: [], count: 0, total: 0, done: false, loading: false, seq: 0, state: "", facets: null, built: "", partial: false, loaded: false };
+  const rows = new Map(); // id -> botao Baixar
+  function show(tab) {
+    const isLib = tab === "lib";
+    document.body.classList.toggle("lib", isLib);
+    tabDl.className = isLib ? "" : "on"; tabLib.className = isLib ? "on" : "";
+    tabDl.setAttribute("aria-selected", String(!isLib)); tabLib.setAttribute("aria-selected", String(isLib));
+    try { history.replaceState(null, "", isLib ? "#biblioteca" : location.pathname + location.search); } catch {}
+    if (isLib && !lib.loaded) load(true);
+  }
+  tabDl.onclick = () => show("dl");
+  tabLib.onclick = () => show("lib");
+
+  // ---- Filtros ----
+  function query(offset) {
+    const p = new URLSearchParams();
+    if (lib.q) p.set("q", lib.q);
+    if (lib.platform) p.set("platform", lib.platform);
+    if (lib.format) p.set("format", lib.format);
+    if (lib.genre) p.set("genre", lib.genre);
+    if (lib.size) { const [min, max] = SIZES[lib.size]; if (min) p.set("minSize", String(min)); if (max) p.set("maxSize", String(max)); }
+    if (lib.sort !== "title") p.set("sort", lib.sort);
+    p.set("offset", String(offset)); p.set("limit", String(PAGE));
+    return `/api/library?${p}`;
+  }
+  const active = () => [lib.platform, lib.size, lib.format, lib.genre].filter(Boolean).length;
+  function chip(label, count, on, onclick) {
+    const b = el("button", on ? "chip on" : "chip", label); b.type = "button";
+    if (count !== undefined) b.append(el("small", "", String(count)));
+    b.setAttribute("aria-pressed", String(on)); b.onclick = onclick;
+    return b;
+  }
+  function option(select, value, label, chosen) { const o = el("option", "", label); o.value = value; o.selected = value === chosen; select.append(o); }
+  function filters() {
+    const f = lib.facets || { platforms: {}, sizes: {}, formats: [], genres: [] };
+    const n = active(), badge = $("libF").querySelector("b");
+    badge.hidden = !n; badge.textContent = String(n);
+    const plat = $("fPlat"); plat.textContent = "";
+    plat.append(chip(B.allP, undefined, !lib.platform, () => set({ platform: "" })));
+    for (const p of ["ps5", "ps4"]) plat.append(chip(p.toUpperCase(), f.platforms[p] ?? 0, lib.platform === p, () => set({ platform: lib.platform === p ? "" : p })));
+    const sz = $("fSize"); sz.textContent = "";
+    sz.append(chip(B.anySize, undefined, !lib.size, () => set({ size: "" })));
+    for (const k of Object.keys(SIZES)) sz.append(chip(SIZE_LABEL[k], f.sizes[k] ?? 0, lib.size === k, () => set({ size: lib.size === k ? "" : k })));
+    const fmt = $("fFormat"); fmt.textContent = ""; option(fmt, "", B.allFmt, lib.format);
+    const formats = [...f.formats].sort((a, b) => (RANK.indexOf(a.name) + 1 || 99) - (RANK.indexOf(b.name) + 1 || 99) || b.count - a.count);
+    for (const x of formats) option(fmt, x.name, `${x.name.toUpperCase()} (${x.count})`, lib.format);
+    const gen = $("fGenre"); gen.textContent = ""; option(gen, "", B.allGenre, lib.genre);
+    for (const x of f.genres) option(gen, x.name, `${x.name} (${x.count})`, lib.genre);
+    const so = $("fSort"); so.textContent = "";
+    option(so, "title", B.sortTitle, lib.sort); option(so, "big", B.sortBig, lib.sort); option(so, "small", B.sortSmall, lib.sort);
+  }
+  function set(change) { Object.assign(lib, change); filters(); load(true); }
+  $("fFormat").onchange = (e) => set({ format: e.target.value });
+  $("fGenre").onchange = (e) => set({ genre: e.target.value });
+  $("fSort").onchange = (e) => set({ sort: e.target.value });
+  $("libF").onclick = () => { $("libFilters").hidden = !$("libFilters").hidden; };
+  let typing = 0;
+  $("libQ").oninput = (e) => { clearTimeout(typing); typing = setTimeout(() => { if (lib.q !== e.target.value.trim()) set({ q: e.target.value.trim() }); }, 300); };
+  $("libQ").onkeydown = (e) => { if (e.key === "Enter") { clearTimeout(typing); e.target.blur(); if (lib.q !== e.target.value.trim()) set({ q: e.target.value.trim() }); } };
+
+  // ---- Lista (em paginas de 40, a proxima quando o fim aparece) ----
+  async function load(reset) {
+    if (reset) { lib.games = []; lib.done = false; rows.clear(); $("glist").textContent = ""; scrollTo(0, 0); }
+    if (!reset && (lib.loading || lib.done)) return;
+    const seq = ++lib.seq;
+    lib.loading = true; lib.loaded = true; foot();
+    const r = await libApi("GET", query(lib.games.length));
+    if (seq !== lib.seq) return;
+    lib.loading = false;
+    if (r.status === 200 && Array.isArray(r.data.games)) {
+      lib.state = "ok";
+      Object.assign(lib, { count: r.data.count || 0, total: r.data.total || 0, facets: r.data.facets || null, built: r.data.builtAt || "", partial: r.data.partial === true });
+      lib.games.push(...r.data.games);
+      lib.done = !r.data.games.length || lib.games.length >= lib.count;
+      for (const g of r.data.games) $("glist").append(row(g));
+      if (reset) filters();
+    } else {
+      lib.state = r.data?.error === "no-library" ? "missing" : r.data?.error === "bad-library" ? "bad" : "offline";
+      lib.done = true;
+    }
+    head(); foot();
+  }
+  function head() {
+    const h = $("libHead"); h.textContent = "";
+    if (lib.state !== "ok") return;
+    const left = el("span"); left.append(el("b", "", fill(lib.count === lib.total ? B.count : B.countOf, { n: lib.count.toLocaleString(document.documentElement.lang), t: lib.total.toLocaleString(document.documentElement.lang) })));
+    h.append(left);
+    const notes = [];
+    const when = lib.built ? new Date(lib.built) : null;
+    if (when && !isNaN(when)) notes.push(fill(B.built, { d: when.toLocaleDateString(document.documentElement.lang) }));
+    if (lib.partial) notes.push(B.partial);
+    if (notes.length) h.append(el("span", "", notes.join(" · ")));
+  }
+  function foot() {
+    const m = $("libMore"); m.textContent = "";
+    if (lib.loading) { m.append(el("span", "foot", B.loading)); return; }
+    if (lib.state === "missing" || lib.state === "bad" || lib.state === "offline") {
+      const box = el("div", "libmsg", lib.state === "missing" ? B.noLib : lib.state === "bad" ? B.badLib : B.offline);
+      box.append(el("br")); const again = el("button", "btn", B.retry); again.type = "button"; again.onclick = () => load(true); box.append(again);
+      m.append(box); return;
+    }
+    if (lib.state === "ok" && !lib.games.length) {
+      const box = el("div", "libmsg", B.none);
+      if (active() || lib.q) { box.append(el("br")); const clear = el("button", "btn", B.clear); clear.type = "button"; clear.onclick = () => { $("libQ").value = ""; set({ q: "", platform: "", size: "", format: "", genre: "" }); }; box.append(clear); }
+      m.append(box); return;
+    }
+    if (!lib.done) { const more = el("button", "btn", B.more); more.type = "button"; more.onclick = () => load(false); m.append(more); }
+  }
+  if ("IntersectionObserver" in window) new IntersectionObserver((seen) => { if (seen.some((x) => x.isIntersecting) && document.body.classList.contains("lib")) load(false); }, { rootMargin: "600px 0px" }).observe($("libMore"));
+
+  function row(g) {
+    const r = el("article", "game");
+    const info = el("div", "info"), meta = el("div", "m");
+    info.append(el("div", "t", g.title), meta);
+    if (g.platform) meta.append(el("span", `pf ${g.platform}`, g.platform.toUpperCase()));
+    if (g.code && g.code !== g.title) meta.append(el("span", "", g.code));
+    if (g.sizeBytes) meta.append(el("span", "", size(g.sizeBytes)));
+    const formats = [...(g.formats || [])].sort((a, b) => (RANK.indexOf(a) + 1 || 99) - (RANK.indexOf(b) + 1 || 99));
+    if (formats.length) meta.append(el("span", formats[0] === "exfat" ? "best" : "", formats.map((f) => f.toUpperCase()).join(" · ")));
+    if (g.files > 1) meta.append(el("span", "", fill(B.files, { n: g.files })));
+    if (g.genres?.length) meta.append(el("span", "", g.genres.slice(0, 2).join(", ")));
+    const b = el("button", "btn get"); b.type = "button";
+    rows.set(g.id, { button: b, game: g });
+    paint(g);
+    b.onclick = () => { if (!g.queued) guarded(() => pick(g)); };
+    r.append(info, b);
+    return r;
+  }
+  function paint(g, busy) {
+    const b = rows.get(g.id)?.button;
+    if (!b) return;
+    b.className = g.queued ? "btn get inq" : "btn get";
+    b.disabled = Boolean(g.queued || busy);
+    b.textContent = busy ? B.adding : g.queued ? B.queued : B.get;
+  }
+
+  // ---- Incluir: um arquivo so vai direto; varios, escolhe (o recomendado ja marcado) ----
+  let toastTimer = 0;
+  function toast(text, tone) {
+    const t = $("toast"); t.textContent = text; t.className = `toast ${tone || ""}`; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 4200);
+  }
+  async function pick(g) {
+    if (g.files <= 1) return add(g, {});
+    paint(g, true);
+    const r = await libApi("GET", `/api/library/game?id=${encodeURIComponent(g.id)}`);
+    paint(g);
+    if (r.status !== 200 || !Array.isArray(r.data.files)) { toast(B.fail, "bad"); return; }
+    const files = r.data.files.filter((f) => !f.piece && f.ok !== false && (f.format || f.size >= 1e6));
+    if (!files.length && r.data.wholeOk === false) { toast(B.noSource, "bad"); return; }
+    let chosen = r.data.suggested || WHOLE;
+    const list = $("fsList"); list.textContent = "";
+    const choices = [...files.map((f) => ({ value: f.name, label: base(f.name), note: [f.format ? f.format.toUpperCase() : "", f.size ? size(f.size) : ""].filter(Boolean).join(" · ") })), ...r.data.wholeOk === false ? [] : [{ value: WHOLE, label: B.whole, note: "" }]];
+    for (const c of choices) {
+      const o = el("label", "fopt"), input = el("input");
+      input.type = "radio"; input.name = "fs"; input.checked = c.value === chosen;
+      input.onchange = () => { chosen = c.value; for (const x of list.children) x.classList.toggle("on", x.firstChild.checked); };
+      const name = el("span", "", c.label); name.title = c.value === WHOLE ? c.label : c.value;
+      o.append(input, name);
+      if (c.note) o.append(el("small", "", c.note));
+      o.classList.toggle("on", input.checked);
+      list.append(o);
+    }
+    $("fsTitle").textContent = B.chooseTitle; $("fsText").textContent = `${g.title} · ${B.chooseText}`;
+    $("fsBack").textContent = B.back; $("fsOk").textContent = B.get;
+    $("fsBack").onclick = () => { $("fileSheet").hidden = true; };
+    $("fsOk").onclick = () => { $("fileSheet").hidden = true; add(g, chosen === WHOLE ? { whole: true } : { file: chosen }); };
+    $("fileSheet").hidden = false;
+    $("fsOk").focus();
+  }
+  async function add(g, choice) {
+    paint(g, true);
+    const r = await libApi("POST", "/api/library/add", { id: g.id, ...choice });
+    paint(g);
+    if (r.status === 401) { session = ""; lockButton(); pending = () => add(g, choice); openPin(); return; }
+    if (r.status === 200 && r.data.ok) {
+      g.queued = true; paint(g);
+      toast(fill(r.data.already ? B.already : r.data.appOpen ? B.addedOpen : B.addedClosed, { t: g.title }), "ok");
+      refresh();
+      return;
+    }
+    if (r.data?.error === "no-library") { lib.loaded = false; load(true); }
+    toast(r.data?.error === "no-hash" ? B.noHash : r.data?.error === "no-source" ? B.noSource : r.data?.error === "full" ? B.full : B.fail, "bad");
+  }
+
+  if (location.hash === "#biblioteca") show("lib");
 })();
 </script>
 </body>

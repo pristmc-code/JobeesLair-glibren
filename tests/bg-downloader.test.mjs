@@ -882,3 +882,223 @@ test('glibren.8: um da fila entregue pausado no celular com o app aberto fica pa
   assert.ok(!existsSync(item.job.destination), 'pausado nao baixa sozinho');
   await stop(child);
 });
+
+// ---- glibren: a Biblioteca TorBox na pagina do celular (GET /api/library, /api/library/game, POST /api/library/add) ----
+
+const GiB = 1024 ** 3;
+const GENRES = ['Acao', 'RPG', 'Corrida', 'Esporte', 'Terror'];
+// Uma lista como a que o app grava (torbox-lista.json): 260 jogos variados e alguns itens tortos.
+function library(count = 260) {
+  const games = [];
+  for (let i = 0; i < count; i++) {
+    const ps5 = i % 3 !== 0;
+    const code = `${ps5 ? 'PPSA' : 'CUSA'}${String(10000 + i).padStart(5, '0')}`;
+    const size = [5, 15, 45, 80][i % 4] * GiB + i;
+    const kind = ['exfat', 'pkg', 'rar'][i % 3];
+    const files = kind === 'rar'
+      ? [{ name: `Jogo ${i}/Jogo.${i}.part1.rar`, size: size / 2, format: 'rar' }, { name: `Jogo ${i}/Jogo.${i}.part2.rar`, size: size / 2, format: 'rar' }]
+      : [{ name: `Jogo ${i}/Jogo-${i}.${kind}`, size, format: kind }, { name: `Jogo ${i}/leia-me.nfo`, size: 1000 }];
+    games.push({ id: `g${i}`, title: `Jogo ${String(i).padStart(3, '0')} ${i % 7 === 0 ? 'Especial' : 'Normal'}`, code, platform: ps5 ? 'ps5' : 'ps4', genres: [GENRES[i % 5]], sizeBytes: size, formats: [kind], hash: (i.toString(16).padStart(2, '0')).repeat(20), files, cover: 'https://example.invalid/c.jpg', extra: { a: [1, 2, { b: null }] } });
+  }
+  // Tortos: sem id (usa o hash), sem id nem hash (fica de fora), titulo numero, generos como texto, sem formatos (vem dos
+  // arquivos), tamanho como texto, um valor que nao e objeto, e um titulo enorme.
+  games.push({ hash: 'ab'.repeat(20), title: 'Sem Id', platform: 'PS5', genres: 'RPG', sizeBytes: '1234', files: [{ name: 'Sem.exfat', size: 1234 }] });
+  games.push({ title: 'Sem nada' });
+  games.push({ id: 'num', title: 12345, code: 'cusa99999', files: [{ name: 'x.ffpkg', size: 7 * GiB }], hash: 'cd'.repeat(20) });
+  games.push('isto nao e um jogo');
+  games.push({ id: 'longo', title: 'Ç'.repeat(400), hash: 'ef'.repeat(20), sizeBytes: null, formats: null });
+  return { version: 1, builtAt: '2026-11-06T10:00:00Z', games };
+}
+const lib = (query = '') => page(`/api/library${query}`);
+
+test('biblioteca TorBox: lista resumida, filtros com contagens, paginacao, campos ausentes; arquivo ausente e malformado', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const file = path.join(base, 'torbox-lista.json');
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file });
+  await up(base);
+  await pageUp();
+  assert.deepEqual((await lib()).data, { error: 'no-library' });
+  assert.equal((await lib()).status, 404);
+  const data = library();
+  writeFileSync(file, JSON.stringify(data));
+  await wait(2100); // o arquivo e olhado no maximo a cada 2 s
+  const first = await lib('?limit=500');
+  assert.equal(first.status, 200);
+  assert.equal(first.data.total, 263, '260 + sem id + titulo numero + titulo enorme (o sem nada e o texto ficam de fora)');
+  assert.equal(first.data.count, 263);
+  assert.equal(first.data.limit, 200, 'no maximo 200 por pagina');
+  assert.equal(first.data.games.length, 200);
+  assert.equal(first.data.builtAt, '2026-11-06T10:00:00Z');
+  assert.equal(first.data.partial, false);
+  const titles = first.data.games.map((game) => game.title);
+  assert.deepEqual(titles, [...titles].sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0), 'em ordem de titulo');
+  for (const secret of ['ab'.repeat(20), '0101010101', 'example.invalid', base]) assert.ok(!first.text.includes(secret), `a lista nao mostra ${secret}`);
+  assert.deepEqual(Object.keys(first.data.games[0]).sort(), ['code', 'files', 'formats', 'genres', 'id', 'platform', 'queued', 'sizeBytes', 'title']);
+  const rest = await lib('?offset=200&limit=200');
+  assert.equal(rest.data.games.length, 63);
+  const all = [...first.data.games, ...rest.data.games];
+  assert.equal(new Set(all.map((game) => game.id)).size, 263, 'paginas sem repetir');
+  const byId = Object.fromEntries(all.map((game) => [game.id, game]));
+  assert.deepEqual(byId[('ab'.repeat(20))], { id: 'ab'.repeat(20), title: 'Sem Id', code: '', platform: 'ps5', sizeBytes: 1234, files: 1, queued: false, formats: ['exfat'], genres: ['RPG'] });
+  assert.deepEqual([byId.num.title, byId.num.code, byId.num.platform, byId.num.formats, byId.num.sizeBytes], ['12345', 'CUSA99999', 'ps4', ['ffpkg'], 7 * GiB]);
+  assert.ok(byId.longo.title.length < 400 && byId.longo.title.startsWith('ÇÇ'), 'titulo enorme cortado sem quebrar o UTF-8');
+  assert.deepEqual(byId.g1.formats, ['pkg'], 'o .nfo do lado nao vira formato');
+  // Filtros.
+  const ps4 = await lib('?platform=ps4&limit=200');
+  assert.ok(ps4.data.games.every((game) => game.platform === 'ps4'));
+  assert.equal(ps4.data.count, 88, '87 CUSA da lista + o de codigo cusa');
+  const exfat = await lib('?format=exfat&limit=200');
+  assert.ok(exfat.data.games.every((game) => game.formats.includes('exfat')));
+  assert.equal(exfat.data.count, 88);
+  const two = await lib('?format=exfat,.PKG&limit=1');
+  assert.equal(two.data.count, 88 + 87, 'varios formatos: qualquer um deles');
+  assert.equal((await lib('?format=iso')).data.count, 0, 'formato que nao existe: nada');
+  const rpg = await lib(`?genre=${encodeURIComponent('rpg')}&limit=200`);
+  assert.ok(rpg.data.games.every((game) => game.genres.includes('RPG')));
+  assert.equal(rpg.data.count, 53);
+  const mid = await lib(`?minSize=${10 * GiB}&maxSize=${30 * GiB}&limit=200`);
+  assert.ok(mid.data.games.every((game) => game.sizeBytes >= 10 * GiB && game.sizeBytes < 30 * GiB));
+  assert.equal(mid.data.count, 65);
+  const text = await lib('?q=especial+ppsa');
+  assert.ok(text.data.games.length && text.data.games.every((game) => /Especial/.test(game.title) && game.code.startsWith('PPSA')));
+  assert.equal((await lib(`?q=${encodeURIComponent('jogo 007')}`)).data.games[0].id, 'g7');
+  // Contagens: cada filtro conta com os outros aplicados.
+  const mixed = await lib(`?platform=ps5&format=exfat&minSize=${30 * GiB}`);
+  const everything = all;
+  const count = (fn) => everything.filter(fn).length;
+  const big = (game) => game.sizeBytes >= 30 * GiB;
+  assert.equal(mixed.data.count, count((game) => game.platform === 'ps5' && game.formats.includes('exfat') && big(game)));
+  assert.equal(mixed.data.facets.platforms.ps4, count((game) => game.platform === 'ps4' && game.formats.includes('exfat') && big(game)));
+  assert.equal(mixed.data.facets.formats.find((item) => item.name === 'pkg').count, count((game) => game.platform === 'ps5' && game.formats.includes('pkg') && big(game)));
+  assert.equal(mixed.data.facets.sizes.lt10, count((game) => game.platform === 'ps5' && game.formats.includes('exfat') && game.sizeBytes && game.sizeBytes < 10 * GiB));
+  assert.deepEqual(Object.keys(mixed.data.facets.sizes), ['lt10', '10to30', '30to60', 'gt60', 'unknown']);
+  assert.ok(mixed.data.facets.genres.length >= 5);
+  // Ordem por tamanho.
+  const sizes = (await lib('?sort=big&limit=10')).data.games.map((game) => game.sizeBytes);
+  assert.deepEqual(sizes, [...sizes].sort((a, b) => b - a));
+  const small = (await lib('?sort=small&limit=5')).data.games;
+  assert.equal(small[0].sizeBytes, 1234);
+  // Os arquivos de um jogo, so quando pedidos.
+  const detail = await page('/api/library/game?id=g3');
+  assert.equal(detail.status, 200);
+  assert.equal(detail.data.suggested, 'Jogo 3/Jogo-3.exfat', 'o exFAT, nao o .nfo');
+  assert.deepEqual(detail.data.files.map((item) => [item.format, item.piece]), [['exfat', false], ['', false]]);
+  assert.equal((await page('/api/library/game?id=g2')).data.suggested, '', 'so pedacos de rar: o torrent inteiro');
+  assert.equal((await page('/api/library/game?id=nao-existe')).status, 404);
+  // Arquivo cortado no meio: o que deu para ler aparece, marcado.
+  const textAll = JSON.stringify(data);
+  writeFileSync(file, textAll.slice(0, Math.floor(textAll.length / 2)));
+  await wait(2100);
+  const cut = await lib('?limit=1');
+  assert.equal(cut.status, 200);
+  assert.equal(cut.data.partial, true);
+  assert.ok(cut.data.total > 50 && cut.data.total < 260, String(cut.data.total));
+  writeFileSync(file, '{ isto nao e json');
+  await wait(2100);
+  assert.deepEqual([(await lib()).status, (await lib()).data.error], [500, 'bad-library']);
+  rmSync(file);
+  await wait(2100);
+  assert.equal((await lib()).status, 404);
+  await stop(child);
+});
+
+test('biblioteca TorBox: incluir download pelo celular (sessao, duplicado, arquivo escolhido, recusa do app, cancelar, reinicio)', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const file = path.join(base, 'torbox-lista.json');
+  // Como a lista real: cada arquivo diz de onde vem (via), com o hash dele.
+  const list = library(30);
+  list.games.push({ id: 'web', title: 'So no catalogo', code: 'PPSA20000', hash: 'aa'.repeat(16), files: [
+    { name: 'Web.exfat', size: 5 * GiB, format: 'exfat', via: 'webdl', hash: 'aa'.repeat(16), release: 'rel-web' },
+    { name: 'Web.part1.rar', size: GiB, via: 'webdl', hash: 'bb'.repeat(16), release: 'rel-rar', piece: true }] });
+  list.games.push({ id: 'acc', title: 'Na conta', code: 'PPSA20001', files: [
+    { name: 'Conta.ffpkg', size: 6 * GiB, format: 'ffpkg', via: 'account', hash: 'cc'.repeat(16), item: { kind: 'torrent', id: 77 }, file: 5 },
+    { name: 'Conta-2.pkg', size: GiB, via: 'account', item: { kind: 'torrent', id: 77 }, file: 6 }] });
+  list.games.push({ id: 'tor', title: 'Torrent por arquivo', files: [
+    { name: 'T/T.part1.rar', size: GiB, via: 'torrent', hash: 'dd'.repeat(20), piece: true },
+    { name: 'T/T.part2.rar', size: GiB, via: 'torrent', hash: 'dd'.repeat(20), piece: true }] });
+  writeFileSync(file, JSON.stringify(list));
+  let child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file, BGDL_APP_SILENCE_MS: '400', BGDL_NOTIFY_FILE: path.join(base, 'notify.txt') });
+  await up(base);
+  await pageUp();
+  assert.equal((await page('/api/library/add', { method: 'POST', body: { id: 'g3' } })).status, 401, 'sem o PIN, nada entra na fila');
+  const session = await unlocked(base);
+  await wait(600); // o app calado = fechado
+  const add = await page('/api/library/add', { method: 'POST', session, body: { id: 'g3' } });
+  assert.equal(add.status, 200);
+  assert.equal(add.data.appOpen, false);
+  assert.match(add.data.id, /^b\d+$/);
+  let shownJob = (await page('/api/status')).data.jobs.find((job) => job.id === add.data.id);
+  assert.deepEqual([shownJob.name, shownJob.state, shownJob.requested, shownJob.via, shownJob.total], ['Jogo 003 Normal', 'waiting-app', true, 'TorBox', 80 * GiB + 3]);
+  assert.ok(!JSON.stringify(shownJob).includes('03'.repeat(20)), 'o hash nao vai para a pagina');
+  let job = (await call(base, 'GET', '/jobs')).data.jobs.find((item) => item.id === add.data.id);
+  assert.deepEqual(job.library, { id: 'g3', hash: '03'.repeat(20), file: 'Jogo 3/Jogo-3.exfat', code: 'CUSA10003', platform: 'ps4', via: 'torrent', release: '', item: { kind: '', id: '' }, fileId: '', whole: false, size: 80 * GiB + 3 });
+  assert.equal(job.placeholder, true);
+  assert.match(job.key, /^lib-[0-9a-f]{24}$/);
+  assert.match(readFileSync(path.join(base, 'notify.txt'), 'utf8'), /Jogo 003 Normal entrou na fila pelo celular/);
+  // Duplicado: o mesmo jogo de novo nao cria outro.
+  const again = await page('/api/library/add', { method: 'POST', session, body: { id: 'g3' } });
+  assert.deepEqual(again.data, { ok: true, already: true, id: add.data.id });
+  assert.equal((await lib('?q=jogo+003')).data.games[0].queued, true, 'a lista mostra "na fila"');
+  // Arquivo escolhido; arquivo que nao e do jogo; pedaco de rar; jogo que nao existe; torrent inteiro.
+  assert.equal((await page('/api/library/add', { method: 'POST', session, body: { id: 'g4', file: 'outro.exfat' } })).data.error, 'file');
+  assert.equal((await page('/api/library/add', { method: 'POST', session, body: { id: 'g5', file: 'Jogo 5/Jogo.5.part1.rar' } })).data.error, 'piece');
+  assert.equal((await page('/api/library/add', { method: 'POST', session, body: { id: 'zzz' } })).status, 404);
+  const rar = await page('/api/library/add', { method: 'POST', session, body: { id: 'g5' } });
+  const picked = await page('/api/library/add', { method: 'POST', session, body: { id: 'g4', file: 'Jogo 4/Jogo-4.pkg' } });
+  let jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+  assert.deepEqual([jobs.find((item) => item.id === rar.data.id).library.whole, jobs.find((item) => item.id === rar.data.id).library.file], [true, '']);
+  assert.equal(jobs.find((item) => item.id === picked.data.id).library.file, 'Jogo 4/Jogo-4.pkg');
+  // Fontes por arquivo: webdl (a fonte do catalogo, so o app pede), conta (item + arquivo), torrent de partes (inteiro).
+  const web = await page('/api/library/add', { method: 'POST', session, body: { id: 'web' } });
+  const acc = await page('/api/library/add', { method: 'POST', session, body: { id: 'acc', file: 'Conta-2.pkg' } });
+  const tor = await page('/api/library/add', { method: 'POST', session, body: { id: 'tor' } });
+  assert.equal((await page('/api/library/add', { method: 'POST', session, body: { id: 'web', file: 'Web.part1.rar' } })).data.error, 'piece');
+  const webDetail = (await page('/api/library/game?id=web')).data;
+  assert.deepEqual([webDetail.wholeOk, webDetail.suggested, webDetail.files.map((item) => [item.via, item.piece, item.ok])], [false, 'Web.exfat', [['webdl', false, true], ['webdl', true, true]]]);
+  assert.ok(!JSON.stringify(webDetail).includes('aa'.repeat(16)) && !JSON.stringify(webDetail).includes('rel-web'), 'nem hash nem fonte na pagina');
+  jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+  const libOf = (id) => jobs.find((item) => item.id === id).library;
+  assert.deepEqual([libOf(web.data.id).via, libOf(web.data.id).release, libOf(web.data.id).hash, libOf(web.data.id).file, libOf(web.data.id).whole], ['webdl', 'rel-web', 'aa'.repeat(16), 'Web.exfat', false]);
+  assert.deepEqual([libOf(acc.data.id).via, libOf(acc.data.id).item, libOf(acc.data.id).fileId, libOf(acc.data.id).file], ['account', { kind: 'torrent', id: '77' }, '6', 'Conta-2.pkg']);
+  assert.deepEqual([libOf(tor.data.id).via, libOf(tor.data.id).hash, libOf(tor.data.id).whole, libOf(tor.data.id).file], ['torrent', 'dd'.repeat(20), true, '']);
+  for (const id of [web.data.id, acc.data.id, tor.data.id]) await page(`/api/jobs/${id}/cancel`, { method: 'POST', session });
+  // Ja na fila do app (mesmo nome): conta como duplicado.
+  await call(base, 'POST', '/queue', { items: [{ key: 'kapp', name: 'Jogo 006 Normal', total: 10 }] });
+  assert.equal((await page('/api/library/add', { method: 'POST', session, body: { id: 'g6' } })).data.already, true);
+  // A fila do app (POST /queue) nao tira os pedidos do celular.
+  await call(base, 'POST', '/queue', { items: [] });
+  jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+  assert.deepEqual(jobs.filter((item) => item.library).map((item) => item.id).sort(), [add.data.id, rar.data.id, picked.data.id].sort());
+  // O app nao conseguiu por na fila: o celular ve o motivo; pedir de novo volta a esperar o app.
+  assert.equal((await call(base, 'POST', `/jobs/${add.data.id}/refuse`, { error: 'Destination already exists at /mnt/ext0/x' })).status, 200);
+  shownJob = (await page('/api/status')).data.jobs.find((item) => item.id === add.data.id);
+  assert.deepEqual([shownJob.state, shownJob.error], ['failed', 'Destination already exists at [...]']);
+  assert.equal((await call(base, 'POST', '/jobs/b999/refuse', { error: 'x' })).status, 404);
+  const retry = await page('/api/library/add', { method: 'POST', session, body: { id: 'g3' } });
+  assert.equal(retry.data.retried, true);
+  assert.equal((await shown(add.data.id)).state, 'waiting-app');
+  // Retomar pelo celular tambem pede de novo (depois de outra recusa).
+  await call(base, 'POST', `/jobs/${add.data.id}/refuse`, { error: 'sem espaco' });
+  assert.equal((await page(`/api/jobs/${add.data.id}/resume`, { method: 'POST', session })).status, 200);
+  assert.equal((await shown(add.data.id)).state, 'waiting-app');
+  // Cancelar no celular: o pedido some.
+  assert.equal((await page(`/api/jobs/${picked.data.id}/cancel`, { method: 'POST', session })).status, 200);
+  assert.ok(!(await call(base, 'GET', '/jobs')).data.jobs.some((item) => item.id === picked.data.id));
+  // O payload reinicia: os pedidos continuam (com o jogo e o arquivo).
+  await stop(child);
+  child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file });
+  await up(base);
+  jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+  assert.deepEqual(jobs.filter((item) => item.library).map((item) => [item.id, item.state, item.library.id]).sort(), [[add.data.id, 'waiting-app', 'g3'], [rar.data.id, 'waiting-app', 'g5']].sort());
+  // O app pos na fila dele: tira o pedido (forget).
+  assert.equal((await call(base, 'POST', `/jobs/${add.data.id}/forget`)).status, 200);
+  assert.ok(!(await call(base, 'GET', '/jobs')).data.jobs.some((item) => item.id === add.data.id));
+  // POST /jobs nao cria pedido do celular.
+  const fake = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: path.join(base, 'disk/downloads/fake.bin'), library: { id: 'g1', hash: '01'.repeat(20) } });
+  assert.equal(fake.status, 201);
+  assert.ok(!('library' in fake.data.job));
+  await call(base, 'POST', `/jobs/${fake.data.id}/cancel`);
+  await stop(child);
+});

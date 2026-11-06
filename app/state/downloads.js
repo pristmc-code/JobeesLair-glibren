@@ -15,6 +15,7 @@ import { createBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from '
 import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
 import { recordCapture } from './capture-hosts.js';
+import { queueLibraryRequest } from './phone-library.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
 import { freeBytes, storageRoots } from './drives.js';
 import { createShadowClient, createShadowMountProbe } from './shadowmount.js';
@@ -72,7 +73,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       // MODIFIED (glibren.5): a pausa ao fechar o app (0 a 30 s, Configuracoes) vai ao payload no POST /config.
       pauseOnCloseSeconds,
       // MODIFIED (glibren.8): os downloads simultaneos escolhidos na pagina do celular / APK viram os das Configuracoes.
-      adoptConcurrency: setSimultaneousDownloads
+      adoptConcurrency: setSimultaneousDownloads,
+      // glibren: um jogo pedido na Biblioteca TorBox do celular entra nesta fila, pelo TorBox, no disco padrao.
+      onLibraryRequest: (request) => queueLibraryRequest(request, { queue: downloadQueue(), roots: storageRoots(), getGame })
     }),
     // glibren: quantos downloads rodam ao mesmo tempo (Configuracoes).
     concurrency: simultaneousDownloads,

@@ -40,6 +40,9 @@
 //     e no /jobs; o app adota o numero do celular (adoptConcurrency -> Configuracoes) uma vez por stamp, antes de mandar
 //     o seu, e nao o sobrescreve. As conexoes por download escolhidas no celular ficam no payload (connectionsSet), que
 //     as aplica ao job do mesmo item da fila (a "key", que agora vai tambem no POST /jobs).
+//   - glibren: a Biblioteca TorBox na pagina do celular (POST /api/library/add no payload) deixa pedidos no payload
+//     (marcadores "waiting-app" com "library" no GET /jobs). Com o app aberto, a cada requestsMs, cada pedido vai a fila
+//     (onLibraryRequest -> phone-library.js) e sai do payload (forget); se a fila recusar, o motivo volta (refuse).
 
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
@@ -185,7 +188,12 @@ import { loadList, saveList } from './saved.js';
     // campo, e o payload fica como esta (30 s, se ninguem mudou).
     pauseOnCloseSeconds = () => null,
     // glibren.8: grava nas Configuracoes os downloads simultaneos escolhidos no celular (setSimultaneousDownloads), ou null.
-    adoptConcurrency = null
+    adoptConcurrency = null,
+    // glibren: poe na fila um pedido da Biblioteca TorBox feito no celular ({ id, hash, file, whole, code, platform,
+    // title, size }; lanca o motivo quando nao da), ou null; e de quanto em quanto os pedidos sao vistos (0 = so quando
+    // adoptRequests() e chamado).
+    onLibraryRequest = null,
+    requestsMs = 5e3
   }) {
     const base = `http://127.0.0.1:${port}`;
     let secretsFor = null; // pid do payload que ja recebeu a chave
@@ -692,6 +700,50 @@ import { loadList, saveList } from './saved.js';
         clearInterval(beat);
         beat = null;
       }
+    }
+    // glibren: os pedidos da Biblioteca TorBox feitos no celular. Um por vez (adopting): a fila os recebe na ordem em que
+    // foram pedidos; o pedido so sai do payload depois de a fila aceitar (forget) ou recusar (refuse, com o motivo).
+    let adopting = null;
+    async function adoptRequests(token) {
+      if (typeof onLibraryRequest !== "function" || !token) return 0;
+      if (adopting) return adopting;
+      adopting = (async () => {
+        let taken = 0;
+        try {
+          const answer = await call(token, "GET", "/jobs");
+          const asked = answer.status === 200 ? (answer.data?.jobs ?? []).filter((job) => job?.library && job.placeholder && job.state === "waiting-app") : [];
+          for (const job of asked) {
+            const request = { ...job.library, title: String(job.name || ""), size: Number(job.library.size || job.total) || 0 };
+            let problem = "";
+            try {
+              await onLibraryRequest(request);
+            } catch (error) {
+              problem = String(error?.message || error || "not queued").slice(0, 380);
+            }
+            if (problem) {
+              log(`${request.title || job.id}: phone request not queued (${problem})`);
+              await call(token, "POST", `/jobs/${job.id}/refuse`, { error: problem }).catch(() => {});
+            } else {
+              taken += 1;
+              log(`${request.title || job.id}: queued from the phone's TorBox library`);
+              await call(token, "POST", `/jobs/${job.id}/forget`).catch(() => {});
+            }
+          }
+        } catch {
+        }
+        return taken;
+      })().finally(() => {
+        adopting = null;
+      });
+      return adopting;
+    }
+    wrapper.adoptRequests = () => adoptRequests(readToken());
+    if (typeof onLibraryRequest === "function" && requestsMs > 0 && platform === "ps5") {
+      const watch = setInterval(() => {
+        const token = readToken();
+        if (token) adoptRequests(token).catch(() => {});
+      }, requestsMs);
+      watch?.unref?.();
     }
     current = wrapper;
     return wrapper;

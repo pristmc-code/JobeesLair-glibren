@@ -20,7 +20,10 @@ test('bg_monitor_html.h esta em dia com bg_monitor.html (rode tools/bg-monitor/e
 
 test('a pagina embutida: fala so com a mesma origem, tem o aviso de PIN e o modo demo', () => {
   const page = readFileSync(embed.PAGE, 'utf8');
-  for (const route of ['/api/status', '/api/unlock', '/api/power', '`/api/jobs/${id}/${what}`']) assert.ok(page.includes(route), route);
+  for (const route of ['/api/status', '/api/unlock', '/api/power', '`/api/jobs/${id}/${what}`', '/api/library?', '/api/library/game?id=', '/api/library/add']) assert.ok(page.includes(route), route);
+  // glibren: a Biblioteca TorBox tambem no modo demo, e sem imagem de fora (a pagina so aceita imagens data:).
+  assert.match(page, /demoApi/);
+  assert.ok(!/<img/i.test(page));
   assert.ok(!/https?:\/\//.test(page.replace(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, '')), 'nada de outro site');
   assert.match(page, /noPin/);
   assert.match(page, /has\("demo"\)/);
