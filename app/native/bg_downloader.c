@@ -3255,6 +3255,77 @@ static void monitor_action(int fd, Request* r) {
   monitor_json(fd, 200, "{\"ok\":true}");
 }
 
+// ---- glibren: desligar o PS5 / modo de repouso pela pagina do celular (e pelo APK Jobe Controle) ------------
+// Para quando a TV falha e nao da para usar o menu de energia. As mesmas chamadas do menu (libSceSystemService, sem
+// argumentos), as usadas pelo shsrv (comando suspend), pelo etaHEN e pelo ps5-homeassistant; NAO o syscall reboot(),
+// que corta sem avisar o sistema. So com a sessao do PIN. A pagina recebe 200 antes: o main desliga POWER_DELAY_MS
+// depois, gravando antes a fila (jobs.json) e o disco (sync). Downloads param e retomam da parcial na proxima vez.
+#define POWER_DELAY_MS 2500
+#ifdef __PROSPERO__
+int sceSystemStateMgrTurnOff(void) __attribute__((weak));
+int sceSystemStateMgrEnterStandby(void) __attribute__((weak));
+#endif
+static int g_power_action; // 0 nada, 1 desligar, 2 repouso (com g_monitor_lock)
+static int64_t g_power_at;
+
+static int power_call(int rest) {
+#ifdef __PROSPERO__
+  int (*fn)(void) = rest ? sceSystemStateMgrEnterStandby : sceSystemStateMgrTurnOff;
+  return fn ? fn() : -1;
+#else
+  // Testes: nada de verdade; so anota num arquivo (BGDL_POWER_FILE) o que seria chamado.
+  const char* path = getenv("BGDL_POWER_FILE");
+  FILE* file = path ? fopen(path, "a") : NULL;
+  if (file) { fprintf(file, "%s\n", rest ? "rest" : "off"); fclose(file); }
+  return 0;
+#endif
+}
+
+// Chamado pelo laco do main a cada 1 s.
+static void power_check(void) {
+  pthread_mutex_lock(&g_monitor_lock);
+  const int action = g_power_action && mono_ms() >= g_power_at ? g_power_action : 0;
+  pthread_mutex_unlock(&g_monitor_lock);
+  if (!action) return;
+  const char* what = action == 2 ? "modo de repouso" : "desligar";
+  logk_("energia: %s (pedido pelo celular); gravando a fila e o disco", what);
+  pthread_mutex_lock(&g_lock);
+  save_jobs_locked();
+  pthread_mutex_unlock(&g_lock);
+  sync();
+  notify(action == 2 ? "Jobee'sLair: modo de repouso pedido pelo celular" : "Jobee'sLair: desligando o PS5 (pedido pelo celular)");
+  const int result = power_call(action == 2);
+  logk_("energia: %s -> 0x%08x", what, (unsigned)result);
+  if (result) notify("Jobee'sLair: o PS5 recusou o pedido de energia");
+  pthread_mutex_lock(&g_monitor_lock);
+  g_power_action = 0; // repouso: o processo segue vivo; um pedido novo vale depois de acordar
+  pthread_mutex_unlock(&g_monitor_lock);
+}
+
+typedef struct { char action[8]; } PowerBody;
+static int power_field(JP* jp, const char* key, void* ctx) {
+  if (!strcmp(key, "action")) return jp_text(jp, ((PowerBody*)ctx)->action, sizeof ((PowerBody*)ctx)->action) ? 1 : -1;
+  return jp_skip(jp) ? 1 : -1;
+}
+
+// POST /api/power {"action":"off"|"rest"} com X-Session.
+static void monitor_power(int fd, Request* r) {
+  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  PowerBody b;
+  memset(&b, 0, sizeof b);
+  JP jp = {r->body, r->body + r->content_length, 0};
+  const int ok = r->body && jp_object(&jp, power_field, &b);
+  const int action = !ok ? 0 : !strcmp(b.action, "off") ? 1 : !strcmp(b.action, "rest") ? 2 : 0;
+  if (!action) { monitor_json(fd, 400, "{\"error\":\"action\"}"); return; }
+  pthread_mutex_lock(&g_monitor_lock);
+  const int busy = g_power_action != 0;
+  if (!busy) { g_power_action = action; g_power_at = mono_ms() + POWER_DELAY_MS; }
+  pthread_mutex_unlock(&g_monitor_lock);
+  if (busy) { monitor_json(fd, 409, "{\"error\":\"busy\"}"); return; }
+  logf_("celular: pedido de energia: %s", action == 2 ? "modo de repouso" : "desligar");
+  monitor_json(fd, 200, "{\"ok\":true}");
+}
+
 static void monitor_route(int fd, Request* r, uint32_t ip) {
   char* query = strchr(r->path, '?');
   if (query) *query = 0;
@@ -3272,6 +3343,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/unlock")) { monitor_unlock(fd, r, ip); return; }
   if (!strcmp(r->method, "POST") && !strncmp(r->path, "/api/jobs/", 10)) { monitor_action(fd, r); return; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/power")) { monitor_power(fd, r); return; }
   monitor_json(fd, 404, "{\"error\":\"not found\"}");
 }
 
@@ -3467,6 +3539,7 @@ int main(void) {
   logk_("app %s ao iniciar", app_seen ? "aberto" : "fechado");
   while (!g_stop) {
     sleep_ms(1000);
+    power_check(); // glibren: desligar/repouso pedido pela pagina do celular
     {
       const int64_t mono = mono_ms();
       const int running_now = app_running();
