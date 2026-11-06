@@ -533,6 +533,16 @@ body.fopen{overflow:hidden}
 .shots{display:flex;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;scrollbar-width:none;margin:0 calc(-1 * var(--pad));padding:0 var(--pad) 2px}
 .shots::-webkit-scrollbar{display:none}
 .shot{flex:0 0 84%;max-width:460px;aspect-ratio:16/9;border:0;padding:0;border-radius:8px;overflow:hidden;scroll-snap-align:center;background:var(--raise);cursor:zoom-in;position:relative}
+.shotsw{position:relative;display:flex;flex-direction:column;gap:6px}
+/* glibren.10: setas e bolinhas na galeria (no PC nao da para deslizar, e a 3a foto ficava fora da tela) */
+.sarrow,.larrow{position:absolute;top:50%;margin-top:-20px;width:40px;height:40px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.6);color:#fff;font-size:26px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:2;padding:0 0 3px}
+.sarrow{top:calc(50% - 7px)}
+.sarrow.prev,.larrow.prev{left:6px}.sarrow.next,.larrow.next{right:6px}
+.sarrow[disabled],.larrow[disabled]{opacity:0;pointer-events:none}
+.larrow{width:46px;height:46px;margin-top:-23px}
+.sdots{display:flex;justify-content:center;flex-wrap:wrap;gap:6px}
+.sdots i{width:7px;height:7px;border-radius:50%;background:var(--line-hi)}
+.sdots i.on{background:var(--ice)}
 .shot img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .25s}
 .shot.ok img{opacity:1}
 .shot.bad{display:none}
@@ -599,6 +609,7 @@ body.fopen{overflow:hidden}
 </section>
 <div class="lbox" id="lbox" hidden role="dialog" aria-modal="true">
   <div class="lstrip" id="lstrip"></div>
+  <button class="larrow prev" type="button" id="lprev" aria-label="&lsaquo;">&lsaquo;</button><button class="larrow next" type="button" id="lnext" aria-label="&rsaquo;">&rsaquo;</button>
   <div class="lbar"><span id="lcount"></span><button class="lock" type="button" id="lclose"></button></div>
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
@@ -623,7 +634,7 @@ body.fopen{overflow:hidden}
       code: "Código", platform: "Plataforma", sizeL: "Tamanho", formatsL: "Formatos", genresL: "Gêneros", released: "Lançamento", developer: "Desenvolvedora",
       publisher: "Editora", metacritic: "Metacritic", stars: "Nota na PS Store", ratings: "{n} avaliações", features: "Recursos",
       loadingGame: "Carregando a ficha…", gameFail: "Não deu para abrir a ficha deste jogo.", noDetails: "O app ainda não gravou a ficha deste jogo (fotos e textos): monte a Biblioteca TorBox de novo na Jobee'sLair.",
-      photoOf: "{i} de {n}", photo: "Foto {i} de {n} de {t}" },
+      photoOf: "{i} de {n}", photo: "Foto {i} de {n} de {t}", prevPhoto: "Foto anterior", nextPhoto: "Próxima foto" },
     en: { tabDl: "Downloads", tabLib: "TorBox library", search: "Search a game or code", filters: "Filters",
       allP: "PS5 and PS4", anySize: "Any size", lt10: "up to 10 GB", s10: "10–30 GB", s30: "30–60 GB", gt60: "60 GB or more",
       allFmt: "Any file type", allGenre: "All genres", sortTitle: "Sort: title", sortBig: "Largest first", sortSmall: "Smallest first",
@@ -641,7 +652,7 @@ body.fopen{overflow:hidden}
       code: "Code", platform: "Platform", sizeL: "Size", formatsL: "Formats", genresL: "Genres", released: "Released", developer: "Developer",
       publisher: "Publisher", metacritic: "Metacritic", stars: "PS Store rating", ratings: "{n} ratings", features: "Features",
       loadingGame: "Loading the details…", gameFail: "Couldn't open this game's details.", noDetails: "The app hasn't saved this game's details (photos and text) yet: build the TorBox library again in Jobee'sLair.",
-      photoOf: "{i} of {n}", photo: "Photo {i} of {n} of {t}" }
+      photoOf: "{i} of {n}", photo: "Photo {i} of {n} of {t}", prevPhoto: "Previous photo", nextPhoto: "Next photo" }
   }[L === T.pt ? "pt" : "en"];
   const GiB = 1024 ** 3, PAGE = 40, WHOLE = "\u0000whole";
   const SIZES = { lt10: [0, 10 * GiB], "10to30": [10 * GiB, 30 * GiB], "30to60": [30 * GiB, 60 * GiB], gt60: [60 * GiB, 0] };
@@ -1101,7 +1112,26 @@ body.fopen{overflow:hidden}
         t.onclick = () => openPhotos(i);
         strip.append(t);
       });
-      s.append(strip); right.append(s);
+      // glibren.10: setas (anterior/proxima) e bolinhas: deslizar continua valendo no celular.
+      const wrap = el("div", "shotsw"), box = el("div"), prev = el("button", "sarrow prev", "‹"), next = el("button", "sarrow next", "›"), dots = el("div", "sdots");
+      box.style.position = "relative";
+      prev.type = next.type = "button"; prev.setAttribute("aria-label", B.prevPhoto); next.setAttribute("aria-label", B.nextPhoto);
+      for (let i = 0; i < fx.shots.length; i++) dots.append(el("i"));
+      const width = () => { const one = strip.querySelector(".shot:not(.bad)"); return one ? one.getBoundingClientRect().width + 8 : strip.clientWidth; };
+      const sync = () => {
+        const at = Math.min(fx.shots.length - 1, Math.round(strip.scrollLeft / Math.max(1, width())));
+        prev.disabled = strip.scrollLeft < 4;
+        next.disabled = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 4;
+        [...dots.children].forEach((d, i) => d.classList.toggle("on", i === at));
+      };
+      prev.onclick = () => strip.scrollBy({ left: -width(), behavior: "smooth" });
+      next.onclick = () => strip.scrollBy({ left: width(), behavior: "smooth" });
+      strip.addEventListener("scroll", sync, { passive: true });
+      addEventListener("resize", sync, { passive: true });
+      box.append(strip, prev, next); wrap.append(box);
+      if (fx.shots.length > 1) wrap.append(dots);
+      s.append(wrap); right.append(s);
+      requestAnimationFrame(sync);
     }
     // Videos: os do catalogo (player do YouTube sem cookies, so ao tocar) e a busca no YouTube pelo nome.
     const vids = section("fs-vids", B.videos), list = el("div", "vids");
@@ -1172,7 +1202,17 @@ body.fopen{overflow:hidden}
     }
     requestAnimationFrame(() => { strip.scrollLeft = at * strip.clientWidth; count(); });
   }
-  function count() { const strip = $("lstrip"); $("lcount").textContent = fill(B.photoOf, { i: Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth)) + 1, n: fx.shots.length }); }
+  function count() {
+    const strip = $("lstrip");
+    $("lcount").textContent = fill(B.photoOf, { i: Math.round(strip.scrollLeft / Math.max(1, strip.clientWidth)) + 1, n: fx.shots.length });
+    $("lprev").disabled = strip.scrollLeft < 4;
+    $("lnext").disabled = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 4;
+  }
+  const lstep = (dir) => { const strip = $("lstrip"); strip.scrollBy({ left: dir * strip.clientWidth, behavior: "smooth" }); };
+  $("lprev").onclick = () => lstep(-1);
+  $("lnext").onclick = () => lstep(1);
+  $("lprev").setAttribute("aria-label", B.prevPhoto); $("lnext").setAttribute("aria-label", B.nextPhoto);
+  addEventListener("keydown", (e) => { if ($("lbox").hidden) return; if (e.key === "ArrowLeft") lstep(-1); else if (e.key === "ArrowRight") lstep(1); });
   $("lstrip").addEventListener("scroll", count, { passive: true });
   function closeLightbox() { if ($("lbox").hidden) return; $("lbox").hidden = true; $("lstrip").textContent = ""; }
 
