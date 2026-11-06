@@ -113,8 +113,20 @@ import { noteRow, warmAtStart } from './cover-warm.js';
   // (state/library-count.js) adds the feeds' own lists to these.
   var bundledIndex = games.map((game) => [game.id, game.direct ? 1 : 0]);
   var catalogIds = new Map([...games, ...twins].map((game) => [game.id, game]));
-  for (const { game: feedGame, page, releases } of loadFeedGames()) {
+  // glibren.9: where each game comes from, for the TorBox library (state/torbox-library.js): "bundled" (the catalog
+  // in the package) and the address of each feed (the live catalog's too) that lists it.
+  var BUNDLED = "bundled";
+  var sourcesById = new Map([...games, ...twins].map((game) => [game.id, [BUNDLED]]));
+  var sourceCounts = /* @__PURE__ */ new Map([[BUNDLED, games.length + twins.length]]);
+  for (const { game: feedGame, page, releases, feed } of loadFeedGames()) {
     if (PS4 && feedGame.platform !== "ps4") continue;
+    if (feed) {
+      const from = sourcesById.get(feedGame.id) ?? [];
+      if (!from.includes(feed)) {
+        sourcesById.set(feedGame.id, [...from, feed]);
+        sourceCounts.set(feed, (sourceCounts.get(feed) ?? 0) + 1);
+      }
+    }
     feedReleases.set(feedGame.id, [...feedReleases.get(feedGame.id) ?? [], ...releases]);
     const known = catalogIds.get(feedGame.id);
     if (known) {
@@ -162,6 +174,23 @@ import { noteRow, warmAtStart } from './cover-warm.js';
     return [...editionsByWork.get(game.work) ?? [game]].sort((a, b) => b.platform.localeCompare(a.platform) || Number(listed.has(b)) - Number(listed.has(a)) || a.titleId.localeCompare(b.titleId));
   }
   var genres = [...new Set(games.flatMap((game) => game.genres))].sort();
+  // glibren.9: every listed game, as loaded: the store's list (`games`) can be narrowed to the TorBox store's
+  // (state/store-mode.js), and this keeps the whole one.
+  var allListed = [...games];
+  /** The catalog's games and where they come from, for the TorBox library: [{ game, sources }], other editions too. */
+  var catalogEntries = () => entries.map((game) => ({ game, sources: sourcesById.get(game.id) ?? [BUNDLED] }));
+  /** The sources the catalog has games from: [{ id: "bundled" | "<feed url>", count }]. */
+  var catalogSources = () => [...sourceCounts].map(([id, count]) => ({ id, count }));
+  /**
+   * glibren.9: after the store's list changed (state/store-mode.js): the filters' and related games' kept answers
+   * go, and the genres are the list's.
+   */
+  function refreshDerived() {
+    pools.clear();
+    countsKept.clear();
+    relatedCache.clear();
+    genres = [...new Set(games.flatMap((game) => game.genres))].sort();
+  }
   var byId = new Map(entries.map((game) => [game.id, game]));
   var getGame = (id) => byId.get(id);
   function listedId(id) {
@@ -395,4 +424,4 @@ import { noteRow, warmAtStart } from './cover-warm.js';
   }
   var formatDate3 = (iso) => iso ? formatDate2(iso) : "\u2014";
 
-export { CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };
+export { BUNDLED, allListed, catalogEntries, catalogSources, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };

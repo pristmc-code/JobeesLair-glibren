@@ -3,6 +3,7 @@
 // MODIFIED: no folder-install migration notice; this build has no updates to migrate for.
 // MODIFIED: Jobee'sLair's library: a full-width hero, then swimlanes (Featured and Homebrew as wide
 // banner cards), then the whole library; the ranked chart lists are gone.
+// MODIFIED (glibren.9): the store's version (the full catalog or the TorBox store) is chosen at the top (StoreModeBar).
 
 import '../assets/Exo2.ttf';
 import '../assets/JetBrainsMono-Regular.ttf';
@@ -17,6 +18,7 @@ import { PageHints } from './PageHints.jsx';
 import { PopularRail } from './PopularRail.jsx';
 import { RecentRow } from './RecentRow.jsx';
 import { Spotlight } from './Spotlight.jsx';
+import { StoreModeBar } from './StoreModeBar.jsx';
 import { NewLane, FeaturedLane, HomebrewLane, ReadyLane, RecentLane, TopLane } from './Lanes.jsx';
 import { useT } from '../i18n/index.js';
 import { StoreFreeze } from '../state/store.jsx';
@@ -37,6 +39,7 @@ import { FocusScope, ScrollView, Text, View } from '@ps5-react/core';
     const onAction = useFavoriteAction();
     return /* @__PURE__ */ (0, jsx)(FocusScope, { trap: true, onAction, children: /* @__PURE__ */ (0, jsxs)(ScrollView, { style: { flex: 1, gap: 60, paddingHorizontal: 48 }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: { gap: 24, paddingTop: 24 }, children: [
+        jsx(StoreModeBar, {}),
         /* @__PURE__ */ (0, jsx)(Spotlight, {})
       ] }),
       /* @__PURE__ */ (0, jsx)(FeaturedLane, {}),

@@ -7,6 +7,7 @@ import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { memo } from 'react';
 import { GameRail } from './GameRail.jsx';
 import { games } from '../data/catalog-index.js';
+import { onStoreMode } from '../state/store-mode.js';
 import { useT } from '../i18n/index.js';
 import { CDN_HOST, NO_FILTERS, onCdn, oneEach, sortGames } from '../state/catalog.js';
 import { useNavActions } from '../state/nav.jsx';
@@ -24,6 +25,10 @@ import { Image, Text, View, motion, useIsFocused } from '@ps5-react/core';
   var TILE = { width: px(WIDTH * 2 + 24), height: px(Math.round(WIDTH * 4 / 3)), borderRadius: radius.sm };
   var CAPTION2 = { width: px(WIDTH * 2 + 24), height: px(DETAILED_CAPTION) };
   var SERVED = oneEach(sortGames(games.filter(onCdn), "relevance"));
+  // glibren.9: again from the TorBox store's games when the store's version changes.
+  onStoreMode(() => {
+    SERVED = oneEach(sortGames(games.filter(onCdn), "relevance"));
+  });
   noteRow(SERVED);
   var lift2 = { type: "tween", duration: 0.3, ease: EASE_OUT };
   function CollectionCard() {

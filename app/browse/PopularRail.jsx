@@ -13,6 +13,7 @@ import { useNavActions } from '../state/nav.jsx';
 import { useStoreActions } from '../state/store.jsx';
 import { GameCard } from '../ui/GameCard.jsx';
 import { noteRow } from '../state/cover-warm.js';
+import { onStoreMode } from '../state/store-mode.js';
 
   var WIDTH4 = 152;
   // 0.5.3: the most played games on PlayStation (the most rated on its store), less those the rows above already show
@@ -20,6 +21,11 @@ import { noteRow } from '../state/cover-warm.js';
   // first, and opened with the same eight games as Featured and Ready right above it.
   var POPULAR = oneEach(otherThan(games.filter((game) => game.ratingCount > 0).sort((a, b) => b.ratingCount - a.ratingCount || b.recommendations - a.recommendations), [...featured, ...FEATURED, ...TOP, ...READY])).slice(0, 15);
   noteRow(POPULAR, POPULAR.length);
+  // glibren.9: again from the TorBox store's games when the store's version changes (after the rows above, which
+  // registered first).
+  onStoreMode(() => {
+    POPULAR = oneEach(otherThan(games.filter((game) => game.ratingCount > 0).sort((a, b) => b.ratingCount - a.ratingCount || b.recommendations - a.recommendations), [...featured, ...FEATURED, ...TOP, ...READY])).slice(0, 15);
+  });
   var PopularRail = (0, memo)(function PopularRail2() {
     const t2 = useT();
     const { openGame, focusLater } = useNavActions();

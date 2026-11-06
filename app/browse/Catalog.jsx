@@ -11,6 +11,7 @@ import { SPAN_MAX, fitBytes } from '../i18n/fit.js';
 import { useLocale, useT } from '../i18n/index.js';
 import { games } from '../data/catalog-index.js';
 import { activeCount, filterGames, oneEach, sortGames } from '../state/catalog.js';
+import { onStoreMode } from '../state/store-mode.js';
 import { useNavActions } from '../state/nav.jsx';
 import { useStore } from '../state/store.jsx';
 import { ButtonGlyph } from '../ui/ButtonHints.jsx';
@@ -48,6 +49,10 @@ import { colors, radius } from '../ui/colors.js';
   // and sorting the whole catalog, then keeping one card a game, took the console tens of milliseconds a switch.
   // With no filter and no search the pool is the catalog itself, the same array every time.
   var grids = /* @__PURE__ */ new WeakMap();
+  // glibren.9: the catalog array stays the same object when the store's version changes, its games do not.
+  onStoreMode(() => {
+    grids = /* @__PURE__ */ new WeakMap();
+  });
   function gridOf(pool, sort, everyCopy) {
     let bySort = grids.get(pool);
     if (!bySort) grids.set(pool, bySort = /* @__PURE__ */ new Map());
