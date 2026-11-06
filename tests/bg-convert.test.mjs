@@ -1,6 +1,6 @@
 // glibren.12: a conversao para .exfat no payload (app/native/bg_convert.c), compilado para o PC e rodado de verdade.
-// O criador de imagem e o real (exfat_writer.c, conferido montando a imagem como root); o leitor de .pkg ainda e o
-// PROVISORIO do wt-converter (pacote falso em texto); a libarchive e a de verdade (RAR, RAR em volumes, 7z, zip com senha). Testa: pasta, .pkg, compactado direto,
+// O criador de imagem (exfat_writer.c) e o leitor de .pkg (pkg_source.c, com os FPKG de teste de tests/pkg-source)
+// sao os reais; as imagens sao montadas como root e conferidas; a libarchive e a de verdade (RAR, RAR em volumes, 7z, zip com senha). Testa: pasta, .pkg, compactado direto,
 // progresso, cancelar, erros (com o codigo que o app traduz), espaco, tentar de novo pela mesma chave, reinicio no
 // meio (recomeca limpo), o pedido de varredura ao ShadowMount+ e o BACKUP na pagina do celular (PIN).
 // Precisa de cc, libcurl, OpenSSL e libarchive; rar/7z/zip so para os testes de compactado (sem eles, pulados).
@@ -268,27 +268,56 @@ test('reinicio no meio: o payload morto volta, a conversao recomeca limpa e term
   assert.ok(!existsSync(path.join(base, 'disk/homebrew/R2.exfat.part')));
 });
 
-test('pacote: um .pkg de jogo vira .exfat (o .pkg fica onde estava); atualizacao ou DLC e recusado como not-a-game', { skip }, async () => {
+// Os FPKG de PS5 de verdade do pkg_source (tests/pkg-source, gerados pelo construtor aberto do ps5upload), em gzip.
+const fixtures = path.join(repo, 'tests/pkg-source');
+const gunzipTo = async (name, to) => writeFileSync(to, (await import('node:zlib')).gunzipSync(readFileSync(path.join(fixtures, `${name}.pkg.gz`))));
+test('pacote: um FPKG de PS5 de verdade (Kraken rapido) vira .exfat com o sha256 de cada arquivo; DLC e atualizacao (LIH) sao not-a-game', { skip }, async () => {
   monitorPort = await freePort();
   const base = workspace();
-  const payload = randomBytes(2 * MiB);
-  const fake = (kind) => Buffer.concat([Buffer.from(`FAKEPKG1\nPPSA01234\nUP0000-PPSA01234_00-TESTTESTTESTTEST\n${kind}\n4\nD 0 sce_sys\nF 10 sce_sys/param.json\n`), Buffer.from('{"t":"ok"}'),
-    Buffer.from(`F ${payload.length} eboot.bin\n`), payload, Buffer.from('F 3 data.bin\n'), Buffer.from('abc')]);
-  mkdirSync(path.join(base, 'disk/BACKUP/Jogo'), { recursive: true });
-  const pkg = path.join(base, 'disk/BACKUP/Jogo/game.pkg');
-  writeFileSync(pkg, fake(1));
+  const backup = path.join(base, 'disk/BACKUP/Jogo');
+  mkdirSync(backup, { recursive: true });
+  const pkg = path.join(backup, 'jogo_fast.pkg');
+  await gunzipTo('jogo_fast', pkg);
   const child = start(base);
   await up(base);
   let r = await call(base, 'POST', '/convert', body(base, { kind: 'pkg', source: pkg }));
-  await until(base, r.data.id, ['done']);
+  const done = await until(base, r.data.id, ['done', 'failed']);
+  assert.equal(done.state, 'done', done.error);
   const entries = readImage(path.join(base, 'disk/homebrew/PPSA01234.exfat'));
-  if (entries) assert.equal(sha(entries['eboot.bin'].bytes), sha(payload));
+  if (entries) {
+    const lines = readFileSync(path.join(fixtures, 'jogo_fast.sha256'), 'utf8').trim().split('\n');
+    assert.ok(lines.length > 50);
+    for (const line of lines) {
+      const [hash, size, ...name] = line.split(' ');
+      const file = entries[name.join(' ')];
+      assert.ok(file && !file.dir, `${name.join(' ')} na imagem`);
+      assert.equal(file.bytes.length, Number(size), name.join(' '));
+      assert.equal(sha(file.bytes), hash, name.join(' '));
+    }
+  }
   assert.ok(existsSync(pkg), 'o original continua no BACKUP');
-  const patch = path.join(base, 'disk/BACKUP/Jogo/patch.pkg');
-  writeFileSync(patch, fake(2));
-  r = await call(base, 'POST', '/convert', body(base, { key: 'patch', kind: 'pkg', source: patch, output: path.join(base, 'disk/homebrew/P.exfat') }));
+  // DLC: o pacote abre, mas nao e o jogo.
+  const dlc = path.join(backup, 'dlc.pkg');
+  await gunzipTo('dlc', dlc);
+  r = await call(base, 'POST', '/convert', body(base, { key: 'dlc', kind: 'pkg', source: dlc, output: path.join(base, 'disk/homebrew/DLC.exfat') }));
   assert.match((await until(base, r.data.id, ['failed'])).error, /^not-a-game: /);
-  assert.ok(!existsSync(path.join(base, 'disk/homebrew/P.exfat.part')));
+  // Atualizacao (\x7FLIH em volta do pacote, como em pkg-source.test.mjs): not-a-game tambem.
+  const whole = readFileSync(pkg);
+  const cnt = Number(whole.readBigUInt64LE(0x58));
+  const head = Buffer.alloc(0x10000);
+  head.write('\x7fLIH', 0, 'latin1');
+  head.writeBigUInt64LE(BigInt(whole.length + 0x10000), 0x18);
+  head.writeBigUInt64LE(BigInt(0x10000 + cnt), 0x30);
+  head.writeBigUInt64LE(BigInt(whole.length - cnt), 0x38);
+  const lih = path.join(backup, 'patch.pkg');
+  writeFileSync(lih, Buffer.concat([head, whole]));
+  r = await call(base, 'POST', '/convert', body(base, { key: 'lih', kind: 'pkg', source: lih, output: path.join(base, 'disk/homebrew/P.exfat') }));
+  assert.match((await until(base, r.data.id, ['failed'])).error, /^not-a-game: /);
+  // Um pacote que nao abre (lixo): source:, nada gravado.
+  writeFileSync(path.join(backup, 'lixo.pkg'), randomBytes(70000));
+  r = await call(base, 'POST', '/convert', body(base, { key: 'lixo', kind: 'pkg', source: path.join(backup, 'lixo.pkg'), output: path.join(base, 'disk/homebrew/L.exfat') }));
+  assert.match((await until(base, r.data.id, ['failed'])).error, /^source: /);
+  assert.ok(!readdirSync(path.join(base, 'disk/homebrew')).some((name) => /^(DLC|P|L)\.exfat/.test(name)));
   await stop(child);
 });
 
