@@ -25,6 +25,8 @@
 > and the TorBox key is no longer kept inside saved download links.
 > **glibren.7** limits TorBox downloads to 8 connections in all (its CDN answered HTTP 429 to more), shared by the
 > downloads running side by side.
+> **glibren.8**: the in-app update downloads only the new image (no more minutes of "Checking" at 7% while update.zip
+> was unpacked).
 > Download it from this fork's [releases](https://github.com/pristmc-code/JobeesLair-glibren/releases/latest);
 > its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
 > the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
