@@ -405,7 +405,8 @@ test('pagina do celular desligada: a porta fecha; ligada de novo, volta; um PIN 
 // ---- glibren: a fila do app entregue com antecedencia (POST /queue) ----
 
 const small = (name, size = 3 * MiB) => { files[name] = randomBytes(size); return name; };
-const queued = (base, name, extra = {}) => ({ key: `k-${name.replace(/\W/g, '')}`, name, total: files[name]?.length || 0, job: { url: `http://127.0.0.1:${port}/f/${name}`, destination: path.join(base, 'disk/downloads', name), storageRoot: path.join(base, 'disk'), connections: 1, expectedBytes: files[name]?.length || 0, ...extra } });
+// glibren.8: chaves como as do app (download-queue.js: "<jogo>/<release>"), com a barra que o payload recusava.
+const queued = (base, name, extra = {}) => ({ key: `PPSA01234/k-${name.replace(/\W/g, '')}`, name, total: files[name]?.length || 0, job: { url: `http://127.0.0.1:${port}/f/${name}`, destination: path.join(base, 'disk/downloads', name), storageRoot: path.join(base, 'disk'), connections: 1, expectedBytes: files[name]?.length || 0, ...extra } });
 async function statusUntil(check, ms = 60000) {
   let last;
   for (const end = Date.now() + ms; Date.now() < end; await wait(50)) {
@@ -422,9 +423,11 @@ test('fila entregue: com o app fechado, N=1 baixa um depois do outro na ordem; o
   const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '600' });
   await up(base);
   await pageUp();
-  const answer = await call(base, 'POST', '/queue', { items: [queued(base, 'q1.bin'), { key: 'kpage', name: 'Jogo do MediaFire', total: 5000 }, queued(base, 'q2.bin'), queued(base, 'q3.bin')] });
+  const answer = await call(base, 'POST', '/queue', { items: [queued(base, 'q1.bin'), { key: 'PPSA09999/mediafire-1', name: 'Jogo do MediaFire', total: 5000 }, queued(base, 'q2.bin'), queued(base, 'q3.bin')] });
   assert.equal(answer.status, 200);
   assert.deepEqual([answer.data.created, answer.data.waiting], [3, 1]);
+  assert.equal((await call(base, 'POST', '/queue', { items: [{ key: 'tem "aspas"', name: 'x', total: 1 }] })).status, 400, 'aspas na chave: recusada');
+  assert.equal((await call(base, 'POST', '/queue', { items: [queued(base, 'q1.bin'), { key: 'PPSA09999/mediafire-1', name: 'Jogo do MediaFire', total: 5000 }, queued(base, 'q2.bin'), queued(base, 'q3.bin')] })).status, 200);
   // Daqui em diante o "app" fica calado (fechado): so a pagina do celular, sem token, e consultada.
   const done = [];
   let most = 0;

@@ -603,7 +603,7 @@ test('glibren.8: sem escolha no celular (concurrencyBy "app"), nada e adotado; u
   })(payload.http.request);
   const adopted = [];
   const wrapper = make(payload, fakeEngine(), { concurrency: () => 1, adoptConcurrency: (n) => adopted.push(n) });
-  wrapper.enqueue(queueOptions({ background: { ...queueOptions().background, key: 'tem espaco/e barra' } }));
+  wrapper.enqueue(queueOptions({ background: { ...queueOptions().background, key: 'tem "aspas"' } }));
   await wait(30);
   assert.deepEqual(adopted, []);
   assert.deepEqual(payload.configs, [{ concurrency: 1 }]);

@@ -802,7 +802,7 @@ typedef struct {
   // `placeholder` ("waiting-app") so mostra no celular um item que so o app sabe baixar (sem URL). `key`: o id do job
   // na fila do app. `followed`: o app abriu e acompanha este job (so na memoria).
   int ahead, placeholder, followed, order;
-  char key[40];
+  char key[128]; // glibren.8: a chave da fila do app e "<jogo>/<release>" (era 40, so letras e digitos)
   // glibren: pedido da Biblioteca TorBox feito no celular (POST /api/library/add): um marcador que so o app tira
   // (forget, depois de por o jogo na fila dele). O jogo da lista (id), o torrent (hash), o arquivo escolhido ("" com
   // lib_whole = o torrent inteiro), o codigo e a plataforma. Gravado em jobs.json ("library").
@@ -968,7 +968,7 @@ static Job* find_job_locked(const char* id) {
 // payload: um marcador "waiting-app" some quando o app comeca o download (POST /jobs com a mesma chave chega depois),
 // ou vira um job antecipado. O job novo com a chave herda o numero. So em memoria, as ultimas CARRY_MAX.
 #define CARRY_MAX 16
-static struct { char key[40]; unsigned connections; } g_carry[CARRY_MAX];
+static struct { char key[128]; unsigned connections; } g_carry[CARRY_MAX];
 static int g_carry_next;
 static void carry_remember_locked(const Job* j) {
   if (!j->connections_set || !j->key[0]) return;
@@ -1104,6 +1104,16 @@ static int safe_token_text(const char* text) { // ids e chaves: letras, digitos,
   return 1;
 }
 
+// MODIFIED (glibren.8): a chave de um item da fila do app e o id do job dela, "<jogo>/<release>"
+// (download-queue.js); safe_token_text recusava a "/" e o POST /queue inteiro voltava 400 ("item 0: key"), de modo
+// que nada da fila chegava ao payload. A chave so e comparada e escrita escapada em JSON: basta texto visivel,
+// sem aspas nem barra invertida.
+static int queue_key_ok(const char* text) {
+  if (!*text) return 0;
+  for (const char* p = text; *p; ++p) if ((unsigned char)*p < 0x20 || *p == 0x7f || *p == '"' || *p == '\\') return 0;
+  return 1;
+}
+
 static int is_hex64(const char* text) {
   if (strlen(text) != 64) return 0;
   for (const char* p = text; *p; ++p) if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f'))) return 0;
@@ -1114,7 +1124,7 @@ static int is_hex64(const char* text) {
 static int validate_job(Job* j, char* error, size_t cap) {
   // Um marcador "waiting-app": so nome, tamanho e ordem, nada para baixar.
   if (j->placeholder) {
-    if (!j->key[0] || !safe_token_text(j->key)) { snprintf(error, cap, "a waiting item needs its key"); return 0; }
+    if (!j->key[0] || !queue_key_ok(j->key)) { snprintf(error, cap, "a waiting item needs its key"); return 0; }
     j->url[0] = j->destination[0] = j->storage_root[0] = j->publish_to[0] = 0;
     j->ahead = 0;
     if (j->requested && (!j->lib_id[0] || !(j->lib_hash[0] || j->lib_release[0] || j->lib_item_id[0]))) j->requested = 0;
@@ -1125,7 +1135,7 @@ static int validate_job(Job* j, char* error, size_t cap) {
     return 1;
   }
   j->requested = 0; // so marcadores
-  if (j->key[0] && !safe_token_text(j->key)) { snprintf(error, cap, "invalid key"); return 0; }
+  if (j->key[0] && !queue_key_ok(j->key)) { snprintf(error, cap, "invalid key"); return 0; }
   if (!safe_url(j->url)) { snprintf(error, cap, "url must be an http(s) URL without spaces"); return 0; }
   if (!safe_path(j->destination)) { snprintf(error, cap, "destination must be an absolute file path"); return 0; }
   if (j->storage_root[0]) {
@@ -2847,7 +2857,7 @@ static void handle_create(int fd, Request* r) {
 // app acompanhar (para, gravando o checkpoint, e sai), marcador. Terminados ficam para o app conferir ao abrir.
 // MODIFIED (glibren.8): "paused" (pausado no app) e "written" (o progresso dele) tambem vem: o pausado continua na
 // fila entregue (Pausado na pagina do celular, com o progresso) em vez de sumir dela.
-typedef struct { char key[40], name[256]; uint64_t total, written; Job* job; int has_job, paused; } QueueItem;
+typedef struct { char key[128], name[256]; uint64_t total, written; Job* job; int has_job, paused; } QueueItem;
 typedef struct { QueueItem* item; } QueueItemCtx;
 static int queue_item_field(JP* jp, const char* key, void* ctx) {
   QueueItem* q = ((QueueItemCtx*)ctx)->item;
@@ -2902,7 +2912,7 @@ static void handle_queue(int fd, Request* r) {
   char error[200] = "";
   for (int i = 0; ok && i < body.count; ++i) {
     QueueItem* q = &body.items[i];
-    if (!q->key[0] || !safe_token_text(q->key)) { snprintf(error, sizeof error, "item %d: key", i); ok = 0; break; }
+    if (!q->key[0] || !queue_key_ok(q->key)) { snprintf(error, sizeof error, "item %d: key", i); ok = 0; break; }
     if (q->has_job) {
       Job* j = q->job;
       j->id[0] = j->state[0] = j->error[0] = j->by[0] = j->published[0] = 0;

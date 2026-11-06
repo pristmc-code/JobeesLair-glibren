@@ -315,7 +315,7 @@ import { loadList, saveList } from './saved.js';
         notifyDone: text("downloads.background.notifyDone", { name }),
         notifyFailed: text("downloads.background.notifyFailed", { name }),
         // glibren.8: o item da fila do app, para o payload aplicar as conexoes escolhidas no celular para ele.
-        ...typeof meta.key === "string" && /^[A-Za-z0-9_-]{1,39}$/.test(meta.key) ? { key: meta.key } : {}
+        ...typeof meta.key === "string" && /^[^\u0000-\u001f"\\\u007f]{1,127}$/.test(meta.key) ? { key: meta.key } : {}
       };
     }
     // Um job entregue com antecedencia que o app passou a acompanhar: o payload so o comeca com o app aberto assim.
