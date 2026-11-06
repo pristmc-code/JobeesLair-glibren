@@ -209,5 +209,39 @@
     reporters.add(reporter);
     return () => reporters.delete(reporter);
   }
+  // glibren.12: de onde vem e o que e um download, para os selos da pagina do celular (o payload os mostra no
+  // /api/status). So o dominio registravel do site ("download1234.mediafire.com" -> "mediafire.com"; "com.br",
+  // "co.uk" e afins com tres partes), nunca caminho, consulta, porta ou usuario.
+  var SECOND_LEVEL = /* @__PURE__ */ new Set(["com", "net", "org", "gov", "edu", "co", "ac"]);
+  function siteOf(url) {
+    const host = /^https?:\/\/(?:[^/?#@]*@)?([^/?#:[\]]+)(?::\d+)?(?:[/?#]|$)/i.exec(String(url || ""))?.[1]?.toLowerCase().replace(/^www\./, "");
+    if (!host || !/^[a-z0-9.-]+$/.test(host) || /^[.-]|[.-]$|\.\./.test(host)) return null;
+    if (/^[\d.]+$/.test(host)) return host.length <= 64 ? host : null;
+    const labels = host.split(".");
+    const keep = labels.length >= 3 && labels.at(-1).length === 2 && SECOND_LEVEL.has(labels.at(-2)) ? 3 : 2;
+    const site = labels.slice(-keep).join(".");
+    return site.length <= 64 ? site : null;
+  }
+  // { via?: "torbox" | "alldebrid", host?: "mediafire.com", format?: "rar", parts?: 3 } de uma fonte (release) da fila.
+  // Pelo TorBox/AllDebrid o site e o CDN deles: so o `via`. O formato e o que a lista de fontes mostra (effectiveFormat);
+  // um conjunto em partes, o da primeira parte.
+  function originOf(release, recordOf) {
+    if (!release || typeof release !== "object") return {};
+    const out = {};
+    const service = release.debrid?.service ?? release.parts?.[0]?.sources?.[0]?.debrid?.service;
+    if (service === "torbox" || service === "alldebrid") out.via = service;
+    else {
+      const first = sourcesOf(release)[0];
+      const link = [first?.browserUrl, first?.url].find((value) => typeof value === "string" && /^https?:\/\//i.test(value));
+      const site = link ? siteOf(link) : null;
+      if (site) out.host = site;
+    }
+    let format = effectiveFormat(release, recordOf).format;
+    if (format === "archive-set" || format === "archive") format = deduceFormat(release);
+    if (typeof format === "string" && /^[a-z0-9]{1,8}$/.test(format)) out.format = format;
+    const parts = Array.isArray(release.parts) ? release.parts.length : 0;
+    if (parts > 1) out.parts = Math.min(parts, 999);
+    return out;
+  }
 
-export { BYTES_ASKED, FORMAT_GROUP, GROUPS, IMAGE_TYPES, UFS_MAGIC_AT, formatFromUfsMagic, imageTypeOf, deduceFormat, effectiveFormat, formatFromContentType, formatFromDisposition, formatFromMagic, formatFromName, formatKeyOf, groupOf, nameFromDisposition, onFormatReport, pageReaderOf, readHostPage, reportFormat };
+export { BYTES_ASKED, FORMAT_GROUP, GROUPS, IMAGE_TYPES, UFS_MAGIC_AT, formatFromUfsMagic, imageTypeOf, deduceFormat, effectiveFormat, formatFromContentType, formatFromDisposition, formatFromMagic, formatFromName, formatKeyOf, groupOf, nameFromDisposition, onFormatReport, originOf, pageReaderOf, readHostPage, reportFormat, siteOf };

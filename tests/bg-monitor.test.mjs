@@ -62,3 +62,9 @@ test('phone-monitor: ligado por padrao, PIN guardado so como sal + SHA-256, conf
   assert.equal(seen.at(-2).address, 'http://192.168.0.20:34201');
   monitor.setPhoneMonitor(true);
 });
+
+test('glibren.12: a pagina tem as secoes, o sistema/arquivo nos cards, os cancelados e o BACKUP no fim da lista', () => {
+  const page = readFileSync(embed.PAGE, 'utf8');
+  for (const piece of ['"all", "downloading", "queue", "extracting", "converting", "done", "cancelled", "backup"', 'localStorage.getItem("jobe.section")', 'Descompactando', 'Cancelados', 'Finalizados', '/api/cancelled/clear', 'cancelledRecent', 'function fileLine', 's-${j.platform}', 'Convertido: {f}', '$("foot").before(row)', '.secbar{', '.secmenu{']) assert.ok(page.includes(piece), piece);
+  assert.ok(!page.includes('list.before(row)'), 'o botao do BACKUP fica no fim, nao no topo');
+});

@@ -49,6 +49,7 @@
 
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
+import { originOf } from './link-formats.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
@@ -299,11 +300,30 @@ import { loadList, saveList } from './saved.js';
     const eligible = (options) => platform === "ps5" && on() && options.background && typeof options.url === "string" &&
       /^https?:\/\//.test(options.url) && options.destination && !options.pieces && !options.unlimited;
     // O job como o payload o recebe (POST /jobs, ou um item de POST /queue).
+    // glibren.12: so os campos de origem que o payload aceita (host, format, parts), ja validados.
+    function originFields(origin) {
+      const out = {};
+      if (typeof origin?.host === "string" && /^[a-z0-9.-]{1,64}$/.test(origin.host)) out.host = origin.host;
+      if (typeof origin?.format === "string" && /^[a-z0-9]{1,8}$/.test(origin.format)) out.format = origin.format;
+      if (Number.isInteger(origin?.parts) && origin.parts > 1) out.parts = Math.min(origin.parts, 999);
+      return out;
+    }
+    // glibren.12: o sistema ("ps5"/"ps4"), o codigo do jogo e (num marcador) o nome do arquivo, validados.
+    function systemFields(meta, withFile) {
+      const out = {};
+      if (meta?.platform === "ps5" || meta?.platform === "ps4") out.platform = meta.platform;
+      if (typeof meta?.code === "string" && /^[A-Z]{4}\d{5}$/.test(meta.code)) out.code = meta.code;
+      if (withFile && typeof meta?.file === "string" && meta.file.length <= 128 && !meta.file.startsWith(".") && !/[\u0000-\u001f\u007f/\\]/.test(meta.file)) out.file = meta.file;
+      return out;
+    }
     function jobBody(options, meta, source) {
       const destination = options.destination;
       const publishTo = meta.publishTo && meta.publishTo !== destination ? meta.publishTo : "";
       const name = meta.title || baseName(destination);
       return {
+        // glibren.12: de onde vem (site do download direto) e o formato, para os selos da pagina do celular.
+        ...originFields(originOf(meta.source)),
+        ...systemFields(meta, false),
         url: options.url,
         destination,
         storageRoot: options.storageRoot || "",
@@ -672,7 +692,9 @@ import { loadList, saveList } from './saved.js';
         const job = source && ["direct", "torbox"].includes(source.provider) ? jobBody(options, background, source) : null;
         // MODIFIED (glibren.8): o pausado no app vai junto (paused, com o progresso), para nao sumir da pagina do celular.
         const paused = item.paused ? { paused: true, written: Math.max(0, Math.round(Number(item.written) || 0)) } : {};
-        return { key: String(item.key), name: String(item.name || ""), total: Math.max(0, Math.round(Number(item.total) || 0)), ...paused, ...job ? { job } : {} };
+        // glibren.12: a origem tambem no item (um marcador nao tem job): site, formato, partes e o servico debrid.
+        const via = item.origin?.via === "torbox" || item.origin?.via === "alldebrid" ? { via: item.origin.via } : {};
+        return { key: String(item.key), name: String(item.name || ""), total: Math.max(0, Math.round(Number(item.total) || 0)), ...paused, ...originFields(item.origin), ...via, ...systemFields(item, true), ...item.extracting === true ? { extracting: true } : {}, ...job ? { job } : {} };
       });
       const body = JSON.stringify({ items });
       if (body === queueSent) return;

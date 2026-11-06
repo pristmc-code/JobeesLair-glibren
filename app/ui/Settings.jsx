@@ -423,7 +423,10 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
       ...open ? found.games.map((game) => jsx(Row, {
         focusKey: `settings:backup:${game.path}`,
         name: game.name,
-        detail: armed === game.path ? t2("settings.backupConfirm", { size: formatBytes(game.bytes) }) : `${formatBytes(game.bytes)} \xB7 ${driveName(game.root)}`,
+        // glibren.12: o sistema e o codigo, o formato ("RAR · 3 partes"), o tamanho e o disco; embaixo, os arquivos (so
+        // os nomes) e se o .exfat convertido existe.
+        detail: armed === game.path ? t2("settings.backupConfirm", { size: formatBytes(game.bytes) }) : [game.platform ? `${game.platform.toUpperCase()}${game.code ? ` ${game.code}` : ""}` : game.code, game.format ? `${game.format.toUpperCase()}${game.parts > 1 ? ` \xB7 ${t2("settings.backupParts", { count: game.parts })}` : ""}` : "", formatBytes(game.bytes), driveName(game.root)].filter(Boolean).join(" \xB7 "),
+        hint: [game.converted ? t2("settings.backupConverted", { file: game.converted }) : t2("settings.backupNotConverted"), (game.fileNames || []).slice(0, 4).join(", ") + (game.fileNames?.length > 4 || game.moreFiles ? ` ${t2("settings.backupMore", { count: (game.fileNames?.length ?? 0) - Math.min(4, game.fileNames?.length ?? 0) + (game.moreFiles || 0) })}` : "")].filter(Boolean).join(" \xB7 "),
         end: jsx(Icon, { name: armed === game.path ? "delete" : "x", color: armed === game.path ? "#f87171" : colors.muted }),
         onPress: () => armed === game.path ? remove(game) : setArmed(game.path)
       }, game.path)) : [],

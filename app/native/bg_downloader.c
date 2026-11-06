@@ -813,6 +813,14 @@ typedef struct {
   // De onde vem o arquivo (files[].via da lista): "torrent" (lib_hash = infohash), "webdl" (lib_hash = MD5 do link do
   // catalogo; lib_release = a fonte no app) ou "account" (item ja na conta: lib_item_kind/lib_item_id + lib_file_id).
   char lib_via[12], lib_release[96], lib_item_kind[12], lib_item_id[32], lib_file_id[32];
+  // glibren.12: de onde vem e o que e, para os selos da pagina do celular: `host` o site do download direto (so o
+  // dominio, "mediafire.com"; vazio = o do url), `format` a extensao ("exfat", "rar"; vazio = a do nome), `parts` as
+  // partes de um conjunto (0/1 = arquivo unico). O app manda (POST /jobs e /queue); gravados em jobs.json.
+  char host[65], format[9];
+  unsigned parts;
+  // glibren.12: o sistema ("ps5"/"ps4"), o codigo do jogo ("PPSA01234") e, num marcador (sem destino), o nome do
+  // arquivo (so o nome base). O app manda; gravados em jobs.json.
+  char platform[4], code[16], file[129];
   char error[600];
   int awaiting_app, renewals;
   uint64_t written, total;
@@ -827,6 +835,14 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_wake_downloader = PTHREAD_COND_INITIALIZER;
 static Job* g_jobs[MAX_JOBS];
 static int g_job_count;
+// glibren.12: os ultimos CANCELLED_MAX cancelados (com g_lock), para a secao "Cancelados" da pagina do celular: so o
+// nome, quando, o sistema/codigo, o formato e a origem (nada de link ou caminho). Gravados em jobs.json ("cancelled");
+// o celular limpa com o PIN (POST /api/cancelled/clear).
+#define CANCELLED_MAX 20
+typedef struct { char name[256], platform[4], code[16], format[9], host[65], via[12]; int64_t at; } Cancelled;
+static Cancelled g_cancelled[CANCELLED_MAX]; // do mais antigo para o mais novo
+static int g_cancelled_count;
+static void remember_cancelled_locked(const Job* j);
 static unsigned g_next_id;
 // Quantos jobs baixam ao mesmo tempo (1 a MAX_WORKERS), escolhido no app e gravado em config.json; e quantos
 // estao baixando agora. Diminuir nao para ninguem: so nao comeca outro ate ficar abaixo.
@@ -914,6 +930,12 @@ static void job_json_as(Buf* b, const Job* j, int for_disk) {
   buf_str(b, ",\"error\":"); buf_json(b, j->error);
   buf_str(b, ",\"by\":"); buf_json(b, j->by);
   buf_str(b, ",\"key\":"); buf_json(b, j->key);
+  buf_str(b, ",\"host\":"); buf_json(b, j->host);
+  buf_str(b, ",\"format\":"); buf_json(b, j->format);
+  buf_fmt(b, ",\"parts\":%u", j->parts);
+  buf_str(b, ",\"platform\":"); buf_json(b, j->platform);
+  buf_str(b, ",\"code\":"); buf_json(b, j->code);
+  buf_str(b, ",\"file\":"); buf_json(b, j->file);
   buf_fmt(b, ",\"ahead\":%s,\"placeholder\":%s,\"followed\":%s,\"order\":%d", j->ahead ? "true" : "false", j->placeholder ? "true" : "false",
           j->followed ? "true" : "false", j->order);
   buf_fmt(b, ",\"expectedBytes\":%llu,\"rangeBytes\":%llu,\"connections\":%u,\"connectionsSet\":%u,\"rejectHtml\":%s",
@@ -946,6 +968,23 @@ static void job_json_as(Buf* b, const Job* j, int for_disk) {
 // O job como a API local (127.0.0.1, com token de sessao) o mostra ao app: com o link inteiro.
 static void job_json(Buf* b, const Job* j) { job_json_as(b, j, 0); }
 
+static void cancelled_json(Buf* b) {
+  buf_str(b, "[");
+  for (int i = g_cancelled_count - 1; i >= 0; --i) { // o mais novo primeiro
+    const Cancelled* c = &g_cancelled[i];
+    if (i != g_cancelled_count - 1) buf_str(b, ",");
+    buf_str(b, "{\"name\":"); buf_json(b, c->name);
+    buf_fmt(b, ",\"at\":%lld", (long long)c->at);
+    if (c->platform[0]) { buf_str(b, ",\"platform\":"); buf_json(b, c->platform); }
+    if (c->code[0]) { buf_str(b, ",\"code\":"); buf_json(b, c->code); }
+    if (c->format[0]) { buf_str(b, ",\"format\":"); buf_json(b, c->format); }
+    if (c->host[0]) { buf_str(b, ",\"host\":"); buf_json(b, c->host); }
+    if (c->via[0]) { buf_str(b, ",\"via\":"); buf_json(b, c->via); }
+    buf_str(b, "}");
+  }
+  buf_str(b, "]");
+}
+
 static void save_jobs_locked(void) {
   Buf b = {0};
   buf_fmt(&b, "{\"version\":1,\"next\":%u,\"jobs\":[", g_next_id);
@@ -953,7 +992,9 @@ static void save_jobs_locked(void) {
     if (i) buf_str(&b, ",");
     job_json_as(&b, g_jobs[i], 1);
   }
-  buf_str(&b, "]}\n");
+  buf_str(&b, "],\"cancelled\":");
+  cancelled_json(&b);
+  buf_str(&b, "}\n");
   char path[600];
   snprintf(path, sizeof path, "%s/jobs.json", g_dir);
   if (b.failed || !save_atomic(path, b.data, b.size, 0600)) logf_("fila nao salva: %s", strerror(errno));
@@ -1041,6 +1082,87 @@ static int library_field(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 
+// glibren.12: a origem de um download para a pagina do celular. `host`: so letras, digitos, '.' e '-' (minusculas),
+// ate 64, sem "www." (nunca caminho, consulta, porta ou usuario: o que vier diferente e descartado). `format`: so
+// letras e digitos (minusculas), ate 8. Um valor invalido vira "" (o item continua valendo).
+static int origin_host_ok(const char* text) {
+  const size_t n = strlen(text);
+  if (!n || n > 64 || text[0] == '.' || text[0] == '-' || text[n - 1] == '.' || strstr(text, "..")) return 0;
+  for (const char* p = text; *p; ++p) if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '.' || *p == '-')) return 0;
+  return 1;
+}
+static int origin_format_ok(const char* text) {
+  const size_t n = strlen(text);
+  if (!n || n > 8) return 0;
+  for (const char* p = text; *p; ++p) if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9'))) return 0;
+  return 1;
+}
+static void origin_clean(char* host, char* format) {
+  if (host) {
+    for (char* p = host; *p; ++p) *p = (char)tolower((unsigned char)*p);
+    if (!strncmp(host, "www.", 4)) memmove(host, host + 4, strlen(host + 4) + 1);
+    if (!origin_host_ok(host)) host[0] = 0;
+  }
+  if (format) {
+    for (char* p = format; *p; ++p) *p = (char)tolower((unsigned char)*p);
+    if (!origin_format_ok(format)) format[0] = 0;
+  }
+}
+// Le o texto num buffer largo (um valor comprido demais e descartado, nao cortado) e valida.
+static int origin_host_field(JP* jp, char* out, size_t cap) {
+  char wide[256];
+  out[0] = 0;
+  if (!lib_text(jp, wide, sizeof wide)) return -1;
+  origin_clean(wide, NULL);
+  if (strlen(wide) < cap) memcpy(out, wide, strlen(wide) + 1);
+  return 1;
+}
+static int origin_format_field(JP* jp, char* out, size_t cap) {
+  char wide[64];
+  out[0] = 0;
+  if (!lib_text(jp, wide, sizeof wide)) return -1;
+  origin_clean(NULL, wide);
+  if (strlen(wide) < cap) memcpy(out, wide, strlen(wide) + 1);
+  return 1;
+}
+
+// glibren.12: o sistema ("ps5"/"ps4"; outro valor vira ""), o codigo do jogo (4 letras + 5 digitos, em maiusculas) e
+// um nome de arquivo (so o nome base: sem '/', '\\' nem controle, nao comeca com '.', ate 128 bytes).
+static int system_code_ok(const char* text) {
+  if (strlen(text) != 9) return 0;
+  for (int i = 0; i < 4; ++i) if (text[i] < 'A' || text[i] > 'Z') return 0;
+  for (int i = 4; i < 9; ++i) if (!isdigit((unsigned char)text[i])) return 0;
+  return 1;
+}
+static int file_name_ok(const char* text) {
+  if (!text[0] || text[0] == '.' || strlen(text) > 128) return 0;
+  for (const unsigned char* p = (const unsigned char*)text; *p; ++p) if (*p < 0x20 || *p == 0x7f || *p == '/' || *p == '\\') return 0;
+  return 1;
+}
+static int system_platform_field(JP* jp, char* out, size_t cap) {
+  char wide[32];
+  out[0] = 0;
+  if (!lib_text(jp, wide, sizeof wide)) return -1;
+  lower_ascii(wide);
+  if ((!strcmp(wide, "ps5") || !strcmp(wide, "ps4")) && strlen(wide) < cap) memcpy(out, wide, strlen(wide) + 1);
+  return 1;
+}
+static int system_code_field(JP* jp, char* out, size_t cap) {
+  char wide[32];
+  out[0] = 0;
+  if (!lib_text(jp, wide, sizeof wide)) return -1;
+  for (char* p = wide; *p; ++p) *p = (char)toupper((unsigned char)*p);
+  if (system_code_ok(wide) && strlen(wide) < cap) memcpy(out, wide, strlen(wide) + 1);
+  return 1;
+}
+static int file_name_field(JP* jp, char* out, size_t cap) {
+  char wide[512];
+  out[0] = 0;
+  if (!lib_text(jp, wide, sizeof wide)) return -1;
+  if (file_name_ok(wide) && strlen(wide) < cap) memcpy(out, wide, strlen(wide) + 1);
+  return 1;
+}
+
 static int job_field(JP* jp, const char* key, void* ctx) {
   Job* j = ((JobParse*)ctx)->job;
   uint64_t number;
@@ -1060,6 +1182,12 @@ static int job_field(JP* jp, const char* key, void* ctx) {
   TEXT("by", by);
   TEXT("key", key);
 #undef TEXT
+  if (!strcmp(key, "host")) return origin_host_field(jp, j->host, sizeof j->host);
+  if (!strcmp(key, "format")) return origin_format_field(jp, j->format, sizeof j->format);
+  if (!strcmp(key, "parts")) { if (!jp_uint(jp, &number)) return -1; j->parts = number > 999 ? 999 : (unsigned)number; return 1; }
+  if (!strcmp(key, "platform")) return system_platform_field(jp, j->platform, sizeof j->platform);
+  if (!strcmp(key, "code")) return system_code_field(jp, j->code, sizeof j->code);
+  if (!strcmp(key, "file")) return file_name_field(jp, j->file, sizeof j->file);
   if (!strcmp(key, "ahead")) return jp_bool(jp, &j->ahead) ? 1 : -1;
   if (!strcmp(key, "placeholder")) return jp_bool(jp, &j->placeholder) ? 1 : -1;
   if (!strcmp(key, "order")) { if (!jp_uint(jp, &number)) return -1; j->order = number > 100000 ? 100000 : (int)number; return 1; }
@@ -1164,10 +1292,50 @@ static int validate_job(Job* j, char* error, size_t cap) {
   return 1;
 }
 
+static int cancelled_field(JP* jp, const char* key, void* ctx) {
+  Cancelled* c = ctx;
+  if (!strcmp(key, "name")) return lib_text(jp, c->name, sizeof c->name) ? 1 : -1;
+  if (!strcmp(key, "at")) return jp_int64(jp, &c->at) ? 1 : -1;
+  if (!strcmp(key, "platform")) return system_platform_field(jp, c->platform, sizeof c->platform);
+  if (!strcmp(key, "code")) return system_code_field(jp, c->code, sizeof c->code);
+  if (!strcmp(key, "format")) return origin_format_field(jp, c->format, sizeof c->format);
+  if (!strcmp(key, "host")) return origin_host_field(jp, c->host, sizeof c->host);
+  if (!strcmp(key, "via")) {
+    if (!lib_text(jp, c->via, sizeof c->via)) return -1;
+    if (strcmp(c->via, "TorBox") && strcmp(c->via, "AllDebrid")) c->via[0] = 0;
+    return 1;
+  }
+  return jp_skip(jp) ? 1 : -1;
+}
+// jobs.json: o mais novo primeiro (como na pagina); na memoria, do mais antigo para o mais novo.
+static int load_cancelled(JP* jp) {
+  jp_ws(jp);
+  if (jp->p >= jp->end || *jp->p != '[') return 0;
+  ++jp->p;
+  Cancelled read[CANCELLED_MAX];
+  int n = 0;
+  jp_ws(jp);
+  if (jp->p < jp->end && *jp->p == ']') { ++jp->p; g_cancelled_count = 0; return 1; }
+  for (;;) {
+    Cancelled c;
+    memset(&c, 0, sizeof c);
+    if (!jp_object(jp, cancelled_field, &c)) return 0;
+    if (n < CANCELLED_MAX && c.name[0]) read[n++] = c;
+    jp_ws(jp);
+    if (jp->p < jp->end && *jp->p == ',') { ++jp->p; continue; }
+    if (jp->p < jp->end && *jp->p == ']') { ++jp->p; break; }
+    return 0;
+  }
+  for (int i = 0; i < n; ++i) g_cancelled[i] = read[n - 1 - i];
+  g_cancelled_count = n;
+  return 1;
+}
+
 typedef struct { int ok; } LoadCtx;
 static int load_jobs_field(JP* jp, const char* key, void* ctx) {
   (void)ctx;
   if (!strcmp(key, "next")) { uint64_t n; if (!jp_uint(jp, &n)) return -1; g_next_id = (unsigned)n; return 1; }
+  if (!strcmp(key, "cancelled")) return load_cancelled(jp) ? 1 : -1;
   if (strcmp(key, "jobs")) return 0;
   jp_ws(jp);
   if (jp->p >= jp->end || *jp->p != '[') return -1;
@@ -2316,7 +2484,38 @@ static void engine_free(Engine* e) {
   free(e->completed); free(e->inflight); free(e->attempts); free(e->retry_at);
 }
 
+// glibren.12: um download que terminou dentro de <disco>/BACKUP/<jogo>/ deixa la o .jobe-backup.json (codigo,
+// sistema, formato e a fonte: o site ou o servico debrid), para a lista do BACKUP saber de que jogo e. Um que ja existe
+// (o app grava antes) fica como esta.
+static void site_of_url(const char* url, char* out, size_t cap);
+static void format_of_file(const char* path, char* out, size_t cap);
+static void backup_marker(const Job* j) {
+  const char* dest = j->destination;
+  const char* at = strstr(dest, "/BACKUP/");
+  if (!at || (!j->code[0] && !j->platform[0])) return;
+  const char* end = strchr(at + 8, '/');
+  if (!end || end == at + 8) return;
+  char path[1100];
+  snprintf(path, sizeof path, "%.*s/.jobe-backup.json", (int)(end - dest), dest);
+  struct stat st;
+  if (!stat(path, &st)) return;
+  char host[65] = "", format[9] = "";
+  if (j->host[0]) snprintf(host, sizeof host, "%s", j->host);
+  else if (j->url[0] && strcmp(j->provider, "torbox") && strcmp(j->provider, "alldebrid")) site_of_url(j->url, host, sizeof host);
+  if (j->format[0]) snprintf(format, sizeof format, "%s", j->format);
+  else format_of_file(dest, format, sizeof format);
+  Buf b = {0};
+  buf_str(&b, "{\"titleId\":"); buf_json(&b, j->code);
+  buf_str(&b, ",\"platform\":"); buf_json(&b, j->platform);
+  buf_str(&b, ",\"format\":"); buf_json(&b, format);
+  buf_str(&b, ",\"source\":"); buf_json(&b, !strcmp(j->provider, "torbox") ? "torbox" : !strcmp(j->provider, "alldebrid") ? "alldebrid" : host);
+  buf_str(&b, "}\n");
+  if (!b.failed && b.data) save_atomic(path, b.data, b.size, 0644);
+  free(b.data);
+}
+
 static void finish(Job* j, const char* state, const char* error) {
+  if (!strcmp(state, "completed")) backup_marker(j);
   pthread_mutex_lock(&g_lock);
   snprintf(j->state, sizeof j->state, "%s", state);
   snprintf(j->error, sizeof j->error, "%s", error ? error : "");
@@ -2529,6 +2728,7 @@ static void* downloader_loop(void* arg) {
     if (next->ctl == CTL_CANCEL) {
       remove_partials(next);
       snprintf(next->state, sizeof next->state, "cancelled");
+      remember_cancelled_locked(next);
       next->ctl = CTL_NONE;
       logf_("job %s: cancelado", next->id);
     } else if (next->ctl == CTL_RELEASE) {
@@ -2859,7 +3059,9 @@ static void handle_create(int fd, Request* r) {
 // app acompanhar (para, gravando o checkpoint, e sai), marcador. Terminados ficam para o app conferir ao abrir.
 // MODIFIED (glibren.8): "paused" (pausado no app) e "written" (o progresso dele) tambem vem: o pausado continua na
 // fila entregue (Pausado na pagina do celular, com o progresso) em vez de sumir dela.
-typedef struct { char key[128], name[256]; uint64_t total, written; Job* job; int has_job, paused; } QueueItem;
+// glibren.12: host/format/parts (a origem, para os selos da pagina) e via ("torbox"/"alldebrid") tambem vem no item:
+// um marcador nao tem job nem url.
+typedef struct { char key[128], name[256], host[65], format[9], via[16], platform[4], code[16], file[129]; uint64_t total, written; unsigned parts; Job* job; int has_job, paused, extracting; } QueueItem;
 typedef struct { QueueItem* item; } QueueItemCtx;
 static int queue_item_field(JP* jp, const char* key, void* ctx) {
   QueueItem* q = ((QueueItemCtx*)ctx)->item;
@@ -2868,6 +3070,19 @@ static int queue_item_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "total")) return jp_uint(jp, &q->total) ? 1 : -1;
   if (!strcmp(key, "written")) return jp_uint(jp, &q->written) ? 1 : -1;
   if (!strcmp(key, "paused")) return jp_bool(jp, &q->paused) ? 1 : -1;
+  if (!strcmp(key, "extracting")) return jp_bool(jp, &q->extracting) ? 1 : -1;
+  if (!strcmp(key, "host")) return origin_host_field(jp, q->host, sizeof q->host);
+  if (!strcmp(key, "format")) return origin_format_field(jp, q->format, sizeof q->format);
+  if (!strcmp(key, "parts")) { uint64_t n; if (!jp_uint(jp, &n)) return -1; q->parts = n > 999 ? 999 : (unsigned)n; return 1; }
+  if (!strcmp(key, "platform")) return system_platform_field(jp, q->platform, sizeof q->platform);
+  if (!strcmp(key, "code")) return system_code_field(jp, q->code, sizeof q->code);
+  if (!strcmp(key, "file")) return file_name_field(jp, q->file, sizeof q->file);
+  if (!strcmp(key, "via")) {
+    if (!lib_text(jp, q->via, sizeof q->via)) return -1;
+    lower_ascii(q->via);
+    if (strcmp(q->via, "torbox") && strcmp(q->via, "alldebrid")) q->via[0] = 0;
+    return 1;
+  }
   if (!strcmp(key, "job")) {
     jp_ws(jp);
     if (jp_literal(jp, "null")) return 1;
@@ -2924,6 +3139,11 @@ static void handle_queue(int fd, Request* r) {
       snprintf(j->key, sizeof j->key, "%s", q->key);
       if (!j->name[0]) snprintf(j->name, sizeof j->name, "%s", q->name);
       if (!j->expected_bytes) j->expected_bytes = q->total;
+      if (!j->host[0]) snprintf(j->host, sizeof j->host, "%s", q->host);
+      if (!j->format[0]) snprintf(j->format, sizeof j->format, "%s", q->format);
+      if (!j->parts) j->parts = q->parts;
+      if (!j->platform[0]) snprintf(j->platform, sizeof j->platform, "%s", q->platform);
+      if (!j->code[0]) snprintf(j->code, sizeof j->code, "%s", q->code);
       if (!validate_job(j, error, sizeof error)) ok = 0;
     }
   }
@@ -2963,6 +3183,25 @@ static void handle_queue(int fd, Request* r) {
     }
     if (!j) continue;
     if (j->placeholder) { snprintf(j->name, sizeof j->name, "%s", q->name); j->total = q->total; j->written = q->written; ++waiting; }
+    // glibren.12: a origem mais nova do app (um marcador: tambem o servico debrid, que vira o "via" da pagina).
+    if (j->placeholder && !j->requested) {
+      snprintf(j->host, sizeof j->host, "%s", q->host);
+      snprintf(j->format, sizeof j->format, "%s", q->format);
+      j->parts = q->parts;
+      snprintf(j->provider, sizeof j->provider, "%s", q->via);
+      snprintf(j->platform, sizeof j->platform, "%s", q->platform);
+      snprintf(j->code, sizeof j->code, "%s", q->code);
+      snprintf(j->file, sizeof j->file, "%s", q->file);
+      // glibren.12: o app descompactando (secao "Descompactando"); quando acaba, sai da lista e o marcador sai.
+      if (q->extracting && strcmp(j->state, "cancelled")) snprintf(j->state, sizeof j->state, "extracting");
+      else if (!q->extracting && !strcmp(j->state, "extracting")) snprintf(j->state, sizeof j->state, "waiting-app");
+    } else if (q->has_job && q->job && j != q->job) {
+      if (q->job->host[0]) snprintf(j->host, sizeof j->host, "%s", q->job->host);
+      if (q->job->format[0]) snprintf(j->format, sizeof j->format, "%s", q->job->format);
+      if (q->job->parts) j->parts = q->job->parts;
+      if (q->job->platform[0]) snprintf(j->platform, sizeof j->platform, "%s", q->job->platform);
+      if (q->job->code[0]) snprintf(j->code, sizeof j->code, "%s", q->job->code);
+    }
     if (j->ahead) snprintf(j->key, sizeof j->key, "%s", q->key);
     // MODIFIED (glibren.8): pausado no app fica pausado aqui (e nao some da pagina do celular); retomado no app volta a
     // fila. Um pedido do celular (by "remote") vale ate a fila do app concordar com ele (o app ja o repetiu): so entao
@@ -3003,6 +3242,29 @@ static void handle_queue(int fd, Request* r) {
 // pause | resume | cancel | release | forget, com a trava. `remote`: pedido do celular (so pause/resume/cancel),
 // que fica em j->by para o app nao desfazer a pausa. Devolve 200, 404 (acao desconhecida) ou 409 (forget de um
 // job rodando); *removed: o job saiu da lista (e foi liberado).
+static void site_of_url(const char* url, char* out, size_t cap);
+static void format_of_file(const char* path, char* out, size_t cap);
+static void remember_cancelled_locked(const Job* j) {
+  if (g_cancelled_count == CANCELLED_MAX) {
+    memmove(&g_cancelled[0], &g_cancelled[1], sizeof g_cancelled[0] * (CANCELLED_MAX - 1));
+    --g_cancelled_count;
+  }
+  Cancelled* c = &g_cancelled[g_cancelled_count++];
+  memset(c, 0, sizeof *c);
+  copy_utf8(c->name, sizeof c->name, j->name[0] ? j->name : "?");
+  c->at = now_s();
+  snprintf(c->platform, sizeof c->platform, "%s", j->platform[0] ? j->platform : j->requested ? j->lib_platform : "");
+  if (strcmp(c->platform, "ps5") && strcmp(c->platform, "ps4")) c->platform[0] = 0;
+  snprintf(c->code, sizeof c->code, "%s", j->code[0] ? j->code : j->requested ? j->lib_code : "");
+  if (!system_code_ok(c->code)) c->code[0] = 0;
+  if (j->format[0]) snprintf(c->format, sizeof c->format, "%s", j->format);
+  else format_of_file(j->destination[0] ? j->destination : j->name, c->format, sizeof c->format);
+  if (j->requested || !strcmp(j->provider, "torbox")) snprintf(c->via, sizeof c->via, "TorBox");
+  else if (!strcmp(j->provider, "alldebrid")) snprintf(c->via, sizeof c->via, "AllDebrid");
+  else if (j->host[0]) snprintf(c->host, sizeof c->host, "%s", j->host);
+  else if (j->url[0]) site_of_url(j->url, c->host, sizeof c->host);
+}
+
 static int job_action_locked(Job* j, const char* action, int remote, int* removed) {
   *removed = 0;
   const char* by = remote ? "remote" : "";
@@ -3022,11 +3284,14 @@ static int job_action_locked(Job* j, const char* action, int remote, int* remove
       snprintf(j->by, sizeof j->by, "%s", by);
     } else if (j->running && j->ctl == CTL_PAUSE) { j->ctl = CTL_NONE; snprintf(j->by, sizeof j->by, "%s", by); }
   } else if (!strcmp(action, "cancel")) {
-    if (j->requested && !j->running) { remove_job_locked(j); *removed = 1; } // glibren: pedido do celular: so sai
+    // glibren.12: o que o app esta descompactando nao se cancela daqui.
+    if (j->placeholder && !strcmp(j->state, "extracting")) return 409;
+    if (j->requested && !j->running) { remember_cancelled_locked(j); remove_job_locked(j); *removed = 1; } // glibren: pedido do celular: so sai
     else if (j->running) { j->ctl = CTL_CANCEL; snprintf(j->by, sizeof j->by, "%s", by); }
     else if (strcmp(j->state, "completed")) {
       if (!j->placeholder) remove_partials(j); // um marcador nao tem arquivo (destino vazio)
       snprintf(j->state, sizeof j->state, "cancelled"); snprintf(j->by, sizeof j->by, "%s", by);
+      remember_cancelled_locked(j);
     }
   } else if (remote) {
     return 404;
@@ -3521,6 +3786,69 @@ static void public_error(const char* in, char* out, size_t cap) {
   out[used] = 0;
 }
 
+// glibren.12: o site de um link (so o dominio registravel, "download1234.mediafire.com" -> "mediafire.com"; com
+// "com.br"/"co.uk" e afins, tres partes), sem esquema, usuario, porta, caminho ou consulta. "" se nao der.
+static void site_of_url(const char* url, char* out, size_t cap) {
+  out[0] = 0;
+  const char* p = strstr(url, "://");
+  if (!p) return;
+  p += 3;
+  const size_t span = strcspn(p, "/?#");
+  char host[256];
+  if (span == 0 || span >= sizeof host) return;
+  memcpy(host, p, span);
+  host[span] = 0;
+  char* at = strrchr(host, '@');
+  char* start = at ? at + 1 : host;
+  if (*start == '[') return; // IPv6: nada
+  char* colon = strchr(start, ':');
+  if (colon) *colon = 0;
+  for (char* c = start; *c; ++c) *c = (char)tolower((unsigned char)*c);
+  if (!strncmp(start, "www.", 4)) start += 4;
+  if (!origin_host_ok(start)) return;
+  int numeric = 1;
+  for (const char* c = start; *c; ++c) if (!(isdigit((unsigned char)*c) || *c == '.')) numeric = 0;
+  const char* site = start;
+  if (!numeric) {
+    const char* dots[3] = {NULL, NULL, NULL}; // os 3 ultimos pontos, do fim para o comeco
+    int found = 0;
+    for (size_t k = strlen(start); k-- > 0 && found < 3;) if (start[k] == '.') dots[found++] = start + k;
+    if (found >= 2) {
+      const char* tld = dots[0] + 1;
+      const size_t second = (size_t)(dots[0] - dots[1] - 1);
+      static const char* const slds[] = {"com", "net", "org", "gov", "edu", "co", "ac"};
+      int sld = 0;
+      for (size_t i = 0; i < sizeof slds / sizeof slds[0] && strlen(tld) == 2; ++i)
+        if (strlen(slds[i]) == second && !strncmp(dots[1] + 1, slds[i], second)) sld = 1;
+      site = sld ? (found >= 3 ? dots[2] + 1 : start) : dots[1] + 1;
+    }
+  }
+  if (strlen(site) < cap) snprintf(out, cap, "%s", site);
+}
+// glibren.12: o formato pelo nome de um arquivo: "Jogo.exfat", "Jogo.part01.rar", "Jogo.7z.001", "Jogo.r00" ->
+// "exfat", "rar", "7z", "rar". So os formatos que a pagina conhece; "" para o resto (".binary", ".part").
+static void format_of_file(const char* path, char* out, size_t cap) {
+  out[0] = 0;
+  const char* name = strrchr(path, '/');
+  name = name ? name + 1 : path;
+  char low[256];
+  snprintf(low, sizeof low, "%s", name);
+  lower_ascii(low);
+  char* dot = strrchr(low, '.');
+  if (!dot || dot == low) return;
+  const char* ext = dot + 1;
+  if (strlen(ext) == 3 && isdigit((unsigned char)ext[0]) && isdigit((unsigned char)ext[1]) && isdigit((unsigned char)ext[2])) {
+    *dot = 0; // "Jogo.7z.001": o de antes
+    dot = strrchr(low, '.');
+    if (!dot || dot == low) return;
+    ext = dot + 1;
+  } else if (strlen(ext) == 3 && (ext[0] == 'r' || ext[0] == 'z') && isdigit((unsigned char)ext[1]) && isdigit((unsigned char)ext[2])) {
+    ext = ext[0] == 'r' ? "rar" : "zip";
+  }
+  static const char* const known[] = {"exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip", "tar"};
+  for (size_t i = 0; i < sizeof known / sizeof known[0]; ++i) if (!strcmp(ext, known[i])) { snprintf(out, cap, "%s", known[i]); return; }
+}
+
 static void monitor_status(Buf* b) {
   char error[600];
   pthread_mutex_lock(&g_lock);
@@ -3552,6 +3880,35 @@ static void monitor_status(Buf* b) {
     if (j->requested) buf_str(b, ",\"requested\":true,\"via\":\"TorBox\""); // glibren: pedido pela Biblioteca TorBox
     else if (!strcmp(j->provider, "torbox")) buf_str(b, ",\"via\":\"TorBox\"");
     else if (!strcmp(j->provider, "alldebrid")) buf_str(b, ",\"via\":\"AllDebrid\"");
+    // glibren.12: download direto: o site (o que o app mandou, ou o do link); pelo TorBox/AllDebrid o host e o CDN
+    // deles, e a pagina mostra o "via". E o formato (o do app, ou a extensao do destino/nome) e as partes.
+    {
+      char host[65] = "", format[9] = "";
+      const int debrid = j->requested || !strcmp(j->provider, "torbox") || !strcmp(j->provider, "alldebrid");
+      if (!debrid) {
+        if (j->host[0]) snprintf(host, sizeof host, "%s", j->host);
+        else if (j->url[0]) site_of_url(j->url, host, sizeof host);
+      }
+      if (j->format[0]) snprintf(format, sizeof format, "%s", j->format);
+      else {
+        format_of_file(j->destination, format, sizeof format);
+        if (!format[0]) format_of_file(j->name, format, sizeof format);
+        if (!format[0] && j->requested) format_of_file(j->lib_file, format, sizeof format);
+      }
+      if (host[0]) { buf_str(b, ",\"host\":"); buf_json(b, host); }
+      if (format[0]) { buf_str(b, ",\"format\":"); buf_json(b, format); }
+      if (j->parts > 1) buf_fmt(b, ",\"parts\":%u", j->parts);
+      // glibren.12: o sistema e o codigo (do app, ou do pedido da Biblioteca) e o nome do arquivo: so o nome base do
+      // destino (do publicado, se ja foi movido), nunca a pasta.
+      const char* platform = j->platform[0] ? j->platform : j->requested ? j->lib_platform : "";
+      const char* code = j->code[0] ? j->code : j->requested ? j->lib_code : "";
+      if (!strcmp(platform, "ps5") || !strcmp(platform, "ps4")) { buf_str(b, ",\"platform\":"); buf_json(b, platform); }
+      if (system_code_ok(code)) { buf_str(b, ",\"code\":"); buf_json(b, code); }
+      const char* from = j->published[0] ? j->published : j->destination[0] ? j->destination : j->file[0] ? j->file : j->requested ? j->lib_file : "";
+      const char* slash = strrchr(from, '/');
+      const char* base = slash ? slash + 1 : from;
+      if (file_name_ok(base)) { buf_str(b, ",\"file\":"); buf_json(b, base); }
+    }
     buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u", (unsigned long long)j->written,
             (unsigned long long)(j->total ? j->total : j->expected_bytes), j->bytes_per_second, j->active_connections);
     // glibren.8: o alvo de conexoes (o escolhido no celular, ou o do app; 0 num "waiting-app" sem escolha: o app decide)
@@ -3561,6 +3918,8 @@ static void monitor_status(Buf* b) {
   }
   buf_str(b, "]");
   conv_status_json(b); // glibren.12: as conversoes para .exfat
+  buf_str(b, ",\"cancelledRecent\":");
+  cancelled_json(b);
   buf_fmt(b, ",\"limit\":%d,\"maxLimit\":%d,\"maxConnections\":%d,\"limitSet\":%s,\"pinSet\":%s}", g_max_running, MAX_WORKERS, MAX_CONNS,
           g_concurrency_remote ? "true" : "false", g_pin_hash[0] ? "true" : "false");
   pthread_mutex_unlock(&g_lock);
@@ -4663,8 +5022,21 @@ static int add_field(JP* jp, const char* key, void* ctx) {
   return jp_skip(jp) ? 1 : -1;
 }
 // A fonte do pedido no job: o arquivo escolhido (ou, inteiro, o torrent do arquivo `from`; sem arquivo, o hash do jogo).
-static void lib_request_source(Job* j, const LibGame* g, const LibFile* from, int whole) {
+static void lib_request_source(Job* j, const LibGame* g, const LibFile* from, int whole, const LibParse* p) {
   j->lib_whole = whole;
+  // glibren.12: o formato (o da lista, ou a extensao) e, num arquivo dividido, quantas partes (as do mesmo torrent).
+  j->format[0] = 0;
+  j->parts = 0;
+  if (from) {
+    snprintf(j->format, sizeof j->format, "%.8s", from->format);
+    origin_clean(NULL, j->format);
+    if (!j->format[0]) format_of_file(from->name, j->format, sizeof j->format);
+    if (from->piece) {
+      unsigned n = 0;
+      for (int i = 0; i < p->file_count; ++i) if (p->files[i].piece && !strcmp(p->files[i].hash, from->hash)) ++n;
+      j->parts = n > 999 ? 999 : n;
+    }
+  }
   snprintf(j->lib_hash, sizeof j->lib_hash, "%s", from && from->hash[0] ? from->hash : g->hash);
   snprintf(j->lib_via, sizeof j->lib_via, "%s", from && from->via[0] ? from->via : "torrent");
   snprintf(j->lib_release, sizeof j->lib_release, "%s", from ? from->release : "");
@@ -4714,7 +5086,7 @@ static void monitor_library_add(int fd, Request* r) {
     // Pedido que o app nao conseguiu por na fila: tenta de novo (com o arquivo escolhido agora).
     snprintf(same->state, sizeof same->state, "waiting-app");
     same->error[0] = 0;
-    lib_request_source(same, g, from, whole);
+    lib_request_source(same, g, from, whole, &p);
     same->total = size;
     same->updated = now_s();
     save_jobs_locked();
@@ -4748,7 +5120,7 @@ static void monitor_library_add(int fd, Request* r) {
     snprintf(j->lib_id, sizeof j->lib_id, "%s", g->id);
     snprintf(j->lib_code, sizeof j->lib_code, "%s", g->code);
     snprintf(j->lib_platform, sizeof j->lib_platform, "%s", g->platform == 1 ? "ps5" : g->platform == 2 ? "ps4" : "");
-    lib_request_source(j, g, from, whole);
+    lib_request_source(j, g, from, whole, &p);
     g_jobs[g_job_count++] = j;
     save_jobs_locked();
     pthread_cond_broadcast(&g_wake_downloader);
@@ -4794,6 +5166,15 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (!strcmp(r->method, "POST") && !strncmp(r->path, "/api/jobs/", 10)) { monitor_action(fd, r); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/config")) { monitor_config(fd, r); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/power")) { monitor_power(fd, r); return; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/cancelled/clear")) {
+    if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+    pthread_mutex_lock(&g_lock);
+    g_cancelled_count = 0;
+    save_jobs_locked();
+    pthread_mutex_unlock(&g_lock);
+    monitor_json(fd, 200, "{\"ok\":true}");
+    return;
+  }
   monitor_json(fd, 404, "{\"error\":\"not found\"}");
 }
 

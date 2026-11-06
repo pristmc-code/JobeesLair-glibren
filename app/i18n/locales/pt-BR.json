@@ -1556,5 +1556,9 @@
   "settings.backupDetail": "Os arquivos originais dos jogos convertidos para .exfat. Abra para ver cada jogo; pressione um jogo duas vezes para apagar o original dele (o jogo convertido continua).",
   "settings.backupConfirm": "Pressione de novo para apagar {size}",
   "settings.backupBusy": "Esse original ainda está sendo convertido.",
-  "settings.backupFailed": "Não apagado: {error}"
+  "settings.backupFailed": "Não apagado: {error}",
+  "settings.backupParts": "{count, plural, one {# parte} other {# partes}}",
+  "settings.backupConverted": "Convertido: {file}",
+  "settings.backupNotConverted": "não convertido",
+  "settings.backupMore": "e mais {count}"
 }

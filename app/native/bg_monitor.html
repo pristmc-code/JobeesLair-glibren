@@ -88,8 +88,52 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 .step output small{color:var(--subtle);font-weight:500}
 .mode{font-size:12px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--line-hi);color:var(--subtle);background:transparent;text-transform:uppercase;letter-spacing:.04em;cursor:default}
 .mode.set{color:var(--ice);border-color:rgba(76,201,240,.5);cursor:pointer}
+/* glibren.12: selos de origem (TorBox/AllDebrid ou o site do download direto) e formato, logo abaixo do nome */
+.orig{display:flex;flex-wrap:wrap;gap:4px 6px;min-width:0}
+.oc{display:inline-flex;align-items:center;gap:4px;max-width:100%;min-width:0;padding:0 8px;border:1px solid;border-radius:999px;font-size:12px;font-weight:700;line-height:20px;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.oc small{font-size:11px;font-weight:500;opacity:.8;text-transform:lowercase}
+.oc svg{width:12px;height:12px;flex:none}
+.oc.o-tb{color:#c4b5fd;border-color:rgba(167,139,250,.55);background:rgba(139,92,246,.16)}
+.oc.o-ad{color:#fdba74;border-color:rgba(251,146,60,.55);background:rgba(234,88,12,.15)}
+.oc.o-site{color:#7dd3fc;border-color:rgba(56,189,248,.5);background:rgba(14,165,233,.13)}
+.oc.fx-best{color:#86efac;border-color:rgba(74,222,128,.55);background:rgba(34,197,94,.15)}
+.oc.fx-img{color:#93c5fd;border-color:rgba(96,165,250,.5);background:rgba(59,130,246,.14)}
+.oc.fx-pkg{color:#f9a8d4;border-color:rgba(244,114,182,.5);background:rgba(236,72,153,.13)}
+.oc.fx-arc{color:#fde68a;border-color:rgba(253,224,71,.45);background:rgba(234,179,8,.12)}
+.oc.s-ps5{color:var(--ice);border-color:rgba(76,201,240,.5);background:rgba(76,201,240,.1)}
+.oc.s-ps4{color:#c4b5fd;border-color:rgba(196,181,253,.5);background:rgba(196,181,253,.1)}
+.oc .cd{font-weight:600;opacity:.85;font-variant-numeric:tabular-nums}
+.fname{font-size:12.5px;color:var(--subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.job.extracting .bar>i{background:repeating-linear-gradient(135deg,var(--ice) 0 10px,rgba(76,201,240,.45) 10px 20px);width:100%!important}
+.tag.extracting{color:var(--ice);border-color:rgba(76,201,240,.5)}
+/* glibren.12: secoes da aba Downloads. Em pe: uma linha de chips (rolagem so dela); deitado: um botao no fim do resumo */
+.secbar{display:flex;gap:6px;margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain;min-width:0}
+.secbar::-webkit-scrollbar{display:none}
+.list:empty,.convlist:empty{display:none}
+.sc{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:4px 12px;border:1px solid var(--line-hi);border-radius:999px;background:var(--panel);color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.sc b{min-width:18px;padding:0 5px;border-radius:9px;background:var(--raise);color:var(--fg);font-size:12px;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}
+.sc.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.sc.on b{background:rgba(255,255,255,.22);color:#fff}
+.sc.zero{opacity:.6}
+.summary .secsel{display:none}
+.secbtn{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:2px 10px;border:1px solid var(--accent);border-radius:8px;background:rgba(58,134,255,.16);color:var(--fg);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.secbtn b{font-weight:700}
+.secmenu{position:fixed;z-index:22;min-width:210px;max-height:80vh;overflow-y:auto;padding:4px;background:var(--panel2);border:1px solid var(--line-hi);border-radius:10px;box-shadow:0 10px 26px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:2px}
+.secmenu button{display:flex;justify-content:space-between;gap:12px;min-height:34px;padding:4px 10px;border:0;border-radius:7px;background:transparent;color:var(--fg);font-size:14px;cursor:pointer;text-align:start}
+.secmenu button.on{background:var(--accent);color:#fff}
+.secmenu button b{font-variant-numeric:tabular-nums;color:inherit;opacity:.85}
+.cancelled{display:flex;flex-direction:column;gap:8px}
+.cancelled .head{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--subtle);font-size:13px}
+.cancelled .head .btn{flex:none;min-height:34px}
+.citem{display:flex;flex-direction:column;gap:5px;padding:9px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;min-width:0}
+.citem .name{font-size:15px}
+.citem small{color:var(--subtle);font-size:12.5px}
+/* Celular deitado / telas largas: duas colunas e topo mais baixo */
 /* Celular deitado / telas largas: duas colunas e topo mais baixo */
 @media (orientation:landscape) and (max-height:520px){
+  .summary{grid-template-columns:repeat(3,minmax(0,1fr)) auto}
+  .summary .secsel{display:flex;align-items:center;justify-content:center;padding:3px 8px}
+  .secbar{display:none}
   .pinned .summary{margin-bottom:6px}
   header{padding-top:calc(6px + env(safe-area-inset-top));padding-bottom:6px}
   .brand small{display:none}
@@ -120,12 +164,15 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
     <div><span id="lblActive">Baixando</span><b id="sumActive">–</b></div>
     <div><span id="lblSpeed">Velocidade</span><b id="sumSpeed">–</b></div>
     <div><span id="lblLeft">Falta</span><b id="sumLeft">–</b></div>
+    <div class="secsel"><button class="secbtn" type="button" id="secBtn" aria-haspopup="menu"></button></div>
   </div>
   <div class="ctlbar" id="ctlbar" hidden><span id="lblLimit">Downloads simultâneos</span><span class="mode set" id="limitMode" hidden></span>
     <div class="step"><button type="button" id="limitDown" aria-label="Menos">−</button><output id="limitVal">–</output><button type="button" id="limitUp" aria-label="Mais">+</button></div></div>
+  <nav class="secbar" id="secbar" aria-label="Seções"></nav>
 </div>
 <main>
   <div class="list" id="list"></div>
+  <div class="cancelled" id="cancelledBox" hidden></div>
   <div class="foot" id="foot"></div>
 </main>
 <div class="sheet" id="sheet" hidden>
@@ -142,7 +189,7 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 const T = {
   pt: { sub: "Downloads em segundo plano", online: "PS5 conectado", offline: "PS5 sem resposta", connecting: "Conectando…",
     locked: "Controles", unlocked: "Liberado", active: "Baixando", speed: "Velocidade", left: "Falta",
-    states: { downloading: "Baixando", connecting: "Conectando", verifying: "Conferindo", queued: "Na fila", paused: "Pausado", completed: "Concluído", failed: "Falhou", "needs-app": "Abra o app", "waiting-app": "Aguardando o app" },
+    states: { extracting: "Descompactando", downloading: "Baixando", connecting: "Conectando", verifying: "Conferindo", queued: "Na fila", paused: "Pausado", completed: "Concluído", failed: "Falhou", "needs-app": "Abra o app", "waiting-app": "Aguardando o app" },
     waitingApp: "Aguardando a Jobee'sLair: começa quando você abrir o app",
     of: "de", eta: "restam", conns: "conexões", pause: "Pausar", resume: "Retomar", cancel: "Cancelar",
     confirm: "Cancelar apaga o que já foi baixado deste jogo. Confirma?", yes: "Sim, cancelar", no: "Não",
@@ -153,10 +200,15 @@ const T = {
     limit: "Downloads simultâneos", connsLbl: "Conexões", connsHint: "ativas / alvo", connsWait: "o app decide", auto: "auto", manual: "manual",
     backToAuto: "Voltar ao número do app", less: "Menos", more: "Mais", setOnPhone: "celular",
     requestedWait: "Pedido pelo celular (Biblioteca TorBox): entra na fila de downloads quando a Jobee'sLair estiver aberta.",
-    confirmReq: "Tirar este pedido da fila?", yesReq: "Sim, tirar" },
+    confirmReq: "Tirar este pedido da fila?", yesReq: "Sim, tirar",
+    via: "via", direct: "direto", parts: "{n} partes", viaTitle: "Baixado pelo serviço {s}", directTitle: "Download direto do site {s}", fmtTitle: "Formato do arquivo",
+    sysTitle: "Sistema e código do jogo", fileTitle: "Arquivo",
+    sections: { all: "Tudo", downloading: "Baixando", queue: "Na fila", extracting: "Descompactando", converting: "Convertendo", done: "Finalizados", cancelled: "Cancelados", backup: "Backup" },
+    show: "Mostrar", emptySection: "Nada nesta seção agora.", extractingWait: "Descompactando na Jobee'sLair: o PS5 faz isso no app.",
+    cancelledHead: "Cancelados recentemente (os últimos 20)", clear: "Limpar", cancelledAt: "cancelado em {t}" },
   en: { sub: "Background downloads", online: "PS5 connected", offline: "PS5 not answering", connecting: "Connecting…",
     locked: "Controls", unlocked: "Unlocked", active: "Downloading", speed: "Speed", left: "Left",
-    states: { downloading: "Downloading", connecting: "Connecting", verifying: "Verifying", queued: "Queued", paused: "Paused", completed: "Done", failed: "Failed", "needs-app": "Open the app", "waiting-app": "Waiting for app" },
+    states: { extracting: "Extracting", downloading: "Downloading", connecting: "Connecting", verifying: "Verifying", queued: "Queued", paused: "Paused", completed: "Done", failed: "Failed", "needs-app": "Open the app", "waiting-app": "Waiting for app" },
     waitingApp: "Waiting for Jobee'sLair: starts when you open the app",
     of: "of", eta: "left", conns: "connections", pause: "Pause", resume: "Resume", cancel: "Cancel",
     confirm: "Cancelling deletes what was downloaded for this game. Go ahead?", yes: "Yes, cancel", no: "No",
@@ -167,7 +219,12 @@ const T = {
     limit: "Simultaneous downloads", connsLbl: "Connections", connsHint: "active / target", connsWait: "the app decides", auto: "auto", manual: "manual",
     backToAuto: "Back to the app's number", less: "Fewer", more: "More", setOnPhone: "phone",
     requestedWait: "Requested from the phone (TorBox library): joins the download queue when Jobee'sLair is open.",
-    confirmReq: "Remove this request from the queue?", yesReq: "Yes, remove" }
+    confirmReq: "Remove this request from the queue?", yesReq: "Yes, remove",
+    via: "via", direct: "direct", parts: "{n} parts", viaTitle: "Downloaded through {s}", directTitle: "Direct download from {s}", fmtTitle: "File format",
+    sysTitle: "System and game code", fileTitle: "File",
+    sections: { all: "All", downloading: "Downloading", queue: "Queued", extracting: "Extracting", converting: "Converting", done: "Finished", cancelled: "Cancelled", backup: "Backup" },
+    show: "Show", emptySection: "Nothing in this section right now.", extractingWait: "Extracting in Jobee'sLair: the PS5 does it in the app.",
+    cancelledHead: "Recently cancelled (the last 20)", clear: "Clear", cancelledAt: "cancelled on {t}" }
 };
 const L = T[(navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en"];
 document.documentElement.lang = L === T.pt ? "pt-BR" : "en";
@@ -193,17 +250,21 @@ const eta = (s) => { if (!isFinite(s) || s <= 0) return "–"; s = Math.round(s)
 let session = "", confirming = null, jobs = [], pinSet = true, limit = 0, maxLimit = 4, limitSet = false, maxConns = 64;
 const DEMO = location.protocol === "file:" || new URLSearchParams(location.search).has("demo");
 const demo = { t: Date.now(), jobs: [
-  { id: "b1", name: "Ghost of Tsushima Director's Cut", state: "downloading", written: 31.6 * GB, total: 48.2 * GB, bytesPerSecond: 38.5 * MB, connectionsActive: 16, connections: 16, connectionsSet: false },
-  { id: "b2", name: "Gran Turismo 7", state: "downloading", written: 12.1 * GB, total: 97.4 * GB, bytesPerSecond: 21.3 * MB, connectionsActive: 16, connections: 32, connectionsSet: true },
-  { id: "b3", name: "Astro Bot", state: "paused", written: 4.2 * GB, total: 41.7 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
-  { id: "b4", name: "Marvel's Spider-Man 2", state: "queued", written: 0, total: 98.9 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
-  { id: "b10", name: "Demon's Souls (MediaFire)", state: "waiting-app", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 0, connectionsSet: false },
-  { id: "b5", name: "Returnal", state: "queued", written: 0, total: 60.3 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
-  { id: "b6", name: "Ratchet & Clank: Rift Apart", state: "queued", written: 0, total: 42.8 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
-  { id: "b7", name: "Demon's Souls", state: "queued", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
-  { id: "b8", name: "Horizon Forbidden West", state: "failed", written: 7.9 * GB, total: 89.6 * GB, bytesPerSecond: 0, connectionsActive: 0, error: "Link do TorBox venceu e não foi renovado. Abra a Jobee'sLair para continuar.", connections: 8, connectionsSet: false },
-  { id: "b9", name: "Stellar Blade", state: "completed", written: 33.4 * GB, total: 33.4 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false }
-], limit: 2, limitSet: false };
+  { id: "b1", name: "Ghost of Tsushima Director's Cut", state: "downloading", via: "TorBox", format: "exfat", platform: "ps5", code: "PPSA01784", file: "Ghost.of.Tsushima.DC.PPSA01784.exfat", written: 31.6 * GB, total: 48.2 * GB, bytesPerSecond: 38.5 * MB, connectionsActive: 16, connections: 16, connectionsSet: false },
+  { id: "b2", name: "Gran Turismo 7", state: "downloading", host: "1fichier.com", format: "rar", parts: 3, platform: "ps5", code: "PPSA01316", file: "GT7.PPSA01316.part2.rar", written: 12.1 * GB, total: 97.4 * GB, bytesPerSecond: 21.3 * MB, connectionsActive: 16, connections: 32, connectionsSet: true },
+  { id: "b3", name: "Astro Bot", state: "paused", via: "AllDebrid", format: "ffpkg", platform: "ps5", code: "PPSA12345", file: "Astro.Bot.PPSA12345.ffpkg", written: 4.2 * GB, total: 41.7 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b4", name: "Marvel's Spider-Man 2", state: "queued", host: "gofile.io", format: "7z", platform: "ps5", code: "PPSA03016", file: "Spider-Man.2.PPSA03016.7z", written: 0, total: 98.9 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b10", name: "Demon's Souls (MediaFire)", state: "waiting-app", host: "mediafire.com", format: "rar", parts: 5, platform: "ps5", code: "PPSA01341", file: "Demons.Souls.PPSA01341.part1.rar", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 0, connectionsSet: false },
+  { id: "b5", name: "Returnal", state: "queued", host: "datanodes.to", format: "zip", platform: "ps5", code: "PPSA01284", file: "Returnal.PPSA01284.zip", written: 0, total: 60.3 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b6", name: "The Last of Us Remastered", state: "queued", via: "TorBox", format: "pkg", platform: "ps4", code: "CUSA00552", file: "TLOU.Remastered.CUSA00552.pkg", written: 0, total: 42.8 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b7", name: "Demon's Souls", state: "queued", host: "vikingfile.com", format: "ffpfs", platform: "ps5", code: "PPSA01341", file: "Demons.Souls.PPSA01341.ffpfs", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b8", name: "Horizon Forbidden West", state: "failed", via: "TorBox", format: "exfat", platform: "ps5", code: "PPSA01521", file: "Horizon.FW.PPSA01521.exfat", written: 7.9 * GB, total: 89.6 * GB, bytesPerSecond: 0, connectionsActive: 0, error: "Link do TorBox venceu e não foi renovado. Abra a Jobee'sLair para continuar.", connections: 8, connectionsSet: false },
+  { id: "b9", name: "Stellar Blade", state: "completed", host: "archive.org", format: "ffpfsc", platform: "ps5", code: "PPSA13198", file: "Stellar.Blade.PPSA13198.ffpfsc", written: 33.4 * GB, total: 33.4 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false }
+  ,{ id: "b11", name: "Final Fantasy XVI", state: "extracting", host: "1fichier.com", format: "rar", parts: 4, platform: "ps5", code: "PPSA10664", file: "FF16.PPSA10664.part1.rar", written: 0, total: 96.1 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 0, connectionsSet: false }
+], limit: 2, limitSet: false, cancelled: [
+  { name: "Ratchet & Clank: Rift Apart", at: Math.floor(Date.now() / 1000) - 1800, platform: "ps5", code: "PPSA01476", format: "rar", host: "gofile.io" },
+  { name: "Bloodborne", at: Math.floor(Date.now() / 1000) - 86400, platform: "ps4", code: "CUSA00900", format: "pkg", via: "TorBox" }
+] };
 async function api(method, path, body) {
   if (DEMO) {
     const dt = (Date.now() - demo.t) / 1000; demo.t = Date.now();
@@ -213,16 +274,17 @@ async function api(method, path, body) {
       j.connectionsActive = j.connectionsActive < j.connections ? Math.min(j.connections, j.connectionsActive + 2) : j.connections;
       j.bytesPerSecond = j.connectionsActive * 0.6 * MB;
     }
-    if (method === "POST") { const [, , , id, act] = path.split("/"); const j = demo.jobs.find((x) => x.id === id);
+    if (method === "POST") { const [, , , id, act] = path.split("/"); const j = demo.jobs.find((x) => x.id === id && x.state !== "extracting");
       if (path === "/api/unlock") return body.pin === "1234" ? { status: 200, data: { session: "demo" } } : { status: 403, data: { retryIn: 0 } };
       if (!session) return { status: 401, data: { error: "pin" } };
       if (path === "/api/config") { Object.assign(demo, { limit: body.concurrency, limitSet: true }); return { status: 200, data: { ok: true, limit: demo.limit, limitSet: true } }; }
       if (j && act === "pause") Object.assign(j, { state: "paused", bytesPerSecond: 0, connectionsActive: 0 });
       if (j && act === "resume") Object.assign(j, { state: "downloading", bytesPerSecond: 3 * MB, connectionsActive: 2 });
-      if (j && act === "cancel") demo.jobs = demo.jobs.filter((x) => x !== j);
+      if (j && act === "cancel") { demo.jobs = demo.jobs.filter((x) => x !== j); demo.cancelled.unshift({ name: j.name, at: Math.floor(Date.now() / 1000), platform: j.platform, code: j.code, format: j.format, host: j.host, via: j.via }); }
+      if (path === "/api/cancelled/clear") demo.cancelled = [];
       if (j && act === "connections") Object.assign(j, body.connections ? { connections: body.connections, connectionsSet: true } : { connections: j.state === "waiting-app" ? 0 : 8, connectionsSet: false });
       return { status: 200, data: { ok: true } }; }
-    return { status: 200, data: { jobs: demo.jobs.map((j) => ({ ...j })), limit: demo.limit, maxLimit: 4, maxConnections: 64, limitSet: demo.limitSet, pinSet: true } };
+    return { status: 200, data: { jobs: demo.jobs.map((j) => ({ ...j })), cancelledRecent: demo.cancelled.slice(0, 20), limit: demo.limit, maxLimit: 4, maxConnections: 64, limitSet: demo.limitSet, pinSet: true } };
   }
   const r = await fetch(path, { method, headers: { "Content-Type": "application/json", ...(session ? { "X-Session": session } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
   // Resposta cortada no caminho (Wi-Fi ruim): data fica null e quem chamou trata como falha, sem apagar a lista.
@@ -243,18 +305,29 @@ function render() {
   $("sumSpeed").textContent = speed(bps);
   $("sumLeft").textContent = leftBytes ? size(leftBytes) : "–";
   limitBar();
-  if (!jobs.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = L.empty; list.append(e); return; }
-  for (const j of jobs) {
+  renderSections();
+  renderCancelled();
+  const visible = jobs.filter((j) => shows(sectionOfJob(j)));
+  // glibren.12: lista vazia: a mensagem de sempre em "Tudo"; numa secao, so quando ela nao mostra outra coisa.
+  if (!visible.length && (section === "all" ? !jobs.length : !["converting", "done", "cancelled", "backup"].includes(section))) {
+    const e = document.createElement("div"); e.className = "empty"; e.textContent = section === "all" ? L.empty : L.emptySection; list.append(e); return;
+  }
+  for (const j of visible) {
     const pct = j.total ? Math.min(100, j.written / j.total * 100) : 0;
     const el = document.createElement("article"); el.className = `job ${j.state}`;
     const running = ["downloading", "connecting", "verifying"].includes(j.state);
-    const nums = [`<span><b>${nf(pct, 0)}%</b> · ${size(j.written || 0)} ${L.of} ${j.total ? size(j.total) : "?"}</span>`];
+    // Descompactando (no app): so o tamanho, o andamento fica no app.
+    const nums = j.state === "extracting" ? [`<span>${j.total ? size(j.total) : ""}</span>`] : [`<span><b>${nf(pct, 0)}%</b> · ${size(j.written || 0)} ${L.of} ${j.total ? size(j.total) : "?"}</span>`];
     if (running) nums.push(`<span>${speed(j.bytesPerSecond || 0)}</span>`, `<span>${L.eta} <b>${eta(((j.total || 0) - (j.written || 0)) / (j.bytesPerSecond || 0))}</b></span>`);
-    // Por um servico debrid: so o nome dele (TorBox, AllDebrid), vindo do payload.
-    if (j.via === "TorBox" || j.via === "AllDebrid") nums.push(`<span>via ${j.via}</span>`);
     el.innerHTML = `<div class="top"><div class="name"></div><span class="tag ${j.state}">${L.states[j.state] || j.state}</span></div>
       <div class="bar"><i style="width:${pct}%"></i></div><div class="nums">${nums.join("")}</div>`;
     el.querySelector(".name").textContent = j.name;
+    // glibren.12: de onde vem (TorBox/AllDebrid ou o site) e o formato, na linha logo abaixo do nome.
+    const origin = originRow(j);
+    if (origin) el.querySelector(".top").after(origin);
+    const file = fileLine(j);
+    if (file) (origin || el.querySelector(".top")).after(file);
+    if (j.state === "extracting") { const w = document.createElement("div"); w.className = "wait"; w.textContent = L.extractingWait; el.append(w); list.append(el); continue; }
     if (j.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = j.error; el.append(e); }
     // So o app sabe baixar este (pagina de site, navegador...): sem botoes aqui; cancelar fica no app.
     // glibren: um pedido da Biblioteca TorBox feito aqui espera o app abrir; ele sim pode ser pausado ou tirado da fila.
@@ -281,6 +354,133 @@ function render() {
     }
     list.append(el);
   }
+}
+// glibren.12: os selos de um download: a origem (por um servico debrid, so o nome dele; direto, so o dominio do site,
+// que o payload ja manda limpo e aqui ainda e conferido) e o formato (EXFAT em verde, como na Biblioteca; "RAR · 3
+// partes" num conjunto). Texto sempre por textContent; o innerHTML so leva os icones fixos.
+const ORIGIN_ICON = {
+  cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 18a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.5 1.5A3.75 3.75 0 0 1 17.5 18z"/></svg>',
+  globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>'
+};
+const FORMAT_CLASS = { exfat: "fx-best", ffpkg: "fx-img", ffpfs: "fx-img", ffpfsc: "fx-img", pkg: "fx-pkg", fpkg: "fx-pkg" };
+function originRow(j) {
+  const row = document.createElement("div"); row.className = "orig";
+  const chip = (cls, icon, small, text, title) => {
+    const c = document.createElement("span"); c.className = `oc ${cls}`; c.innerHTML = ORIGIN_ICON[icon];
+    if (small) { const s = document.createElement("small"); s.textContent = small; c.append(s); }
+    c.append(document.createTextNode(text)); c.title = title; row.append(c);
+  };
+  // glibren.12: o sistema (PS5 azul, PS4 roxo, como na Biblioteca) com o codigo do jogo ao lado.
+  if (j.platform === "ps5" || j.platform === "ps4") {
+    const c = document.createElement("span"); c.className = `oc s-${j.platform}`; c.textContent = j.platform.toUpperCase(); c.title = L.sysTitle;
+    if (typeof j.code === "string" && /^[A-Z]{4}\d{5}$/.test(j.code)) { const k = document.createElement("span"); k.className = "cd"; k.textContent = j.code; c.append(k); }
+    row.append(c);
+  }
+  if (j.via === "TorBox" || j.via === "AllDebrid") chip(j.via === "TorBox" ? "o-tb" : "o-ad", "cloud", L.via, j.via, L.viaTitle.replace("{s}", j.via));
+  else if (typeof j.host === "string" && /^[a-z0-9.-]{1,64}$/.test(j.host)) chip("o-site", "globe", L.direct, j.host, L.directTitle.replace("{s}", j.host));
+  const f = typeof j.format === "string" && /^[a-z0-9]{1,8}$/.test(j.format) ? j.format : "";
+  const parts = Number(j.parts) > 1 ? ` · ${L.parts.replace("{n}", Math.min(999, Math.round(Number(j.parts))))}` : "";
+  if (f) chip(FORMAT_CLASS[f] || "fx-arc", "file", "", f.toUpperCase() + parts, L.fmtTitle);
+  return row.childNodes.length ? row : null;
+}
+// glibren.12: o nome do arquivo baixado (so o nome base, nunca a pasta), cortado com reticencias.
+function fileLine(j) {
+  const name = typeof j.file === "string" ? j.file.slice(j.file.lastIndexOf("/") + 1) : "";
+  if (!name) return null;
+  const d = document.createElement("div"); d.className = "fname"; d.textContent = name; d.title = `${L.fileTitle}: ${name}`;
+  return d;
+}
+// glibren.12: as secoes da aba Downloads. "Na fila" junta na fila, aguardando o app, pausados e os que falharam (cada
+// um com o seu selo: todos esperam algo para continuar); "Finalizados" = concluidos e conversoes prontas.
+const SECTIONS = ["all", "downloading", "queue", "extracting", "converting", "done", "cancelled", "backup"];
+let section = "all";
+try { const saved = localStorage.getItem("jobe.section"); if (SECTIONS.includes(saved)) section = saved; } catch {}
+const sectionOfJob = (j) => ["downloading", "connecting", "verifying"].includes(j.state) ? "downloading" : j.state === "extracting" ? "extracting" : j.state === "completed" ? "done" : j.state === "cancelled" ? "cancelled" : "queue";
+const sectionOfConv = (c) => c.state === "done" ? "done" : "converting";
+const shows = (sec) => section === "all" ? sec !== "cancelled" && sec !== "backup" : section === sec;
+function sectionCounts() {
+  const n = Object.fromEntries(SECTIONS.map((k) => [k, 0]));
+  for (const j of jobs) ++n[sectionOfJob(j)];
+  for (const c of (DEMO ? window.demoConversions || [] : lastStatus?.conversions || []).filter((c) => c.state !== "cancelled")) ++n[sectionOfConv(c)];
+  n.cancelled = (lastStatus?.cancelledRecent || []).length;
+  n.backup = window.backupCount || 0;
+  n.all = jobs.length + (DEMO ? window.demoConversions || [] : lastStatus?.conversions || []).filter((c) => c.state !== "cancelled").length;
+  return n;
+}
+function setSection(next) {
+  section = SECTIONS.includes(next) ? next : "all";
+  try { localStorage.setItem("jobe.section", section); } catch {}
+  closeSecMenu();
+  render();
+  if (window.convHook) window.convHook(lastStatus, true);
+}
+function renderSections() {
+  const n = sectionCounts();
+  const bar = $("secbar"); bar.textContent = "";
+  for (const k of SECTIONS) {
+    const b = document.createElement("button"); b.type = "button"; b.className = `sc${k === section ? " on" : ""}${n[k] ? "" : " zero"}`;
+    b.setAttribute("aria-pressed", String(k === section));
+    b.textContent = L.sections[k];
+    const c = document.createElement("b"); c.textContent = String(n[k]); b.append(c);
+    b.onclick = () => setSection(k);
+    bar.append(b);
+  }
+  const on = bar.querySelector(".on");
+  // A secao escolhida fica a vista na linha de chips (so a linha rola, nunca a pagina).
+  if (on && bar.dataset.seen !== section) { bar.dataset.seen = section; bar.scrollLeft = Math.max(0, on.offsetLeft - (bar.clientWidth - on.offsetWidth) / 2); }
+  const btn = $("secBtn"); btn.textContent = `${L.show}: `;
+  const cur = document.createElement("b"); cur.textContent = `${L.sections[section]} ${n[section]}`; btn.append(cur, document.createTextNode(" ▾"));
+  if (secMenu) fillSecMenu(n);
+}
+let secMenu = null;
+function fillSecMenu(n) {
+  secMenu.textContent = "";
+  for (const k of SECTIONS) {
+    const b = document.createElement("button"); b.type = "button"; b.className = k === section ? "on" : ""; b.setAttribute("role", "menuitemradio"); b.setAttribute("aria-checked", String(k === section));
+    const t = document.createElement("span"); t.textContent = L.sections[k];
+    const c = document.createElement("b"); c.textContent = String(n[k]);
+    b.append(t, c); b.onclick = () => setSection(k);
+    secMenu.append(b);
+  }
+}
+function closeSecMenu() { if (secMenu) { secMenu.remove(); secMenu = null; } }
+$("secBtn").onclick = (e) => {
+  e.stopPropagation();
+  if (secMenu) { closeSecMenu(); return; }
+  secMenu = document.createElement("div"); secMenu.className = "secmenu"; secMenu.setAttribute("role", "menu");
+  fillSecMenu(sectionCounts());
+  document.body.append(secMenu);
+  const r = $("secBtn").getBoundingClientRect();
+  secMenu.style.top = `${Math.round(r.bottom + 4)}px`;
+  secMenu.style.right = `${Math.max(8, Math.round(document.documentElement.clientWidth - r.right))}px`;
+};
+addEventListener("click", (e) => { if (secMenu && !secMenu.contains(e.target)) closeSecMenu(); });
+addEventListener("keydown", (e) => { if (e.key === "Escape") closeSecMenu(); });
+// glibren.12: "Cancelados": os ultimos 20 que o payload guardou (nome, quando, sistema, formato, origem); Limpar pede o PIN.
+function renderCancelled() {
+  const box = $("cancelledBox"); box.textContent = "";
+  box.hidden = section !== "cancelled";
+  if (box.hidden) return;
+  const items = lastStatus?.cancelledRecent || [];
+  const head = document.createElement("div"); head.className = "head";
+  const h = document.createElement("span"); h.textContent = L.cancelledHead;
+  const clear = document.createElement("button"); clear.type = "button"; clear.className = "btn"; clear.textContent = L.clear; clear.disabled = !items.length;
+  clear.onclick = () => guarded(clearCancelled);
+  head.append(h, clear); box.append(head);
+  if (!items.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = L.emptySection; box.append(e); return; }
+  for (const c of items) {
+    const it = document.createElement("div"); it.className = "citem";
+    const nm = document.createElement("div"); nm.className = "name"; nm.textContent = c.name; it.append(nm);
+    const o = originRow(c); if (o) it.append(o);
+    const when = document.createElement("small"); when.textContent = L.cancelledAt.replace("{t}", new Date((Number(c.at) || 0) * 1000).toLocaleString(document.documentElement.lang, { dateStyle: "short", timeStyle: "short" }));
+    it.append(when); box.append(it);
+  }
+}
+async function clearCancelled() {
+  const r = await api("POST", "/api/cancelled/clear");
+  if (r.status === 401) { session = ""; lockButton(); pending = clearCancelled; openPin(); return; }
+  await refresh();
 }
 // glibren.8: conexoes de um download (baixando ou na fila): − / + nos degraus abaixo, ate 64. Baixando, mostra
 // "ativas / alvo": quantas estao abertas agora e quantas ele busca. "manual" = escolhido aqui (prevalece sobre o app);
@@ -446,9 +646,22 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
 .convlist{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
 .job.conv .tag{background:var(--panel2)}
 .job.conv.done .tag{color:var(--good)}
-.backup-row{display:flex;justify-content:center;margin:4px 0 8px}
-.backup-btn{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:6px 14px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--subtle);font-size:13.5px;cursor:pointer;max-width:100%}
-.backup-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* glibren.12: o BACKUP agora e um botao colorido de largura cheia no topo da aba Downloads (antes, discreto no rodape) */
+.backup-row{display:flex;min-width:0}
+.backup-btn{flex:1;min-width:0;display:flex;align-items:center;gap:10px;min-height:44px;padding:7px 14px;border:1px solid #f59e0b;border-radius:10px;background:linear-gradient(135deg,#fbbf24,#f97316);color:#1c0f02;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(249,115,22,.22);text-align:start}
+.backup-btn:active{filter:brightness(.92)}
+.backup-btn svg{width:20px;height:20px;flex:none}
+.backup-btn span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.backup-btn.empty{background:rgba(245,158,11,.1);color:#fcd34d;border-color:rgba(245,158,11,.55);box-shadow:none}
+@media (orientation:landscape) and (max-height:520px){ .backup-btn{min-height:36px;padding:4px 12px;font-size:14px} .backup-btn svg{width:18px;height:18px} }
+/* glibren.12: a secao Backup, direto na pagina (os mesmos itens da janela de antes, com os detalhes de cada jogo) */
+.bkpanel{display:flex;flex-direction:column;gap:8px}
+.bkpanel h2{margin:0;font-size:17px}
+.bkpanel .bk-list{max-height:none;overflow:visible;margin:0}
+.bk-item .orig{grid-column:1/-1}
+.bk-files{grid-column:1/-1;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.bk-conv{grid-column:1/-1;font-size:13px;font-weight:600;color:var(--subtle)}
+.bk-conv.ok{color:var(--good)}
 .bk-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;margin:8px 0}
 .bk-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
 .bk-item b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
@@ -476,7 +689,8 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
       button: "Pasta BACKUP: {n} jogo(s), {s}", buttonEmpty: "Pasta BACKUP: vazia", title: "Pasta BACKUP",
       text: "Os arquivos originais dos jogos convertidos para .exfat. Ficam até você apagar; apagar não mexe no jogo já convertido.",
       empty: "Nada no BACKUP.", del: "Apagar", confirm: "Apagar o original de \"{g}\" ({s})? Não dá para desfazer.", yes: "Sim, apagar", no: "Não",
-      back: "Fechar", busy: "Esse original ainda está sendo convertido.", fail: "Não deu para apagar. Tente de novo.", files: "{n} arquivo(s)" },
+      back: "Fechar", busy: "Esse original ainda está sendo convertido.", fail: "Não deu para apagar. Tente de novo.", files: "{n} arquivo(s)",
+      converted: "Convertido: {f}", notConverted: "Não convertido", more: "e mais {n}" },
     en: { converting: "Converting to EXFAT", verifying: "Checking the EXFAT", queued: "Queued for EXFAT", done: "Ready (EXFAT)", failed: "Conversion failed",
       errors: { space: "Not enough space on the drive for the .exfat.", "not-direct": "It could not be converted straight from the archive: Jobee'sLair extracts and converts it.",
         "not-a-game": "Not the game (an update or DLC): it stays as it came.", source: "The game's files could not be read.", write: "The .exfat could not be written.", verify: "The written .exfat did not check out." },
@@ -484,17 +698,27 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
       button: "BACKUP folder: {n} game(s), {s}", buttonEmpty: "BACKUP folder: empty", title: "BACKUP folder",
       text: "The original files of the games converted to .exfat. They stay until you delete them; deleting does not touch the converted game.",
       empty: "Nothing in BACKUP.", del: "Delete", confirm: "Delete the original of \"{g}\" ({s})? This cannot be undone.", yes: "Yes, delete", no: "No",
-      back: "Close", busy: "That original is still being converted.", fail: "It could not be deleted. Try again.", files: "{n} file(s)" }
+      back: "Close", busy: "That original is still being converted.", fail: "It could not be deleted. Try again.", files: "{n} file(s)",
+      converted: "Converted: {f}", notConverted: "Not converted", more: "and {n} more" }
   }[L === T.pt ? "pt" : "en"];
   const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
   const demoConv = [{ id: "c1", name: "Astro Bot", state: "converting", written: 18.2 * GB, total: 41.7 * GB, error: "" }, { id: "c2", name: "Stellar Blade", state: "done", written: 33.4 * GB, total: 33.4 * GB, error: "" }];
-  let demoBackup = [{ root: "/mnt/usb0", name: "Stellar Blade", bytes: 31.9 * GB, files: 12 }, { root: "/mnt/usb0", name: "Returnal", bytes: 58.2 * GB, files: 1 }];
+  window.demoConversions = demoConv;
+  let demoBackup = [
+    { root: "/mnt/usb0", name: "Stellar Blade", bytes: 31.9 * GB, files: 12, platform: "ps5", code: "PPSA13198", format: "rar", parts: 12, fileNames: ["Stellar.Blade.PPSA13198.part01.rar", "Stellar.Blade.PPSA13198.part02.rar", "Stellar.Blade.PPSA13198.part03.rar", "Stellar.Blade.PPSA13198.part04.rar", "Stellar.Blade.PPSA13198.part05.rar", "Stellar.Blade.PPSA13198.part06.rar", "Stellar.Blade.PPSA13198.part07.rar", "Stellar.Blade.PPSA13198.part08.rar", "Stellar.Blade.PPSA13198.part09.rar", "Stellar.Blade.PPSA13198.part10.rar"], moreFiles: 2, converted: "PPSA13198.exfat" },
+    { root: "/mnt/usb0", name: "Returnal", bytes: 58.2 * GB, files: 1, platform: "ps5", code: "PPSA01284", format: "7z", parts: 0, fileNames: ["Returnal.PPSA01284.7z"], moreFiles: 0, converted: "" },
+    { root: "/data", name: "Bloodborne", bytes: 29.4 * GB, files: 1, platform: "ps4", code: "CUSA00900", format: "pkg", parts: 0, fileNames: ["Bloodborne.CUSA00900.pkg"], moreFiles: 0, converted: "" }];
   let backup = { games: [], totalBytes: 0 }, confirmingBk = null;
   const list = document.createElement("div"); list.className = "convlist dlonly";
   $("list").before(list);
+  // glibren.12: no fim da lista de downloads (antes do rodape), colorido; leva para a secao Backup.
   const row = document.createElement("div"); row.className = "backup-row dlonly";
-  row.innerHTML = '<button class="backup-btn" type="button" id="bkOpen"><span></span></button>';
+  row.innerHTML = '<button class="backup-btn" type="button" id="bkOpen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/></svg><span></span>' +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>';
   $("foot").before(row);
+  const panel = document.createElement("section"); panel.className = "bkpanel dlonly"; panel.hidden = true;
+  panel.append($("bkTitle"), $("bkText"), $("bkList"), $("bkMsg"));
+  row.before(panel);
   $("bkTitle").textContent = C.title; $("bkText").textContent = C.text; $("bkBack").textContent = C.back;
   function why(error) {
     const code = /^([a-z-]+):/.exec(error || "")?.[1];
@@ -510,6 +734,7 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
       el.querySelector(".name").textContent = c.name;
       el.querySelector(".tag").textContent = c.state === "converting" ? `${label} ${nf(pct, 0)}%` : label;
       el.querySelector(".nums").textContent = c.total ? `${size(c.written || 0)} ${L.of} ${size(c.total)}` : "";
+      el.querySelector(".top").after(originRow({ format: "exfat" })); // glibren.12: o formato que sai da conversao
       if (c.state === "failed") { const e = document.createElement("div"); e.className = "err"; e.textContent = `${why(c.error)} ${C.openApp}`; el.append(e); }
       list.append(el);
     }
@@ -517,12 +742,15 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
   function renderButton() {
     const n = backup.games.length;
     $("bkOpen").querySelector("span").textContent = n ? fill(C.button, { n, s: size(backup.totalBytes) }) : C.buttonEmpty;
+    $("bkOpen").classList.toggle("empty", !n);
+    window.backupCount = n;
+    if (window.renderSections) renderSections();
   }
   async function loadBackup() {
     const r = DEMO ? { status: 200, data: { games: demoBackup, totalBytes: demoBackup.reduce((s, g) => s + g.bytes, 0) } } : await api("GET", "/api/backup").catch(() => ({ status: 0, data: {} }));
     if (r.status === 200 && Array.isArray(r.data.games)) backup = { games: r.data.games, totalBytes: Number(r.data.totalBytes) || 0 };
     renderButton();
-    if (!$("bkSheet").hidden) renderSheet();
+    renderSheet();
   }
   function renderSheet() {
     const box = $("bkList"); box.textContent = "";
@@ -532,6 +760,19 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
       item.innerHTML = '<b></b><button class="btn danger" type="button" data-d></button><small></small>';
       item.querySelector("b").textContent = g.name;
       item.querySelector("small").textContent = `${size(g.bytes)} · ${fill(C.files, { n: g.files })} · ${g.root}`;
+      // glibren.12: sistema + codigo, formato ("RAR · 12 partes"), os arquivos (so os nomes) e o .exfat convertido.
+      const chips = originRow({ platform: g.platform, code: g.code, format: g.format, parts: g.parts });
+      if (chips) item.querySelector("small").before(chips);
+      const names = Array.isArray(g.fileNames) ? g.fileNames.filter((x) => typeof x === "string").map((x) => x.slice(x.lastIndexOf("/") + 1)) : [];
+      if (names.length) {
+        const f = document.createElement("div"); f.className = "bk-files";
+        const shown = names.slice(0, 4), rest = names.length - shown.length + (Number(g.moreFiles) || 0);
+        f.textContent = shown.join(" · ") + (rest > 0 ? ` · ${fill(C.more, { n: rest })}` : "");
+        item.append(f);
+      }
+      const cv = document.createElement("div"); cv.className = `bk-conv${g.converted ? " ok" : ""}`;
+      cv.textContent = g.converted ? fill(C.converted, { f: g.converted }) : C.notConverted;
+      item.append(cv);
       const del = item.querySelector("[data-d]"); del.textContent = C.del;
       const key = `${g.root}/${g.name}`;
       if (confirmingBk === key) {
@@ -544,7 +785,7 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
         const q = document.createElement("small"); q.textContent = fill(C.confirm, { g: g.name, s: size(g.bytes) });
         item.append(q, c);
       } else {
-        del.onclick = () => guarded(() => { confirmingBk = key; $("bkSheet").hidden = false; renderSheet(); });
+        del.onclick = () => guarded(() => { confirmingBk = key; renderSheet(); });
       }
       box.append(item);
     }
@@ -555,17 +796,20 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
     let r;
     if (DEMO) { demoBackup = demoBackup.filter((x) => x !== g); r = { status: 200 }; }
     else r = await api("POST", "/api/backup/delete", { root: g.root, name: g.name }).catch(() => ({ status: 0, data: {} }));
-    if (r.status === 401) { session = ""; lockButton(); $("bkSheet").hidden = true; pending = () => { $("bkSheet").hidden = false; remove(g); }; openPin(); return; }
+    if (r.status === 401) { session = ""; lockButton(); pending = () => remove(g); openPin(); return; }
     if (r.status !== 200) $("bkMsg").textContent = r.status === 409 ? C.busy : C.fail;
     await loadBackup();
   }
-  $("bkOpen").onclick = () => { confirmingBk = null; $("bkMsg").textContent = ""; $("bkSheet").hidden = false; renderSheet(); loadBackup(); };
+  $("bkOpen").onclick = () => { confirmingBk = null; $("bkMsg").textContent = ""; setSection("backup"); scrollTo(0, 0); loadBackup(); };
   $("bkBack").onclick = () => { $("bkSheet").hidden = true; confirmingBk = null; };
   // A pagina chama a cada atualizacao (refresh) com o que o /api/status trouxe.
   let ticks = 0;
-  window.convHook = (data) => {
-    renderConversions(DEMO ? demoConv : (data?.conversions || []).filter((c) => c.state !== "cancelled"));
-    if (ticks++ % 15 === 0) loadBackup(); // o BACKUP muda pouco: a cada ~30 s (e ao abrir a janela)
+  window.convHook = (data, sectionOnly) => {
+    renderConversions((DEMO ? demoConv : (data?.conversions || [])).filter((c) => c.state !== "cancelled" && shows(sectionOfConv(c))));
+    panel.hidden = section !== "backup";
+    row.hidden = section === "backup";
+    if (!sectionOnly && ticks++ % 15 === 0) loadBackup(); // o BACKUP muda pouco: a cada ~30 s (e ao abrir a secao)
+    if (sectionOnly && section === "backup") loadBackup();
   };
   // A primeira atualizacao da pagina roda antes deste bloco existir: mostra ja, sem esperar a proxima (2 s).
   window.convHook(lastStatus);
@@ -878,7 +1122,7 @@ body.fopen{overflow:hidden}
       if (!g) return { status: 404, data: { error: "not-found" } };
       if (g.queued) return { status: 200, data: { ok: true, already: true, id: "b99" } };
       g.queued = true;
-      demo.jobs.push({ id: `b${100 + demo.jobs.length}`, name: g.title, state: "waiting-app", requested: true, via: "TorBox", written: 0, total: g.sizeBytes, bytesPerSecond: 0, connectionsActive: 0, connections: 0, connectionsSet: false });
+      demo.jobs.push({ id: `b${100 + demo.jobs.length}`, name: g.title, state: "waiting-app", requested: true, via: "TorBox", format: g.formats[0], ...g.formats[0] === "rar" ? { parts: g.files } : {}, written: 0, total: g.sizeBytes, bytesPerSecond: 0, connectionsActive: 0, connections: 0, connectionsSet: false });
       return { status: 200, data: { ok: true, id: "b100", appOpen: false } };
     }
     if (pathname === "/api/library/game") {

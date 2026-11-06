@@ -20,7 +20,7 @@ import { fakelibState } from './fakelib.js';
 import { consoleFirmware, newerFirmware, ps5FakePackagesLaunch, titleRequirement } from './firmware.js';
 import { releaseType } from './release-sets.js';
 import { reportLink, reportOutcome } from './link-health.js';
-import { reportFormat } from './link-formats.js';
+import { originOf, reportFormat } from './link-formats.js';
 import { BrowserRequired, RESOLVED_KINDS, archiveRefusal, cancellation, createSourceResolver, sourceKind, webURL } from './download-sources.js';
 import { captureAnchor } from './browser-links.js';
 import { createCaptureFlow } from './capture-flow.js';
@@ -34,7 +34,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
 import { hostOf } from './download-tuning.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 import { mirrorsFor } from './download-mirrors.js';
-import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platformOf, PS4_FOLDER } from './exfat-convert.js';
+import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platformOf, PS4_FOLDER, writeBackupMarker } from './exfat-convert.js';
 
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
   var BUSY = ["queued", ...ACTIVE];
@@ -764,6 +764,17 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
     // sozinho (link direto, ou TorBox ja pedido) e marcadores "waiting-app" para o resto (paginas de site, navegador,
     // conjuntos em partes, manifestos). A fila do app continua mandando: pausar, cancelar, apagar ou reordenar aqui
     // manda a lista nova, e o payload larga o que saiu dela.
+    // glibren.12: o sistema e o codigo do jogo (PPSA = PS5, CUSA = PS4; o do jogo, senao o do nome do arquivo, senao o
+    // que o catalogo diz) e o nome do arquivo (so o nome base), para os selos da pagina do celular.
+    function systemOf(job2) {
+      const ids = [job2.consoleTitleId, job2.titleId, job2.release?.filename, job2.artifact?.destination].map((value) => String(value || "").toUpperCase());
+      const code = ids.map((value) => /^(PPSA|CUSA)\d{5}$/.test(value) ? value : /\b(PPSA|CUSA)\d{5}/.exec(value)?.[0]).find(Boolean) ?? "";
+      const said = String(job2.release?.platform || "").toLowerCase();
+      const platform = code.startsWith("PPSA") ? "ps5" : code.startsWith("CUSA") ? "ps4" : ["ps5", "ps4"].includes(said) ? said : "";
+      const path = job2.downloadDestination || job2.artifact?.destination || job2.release?.filename || "";
+      const file = String(path).slice(String(path).lastIndexOf("/") + 1);
+      return { ...platform ? { platform } : {}, ...code ? { code } : {}, ...file && !file.startsWith(".") && file.length <= 128 ? { file } : {} };
+    }
     function handoffRequest(job2) {
       const release = job2.release;
       if (!release || release.parts || release.manifestUrl || job2.directURL || job2.capturedLink || job2.install || !job2.artifact || !job2.root) return null;
@@ -788,7 +799,7 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         destination,
         storageRoot: job2.root,
         // glibren.8: key = o item da fila, para o payload aplicar as conexoes escolhidas no celular para ele.
-        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: release, key: job2.id }
+        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: release, key: job2.id, ...systemOf(job2) }
       };
     }
     // Agendada (e nao na hora): change() roda tambem enquanto a fila ainda esta sendo montada, e varias mudancas
@@ -812,10 +823,14 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       // MODIFIED (glibren.8): os pausados tambem vao (paused, com o progresso): continuam na pagina do celular como
       // "Pausado" (antes sumiam dela) e, retomados la, voltam para ca (remoteAction "resume"); o payload so os baixa
       // sozinho se forem retomados com o app fechado.
-      const items = !ahead ? [] : jobs.filter((job2) => ["queued", "paused"].includes(job2.state) && !lanes.has(job2) && !job2.install).map((job2) => {
+      // glibren.12: os que o app esta descompactando tambem vao (extracting, sem job), para a secao "Descompactando".
+      const items = !ahead ? [] : jobs.filter((job2) => ["queued", "paused"].includes(job2.state) && !lanes.has(job2) && !job2.install || job2.state === "extracting").map((job2) => {
+        if (job2.state === "extracting") return { key: job2.id, name: job2.title, total: job2.total || job2.release?.sizeBytes || 0, extracting: true, ...systemOf(job2) };
         const request = handoffRequest(job2);
         const paused = job2.state === "paused" ? { paused: true, written: job2.written || 0 } : {};
-        return { key: job2.id, name: job2.title, total: job2.release?.sizeBytes || job2.total || 0, ...paused, ...request ? { request } : {} };
+        // glibren.12: a origem (site ou servico debrid) e o formato, para os selos da pagina do celular.
+        const origin = originOf(job2.release);
+        return { key: job2.id, name: job2.title, total: job2.release?.sizeBytes || job2.total || 0, ...paused, ...systemOf(job2), ...Object.keys(origin).length ? { origin } : {}, ...request ? { request } : {} };
       });
       downloads.syncQueue(items);
       if (ahead) void resolveForHandoff();
@@ -1199,7 +1214,7 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         lane.transferring = true;
         // glibren-bg: `background` diz ao payload de segundo plano o nome, onde a imagem pronta mora e a fonte (background-downloads.js);
         // com mirrors o download fica no motor do app (background-downloads.js eligible).
-        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes, job2), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: job2.release, key: job2.id } });
+        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes, job2), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: job2.release, key: job2.id, ...systemOf(job2) } });
         lane.task = task;
         // Most catalog releases do not say their size, so the check above had nothing to go on: once the
         // server does, the rest is checked against the drive once, before it fills (the partial file counts
@@ -3029,6 +3044,15 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         });
         try {
           if (orphan) Object.assign(jobs.at(-1), { rootIdentity: storageIdentity(jobs.at(-1)), adopted: true });
+          // glibren.12: a pasta do BACKUP diz de que jogo e (codigo, sistema, formato, fonte) para a lista do BACKUP.
+          if (plan.backupDir) {
+            try {
+              const system = systemOf(jobs.at(-1)), origin = originOf(release);
+              writeBackupMarker(fs, plan.backupDir, { titleId: system.code, platform: system.platform, format: origin.format, source: origin.via || origin.host });
+            } catch (error2) {
+              console.log(`[download-queue] ${id}: BACKUP marker not written: ${error2.message}`);
+            }
+          }
           change();
         } catch (error2) {
           jobs.pop();

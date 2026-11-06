@@ -333,7 +333,9 @@ test('pagina do celular: a tela embutida inteira (leitura lenta), status sem seg
   await until(base, data.id, ['downloading'], (job) => job.written > 0);
   const status = await page('/api/status');
   assert.equal(status.data.pinSet, true);
-  assert.deepEqual(Object.keys(status.data.jobs[0]).sort(), ['by', 'bytesPerSecond', 'connections', 'connectionsActive', 'connectionsSet', 'error', 'id', 'name', 'state', 'total', 'written']);
+  assert.deepEqual(Object.keys(status.data.jobs[0]).sort(), ['by', 'bytesPerSecond', 'connections', 'connectionsActive', 'connectionsSet', 'error', 'file', 'host', 'id', 'name', 'state', 'total', 'written']);
+  assert.equal(status.data.jobs[0].file, 'm.bin', 'glibren.12: so o nome base do arquivo, sem a pasta');
+  assert.equal(status.data.jobs[0].host, '127.0.0.1', 'glibren.12: so o site do link (aqui um IP), sem porta, caminho ou consulta');
   assert.equal(status.data.jobs[0].name, 'Jogo Teste');
   assert.ok(!('via' in status.data.jobs[0]), 'um link direto nao diz via');
   for (const secret of ['SECRET-TOKEN', '/f/a.bin', dest, path.join(base, 'disk')]) assert.ok(!status.text.includes(secret), `a pagina nao ve ${secret}`);
@@ -1173,5 +1175,140 @@ test('biblioteca TorBox: incluir download pelo celular (sessao, duplicado, arqui
   assert.equal(fake.status, 201);
   assert.ok(!('library' in fake.data.job));
   await call(base, 'POST', `/jobs/${fake.data.id}/cancel`);
+  await stop(child);
+});
+
+// ---- glibren.12: selos de origem e formato na pagina do celular (host/format/parts no /api/status) ----
+
+test('glibren.12: origem e formato no /api/status (do url, do /queue e do /jobs), validados, sem caminho nem consulta, gravados', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  let child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  await pageUp();
+  const dl = (name) => path.join(base, 'disk/downloads', name);
+  const items = [
+    // Job antecipado sem origem do app: o site sai do url (aqui um IP) e o formato da extensao do destino.
+    { key: 'PPSA1/a', name: 'Do url', total: 10, job: { url: `http://127.0.0.1:${port}/f/a.bin?token=SEGREDO`, destination: dl('Jogo.part01.rar'), storageRoot: path.join(base, 'disk') } },
+    // Job antecipado com origem do app (no item e no job): vale a do app, em minusculas.
+    { key: 'PPSA1/b', name: 'Do app', total: 10, host: 'MediaFire.com', format: 'RAR', parts: 3, job: { url: `http://127.0.0.1:${port}/f/a.bin`, destination: dl('b.binary'), storageRoot: path.join(base, 'disk') } },
+    // Marcadores: so o que o app manda.
+    { key: 'PPSA1/c', name: 'Marcador site', total: 10, host: 'www.1fichier.com', format: 'exfat' },
+    { key: 'PPSA1/d', name: 'Marcador TorBox', total: 10, via: 'torbox', host: 'tb-cdn.cx', format: 'ffpkg' },
+    { key: 'PPSA1/e', name: 'Invalido', total: 10, host: 'evil.com/path?q=1', format: 'r-a-r', parts: 1, via: 'x' },
+    { key: 'PPSA1/f', name: 'Comprido', total: 10, host: `${'a'.repeat(70)}.com`, format: 'ffpfsclong' },
+  ];
+  assert.equal((await call(base, 'POST', '/queue', { items })).status, 200);
+  // POST /jobs (o app comecou): com usuario, porta e consulta no link.
+  const posted = await call(base, 'POST', '/jobs', { url: `http://user:pw@127.0.0.1:${port}/f/a.bin?x=1#frag`, destination: dl('Direto.exfat'), storageRoot: path.join(base, 'disk'), name: 'Direto.exfat' });
+  assert.equal(posted.status, 201);
+  const check = (status) => {
+    const by = (name) => status.jobs.find((job) => job.name === name);
+    assert.deepEqual([by('Do url').host, by('Do url').format, by('Do url').parts], ['127.0.0.1', 'rar', undefined]);
+    assert.deepEqual([by('Do app').host, by('Do app').format, by('Do app').parts], ['mediafire.com', 'rar', 3]);
+    assert.deepEqual([by('Marcador site').host, by('Marcador site').format], ['1fichier.com', 'exfat']);
+    assert.deepEqual([by('Marcador TorBox').via, by('Marcador TorBox').host, by('Marcador TorBox').format], ['TorBox', undefined, 'ffpkg'], 'pelo TorBox: so o via');
+    assert.deepEqual([by('Invalido').host, by('Invalido').format, by('Invalido').parts, by('Invalido').via], [undefined, undefined, undefined, undefined], 'invalido: descartado');
+    assert.deepEqual([by('Comprido').host, by('Comprido').format], [undefined, undefined], 'longo demais: descartado, nao cortado');
+    assert.deepEqual([by('Direto.exfat').host, by('Direto.exfat').format], ['127.0.0.1', 'exfat']);
+    const text = JSON.stringify(status);
+    for (const secret of ['SEGREDO', 'token', 'user', 'pw@', '/f/', '?x=1', 'frag', 'evil', '/path', ':' + port]) assert.ok(!text.includes(secret), secret);
+  };
+  check((await page('/api/status')).data);
+  // jobs.json guarda a origem; ao reabrir, a pagina mostra o mesmo.
+  const saved = JSON.parse(readFileSync(path.join(base, 'state/jobs.json'), 'utf8')).jobs.find((job) => job.key === 'PPSA1/b');
+  assert.deepEqual([saved.host, saved.format, saved.parts], ['mediafire.com', 'rar', 3]);
+  await call(base, 'POST', `/jobs/${posted.data.id}/cancel`);
+  await stop(child);
+  child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  await pageUp();
+  const again = (await page('/api/status')).data;
+  const b = again.jobs.find((job) => job.name === 'Do app');
+  assert.deepEqual([b.host, b.format, b.parts], ['mediafire.com', 'rar', 3]);
+  assert.equal(again.jobs.find((job) => job.name === 'Marcador TorBox').via, 'TorBox');
+  await stop(child);
+});
+
+test('glibren.12: sistema, codigo e arquivo no /api/status (sem caminho); descompactando; cancelados guardados (20), gravados e limpos com o PIN', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  let child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  await pageUp();
+  const dl = (name) => path.join(base, 'disk/downloads', name);
+  const items = [
+    { key: 'K/a', name: 'Fila PS4', total: 5, platform: 'PS4', code: 'cusa00552', file: 'TLOU.CUSA00552.pkg', format: 'pkg' },
+    { key: 'K/b', name: 'Ruim', total: 5, platform: 'ps3', code: 'ABC12', file: '../x/y.rar' },
+    { key: 'K/c', name: 'Extraindo', total: 5, extracting: true, platform: 'ps5', file: 'G.part1.rar' },
+    { key: 'K/d', name: 'Job', total: 5, job: { url: `http://127.0.0.1:${port}/f/a.bin`, destination: dl('Game.PPSA01234.rar'), storageRoot: path.join(base, 'disk'), platform: 'ps5', code: 'PPSA01234' } },
+  ];
+  assert.equal((await call(base, 'POST', '/queue', { items })).status, 200);
+  let status = (await page('/api/status')).data;
+  const by = (name) => status.jobs.find((job) => job.name === name);
+  assert.deepEqual([by('Fila PS4').platform, by('Fila PS4').code, by('Fila PS4').file], ['ps4', 'CUSA00552', 'TLOU.CUSA00552.pkg']);
+  assert.deepEqual([by('Ruim').platform, by('Ruim').code, by('Ruim').file], [undefined, undefined, undefined], 'invalidos: descartados');
+  assert.equal(by('Extraindo').state, 'extracting');
+  assert.deepEqual([by('Job').platform, by('Job').code, by('Job').file], ['ps5', 'PPSA01234', 'Game.PPSA01234.rar'], 'so o nome base do destino');
+  assert.ok(!JSON.stringify(status).includes(base), 'nenhum caminho');
+  const extracting = (await call(base, 'GET', '/jobs')).data.jobs.find((job) => job.key === 'K/c');
+  assert.equal((await call(base, 'POST', `/jobs/${extracting.id}/cancel`)).status, 409, 'o que o app descompacta nao se cancela daqui');
+  // A fila seguinte sem "extracting": volta a esperar o app.
+  assert.equal((await call(base, 'POST', '/queue', { items: items.map((item) => item.key === 'K/c' ? { ...item, extracting: false } : item) })).status, 200);
+  status = (await page('/api/status')).data;
+  assert.equal(by('Extraindo').state, 'waiting-app');
+  // Cancelados: o mais novo primeiro, so nome/quando/sistema/formato/origem, ate 20.
+  const ps4 = (await call(base, 'GET', '/jobs')).data.jobs.find((job) => job.key === 'K/a');
+  assert.equal((await call(base, 'POST', `/jobs/${ps4.id}/cancel`)).status, 200);
+  status = (await page('/api/status')).data;
+  assert.deepEqual(status.cancelledRecent[0], { name: 'Fila PS4', at: status.cancelledRecent[0].at, platform: 'ps4', code: 'CUSA00552', format: 'pkg' });
+  assert.ok(Math.abs(status.cancelledRecent[0].at - Date.now() / 1000) < 60);
+  const many = Array.from({ length: 22 }, (_, i) => ({ key: `K/m${i}`, name: `Muitos ${i}`, total: 1 }));
+  assert.equal((await call(base, 'POST', '/queue', { items: many })).status, 200);
+  for (const job of (await call(base, 'GET', '/jobs')).data.jobs.filter((item) => item.key.startsWith('K/m'))) await call(base, 'POST', `/jobs/${job.id}/cancel`);
+  status = (await page('/api/status')).data;
+  assert.equal(status.cancelledRecent.length, 20, 'so os ultimos 20');
+  assert.equal(status.cancelledRecent[0].name, 'Muitos 21', 'o mais novo primeiro');
+  assert.ok(!status.cancelledRecent.some((item) => item.name === 'Fila PS4'), 'o mais antigo saiu');
+  // Gravados: voltam depois de reiniciar.
+  await stop(child);
+  child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  await pageUp();
+  assert.equal((await page('/api/status')).data.cancelledRecent.length, 20);
+  assert.equal((await page('/api/cancelled/clear', { method: 'POST' })).status, 401, 'limpar pede o PIN');
+  const session = await unlocked(base);
+  assert.equal((await page('/api/cancelled/clear', { method: 'POST', session })).status, 200);
+  assert.deepEqual((await page('/api/status')).data.cancelledRecent, []);
+  await stop(child);
+});
+
+test('glibren.12: a lista do BACKUP diz o sistema, o codigo, o formato, as partes, os nomes e o .exfat convertido; o download para o BACKUP grava o marcador', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const root = path.join(base, 'disk');
+  const put = (rel, text = 'x') => { mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); writeFileSync(path.join(root, rel), text); };
+  put('BACKUP/Jogo Marcado/Game.PPSA01234.part1.rar', 'aaaa');
+  put('BACKUP/Jogo Marcado/Game.PPSA01234.part2.rar', 'bb');
+  put('BACKUP/Jogo Marcado/sub/leia.txt', 'c');
+  put('BACKUP/Jogo Marcado/.jobe-backup.json', JSON.stringify({ titleId: 'PPSA01234', platform: 'ps5', format: 'rar', source: 'mediafire.com' }));
+  put('homebrew/PPSA01234.exfat', 'img');
+  put('BACKUP/Velho/Bloodborne.CUSA00900.pkg', 'pkg');
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_BACKUP_ROOTS: root });
+  await up(base);
+  await pageUp();
+  const games = (await page('/api/backup')).data.games;
+  const marked = games.find((game) => game.name === 'Jogo Marcado');
+  assert.deepEqual([marked.platform, marked.code, marked.format, marked.parts, marked.files, marked.bytes, marked.converted], ['ps5', 'PPSA01234', 'rar', 2, 3, 7, 'PPSA01234.exfat'], 'o marcador nao conta como arquivo');
+  assert.deepEqual([...marked.fileNames].sort(), ['Game.PPSA01234.part1.rar', 'Game.PPSA01234.part2.rar', 'leia.txt'], 'so os nomes base');
+  const old = games.find((game) => game.name === 'Velho');
+  assert.deepEqual([old.platform, old.code, old.format, old.parts, old.converted], ['ps4', 'CUSA00900', 'pkg', 0, ''], 'sem marcador: pelo nome');
+  // Um download que termina dentro de BACKUP/<jogo>/ grava o marcador (com o codigo e o sistema do app).
+  mkdirSync(path.join(root, 'BACKUP/Novo'), { recursive: true }); // a pasta, como o app a cria
+  const posted = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: path.join(root, 'BACKUP/Novo/Novo.PPSA05555.rar'), storageRoot: root, platform: 'ps5', code: 'PPSA05555', name: 'Novo' });
+  assert.equal(posted.status, 201);
+  await until(base, posted.data.id, ['completed']);
+  const marker = JSON.parse(readFileSync(path.join(root, 'BACKUP/Novo/.jobe-backup.json'), 'utf8'));
+  assert.deepEqual(marker, { titleId: 'PPSA05555', platform: 'ps5', format: 'rar', source: '127.0.0.1' });
   await stop(child);
 });

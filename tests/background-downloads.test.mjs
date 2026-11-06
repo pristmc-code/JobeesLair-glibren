@@ -611,3 +611,40 @@ test('glibren.8: sem escolha no celular (concurrencyBy "app"), nada e adotado; u
   for (const job of payload.jobs) job.state = 'completed';
   await wait(30);
 });
+
+// ---- glibren.12: origem e formato vao na fila (item e job), validados ----
+
+test('fila inteira (glibren.12: origem): host/format/parts/via no item, e no job o site e o formato da fonte', async () => {
+  const payload = fakePayload();
+  const handoff = (source) => source?.debrid?.service === 'torbox' ? { provider: 'torbox', kind: 'webdl', id: 42, fileId: 3, zip: false } : null;
+  const wrapper = make(payload, fakeEngine(), { on: () => true, queueDelayMs: 0, handoff });
+  const req = (name, source = {}) => queueOptions({ destination: `/mnt/ext0/downloads/images/${name}`, background: { title: name, publishTo: '', source } });
+  wrapper.syncQueue([
+    { key: 'j1', name: 'Direto', total: 10, origin: { host: 'gofile.io', format: '7z' }, request: req('A.7z', { url: 'https://store9.gofile.io/download/abc/A.7z?t=1' }) },
+    { key: 'j2', name: 'MediaFire', total: 20, origin: { host: 'mediafire.com', format: 'rar', parts: 3 } },
+    { key: 'j3', name: 'TorBox', total: 30, origin: { via: 'torbox', format: 'exfat' }, request: req('C.exfat', { debrid: { service: 'torbox' }, filename: 'C.exfat' }) },
+    { key: 'j4', name: 'Ruim', total: 40, origin: { host: 'evil.com/x?y', format: 'R-AR', parts: 1.5, via: 'other' } },
+  ]);
+  await wrapper.flushQueue();
+  const sent = payload.queues.at(-1).items;
+  assert.deepEqual([sent[0].host, sent[0].format, sent[0].job.host, sent[0].job.format], ['gofile.io', '7z', 'gofile.io', '7z']);
+  assert.deepEqual(sent[1], { key: 'j2', name: 'MediaFire', total: 20, host: 'mediafire.com', format: 'rar', parts: 3 }, 'o marcador leva so a origem');
+  assert.deepEqual([sent[2].via, sent[2].host, sent[2].job.host, sent[2].job.format], ['torbox', undefined, undefined, 'exfat'], 'pelo TorBox: so o servico');
+  assert.deepEqual(sent[3], { key: 'j4', name: 'Ruim', total: 40 }, 'invalido: nada');
+});
+
+test('fila inteira (glibren.12: sistema): platform/code/file/extracting no item; platform/code no job (do background)', async () => {
+  const payload = fakePayload();
+  const wrapper = make(payload, fakeEngine(), { on: () => true, queueDelayMs: 0 });
+  const req = (name, extra = {}) => queueOptions({ destination: `/mnt/ext0/downloads/images/${name}`, background: { title: name, publishTo: '', source: {}, ...extra } });
+  wrapper.syncQueue([
+    { key: 'j1', name: 'PS5', total: 10, platform: 'ps5', code: 'PPSA01234', file: 'A.exfat', request: req('A.exfat', { platform: 'ps5', code: 'PPSA01234' }) },
+    { key: 'j2', name: 'Descompactando', total: 20, platform: 'ps4', code: 'CUSA00552', file: 'B.part1.rar', extracting: true },
+    { key: 'j3', name: 'Ruim', total: 30, platform: 'ps3', code: 'x', file: '../etc/passwd' },
+  ]);
+  await wrapper.flushQueue();
+  const sent = payload.queues.at(-1).items;
+  assert.deepEqual([sent[0].platform, sent[0].code, sent[0].file, sent[0].job.platform, sent[0].job.code], ['ps5', 'PPSA01234', 'A.exfat', 'ps5', 'PPSA01234']);
+  assert.deepEqual(sent[1], { key: 'j2', name: 'Descompactando', total: 20, platform: 'ps4', code: 'CUSA00552', file: 'B.part1.rar', extracting: true });
+  assert.deepEqual(sent[2], { key: 'j3', name: 'Ruim', total: 30 }, 'invalido: nada');
+});

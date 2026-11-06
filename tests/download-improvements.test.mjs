@@ -897,3 +897,59 @@ test('simultaneous (glibren.8): two TorBox downloads on different CDN nodes no l
   for (const gate of gates) gate.open();
   for (const id of ids) assert.equal((await settle(queue, id)).state, 'downloaded');
 });
+
+// ---- glibren.12: origem e formato de cada item entregue ao payload (selos da pagina do celular) ----
+
+test('handoff (glibren.12: origem): each item carries its site or debrid service and its format; never a path or query', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  const handed = [];
+  downloads.queueAhead = () => true;
+  downloads.syncQueue = (items) => handed.push(items);
+  const queue = queueWith({ fs, downloads });
+  const a = queue.enqueue(other(1), image('Alpha.exfat'), '/data');
+  const b = queue.enqueue(other(2), image('Beta.exfat', 'https://download77.mediafire.com/abc/Beta.exfat?key=1'), '/data');
+  const c = queue.enqueue(other(3), page('Gamma.exfat'), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  await later();
+  const last = handed.at(-1);
+  const byKey = (key) => last.find((item) => item.key === key);
+  assert.deepEqual(byKey(b).origin, { host: 'mediafire.com', format: 'exfat' });
+  assert.equal(byKey(c).origin.format, 'exfat', 'a host page that only waits still says its format');
+  assert.equal(byKey(c).origin.host, 'mediafire.com', 'the host page link: its site only');
+  assert.ok(!JSON.stringify(last.map((item) => item.origin)).includes('/'), 'only domains, no path');
+  first.open();
+  for (const id of [a, b]) assert.equal((await settle(queue, id)).state, 'downloaded');
+});
+
+test('link formats (glibren.12): siteOf keeps the registrable domain only; originOf says via, host, format and parts', async () => {
+  const { siteOf, originOf } = await import('../app/state/link-formats.js');
+  assert.equal(siteOf('https://download1234.mediafire.com/x/Game.rar?a=1'), 'mediafire.com');
+  assert.equal(siteOf('https://www.1fichier.com/?abc'), '1fichier.com');
+  assert.equal(siteOf('http://user:pw@a.b.example.com.br:8080/p'), 'example.com.br');
+  assert.equal(siteOf('magnet:?xt=urn:btih:abc'), null);
+  assert.equal(siteOf('https://[::1]/x'), null);
+  assert.deepEqual(originOf({ debrid: { service: 'torbox' }, url: 'https://x.example/Game.exfat' }), { via: 'torbox', format: 'exfat' });
+  assert.deepEqual(originOf({ format: 'archive-set', parts: [{ sources: [{ url: 'https://1fichier.com/?a', filename: 'G.part1.rar' }] }, { sources: [{ url: 'https://1fichier.com/?b' }] }, { sources: [{}] }] }), { host: '1fichier.com', format: 'rar', parts: 3 });
+  assert.deepEqual(originOf(null), {});
+});
+
+test('handoff (glibren.12: sistema): each item says the game system and code and the file base name', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  const handed = [];
+  downloads.queueAhead = () => true;
+  downloads.syncQueue = (items) => handed.push(items);
+  const queue = queueWith({ fs, downloads });
+  const a = queue.enqueue(other(1), image('Alpha.exfat'), '/data');
+  const b = queue.enqueue(other(2), image('Beta.exfat'), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  await later();
+  const item = handed.at(-1).find((entry) => entry.key === b);
+  assert.deepEqual([item.platform, item.code, item.file], ['ps5', 'PPSA02000', 'Beta.exfat']);
+  assert.deepEqual([item.request.background.platform, item.request.background.code], ['ps5', 'PPSA02000'], 'and the job the payload downloads');
+  first.open();
+  for (const id of [a, b]) assert.equal((await settle(queue, id)).state, 'downloaded');
+});

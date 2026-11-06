@@ -254,7 +254,7 @@ static void conv_tree_size(const char* path, int depth, uint64_t* bytes, unsigne
   DIR* d = opendir(path);
   if (!d) return;
   for (struct dirent* it; (it = readdir(d));) {
-    if (!strcmp(it->d_name, ".") || !strcmp(it->d_name, "..")) continue;
+    if (!strcmp(it->d_name, ".") || !strcmp(it->d_name, "..") || !strcmp(it->d_name, ".jobe-backup.json")) continue;
     char child[4096];
     snprintf(child, sizeof child, "%s/%s", path, it->d_name);
     conv_tree_size(child, depth + 1, bytes, files);
@@ -844,6 +844,111 @@ static int conv_backup_roots(char roots[][256], int max) {
   return count;
 }
 
+// glibren.12: definidas mais adiante em bg_downloader.c.
+static void format_of_file(const char* path, char* out, size_t cap);
+static int system_code_ok(const char* text);
+static int system_platform_field(JP* jp, char* out, size_t cap);
+static int system_code_field(JP* jp, char* out, size_t cap);
+
+// glibren.12: o que a lista do BACKUP mostra de cada jogo: o sistema e o codigo (do .jobe-backup.json que o app ou o
+// payload grava; sem ele, PPSA/CUSA no nome dos arquivos ou da pasta), o formato dos arquivos guardados (o mais comum;
+// "parts" quando sao varios do mesmo formato), os nomes (so o nome base, ate BACKUP_NAMES) e o .exfat convertido, se
+// existe (<disco>/homebrew/<codigo>.exfat).
+#define BACKUP_NAMES 10
+typedef struct {
+  char platform[4], code[16], format[9];
+  char names[BACKUP_NAMES][129];
+  int named, more;
+  unsigned counts[10];
+} BackupInfo;
+static const char* const BACKUP_FORMATS[10] = {"exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip", "tar"};
+static void backup_code_in(const char* text, BackupInfo* info) {
+  if (info->code[0]) return;
+  for (const char* p = text; p[0] && p[1] && p[2] && p[3]; ++p) {
+    char maybe[10];
+    int k = 0;
+    for (; k < 9 && p[k]; ++k) maybe[k] = (char)toupper((unsigned char)p[k]);
+    maybe[k] = 0;
+    if (k == 9 && system_code_ok(maybe) && (!strncmp(maybe, "PPSA", 4) || !strncmp(maybe, "CUSA", 4))) {
+      snprintf(info->code, sizeof info->code, "%s", maybe);
+      return;
+    }
+  }
+}
+static void backup_walk(const char* path, int depth, BackupInfo* info) {
+  if (depth > 6) return;
+  DIR* d = opendir(path);
+  if (!d) return;
+  for (struct dirent* it; (it = readdir(d));) {
+    if (it->d_name[0] == '.') continue;
+    char child[4096];
+    snprintf(child, sizeof child, "%s/%s", path, it->d_name);
+    struct stat st;
+    if (lstat(child, &st)) continue;
+    if (S_ISDIR(st.st_mode)) { backup_walk(child, depth + 1, info); continue; }
+    if (!S_ISREG(st.st_mode)) continue;
+    char format[9];
+    format_of_file(it->d_name, format, sizeof format);
+    for (int i = 0; i < 10; ++i) if (format[0] && !strcmp(format, BACKUP_FORMATS[i])) ++info->counts[i];
+    backup_code_in(it->d_name, info);
+    if (info->named < BACKUP_NAMES && strlen(it->d_name) < sizeof info->names[0] && !strchr(it->d_name, '\\')) snprintf(info->names[info->named++], sizeof info->names[0], "%s", it->d_name);
+    else ++info->more;
+  }
+  closedir(d);
+}
+static int backup_marker_field(JP* jp, const char* key, void* ctx) {
+  BackupInfo* info = ctx;
+  if (!strcmp(key, "titleId")) return system_code_field(jp, info->code, sizeof info->code);
+  if (!strcmp(key, "platform")) return system_platform_field(jp, info->platform, sizeof info->platform);
+  if (!strcmp(key, "format")) {
+    char value[16];
+    if (!lib_text(jp, value, sizeof value)) return -1;
+    lower_ascii(value);
+    for (int i = 0; i < 10; ++i) if (!strcmp(value, BACKUP_FORMATS[i])) snprintf(info->format, sizeof info->format, "%s", BACKUP_FORMATS[i]);
+    return 1;
+  }
+  return jp_skip(jp) ? 1 : -1;
+}
+static void backup_info(const char* root, const char* path, const char* name, BackupInfo* info, char* converted, size_t cap) {
+  memset(info, 0, sizeof *info);
+  converted[0] = 0;
+  char marker[700];
+  snprintf(marker, sizeof marker, "%.599s/.jobe-backup.json", path);
+  FILE* f = fopen(marker, "rb");
+  if (f) {
+    char text[2048];
+    const size_t n = fread(text, 1, sizeof text - 1, f);
+    fclose(f);
+    text[n] = 0;
+    JP jp = {text, text + n, 0};
+    if (!jp_object(&jp, backup_marker_field, info)) { info->code[0] = info->platform[0] = info->format[0] = 0; }
+  }
+  struct stat st;
+  if (!lstat(path, &st) && S_ISDIR(st.st_mode)) backup_walk(path, 0, info);
+  else if (!lstat(path, &st) && S_ISREG(st.st_mode)) {
+    char format[9];
+    format_of_file(name, format, sizeof format);
+    for (int i = 0; i < 10; ++i) if (format[0] && !strcmp(format, BACKUP_FORMATS[i])) ++info->counts[i];
+    if (strlen(name) < sizeof info->names[0]) snprintf(info->names[info->named++], sizeof info->names[0], "%s", name);
+  }
+  backup_code_in(name, info);
+  if (!info->platform[0] && info->code[0]) snprintf(info->platform, sizeof info->platform, "%s", !strncmp(info->code, "CUSA", 4) ? "ps4" : !strncmp(info->code, "PPSA", 4) ? "ps5" : "");
+  if (!info->format[0]) {
+    int best = -1;
+    for (int i = 0; i < 10; ++i) if (info->counts[i] && (best < 0 || info->counts[i] > info->counts[best])) best = i;
+    if (best >= 0) snprintf(info->format, sizeof info->format, "%s", BACKUP_FORMATS[best]);
+  }
+  if (info->code[0]) {
+    char image[700];
+    snprintf(image, sizeof image, "%.255s/homebrew/%s.exfat", root, info->code);
+    if (!stat(image, &st) && S_ISREG(st.st_mode)) snprintf(converted, cap, "%s.exfat", info->code);
+  }
+}
+static unsigned backup_parts(const BackupInfo* info) {
+  for (int i = 0; i < 10; ++i) if (!strcmp(info->format, BACKUP_FORMATS[i])) return info->counts[i] > 1 ? info->counts[i] : 0;
+  return 0;
+}
+
 static void conv_backup_list(int fd) {
   char roots[24][256];
   const int count = conv_backup_roots(roots, 24);
@@ -868,7 +973,19 @@ static void conv_backup_list(int fd) {
       first = 0;
       buf_str(&b, "{\"root\":"); buf_json(&b, roots[i]);
       buf_str(&b, ",\"name\":"); buf_json(&b, it->d_name);
-      buf_fmt(&b, ",\"bytes\":%llu,\"files\":%u}", (unsigned long long)bytes, files);
+      buf_fmt(&b, ",\"bytes\":%llu,\"files\":%u", (unsigned long long)bytes, files);
+      // glibren.12: de que jogo e, o formato e os nomes (sem caminho) e o .exfat convertido.
+      BackupInfo info;
+      char converted[32];
+      backup_info(roots[i], path, it->d_name, &info, converted, sizeof converted);
+      buf_str(&b, ",\"platform\":"); buf_json(&b, info.platform);
+      buf_str(&b, ",\"code\":"); buf_json(&b, info.code);
+      buf_str(&b, ",\"format\":"); buf_json(&b, info.format);
+      buf_fmt(&b, ",\"parts\":%u,\"fileNames\":[", backup_parts(&info));
+      for (int k = 0; k < info.named; ++k) { if (k) buf_str(&b, ","); buf_json(&b, info.names[k]); }
+      buf_fmt(&b, "],\"moreFiles\":%d,\"converted\":", info.more);
+      buf_json(&b, converted);
+      buf_str(&b, "}");
     }
     closedir(d);
   }

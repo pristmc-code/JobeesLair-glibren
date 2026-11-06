@@ -17,6 +17,7 @@
 
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
+import { formatFromName } from './link-formats.js';
 
   var SETTINGS = "settings.json";
   var BACKUP = "BACKUP";
@@ -141,14 +142,66 @@ import { loadList, saveList } from './saved.js';
           bytes += inner.bytes;
           files += inner.files;
         }
-      } else {
+      } else if (entry.name !== MARKER) {
         bytes += entry.size ?? fs.stat(child)?.size ?? 0;
         files += 1;
       }
     }
     return { bytes, files };
   }
-  /** Os jogos guardados no BACKUP de cada disco: [{ root, name, path, bytes, files }] e o total. */
+  // glibren.12: <disco>/BACKUP/<jogo>/.jobe-backup.json: { titleId, platform, format, source } de quem baixou para la
+  // (o app ao por na fila; o payload ao terminar, se faltar). A lista do BACKUP le daqui de que jogo e; sem ele, deduz
+  // pelo PPSA/CUSA no nome dos arquivos ou da pasta.
+  var MARKER = ".jobe-backup.json";
+  var CODE = /\b(PPSA|CUSA)\d{5}/i;
+  function writeBackupMarker(fs, dir, { titleId = "", platform = "", format = "", source = "" } = {}) {
+    const code = /^[A-Z]{4}\d{5}$/i.test(String(titleId)) ? String(titleId).toUpperCase() : "";
+    const body = { titleId: code, platform: ["ps5", "ps4"].includes(platform) ? platform : "", format: /^[a-z0-9]{1,8}$/.test(format) ? format : "", source: /^[a-z0-9.-]{1,64}$/.test(source) ? source : "" };
+    fs.mkdir(dir, { recursive: true });
+    fs.writeFile(`${dir}/${MARKER}`, JSON.stringify(body), { sync: true });
+  }
+  var BACKUP_NAMES = 10;
+  // { platform, code, format, parts, fileNames, moreFiles, converted } de um jogo do BACKUP (`path` a pasta dele).
+  function backupDetails(fs, root, path, name) {
+    let marker = {};
+    try {
+      if (fs.exists(`${path}/${MARKER}`)) marker = JSON.parse(fs.readFile(`${path}/${MARKER}`)) || {};
+    } catch {
+      marker = {};
+    }
+    const names = [];
+    const walk = (dir, depth) => {
+      let entries = [];
+      try {
+        entries = fs.readDir(dir);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith(".")) continue;
+        if (entry.isDirectory) {
+          if (depth < 6) walk(`${dir}/${entry.name}`, depth + 1);
+        } else names.push(entry.name);
+      }
+    };
+    if (fs.stat(path)?.isDirectory) walk(path, 0);
+    else names.push(name);
+    names.sort();
+    const counts = /* @__PURE__ */ new Map();
+    for (const file of names) {
+      const format2 = formatFromName(file);
+      if (format2) counts.set(format2, (counts.get(format2) ?? 0) + 1);
+    }
+    const said = String(marker.format || "").toLowerCase();
+    const format = /^[a-z0-9]{1,8}$/.test(said) ? said : [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+    const code = (/^[A-Z]{4}\d{5}$/i.test(String(marker.titleId || "")) ? String(marker.titleId) : [name, ...names].map((value) => CODE.exec(value)?.[0]).find(Boolean) ?? "").toUpperCase();
+    const platform = ["ps5", "ps4"].includes(marker.platform) ? marker.platform : code.startsWith("PPSA") ? "ps5" : code.startsWith("CUSA") ? "ps4" : "";
+    const parts = (counts.get(format) ?? 0) > 1 ? counts.get(format) : 0;
+    const converted = code && fs.exists(`${root}/homebrew/${code}.exfat`) ? `${code}.exfat` : "";
+    return { platform, code, format, parts, fileNames: names.slice(0, BACKUP_NAMES), moreFiles: Math.max(0, names.length - BACKUP_NAMES), converted };
+  }
+  /** Os jogos guardados no BACKUP de cada disco: [{ root, name, path, bytes, files, platform, code, format, parts,
+   *  fileNames, moreFiles, converted }] e o total. */
   function listBackup(fs, roots) {
     const games = [];
     for (const root of roots) {
@@ -164,7 +217,7 @@ import { loadList, saveList } from './saved.js';
         if (entry.name.startsWith(".")) continue;
         const path = `${dir}/${entry.name}`;
         const { bytes, files } = entry.isDirectory ? treeSize(fs, path) : { bytes: entry.size ?? fs.stat(path)?.size ?? 0, files: 1 };
-        games.push({ root, name: entry.name, path, bytes, files });
+        games.push({ root, name: entry.name, path, bytes, files, ...backupDetails(fs, root, path, entry.name) });
       }
     }
     games.sort((a, b) => b.bytes - a.bytes);
@@ -180,4 +233,4 @@ import { loadList, saveList } from './saved.js';
     return path;
   }
 
-export { BACKUP, PS4_FOLDER, backupFolder, convertToExfatOn, deleteBackup, destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, kindOf, listBackup, onConvertToExfat, platformOf, safeFolderName, setConvertToExfat, useConvertToExfat };
+export { BACKUP, PS4_FOLDER, backupDetails, backupFolder, writeBackupMarker, convertToExfatOn, deleteBackup, destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, kindOf, listBackup, onConvertToExfat, platformOf, safeFolderName, setConvertToExfat, useConvertToExfat };

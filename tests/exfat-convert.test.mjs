@@ -344,3 +344,22 @@ test('BACKUP nas Configuracoes: lista por jogo com o tamanho; apagar um; nomes i
   await convert.deleteBackup(fs, '/data', 'A');
   assert.ok(!fs.exists('/data/BACKUP/A') && fs.exists('/mnt/usb0/BACKUP/B'));
 });
+
+test('BACKUP (glibren.12: detalhes): sistema, codigo, formato, partes, nomes e o .exfat convertido; o marcador gravado e lido', () => {
+  const fs = memoryFs();
+  fs.file('/data/BACKUP/Jogo/Game.PPSA01234.part1.rar', 3000);
+  fs.file('/data/BACKUP/Jogo/sub/Game.PPSA01234.part2.rar', 1000);
+  convert.writeBackupMarker(fs, '/data/BACKUP/Jogo', { titleId: 'ppsa01234', platform: 'ps5', format: 'rar', source: 'mediafire.com' });
+  assert.deepEqual(JSON.parse(fs.readFile('/data/BACKUP/Jogo/.jobe-backup.json')), { titleId: 'PPSA01234', platform: 'ps5', format: 'rar', source: 'mediafire.com' });
+  fs.file('/data/homebrew/PPSA01234.exfat', 10);
+  fs.file('/mnt/usb0/BACKUP/Velho CUSA00900/Bloodborne.pkg', 500);
+  for (let i = 0; i < 12; i++) fs.file(`/mnt/usb0/BACKUP/Muitos/M.part${String(i + 1).padStart(2, '0')}.rar`, 1);
+  const listed = convert.listBackup(fs, ['/data', '/mnt/usb0']);
+  const jogo = listed.games.find((game) => game.name === 'Jogo');
+  assert.deepEqual([jogo.platform, jogo.code, jogo.format, jogo.parts, jogo.files, jogo.bytes, jogo.converted], ['ps5', 'PPSA01234', 'rar', 2, 2, 4000, 'PPSA01234.exfat'], 'o marcador nao conta');
+  assert.deepEqual(jogo.fileNames, ['Game.PPSA01234.part1.rar', 'Game.PPSA01234.part2.rar']);
+  const velho = listed.games.find((game) => game.name === 'Velho CUSA00900');
+  assert.deepEqual([velho.platform, velho.code, velho.format, velho.converted], ['ps4', 'CUSA00900', 'pkg', ''], 'sem marcador: pelo nome da pasta');
+  const muitos = listed.games.find((game) => game.name === 'Muitos');
+  assert.deepEqual([muitos.fileNames.length, muitos.moreFiles, muitos.parts, muitos.platform], [10, 2, 12, '']);
+});
