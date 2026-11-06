@@ -27,6 +27,8 @@
 > downloads running side by side.
 > **glibren.8**: the in-app update downloads only the new image (no more minutes of "Checking" at 7% while update.zip
 > was unpacked).
+> **glibren.9**: the phone page's TorBox Library shows the games' covers and opens a page per game with photos,
+> videos and details (simple list with the phone upright, detailed with it on its side); Jobe Controle 0.2.
 > Download it from this fork's [releases](https://github.com/pristmc-code/JobeesLair-glibren/releases/latest);
 > its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
 > the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
