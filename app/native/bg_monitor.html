@@ -567,6 +567,8 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
     renderConversions(DEMO ? demoConv : (data?.conversions || []).filter((c) => c.state !== "cancelled"));
     if (ticks++ % 15 === 0) loadBackup(); // o BACKUP muda pouco: a cada ~30 s (e ao abrir a janela)
   };
+  // A primeira atualizacao da pagina roda antes deste bloco existir: mostra ja, sem esperar a proxima (2 s).
+  window.convHook(lastStatus);
 })();
 </script>
 <!-- glibren: Biblioteca TorBox (a lista de jogos confirmados no TorBox que o app monta): ver, filtrar e incluir downloads.
