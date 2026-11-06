@@ -57,6 +57,11 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     titleId,
     // Whether the gamer turned automatic installs on (Settings).
     automatic = () => false,
+    // glibren.8: whether update.zip is downloaded and unpacked to check its title and version first. Its 4,302 files
+    // took minutes to unpack on an exFAT USB drive ("Checking" at 7%), to read one 1 KB file; the image is checked
+    // by the SHA-256 GitHub gives, and a build that starts as another version is set aside (start()). The glibren
+    // fork turns it off (state/update.js).
+    verifyZip = true,
     notify = () => {
     },
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -280,7 +285,7 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
       await clearStaging(root, release.version);
       fs.mkdir(staging, { recursive: true });
       const have = (path) => fs.stat(path)?.size ?? fs.stat(`${path}.part`)?.size ?? 0;
-      const checked = saved().checked === true;
+      const checked = !verifyZip || saved().checked === true;
       const need = image.size - have(stagedImage(staging)) + (checked ? 0 : zip.size * (1 + UNPACKED) - have(`${staging}/update.zip`)) + MARGIN;
       const free = await freeBytes(root);
       if (free < need) throw Object.assign(new Error(`The update needs ${need} bytes free on ${root}; ${free} are.`), { shortfall: { root, need, free } });

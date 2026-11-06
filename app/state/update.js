@@ -52,6 +52,8 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
     version: VERSION,
     titleId: TITLE_ID,
     automatic: () => automatic,
+    // MODIFIED (glibren.8): only the image is downloaded; update.zip is not unpacked to check it (state/auto-update.js).
+    verifyZip: false,
     notify: (version) => {
       try {
         Notifications.notify(t("update.install.readyNotice", { version }));

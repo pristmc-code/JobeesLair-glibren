@@ -1970,7 +1970,7 @@ test('a request to ShadowMount that cannot wait asks the borrower to stop first'
 
 // The install's world: a USB drive with the installed image, a fake download engine that publishes each file
 // at its expected size (or fails as told), an extractor that unpacks update.zip's title folder.
-function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => true, failures = {}, free = 1e12, located = '/mnt/usb0/homebrew/JobeesLair.exfat', armed = () => true, automatic = false, version = '0.5.0' } = {}) {
+function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => true, failures = {}, free = 1e12, located = '/mnt/usb0/homebrew/JobeesLair.exfat', armed = () => true, automatic = false, version = '0.5.0', verifyZip = true } = {}) {
   // The running version: a released one older than the fake 0.5.1 release these tests install, whatever the app's own VERSION is.
   const fs = memoryFs();
   fs.mkdir('/mnt/usb0/homebrew');
@@ -2025,7 +2025,7 @@ function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => 
     arm: (dir) => { world.arms.push(dir); return armed(); },
     freeBytes: async () => free,
     store: { get: () => saved.value, set: (next) => { saved.value = next; } },
-    controlDir: '/data/JobeesLair/update', version, titleId: TITLE_ID,
+    controlDir: '/data/JobeesLair/update', version, titleId: TITLE_ID, verifyZip,
     // A wait that lets the rest of the test run (an already-resolved promise would spin the loop forever).
     automatic: () => automatic, notify: (v) => world.notified.push(v), wait: () => new Promise((resolve) => setImmediate(resolve)), log: (line) => world.logs.push(line),
   });
@@ -3669,4 +3669,17 @@ test('settings: "Exit Jobee\'sLair" is focusable under the categories, asks firs
   assert.match(exit, /BackHandler\.exitApp\(\)/);
   for (const key of ['settings.exit', 'settings.pauseOnClose', 'settings.pauseOnCloseDetail', 'settings.pauseOnCloseOff', 'settings.pauseOnCloseValue', 'exit.title', 'exit.appDownloads', 'exit.backgroundDownloads', 'exit.confirm', 'exit.stay'])
     assert.ok(en[key], key);
+});
+
+test('glibren.8 install: with verifyZip off only the image is downloaded, nothing is unpacked, and the progress is the image alone', async () => {
+  const world = installWorld({ verifyZip: false });
+  const seen = [];
+  world.updater.subscribe?.((state) => seen.push(state));
+  world.updater.download(world.release);
+  const state = await world.until((s) => ['ready', 'failed'].includes(s.phase));
+  assert.equal(state.phase, 'ready', state.error);
+  assert.equal(world.extracts.length, 0, 'update.zip is not unpacked');
+  assert.deepEqual(world.requests.map((r) => r.destination.endsWith(IMAGE_NAME)), [true], 'only the image');
+  assert.ok(!seen.some((s) => s.phase === 'checking'), 'no "Checking" phase');
+  assert.ok(world.fs.exists(`${STAGED}/${IMAGE_NAME}`));
 });
