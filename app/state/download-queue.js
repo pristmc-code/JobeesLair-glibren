@@ -28,7 +28,7 @@ import { readJSON } from './read-json.js';
 import { STAGING_SUFFIXES } from './extraction-staging.js';
 import { busyWhileOpen, mountedImages, shadowRequest, within2 } from './shadowmount.js';
 import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
-import { hostGroup } from './download-tuning.js';
+import { hostOf } from './download-tuning.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 import { mirrorsFor } from './download-mirrors.js';
 
@@ -777,7 +777,8 @@ import { mirrorsFor } from './download-mirrors.js';
         ...transferTuning(job2, options.url, destination, DEFAULT_TUNING.rangeBytes, job2),
         destination,
         storageRoot: job2.root,
-        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: release }
+        // glibren.8: key = o item da fila, para o payload aplicar as conexoes escolhidas no celular para ele.
+        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: release, key: job2.id }
       };
     }
     // Agendada (e nao na hora): change() roda tambem enquanto a fila ainda esta sendo montada, e varias mudancas
@@ -1056,8 +1057,10 @@ import { mirrorsFor } from './download-mirrors.js';
     function transferTuning(holder, url, destination, legacy, job2) {
       const tuned = tuningFor(url);
       const lane = job2 ? lanes.get(job2) : null;
-      // glibren.7: by the table's domain, so two TorBox downloads on different nodes still share its connections.
-      const host = hostGroup(url);
+      // MODIFIED (glibren.8): by the host itself again, as before glibren.7 (which grouped every TorBox node under
+      // "tb-cdn.cx" and capped them at 8 in all, making the downloads crawl). The connections of each download can
+      // now be set by hand, live, from the phone page (bg_downloader.c), and that choice wins over this one.
+      const host = hostOf(url);
       if (lane) lane.host = host;
       const sharing = 1 + [...lanes.values()].filter((other) => other !== lane && other.transferring && other.host === host).length;
       if (sharing > 1) {
@@ -1177,7 +1180,7 @@ import { mirrorsFor } from './download-mirrors.js';
         lane.transferring = true;
         // glibren-bg: `background` diz ao payload de segundo plano o nome, onde a imagem pronta mora e a fonte (background-downloads.js);
         // com mirrors o download fica no motor do app (background-downloads.js eligible).
-        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes, job2), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: job2.release } });
+        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes, job2), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: job2.release, key: job2.id } });
         lane.task = task;
         // Most catalog releases do not say their size, so the check above had nothing to go on: once the
         // server does, the rest is checked against the drive once, before it fills (the partial file counts

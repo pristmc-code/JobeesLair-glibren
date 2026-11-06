@@ -19,13 +19,13 @@ var DEFAULT_TUNING = Object.freeze({ connections: 64, rangeBytes: 16 * MiB });
  * Per host, by domain (a subdomain matches too). Only what differs from the default needs to be given.
  * - archive.org: the Internet Archive's download nodes answer 503/429 under many parallel ranges from one address.
  * - mediafire.com, github.com and its objects host: one file is served by one node that throttles long before 64.
- * - tb-cdn.cx (TorBox's CDN, glibren.7): a console log of 2026-11-05 had two TorBox downloads at 8-10 connections
- *   together answered HTTP 429 every few seconds for half an hour; TorBox counts the account's connections, on
- *   whichever of its nodes (nexus-244.latm.tb-cdn.cx...), so its 8 are shared by every download from it (hostGroup).
+ * MODIFIED (glibren.8): the fixed TorBox entry of glibren.7 ({ hosts: ["tb-cdn.cx"], connections: 8 }) and the
+ * grouping of its nodes (hostGroup) are gone: with it the downloads got much slower ("the connection limiter broke
+ * the downloads"). TorBox is back to the default, and the connections of any download (running or queued) can now
+ * be set by hand, live, from the phone page / the Jobe Controle APK (bg_downloader.c, POST /api/jobs/<id>/connections).
  */
 var HOST_TUNING = Object.freeze([
   { hosts: ["archive.org"], connections: 8 },
-  { hosts: ["tb-cdn.cx"], connections: 8 },
   { hosts: ["mediafire.com"], connections: 16 },
   { hosts: ["github.com", "githubusercontent.com"], connections: 16 }
 ]);
@@ -48,16 +48,6 @@ function tuningFor(url, table = HOST_TUNING, fallback = DEFAULT_TUNING) {
 }
 
 /**
- * glibren.7: what downloads side by side share connections by: the table's domain for a host in it (every
- * TorBox node is "tb-cdn.cx"), else the host itself.
- */
-function hostGroup(url, table = HOST_TUNING) {
-  const host = hostOf(url);
-  const entry = host ? table.find((item) => item.hosts.some((domain) => matches(host, domain))) : null;
-  return entry ? entry.hosts.find((domain) => matches(host, domain)) : host;
-}
-
-/**
  * The range size for one file: the one it was started with when it already has bytes (`holder.rangeBytes`, saved
  * with the job; `legacy` for a partial an earlier build started, null meaning the engine's own default), else the
  * table's, which is then recorded in `holder` for its resume. `started`: whether a partial of it is on disk.
@@ -69,4 +59,4 @@ function rangeFor(holder, tuned, started, legacy) {
   return holder.rangeBytes = tuned.rangeBytes;
 }
 
-export { DEFAULT_TUNING, HOST_TUNING, hostGroup, hostOf, rangeFor, tuningFor };
+export { DEFAULT_TUNING, HOST_TUNING, hostOf, rangeFor, tuningFor };

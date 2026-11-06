@@ -14,7 +14,15 @@
 //     GET  /jobs                   {jobs:[...]}
 //     POST /jobs                   cria (corpo JSON, ver parse_job_body); 409 {id} se o destino ja tem job ativo
 //     POST /jobs/<id>/pause|resume|cancel|release|forget
-//     POST /secret                 {service:"torbox", key} -> chave so em memoria (nunca gravada nem registrada)
+//     POST /jobs/<id>/connections  glibren.8: {connections: 1..64 | 0 = as do app}, o mesmo do celular (abaixo)
+//   Pagina do celular (porta 34201, sem token; as acoes exigem a sessao do PIN em X-Session):
+//     GET  /api/status             {jobs:[{..., connectionsActive, connections (alvo), connectionsSet}], limit, maxLimit,
+//                                  maxConnections, limitSet, pinSet}
+//     POST /api/unlock             {pin} -> {session}
+//     POST /api/jobs/<id>/pause|resume|cancel
+//     POST /api/jobs/<id>/connections  glibren.8: {connections: 1..64 | 0/null = as do app} -> {ok, connections, connectionsSet}
+//     POST /api/config             glibren.8: {concurrency: 1..4} -> {ok, limit, limitSet}; o app adota o numero
+//     POST /secret                {service:"torbox", key} -> chave so em memoria (nunca gravada nem registrada)
 //     POST /quit                   encerra limpo (checkpoint gravado)
 //     POST /bye                    glibren.5: o app avisa que vai fechar (botao "Sair"): conta como fechado ja, sem
 //                                  esperar o silencio, e aplica a pausa ao fechar conforme a opcao
@@ -75,7 +83,10 @@
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
 #define MAX_JOBS 64
-#define MAX_CONNS 32
+// MODIFIED (glibren.8): 64 conexoes por job no maximo (era 32), so quando o jogador escolhe o numero no celular
+// (POST /api/jobs/<id>/connections). O numero que o app manda continua limitado a AUTO_CONNS, como antes.
+#define MAX_CONNS 64
+#define AUTO_CONNS 32
 #define MAX_WORKERS 4 // downloads simultaneos: ate 4 jobs, cada um na sua thread e com seu Engine (POST /config)
 #define MAX_RANGES 65536
 #define DEFAULT_RANGE (32ull * 1024 * 1024) // o padrao do motor nativo (network.hpp)
@@ -85,6 +96,7 @@
 #define SAFE_INTEGER 9007199254740991ULL
 #define BG_BUILD "glibren-fechar"
 #define CONN_BUDGET 32           // conexoes somando todos os jobs (cada job tem no minimo 2)
+#define MANUAL_BUDGET 64         // glibren.8: a soma quando algum job baixando tem o numero escolhido no celular
 #define CHECKPOINT_MS 5000       // checkpoint (fsync da parcial) com o app aberto
 #define CHECKPOINT_AWAY_MS 15000 // com o app fechado: menos fsync no disco que o sistema esta usando
 #define HEARTBEAT_MS 60000       // "pulso" no diario enquanto ha trabalho
@@ -696,6 +708,9 @@ typedef struct {
   char notify_done[300], notify_failed[300];
   uint64_t expected_bytes, range_bytes;
   unsigned connections;
+  // glibren.8: as conexoes escolhidas no celular (1..64; 0 = as do app). Prevalece sobre `connections`, que o app
+  // manda; o app nunca a muda (POST /jobs e /queue a zeram no corpo). Gravada em jobs.json ("connectionsSet").
+  unsigned connections_set; // lida e mudada so com g_lock
   int reject_html;
   // Fonte: provider "torbox" | "alldebrid" | "direct" | ...; para o TorBox, kind/id/fileId/zip do pedido.
   char provider[16], kind[16], item_id[32], file_id[32];
@@ -726,6 +741,10 @@ static unsigned g_next_id;
 // Quantos jobs baixam ao mesmo tempo (1 a MAX_WORKERS), escolhido no app e gravado em config.json; e quantos
 // estao baixando agora. Diminuir nao para ninguem: so nao comeca outro ate ficar abaixo.
 static int g_max_running = 1;
+// glibren.8: quem escolheu g_max_running por ultimo: 1 = o celular (POST /api/config), 0 = o app. g_concurrency_stamp
+// sobe a cada escolha no celular: o app adota o numero (uma vez por stamp) em vez de sobrescreve-lo. Em config.json.
+static int g_concurrency_remote;
+static unsigned g_concurrency_stamp;
 static int g_running_count;
 static int g_dirty;
 // A pagina do celular (porta 34201): ligada por padrao; o PIN chega do app so como sal + SHA-256 (hex), e o texto
@@ -807,8 +826,8 @@ static void job_json_as(Buf* b, const Job* j, int for_disk) {
   buf_str(b, ",\"key\":"); buf_json(b, j->key);
   buf_fmt(b, ",\"ahead\":%s,\"placeholder\":%s,\"followed\":%s,\"order\":%d", j->ahead ? "true" : "false", j->placeholder ? "true" : "false",
           j->followed ? "true" : "false", j->order);
-  buf_fmt(b, ",\"expectedBytes\":%llu,\"rangeBytes\":%llu,\"connections\":%u,\"rejectHtml\":%s",
-          (unsigned long long)j->expected_bytes, (unsigned long long)j->range_bytes, j->connections, j->reject_html ? "true" : "false");
+  buf_fmt(b, ",\"expectedBytes\":%llu,\"rangeBytes\":%llu,\"connections\":%u,\"connectionsSet\":%u,\"rejectHtml\":%s",
+          (unsigned long long)j->expected_bytes, (unsigned long long)j->range_bytes, j->connections, j->connections_set, j->reject_html ? "true" : "false");
   buf_str(b, ",\"source\":{\"provider\":"); buf_json(b, j->provider);
   buf_str(b, ",\"kind\":"); buf_json(b, j->kind);
   buf_str(b, ",\"id\":"); buf_json(b, j->item_id);
@@ -843,7 +862,30 @@ static Job* find_job_locked(const char* id) {
   return NULL;
 }
 
+// glibren.8: as conexoes escolhidas no celular para um item da fila do app (pela chave dele) que saiu da lista do
+// payload: um marcador "waiting-app" some quando o app comeca o download (POST /jobs com a mesma chave chega depois),
+// ou vira um job antecipado. O job novo com a chave herda o numero. So em memoria, as ultimas CARRY_MAX.
+#define CARRY_MAX 16
+static struct { char key[40]; unsigned connections; } g_carry[CARRY_MAX];
+static int g_carry_next;
+static void carry_remember_locked(const Job* j) {
+  if (!j->connections_set || !j->key[0]) return;
+  for (int i = 0; i < CARRY_MAX; ++i)
+    if (!strcmp(g_carry[i].key, j->key)) { g_carry[i].connections = j->connections_set; return; }
+  snprintf(g_carry[g_carry_next].key, sizeof g_carry[0].key, "%s", j->key);
+  g_carry[g_carry_next].connections = j->connections_set;
+  g_carry_next = (g_carry_next + 1) % CARRY_MAX;
+}
+static unsigned carried_connections_locked(const char* key, const Job* except) {
+  if (!key[0]) return 0;
+  for (int i = 0; i < g_job_count; ++i)
+    if (g_jobs[i] != except && g_jobs[i]->connections_set && !strcmp(g_jobs[i]->key, key)) return g_jobs[i]->connections_set;
+  for (int i = 0; i < CARRY_MAX; ++i) if (g_carry[i].key[0] && !strcmp(g_carry[i].key, key)) return g_carry[i].connections;
+  return 0;
+}
+
 static void remove_job_locked(Job* j) {
+  carry_remember_locked(j);
   for (int i = 0; i < g_job_count; ++i) {
     if (g_jobs[i] != j) continue;
     memmove(&g_jobs[i], &g_jobs[i + 1], sizeof(Job*) * (size_t)(g_job_count - i - 1));
@@ -894,7 +936,8 @@ static int job_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "order")) { if (!jp_uint(jp, &number)) return -1; j->order = number > 100000 ? 100000 : (int)number; return 1; }
   if (!strcmp(key, "expectedBytes")) return jp_uint(jp, &j->expected_bytes) ? 1 : -1;
   if (!strcmp(key, "rangeBytes")) return jp_uint(jp, &j->range_bytes) ? 1 : -1;
-  if (!strcmp(key, "connections")) { if (!jp_uint(jp, &number)) return -1; j->connections = (unsigned)number; return 1; }
+  if (!strcmp(key, "connections")) { if (!jp_uint(jp, &number)) return -1; j->connections = number > 64 ? 64 : (unsigned)number; return 1; }
+  if (!strcmp(key, "connectionsSet")) { if (!jp_uint(jp, &number)) return -1; j->connections_set = number > MAX_CONNS ? MAX_CONNS : (unsigned)number; return 1; }
   if (!strcmp(key, "rejectHtml")) return jp_bool(jp, &j->reject_html) ? 1 : -1;
   if (!strcmp(key, "awaitingApp")) return jp_bool(jp, &j->awaiting_app) ? 1 : -1;
   if (!strcmp(key, "renewals")) { if (!jp_uint(jp, &number)) return -1; j->renewals = (int)number; return 1; }
@@ -1148,6 +1191,8 @@ struct Engine {
   int64_t* retry_at;
   Conn conns[MAX_CONNS];
   unsigned window, max_window, success_streak;
+  unsigned share;  // glibren.8: a parte deste job na soma de conexoes (budget_share_locked)
+  int64_t cap_at;  // quando o alvo e a parte foram relidos (mono_ms)
   int64_t last_checkpoint;
   int64_t last_tick, last_speed_at;
   uint64_t last_speed_bytes;
@@ -1805,14 +1850,73 @@ static void drop_all(Engine* e) {
   }
 }
 
-// Quantas conexoes este job pode abrir agora: a janela AIMD, limitada a sua parte de CONN_BUDGET entre os jobs que
-// baixam ao mesmo tempo (no minimo 2). Ate 4 jobs x 32 conexoes TLS com 2 MiB de buffer cada era possivel antes.
+// glibren.8: o alvo de conexoes de um job (com g_lock): o numero escolhido no celular (ate MAX_CONNS) ou, sem ele, o
+// que o app mandou, ate AUTO_CONNS (o teto de antes).
+static unsigned job_target_locked(const Job* j) {
+  if (j->connections_set) return j->connections_set < MAX_CONNS ? j->connections_set : MAX_CONNS;
+  const unsigned app = j->connections ? j->connections : 1;
+  return app < AUTO_CONNS ? app : AUTO_CONNS;
+}
+
+// Quantas conexoes este job pode abrir agora (com g_lock), somando todos os jobs que baixam: no maximo CONN_BUDGET
+// (MANUAL_BUDGET quando algum tem o numero escolhido no celular). Ate 4 jobs x 32 conexoes TLS com 2 MiB de buffer
+// cada era possivel antes. MODIFIED (glibren.8): a soma e repartida pelo alvo de cada um (quem pede menos que a parte
+// igual deixa a sobra para os outros), no minimo 2 por job (ou o alvo, se for 1).
+static unsigned budget_share_locked(const Job* me) {
+  unsigned want[MAX_JOBS];
+  int n = 0, manual = 0;
+  for (int i = 0; i < g_job_count; ++i) {
+    const Job* j = g_jobs[i];
+    if (!j->running) continue;
+    want[n++] = job_target_locked(j);
+    if (j->connections_set) manual = 1;
+  }
+  const unsigned mine = job_target_locked(me);
+  if (n < 2) return mine < (manual ? MANUAL_BUDGET : CONN_BUDGET) ? mine : (manual ? MANUAL_BUDGET : CONN_BUDGET);
+  for (int i = 1; i < n; ++i) { // em ordem crescente
+    const unsigned item = want[i];
+    int k = i - 1;
+    while (k >= 0 && want[k] > item) { want[k + 1] = want[k]; --k; }
+    want[k + 1] = item;
+  }
+  unsigned left = manual ? MANUAL_BUDGET : CONN_BUDGET, level = MAX_CONNS;
+  for (int i = 0; i < n; ++i) {
+    if (want[i] * (unsigned)(n - i) <= left) { left -= want[i]; continue; }
+    level = left / (unsigned)(n - i);
+    break;
+  }
+  if (level < 2) level = 2;
+  return mine < level ? mine : level;
+}
+
+// A janela AIMD, ate a parte deste job na soma (e->share, refeita a cada CAP_REFRESH_MS).
 static unsigned connection_cap(const Engine* e) {
-  int running = __atomic_load_n(&g_running_count, __ATOMIC_RELAXED);
-  if (running < 1) running = 1;
-  unsigned share = CONN_BUDGET / (unsigned)running;
-  if (share < 2) share = 2;
-  return e->window < share ? e->window : share;
+  return e->window < e->share ? e->window : e->share;
+}
+
+// glibren.8: o alvo e a parte deste job, relidos a cada CAP_REFRESH_MS (o celular muda o numero com o download
+// rodando, e outro job pode comecar ou terminar). Alvo maior: a janela vai direto a ele (o jogador pediu mais; um
+// 429/5xx ainda a corta pela metade). Menor: nao abre faixa nova ate as conexoes abertas ficarem abaixo dele; as que
+// sobram terminam a faixa delas (nada se perde: o checkpoint so marca faixas inteiras).
+#define CAP_REFRESH_MS 250
+static void refresh_cap(Engine* e, int64_t now) {
+  if (e->share && now - e->cap_at < CAP_REFRESH_MS) return;
+  e->cap_at = now;
+  Job* j = e->job;
+  pthread_mutex_lock(&g_lock);
+  const unsigned target = e->ranged ? job_target_locked(j) : 1;
+  const unsigned share = budget_share_locked(j);
+  const int manual = j->connections_set != 0;
+  pthread_mutex_unlock(&g_lock);
+  e->share = e->ranged ? (share ? share : 1) : 1;
+  const unsigned before = e->max_window;
+  if (target == before) return;
+  e->max_window = target;
+  e->success_streak = 0;
+  if (!before) { e->window = target < 8 ? target : 8; return; } // inicio da transferencia: comeca com ate 8, como antes
+  logf_("job %s: conexoes %u -> %u (%s)", j->id, before, target, manual ? "escolhido no celular" : "do app");
+  if (target > before) e->window = target;
+  else if (e->window > target) e->window = target;
 }
 
 // Baixa as faixas que faltam com varias conexoes (janela AIMD). 1 = todas completas.
@@ -1824,9 +1928,10 @@ static int transfer_ranges(Engine* e) {
   e->attempts = calloc(count ? count : 1, 1);
   e->retry_at = calloc(count ? count : 1, sizeof(int64_t));
   if (!e->inflight || !e->attempts || !e->retry_at) { engine_fail(e, "out of memory"); return 0; }
-  e->max_window = e->ranged ? (j->connections < MAX_CONNS ? j->connections : MAX_CONNS) : 1;
-  if (!e->max_window) e->max_window = 1;
-  e->window = e->max_window < 8 ? e->max_window : 8;
+  // MODIFIED (glibren.8): o alvo vem de refresh_cap (o do celular ou o do app), relido durante a transferencia.
+  e->max_window = 0;
+  e->share = 0;
+  refresh_cap(e, mono_ms());
   e->epoch = g_epoch;
   int64_t last_pass = mono_ms();
   time_t last_wall = time(NULL);
@@ -1880,6 +1985,7 @@ static int transfer_ranges(Engine* e) {
     // Dispara faixas ate encher a janela, sem passar da parte deste job em CONN_BUDGET (todos os jobs somados).
     unsigned active = 0;
     for (unsigned i = 0; i < MAX_CONNS; ++i) active += e->conns[i].in_use;
+    refresh_cap(e, now);
     const unsigned cap = connection_cap(e);
     int pending = 0;
     for (uint32_t i = 0; i < count; ++i) {
@@ -2297,6 +2403,10 @@ typedef struct {
   uint64_t concurrency, pause_seconds;
   int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text, has_power, power, has_pause;
   char pin_salt[65], pin_hash[65], monitor_text[300];
+  // glibren.8: so de config.json (from_disk): quem escolheu os downloads simultaneos e o stamp do celular.
+  int from_disk, has_by;
+  char by[8];
+  uint64_t stamp;
 } ConfigBody;
 static int config_field(JP* jp, const char* key, void* ctx) {
   ConfigBody* c = ctx;
@@ -2306,6 +2416,8 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "pinHash")) { c->found = c->has_pin_hash = 1; return jp_text(jp, c->pin_hash, sizeof c->pin_hash) ? 1 : -1; }
   if (!strcmp(key, "monitorText")) { c->found = c->has_text = 1; return jp_text(jp, c->monitor_text, sizeof c->monitor_text) ? 1 : -1; }
   if (!strcmp(key, "powerTick")) { c->found = c->has_power = 1; return jp_bool(jp, &c->power) ? 1 : -1; }
+  if (c->from_disk && !strcmp(key, "concurrencyBy")) { c->has_by = 1; return jp_text(jp, c->by, sizeof c->by) ? 1 : -1; }
+  if (c->from_disk && !strcmp(key, "concurrencyStamp")) return jp_uint(jp, &c->stamp) ? 1 : -1;
   if (!strcmp(key, "pauseOnCloseSeconds")) {
     // So um inteiro (nem null, nem fracao, nem negativo); o limite e conferido em config_valid.
     double d;
@@ -2331,7 +2443,12 @@ static int config_apply_locked(const ConfigBody* c) {
   if (c->has_concurrency && g_max_running != (int)c->concurrency) {
     logf_("downloads simultaneos: %d -> %d", g_max_running, (int)c->concurrency);
     g_max_running = (int)c->concurrency;
+    g_concurrency_remote = 0; // glibren.8: o app escolheu outro numero (o do celular ja adotado nao muda nada aqui)
     changed = 1;
+  }
+  if (c->from_disk) {
+    g_concurrency_remote = c->has_by && !strcmp(c->by, "remote");
+    g_concurrency_stamp = (unsigned)c->stamp;
   }
   if (c->has_monitor && g_monitor_on != (c->monitor ? 1 : 0)) {
     g_monitor_on = c->monitor ? 1 : 0;
@@ -2381,6 +2498,7 @@ static void load_config(void) {
   if (!text) return;
   ConfigBody c;
   memset(&c, 0, sizeof c);
+  c.from_disk = 1;
   JP jp = {text, text + size, 0};
   if (jp_object(&jp, config_field, &c) && config_valid(&c)) config_apply_locked(&c);
   free(text);
@@ -2396,6 +2514,7 @@ static void save_config_locked(void) {
   buf_str(&b, ",\"monitorText\":");
   buf_json(&b, g_monitor_text);
   buf_fmt(&b, ",\"powerTick\":%s", g_power_tick ? "true" : "false");
+  buf_fmt(&b, ",\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u", g_concurrency_remote ? "remote" : "app", g_concurrency_stamp);
   // glibren.5: so quando o app mandou o tempo (sem ele, vale o padrao de quem roda: 30 s, ou BGDL_QUIET_MS nos testes).
   if (g_pause_seconds >= 0) buf_fmt(&b, ",\"pauseOnCloseSeconds\":%d", g_pause_seconds);
   buf_str(&b, "}\n");
@@ -2536,6 +2655,7 @@ static void handle_create(int fd, Request* r) {
   char error[200];
   if (!jp_object(&jp, job_field, &parse)) { free(j); respond_error(fd, 400, "invalid JSON body"); return; }
   j->id[0] = 0; j->state[0] = 0; j->error[0] = 0; j->by[0] = 0; j->published[0] = 0; j->awaiting_app = 0; j->renewals = 0; j->written = j->total = 0;
+  j->connections_set = 0; // glibren.8: so o celular escolhe (POST /api/jobs/<id>/connections, ou /jobs/<id>/connections)
   if (!validate_job(j, error, sizeof error)) { free(j); respond_error(fd, 400, error); return; }
   pthread_mutex_lock(&g_lock);
   for (int i = 0; i < g_job_count; ++i) {
@@ -2561,6 +2681,9 @@ static void handle_create(int fd, Request* r) {
   j->created = j->updated = now_s();
   if (!j->link_at) j->link_at = now_s();
   else if (j->link_at > 100000000000LL) j->link_at /= 1000; // milissegundos do JS
+  // glibren.8: o app comecou um item da fila dele (a chave): vale o numero de conexoes escolhido no celular para ele.
+  j->connections_set = carried_connections_locked(j->key, NULL);
+  if (j->connections_set) logf_("job %s: %u conexoes escolhidas no celular para o item da fila", j->id, j->connections_set);
   g_jobs[g_job_count++] = j;
   save_jobs_locked();
   pthread_cond_broadcast(&g_wake_downloader);
@@ -2641,6 +2764,7 @@ static void handle_queue(int fd, Request* r) {
       Job* j = q->job;
       j->id[0] = j->state[0] = j->error[0] = j->by[0] = j->published[0] = 0;
       j->placeholder = 0;
+      j->connections_set = 0; // glibren.8: so o celular escolhe
       snprintf(j->key, sizeof j->key, "%s", q->key);
       if (!j->name[0]) snprintf(j->name, sizeof j->name, "%s", q->name);
       if (!j->expected_bytes) j->expected_bytes = q->total;
@@ -2668,6 +2792,7 @@ static void handle_queue(int fd, Request* r) {
         j->created = j->updated = now_s();
         if (!j->link_at) j->link_at = now_s();
         else if (j->link_at > 100000000000LL) j->link_at /= 1000;
+        j->connections_set = carried_connections_locked(q->key, NULL); // glibren.8: o marcador dele pode ter um numero
         ++created;
       } else {
         j = calloc(1, sizeof *j);
@@ -2750,6 +2875,39 @@ static int job_action_locked(Job* j, const char* action, int remote, int* remove
   return 200;
 }
 
+// glibren.8: {"connections": N} no corpo: 1..64 escolhe o numero de conexoes do job; 0 (ou null) volta ao do app.
+typedef struct { uint64_t connections; int found; } ConnectionsBody;
+static int connections_field(JP* jp, const char* key, void* ctx) {
+  ConnectionsBody* c = ctx;
+  if (strcmp(key, "connections")) return jp_skip(jp) ? 1 : -1;
+  c->found = 1;
+  jp_ws(jp);
+  if (jp_literal(jp, "null")) { c->connections = 0; return 1; }
+  double d;
+  int integer;
+  return jp_number(jp, &d, &c->connections, &integer) && integer ? 1 : -1;
+}
+static int connections_body(const Request* r, unsigned* out) {
+  ConnectionsBody c = {0, 0};
+  JP jp = {r->body, r->body + r->content_length, 0};
+  if (!jp_object(&jp, connections_field, &c) || !c.found || c.connections > 64) return 0;
+  *out = (unsigned)c.connections;
+  return 1;
+}
+// Muda o numero de conexoes de um job (com g_lock): baixando (o motor o rele em ate CAP_REFRESH_MS), na fila, pausado
+// ou so um marcador "waiting-app" (vale quando o app o comecar). 0 se o job ja terminou.
+static int set_connections_locked(Job* j, unsigned connections, const char* who) {
+  if (!strcmp(j->state, "cancelled") || !strcmp(j->state, "completed")) return 0;
+  if (j->connections_set != connections) {
+    j->connections_set = connections;
+    if (connections) logf_("%s: job %s com %u conexoes", who, j->id, connections);
+    else logf_("%s: job %s volta as conexoes do app", who, j->id);
+    j->updated = now_s();
+    save_jobs_locked();
+  }
+  return 1;
+}
+
 static void handle_action(int fd, const char* id, const char* action) {
   pthread_mutex_lock(&g_lock);
   Job* j = find_job_locked(id);
@@ -2776,10 +2934,11 @@ static void route(int fd, Request* r) {
     pthread_mutex_lock(&g_lock);
     const Job* active = first_running_locked();
     snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
+             "\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,"
              "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s}",
              BG_VERSION, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
-             g_running_count, g_max_running, ip, g_monitor_on ? "true" : "false", g_monitor_port_now(), g_pin_hash[0] ? "true" : "false",
-             (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false");
+             g_running_count, g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp, ip, g_monitor_on ? "true" : "false",
+             g_monitor_port_now(), g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false");
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
     return;
@@ -2790,7 +2949,8 @@ static void route(int fd, Request* r) {
     buf_str(&b, "{\"jobs\":[");
     for (int i = 0; i < g_job_count; ++i) { if (i) buf_str(&b, ","); job_json(&b, g_jobs[i]); }
     const Job* active = first_running_locked();
-    buf_fmt(&b, "],\"active\":%s%s%s,\"concurrency\":%d}", active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_max_running);
+    buf_fmt(&b, "],\"active\":%s%s%s,\"concurrency\":%d,\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u}", active ? "\"" : "",
+            active ? active->id : "null", active ? "\"" : "", g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, b.failed || !b.data ? "{\"jobs\":[]}" : b.data);
     free(b.data);
@@ -2807,10 +2967,11 @@ static void route(int fd, Request* r) {
       respond_error(fd, 400, "expected {concurrency: 1..4, monitor, pinSalt + pinHash, monitorText, pauseOnCloseSeconds: 0..30}");
       return;
     }
-    char body[200];
+    char body[256];
     pthread_mutex_lock(&g_lock);
     if (config_apply_locked(&c)) save_config_locked();
-    snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d,\"monitor\":%s,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld}", g_max_running,
+    snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d,\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"monitor\":%s,\"pinSet\":%s,"
+             "\"pauseOnCloseSeconds\":%lld}", g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
              g_monitor_on ? "true" : "false", g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000));
     pthread_cond_broadcast(&g_wake_downloader);
     pthread_mutex_unlock(&g_lock);
@@ -2865,6 +3026,21 @@ static void route(int fd, Request* r) {
       memcpy(id, rest, (size_t)(slash - rest));
       id[slash - rest] = 0;
       snprintf(action, sizeof action, "%s", slash + 1);
+      // glibren.8: POST /jobs/<id>/connections {"connections": 0..64}, como o do celular (o mesmo override).
+      if (!strcmp(action, "connections")) {
+        unsigned connections;
+        if (!connections_body(r, &connections)) { respond_error(fd, 400, "expected {connections: 0..64}"); return; }
+        pthread_mutex_lock(&g_lock);
+        Job* j = find_job_locked(id);
+        const int ok = j && set_connections_locked(j, connections, "app");
+        Buf b = {0};
+        if (ok) { buf_str(&b, "{\"ok\":true,\"job\":"); job_json(&b, j); buf_str(&b, "}"); }
+        pthread_mutex_unlock(&g_lock);
+        if (!ok) respond_error(fd, 404, "no such job (or it has ended)");
+        else respond(fd, 200, b.data ? b.data : "{}");
+        free(b.data);
+        return;
+      }
       handle_action(fd, id, action);
       return;
     }
@@ -3156,10 +3332,15 @@ static void monitor_status(Buf* b) {
     // glibren: through a debrid service: its name only (no item, link or key), for the page's "via TorBox".
     if (!strcmp(j->provider, "torbox")) buf_str(b, ",\"via\":\"TorBox\"");
     else if (!strcmp(j->provider, "alldebrid")) buf_str(b, ",\"via\":\"AllDebrid\"");
-    buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u}", (unsigned long long)j->written,
+    buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u", (unsigned long long)j->written,
             (unsigned long long)(j->total ? j->total : j->expected_bytes), j->bytes_per_second, j->active_connections);
+    // glibren.8: o alvo de conexoes (o escolhido no celular, ou o do app; 0 num "waiting-app" sem escolha: o app decide)
+    // e se foi escolhido no celular.
+    buf_fmt(b, ",\"connections\":%u,\"connectionsSet\":%s}", j->placeholder && !j->connections_set ? 0 : job_target_locked(j),
+            j->connections_set ? "true" : "false");
   }
-  buf_fmt(b, "],\"limit\":%d,\"pinSet\":%s}", g_max_running, g_pin_hash[0] ? "true" : "false");
+  buf_fmt(b, "],\"limit\":%d,\"maxLimit\":%d,\"maxConnections\":%d,\"limitSet\":%s,\"pinSet\":%s}", g_max_running, MAX_WORKERS, MAX_CONNS,
+          g_concurrency_remote ? "true" : "false", g_pin_hash[0] ? "true" : "false");
   pthread_mutex_unlock(&g_lock);
 }
 
@@ -3243,8 +3424,24 @@ static void monitor_action(int fd, Request* r) {
   memcpy(id, rest, (size_t)(slash - rest));
   id[slash - rest] = 0;
   snprintf(action, sizeof action, "%s", slash + 1);
-  if (strcmp(action, "pause") && strcmp(action, "resume") && strcmp(action, "cancel")) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return; }
+  const int connections_action = !strcmp(action, "connections");
+  if (strcmp(action, "pause") && strcmp(action, "resume") && strcmp(action, "cancel") && !connections_action) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return; }
   if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  // glibren.8: POST /api/jobs/<id>/connections {"connections": 1..64, ou 0/null = as do app}: vale ja para um job
+  // baixando, e quando comecar para um na fila (inclusive um "waiting-app", que o app comeca depois).
+  if (connections_action) {
+    unsigned connections;
+    if (!connections_body(r, &connections)) { monitor_json(fd, 400, "{\"error\":\"connections\"}"); return; }
+    pthread_mutex_lock(&g_lock);
+    Job* j = find_job_locked(id);
+    const int ok = j && set_connections_locked(j, connections, "celular");
+    char body[96];
+    snprintf(body, sizeof body, "{\"ok\":true,\"connections\":%u,\"connectionsSet\":%s}", ok ? job_target_locked(j) : 0, connections ? "true" : "false");
+    pthread_mutex_unlock(&g_lock);
+    if (!ok) { monitor_json(fd, 404, "{\"error\":\"no such job\"}"); return; }
+    monitor_json(fd, 200, body);
+    return;
+  }
   pthread_mutex_lock(&g_lock);
   Job* j = find_job_locked(id);
   int status = 404, removed = 0;
@@ -3253,6 +3450,43 @@ static void monitor_action(int fd, Request* r) {
   if (status != 200) { monitor_json(fd, 404, "{\"error\":\"no such job\"}"); return; }
   logf_("celular: job %s %s", id, action);
   monitor_json(fd, 200, "{\"ok\":true}");
+}
+
+// glibren.8: POST /api/config {"concurrency": 1..MAX_WORKERS} (com a sessao do PIN): downloads simultaneos escolhidos
+// no celular. Vale na hora: mais = comeca o que esta na fila; menos = nenhum para no meio (os que baixam terminam, e
+// outro so comeca quando houver menos que o numero), como no app. Fica em config.json, marcado como do celular: o
+// app adota o numero ao falar com o payload (concurrencyBy/concurrencyStamp no /health e no /jobs).
+typedef struct { uint64_t concurrency; int found; } RemoteConfig;
+static int remote_config_field(JP* jp, const char* key, void* ctx) {
+  RemoteConfig* c = ctx;
+  if (strcmp(key, "concurrency")) return jp_skip(jp) ? 1 : -1;
+  double d;
+  int integer;
+  c->found = 1;
+  jp_ws(jp);
+  return jp_number(jp, &d, &c->concurrency, &integer) && integer ? 1 : -1;
+}
+static void monitor_config(int fd, Request* r) {
+  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  RemoteConfig c = {0, 0};
+  JP jp = {r->body, r->body + r->content_length, 0};
+  if (!jp_object(&jp, remote_config_field, &c) || !c.found || c.concurrency < 1 || c.concurrency > MAX_WORKERS) {
+    monitor_json(fd, 400, "{\"error\":\"concurrency\"}");
+    return;
+  }
+  char body[96];
+  pthread_mutex_lock(&g_lock);
+  if (g_max_running != (int)c.concurrency || !g_concurrency_remote) {
+    logf_("celular: downloads simultaneos %d -> %d", g_max_running, (int)c.concurrency);
+    g_max_running = (int)c.concurrency;
+    g_concurrency_remote = 1;
+    ++g_concurrency_stamp;
+    save_config_locked();
+  }
+  snprintf(body, sizeof body, "{\"ok\":true,\"limit\":%d,\"limitSet\":true}", g_max_running);
+  pthread_cond_broadcast(&g_wake_downloader);
+  pthread_mutex_unlock(&g_lock);
+  monitor_json(fd, 200, body);
 }
 
 static void monitor_route(int fd, Request* r, uint32_t ip) {
@@ -3272,6 +3506,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/unlock")) { monitor_unlock(fd, r, ip); return; }
   if (!strcmp(r->method, "POST") && !strncmp(r->path, "/api/jobs/", 10)) { monitor_action(fd, r); return; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/config")) { monitor_config(fd, r); return; }
   monitor_json(fd, 404, "{\"error\":\"not found\"}");
 }
 

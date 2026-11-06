@@ -3,6 +3,8 @@
 // to this many, and hands the number to the download engine's lanes (Downloads.setConcurrency, ps5-react) and to
 // the background payload (background-downloads.js, POST /config). Lowering it stops nothing: the downloads
 // running go on, and no other starts until fewer run.
+// MODIFIED (glibren.8): it can also be chosen on the phone page / the Jobe Controle APK (the payload's POST /api/config);
+// background-downloads.js then adopts that number here (setSimultaneousDownloads), so both sides keep the same one.
 
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';

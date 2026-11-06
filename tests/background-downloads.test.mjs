@@ -451,3 +451,64 @@ test('sair: a folha conta os downloads do app (param) e os do payload (continuam
   assert.deepEqual(exitSummary([], owned), { app: 0, background: 0 });
   assert.deepEqual(exitSummary(undefined, owned), { app: 0, background: 0 });
 });
+
+// ---- glibren.8: downloads simultaneos e conexoes escolhidos na pagina do celular / APK ----
+
+test('glibren.8: o app adota os downloads simultaneos escolhidos no celular (uma vez por stamp) e nao os sobrescreve', async () => {
+  const payload = fakePayload();
+  // O payload diz que o celular escolheu 3 (stamp 1); depois, 2 (stamp 2), visto no GET /jobs do acompanhamento.
+  const remote = { concurrency: 3, concurrencyBy: 'remote', concurrencyStamp: 1 };
+  payload.http.request = ((request) => async (url, options = {}) => {
+    const answer = await request(url, options);
+    if (answer.status !== 200) return answer;
+    const data = await answer.json();
+    if (url.endsWith('/health') || url.endsWith('/jobs')) return { ...answer, json: async () => ({ ...data, ...remote }) };
+    return { ...answer, json: async () => data };
+  })(payload.http.request);
+  let count = 1;
+  const adopted = [];
+  const wrapper = make(payload, fakeEngine(), {
+    concurrency: () => count,
+    // Como setSimultaneousDownloads: grava e avisa a fila, que passa o numero ao payload (setConcurrency).
+    adoptConcurrency: (n) => { adopted.push(n); count = n; wrapper.setConcurrency(n); }
+  });
+  wrapper.enqueue(queueOptions({ background: { ...queueOptions().background, key: 'job-7' } }));
+  await wait(40);
+  assert.deepEqual(adopted, [3], 'adotou o numero do celular');
+  assert.ok(payload.configs.length >= 1 && payload.configs.every((config) => config.concurrency === 3), `nunca mandou o 1 antigo: ${JSON.stringify(payload.configs)}`);
+  assert.equal(payload.jobs[0].key, 'job-7', 'o item da fila vai no POST /jobs (conexoes escolhidas para ele no celular)');
+  // O celular muda de novo com o download rodando: o acompanhamento (GET /jobs) traz o stamp novo.
+  Object.assign(remote, { concurrency: 2, concurrencyStamp: 2 });
+  await wait(40);
+  assert.deepEqual(adopted, [3, 2]);
+  assert.equal(payload.configs.at(-1).concurrency, 2);
+  // O jogador muda no app: o stamp do celular ja foi adotado, entao o app nao volta ao 2 (mesmo antes de o payload
+  // responder que agora e do app).
+  count = 4;
+  wrapper.setConcurrency(4);
+  await wait(40);
+  assert.deepEqual(adopted, [3, 2], 'nao desfaz a escolha feita no app');
+  assert.equal(count, 4);
+  assert.equal(payload.configs.at(-1).concurrency, 4);
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
+});
+
+test('glibren.8: sem escolha no celular (concurrencyBy "app"), nada e adotado; uma chave invalida nao vai no POST /jobs', async () => {
+  const payload = fakePayload();
+  payload.http.request = ((request) => async (url, options = {}) => {
+    const answer = await request(url, options);
+    if (answer.status !== 200 || !url.endsWith('/health')) return answer;
+    const data = await answer.json();
+    return { ...answer, json: async () => ({ ...data, concurrency: 4, concurrencyBy: 'app', concurrencyStamp: 9 }) };
+  })(payload.http.request);
+  const adopted = [];
+  const wrapper = make(payload, fakeEngine(), { concurrency: () => 1, adoptConcurrency: (n) => adopted.push(n) });
+  wrapper.enqueue(queueOptions({ background: { ...queueOptions().background, key: 'tem espaco/e barra' } }));
+  await wait(30);
+  assert.deepEqual(adopted, []);
+  assert.deepEqual(payload.configs, [{ concurrency: 1 }]);
+  assert.ok(!('key' in payload.jobs[0]));
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
+});

@@ -35,6 +35,11 @@
 //     (Downloads.setConcurrency) e ao payload (POST /config), que entao baixa ate n jobs ao mesmo tempo.
 //   - glibren.5: a opcao "Pausa ao fechar o app" (0 a 30 s, abaixo) vai junto no POST /config; o botao "Sair"
 //     (state/exit-app.js) avisa o payload por POST /bye (sayByeToPayload) antes de fechar o app.
+//   - MODIFIED (glibren.8): os downloads simultaneos tambem mudam pela pagina do celular / APK Jobe Controle (POST
+//     /api/config no payload). O payload diz quem escolheu ("concurrencyBy": "remote") e um "concurrencyStamp" no /health
+//     e no /jobs; o app adota o numero do celular (adoptConcurrency -> Configuracoes) uma vez por stamp, antes de mandar
+//     o seu, e nao o sobrescreve. As conexoes por download escolhidas no celular ficam no payload (connectionsSet), que
+//     as aplica ao job do mesmo item da fila (a "key", que agora vai tambem no POST /jobs).
 
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
@@ -178,7 +183,9 @@ import { loadList, saveList } from './saved.js';
     queueDelayMs = 300,
     // glibren.5: a pausa ao fechar o app, em segundos (0 a 30), que vai no POST /config; null (o padrao aqui) nao manda o
     // campo, e o payload fica como esta (30 s, se ninguem mudou).
-    pauseOnCloseSeconds = () => null
+    pauseOnCloseSeconds = () => null,
+    // glibren.8: grava nas Configuracoes os downloads simultaneos escolhidos no celular (setSimultaneousDownloads), ou null.
+    adoptConcurrency = null
   }) {
     const base = `http://127.0.0.1:${port}`;
     let secretsFor = null; // pid do payload que ja recebeu a chave
@@ -205,9 +212,26 @@ import { loadList, saveList } from './saved.js';
       }
       return { status: response.status, data: data ?? {} };
     }
+    // glibren.8: o payload diz que os downloads simultaneos foram escolhidos no celular: o app passa a usar esse numero
+    // (uma vez por stamp; se o jogador mudar no app depois, o payload volta a "app" e nada e adotado).
+    let adoptedStamp = null;
+    function adoptRemote(data) {
+      if (typeof adoptConcurrency !== "function" || data?.concurrencyBy !== "remote") return;
+      const count = data.concurrency;
+      if (!Number.isInteger(count) || count < 1 || count > 4 || adoptedStamp === data.concurrencyStamp) return;
+      adoptedStamp = data.concurrencyStamp;
+      if (count === concurrency()) return;
+      log(`simultaneous downloads set on the phone: ${count} (was ${concurrency()})`);
+      try {
+        adoptConcurrency(count);
+      } catch (problem) {
+        log(`simultaneous downloads from the phone not kept: ${problem?.message ?? problem}`);
+      }
+    }
     async function health(token) {
       try {
         const answer = await call(token, "GET", "/health");
+        if (answer.status === 200 && answer.data?.ok) adoptRemote(answer.data);
         if (answer.status === 200 && answer.data?.ok && "ip" in answer.data) addressSeen(answer.data.ip);
         return answer.status === 200 && answer.data?.ok ? answer.data : null;
       } catch {
@@ -248,12 +272,13 @@ import { loadList, saveList } from './saved.js';
     }
     // O payload baixa ate `concurrency()` jobs ao mesmo tempo, e serve a pagina do celular como `monitor()` diz: a
     // configuracao vai a cada payload novo (pid) e a cada mudanca.
+    // MODIFIED (glibren.8): pergunta antes (health adota o numero escolhido no celular) e so depois monta o que manda.
     async function syncConcurrency(token) {
       if (!token) return;
+      const state = await health(token);
       const count = concurrency();
       const pause = pauseOnCloseSeconds();
       const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...monitor() ?? {} };
-      const state = await health(token);
       const key = `${state?.pid}:${JSON.stringify(body)}`;
       if (!state || configFor === key) return;
       const answer = await call(token, "POST", "/config", body);
@@ -280,7 +305,9 @@ import { loadList, saveList } from './saved.js';
         publishTo,
         source,
         notifyDone: text("downloads.background.notifyDone", { name }),
-        notifyFailed: text("downloads.background.notifyFailed", { name })
+        notifyFailed: text("downloads.background.notifyFailed", { name }),
+        // glibren.8: o item da fila do app, para o payload aplicar as conexoes escolhidas no celular para ele.
+        ...typeof meta.key === "string" && /^[A-Za-z0-9_-]{1,39}$/.test(meta.key) ? { key: meta.key } : {}
       };
     }
     // Um job entregue com antecedencia que o app passou a acompanhar: o payload so o comeca com o app aberto assim.
@@ -391,6 +418,7 @@ import { loadList, saveList } from './saved.js';
           if (answer.status !== 200) throw new Error(`HTTP ${answer.status}`);
           job = answer.data.jobs?.find((item) => item.id === jobId);
           failures = 0;
+          adoptRemote(answer.data);
         } catch (problem) {
           // O payload sumiu (morto pelo gerenciador de payloads, ou o sistema): o app continua do ultimo checkpoint.
           if (++failures >= 15) {

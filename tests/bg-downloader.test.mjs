@@ -333,7 +333,7 @@ test('pagina do celular: a tela embutida inteira (leitura lenta), status sem seg
   await until(base, data.id, ['downloading'], (job) => job.written > 0);
   const status = await page('/api/status');
   assert.equal(status.data.pinSet, true);
-  assert.deepEqual(Object.keys(status.data.jobs[0]).sort(), ['by', 'bytesPerSecond', 'connectionsActive', 'error', 'id', 'name', 'state', 'total', 'written']);
+  assert.deepEqual(Object.keys(status.data.jobs[0]).sort(), ['by', 'bytesPerSecond', 'connections', 'connectionsActive', 'connectionsSet', 'error', 'id', 'name', 'state', 'total', 'written']);
   assert.equal(status.data.jobs[0].name, 'Jogo Teste');
   assert.ok(!('via' in status.data.jobs[0]), 'um link direto nao diz via');
   for (const secret of ['SECRET-TOKEN', '/f/a.bin', dest, path.join(base, 'disk')]) assert.ok(!status.text.includes(secret), `a pagina nao ve ${secret}`);
@@ -569,5 +569,149 @@ test('varios jobs ao mesmo tempo dividem o limite de conexoes (nunca 4 x 32)', {
   assert.ok(most <= 32, `no maximo 32 conexoes somadas (${most})`);
   srv.rate = 0;
   for (const id of ids) assert.equal((await until(base, id, ['completed', 'failed'])).state, 'completed');
+  await stop(child);
+});
+
+// ---- glibren.8: conexoes por download e downloads simultaneos mudados pelo celular, com tudo baixando ----
+
+async function unlocked(base) {
+  assert.equal((await call(base, 'POST', '/config', pinConfig())).status, 200);
+  const { session } = (await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data;
+  assert.ok(session);
+  return session;
+}
+const statusJob = async (id) => (await page('/api/status')).data.jobs.find((job) => job.id === id);
+
+test('glibren.8: conexoes de um job mudadas ao vivo pelo celular (sobe, desce sem perder nada, volta ao do app); o app nao sobrescreve', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  small('live.bin', 24 * MiB);
+  srv.rate = 256 * 1024;
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  await pageUp();
+  const session = await unlocked(base);
+  const dest = path.join(base, 'disk/downloads/live.bin');
+  const body = { url: `http://127.0.0.1:${port}/f/live.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 2, expectedBytes: files['live.bin'].length, sha256: sha(files['live.bin']) };
+  const { data } = await call(base, 'POST', '/jobs', body);
+  await until(base, data.id, ['downloading'], (job) => job.connectionsActive > 0);
+  let job = await statusJob(data.id);
+  assert.deepEqual([job.connections, job.connectionsSet], [2, false], 'o alvo do app');
+  // Sem sessao, nada muda; valores fora de 0..64 sao recusados; job que nao existe, 404.
+  assert.equal((await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: 8 } })).status, 401);
+  assert.equal((await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: 65 }, session })).status, 400);
+  assert.equal((await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: 'oito' }, session })).status, 400);
+  assert.equal((await page('/api/jobs/b999/connections', { method: 'POST', body: { connections: 4 }, session })).status, 404);
+  // Sobe para 8: o motor abre mais faixas sem recomecar o download.
+  const more = await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: 8 }, session });
+  assert.equal(more.status, 200);
+  assert.deepEqual(more.data, { ok: true, connections: 8, connectionsSet: true });
+  const up8 = await statusUntil((status) => status.jobs.find((item) => item.id === data.id)?.connectionsActive > 2, 10000);
+  const live = up8.jobs.find((item) => item.id === data.id);
+  assert.deepEqual([live.connections, live.connectionsSet, live.state], [8, true, 'downloading']);
+  assert.match(readFileSync(path.join(base, 'state/jobs.json'), 'utf8'), /"connectionsSet":8/, 'gravado em jobs.json');
+  // O app manda o mesmo job de novo: o numero do celular continua.
+  assert.equal((await call(base, 'POST', '/jobs', body)).status, 409);
+  assert.equal((await call(base, 'GET', '/jobs')).data.jobs.find((item) => item.id === data.id).connectionsSet, 8);
+  // Desce para 1: as conexoes que sobram terminam a faixa delas e nao abrem outra.
+  assert.equal((await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: 1 }, session })).status, 200);
+  await statusUntil((status) => { const item = status.jobs.find((x) => x.id === data.id); return item.connections === 1 && item.connectionsActive === 1; }, 15000);
+  // null (ou 0) volta ao numero do app.
+  const back = await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: null }, session });
+  assert.deepEqual(back.data, { ok: true, connections: 2, connectionsSet: false });
+  // A API do app (com token) faz o mesmo.
+  assert.equal((await call(base, 'POST', `/jobs/${data.id}/connections`, { connections: 4 })).data.job.connectionsSet, 4);
+  srv.rate = 0;
+  job = await until(base, data.id, ['completed', 'failed']);
+  assert.equal(job.state, 'completed', job.error);
+  assert.equal(sha(readFileSync(dest)), sha(files['live.bin']), 'nada se perdeu ao subir e descer');
+  assert.equal((await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: 8 }, session })).status, 404, 'terminado: nao muda');
+  const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+  assert.ok(log.includes(`job ${data.id}: conexoes 2 -> 8 (escolhido no celular)`), log);
+  assert.ok(log.includes(`job ${data.id}: conexoes 8 -> 1`), log);
+  await stop(child);
+});
+
+test('glibren.8: conexoes escolhidas para um item na fila (waiting-app ou antecipado) valem quando ele comeca', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  small('w1.bin', MiB);
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '600000' });
+  await up(base);
+  await pageUp();
+  const session = await unlocked(base);
+  await call(base, 'POST', '/queue', { items: [{ key: 'kwait', name: 'Jogo do site', total: MiB }, queued(base, 'w1.bin')] });
+  let status = (await page('/api/status')).data;
+  const waiting = status.jobs.find((job) => job.name === 'Jogo do site');
+  const ahead = status.jobs.find((job) => job.name === 'w1.bin');
+  assert.deepEqual([waiting.connections, waiting.connectionsSet], [0, false], 'sem escolha, o app decide');
+  assert.equal(ahead.connections, 1);
+  assert.equal((await page(`/api/jobs/${waiting.id}/connections`, { method: 'POST', body: { connections: 16 }, session })).data.connections, 16);
+  assert.equal((await page(`/api/jobs/${ahead.id}/connections`, { method: 'POST', body: { connections: 4 }, session })).status, 200);
+  // O app manda a fila de novo (o mesmo item antecipado, agora com outro numero dele): o do celular fica.
+  await call(base, 'POST', '/queue', { items: [{ key: 'kwait', name: 'Jogo do site', total: MiB }, queued(base, 'w1.bin', { connections: 2 })] });
+  status = (await page('/api/status')).data;
+  assert.deepEqual(status.jobs.map((job) => [job.name, job.connections, job.connectionsSet]), [['Jogo do site', 16, true], ['w1.bin', 4, true]]);
+  // O app abre e comeca o item do site: ele sai da fila do payload e chega o POST /jobs com a mesma chave.
+  await call(base, 'POST', '/queue', { items: [queued(base, 'w1.bin')] });
+  assert.ok(!(await page('/api/status')).data.jobs.some((job) => job.name === 'Jogo do site'));
+  const { data } = await call(base, 'POST', '/jobs', { key: 'kwait', url: `http://127.0.0.1:${port}/f/w1.bin`, destination: path.join(base, 'disk/downloads/site.bin'), storageRoot: path.join(base, 'disk'), connections: 2, connectionsSet: 64 });
+  const created = (await call(base, 'GET', '/jobs')).data.jobs.find((job) => job.id === data.id);
+  assert.equal(created.connectionsSet, 16, 'o numero do celular (e nao um connectionsSet no corpo do app)');
+  assert.equal((await until(base, data.id, ['completed', 'failed'])).state, 'completed');
+  await stop(child);
+});
+
+test('glibren.8: downloads simultaneos pelo celular: valem na hora, gravados, o app nao desfaz; diminuir nao para ninguem', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  ['p1.bin', 'p2.bin', 'p3.bin'].forEach((name) => small(name, 6 * MiB));
+  srv.rate = 768 * 1024;
+  let child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  await pageUp();
+  assert.equal((await call(base, 'POST', '/config', { concurrency: 1 })).status, 200);
+  const session = await unlocked(base);
+  const ids = [];
+  for (const name of ['p1.bin', 'p2.bin', 'p3.bin']) {
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/${name}`, destination: path.join(base, 'disk/downloads', name), storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 2 });
+    ids.push(data.id);
+  }
+  const running = (status) => status.jobs.filter((job) => ['connecting', 'downloading', 'verifying'].includes(job.state)).length;
+  await statusUntil((status) => running(status) === 1);
+  let status = (await page('/api/status')).data;
+  assert.deepEqual([status.limit, status.maxLimit, status.limitSet], [1, 4, false]);
+  assert.equal((await page('/api/config', { method: 'POST', body: { concurrency: 3 } })).status, 401);
+  assert.equal((await page('/api/config', { method: 'POST', body: { concurrency: 5 }, session })).status, 400);
+  assert.equal((await page('/api/config', { method: 'POST', body: { concurrency: 0 }, session })).status, 400);
+  const set = await page('/api/config', { method: 'POST', body: { concurrency: 3 }, session });
+  assert.deepEqual(set.data, { ok: true, limit: 3, limitSet: true });
+  await statusUntil((s) => running(s) === 3, 10000);
+  let health = (await call(base, 'GET', '/health')).data;
+  assert.deepEqual([health.concurrency, health.concurrencyBy], [3, 'remote']);
+  const stamp = health.concurrencyStamp;
+  assert.ok(stamp >= 1);
+  assert.equal((await call(base, 'GET', '/jobs')).data.concurrencyBy, 'remote');
+  // O app, ao adotar, manda o mesmo numero: continua "do celular".
+  assert.equal((await call(base, 'POST', '/config', { concurrency: 3 })).data.concurrencyBy, 'remote');
+  // Menos pelo celular: os que estao baixando continuam (nenhum volta para a fila ou pausa).
+  assert.equal((await page('/api/config', { method: 'POST', body: { concurrency: 1 }, session })).status, 200);
+  await wait(1500);
+  status = (await page('/api/status')).data;
+  assert.equal(status.limit, 1);
+  assert.ok(!status.jobs.some((job) => ['paused', 'queued'].includes(job.state)), JSON.stringify(status.jobs.map((job) => job.state)));
+  health = (await call(base, 'GET', '/health')).data;
+  assert.equal(health.concurrencyStamp, stamp + 1, 'outro stamp a cada escolha no celular');
+  srv.rate = 0;
+  for (const id of ids) assert.equal((await until(base, id, ['completed', 'failed'])).state, 'completed');
+  // Gravado: volta igual depois de reiniciar.
+  await stop(child);
+  assert.match(readFileSync(path.join(base, 'state/config.json'), 'utf8'), /"concurrency":1,.*"concurrencyBy":"remote"/s);
+  child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  health = (await call(base, 'GET', '/health')).data;
+  assert.deepEqual([health.concurrency, health.concurrencyBy, health.concurrencyStamp], [1, 'remote', stamp + 1]);
+  // O jogador muda no app: passa a ser do app.
+  assert.equal((await call(base, 'POST', '/config', { concurrency: 2 })).data.concurrencyBy, 'app');
   await stop(child);
 });

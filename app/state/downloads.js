@@ -12,7 +12,7 @@ import { createDownloadQueue } from './download-queue.js';
 import { createSourceResolver } from './download-sources.js';
 import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
 import { createBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from './background-downloads.js';
-import { onSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
+import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
 import { recordCapture } from './capture-hosts.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
@@ -69,7 +69,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       addressSeen: setPhoneMonitorAddress,
       onRemote: (destination, action) => instance?.remoteAction?.(destination, action),
       // MODIFIED (glibren.5): a pausa ao fechar o app (0 a 30 s, Configuracoes) vai ao payload no POST /config.
-      pauseOnCloseSeconds
+      pauseOnCloseSeconds,
+      // MODIFIED (glibren.8): os downloads simultaneos escolhidos na pagina do celular / APK viram os das Configuracoes.
+      adoptConcurrency: setSimultaneousDownloads
     }),
     // glibren: quantos downloads rodam ao mesmo tempo (Configuracoes).
     concurrency: simultaneousDownloads,

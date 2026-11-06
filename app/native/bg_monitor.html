@@ -75,6 +75,19 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 .dialog .row{display:flex;gap:8px}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .msg{min-height:1.2em;font-size:13.5px;color:var(--bad)}
+/* glibren.8: conexoes por download e downloads simultaneos, mudaveis com tudo baixando */
+.conn,.ctlbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0}
+.conn{font-size:14px;color:var(--muted)}
+.conn .lbl{display:flex;flex-direction:column;line-height:1.2;min-width:0}
+.conn .lbl small{color:var(--subtle);font-size:12px}
+.ctlbar{margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));padding:6px 10px 6px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;font-size:14px;color:var(--muted)}
+.step{margin-inline-start:auto;display:inline-flex;align-items:stretch;border:1px solid var(--line-hi);border-radius:8px;overflow:hidden;flex:none}
+.step button{width:36px;min-height:36px;border:0;background:var(--raise);color:var(--fg);font-size:20px;font-weight:700;line-height:1;cursor:pointer;padding:0}
+.step button:disabled{opacity:.35;cursor:not-allowed}
+.step output{min-width:54px;display:flex;align-items:center;justify-content:center;gap:2px;padding:0 6px;background:var(--deep);font-variant-numeric:tabular-nums;color:var(--fg);font-weight:600}
+.step output small{color:var(--subtle);font-weight:500}
+.mode{font-size:12px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--line-hi);color:var(--subtle);background:transparent;text-transform:uppercase;letter-spacing:.04em;cursor:default}
+.mode.set{color:var(--ice);border-color:rgba(76,201,240,.5);cursor:pointer}
 /* Celular deitado / telas largas: duas colunas e topo mais baixo */
 @media (orientation:landscape) and (max-height:520px){
   .pinned .summary{margin-bottom:6px}
@@ -88,6 +101,8 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
   .name{font-size:15px;-webkit-line-clamp:1}
   .nums{font-size:13px}
   .btn{min-height:34px;padding:5px 10px;font-size:13.5px}
+  .ctlbar{margin-bottom:6px;padding:3px 8px 3px 12px}
+  .step button{min-height:30px}
 }
 @media (min-width:900px) and (min-height:521px){ .list{grid-template-columns:1fr 1fr} }
 @media (prefers-reduced-motion:reduce){ .bar>i{transition:none} }
@@ -106,6 +121,8 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
     <div><span id="lblSpeed">Velocidade</span><b id="sumSpeed">–</b></div>
     <div><span id="lblLeft">Falta</span><b id="sumLeft">–</b></div>
   </div>
+  <div class="ctlbar" id="ctlbar" hidden><span id="lblLimit">Downloads simultâneos</span><span class="mode set" id="limitMode" hidden></span>
+    <div class="step"><button type="button" id="limitDown" aria-label="Menos">−</button><output id="limitVal">–</output><button type="button" id="limitUp" aria-label="Mais">+</button></div></div>
 </div>
 <main>
   <div class="list" id="list"></div>
@@ -132,7 +149,9 @@ const T = {
     empty: "Nenhum download no segundo plano agora. Quando a Jobee'sLair entregar um download ao PS5, ele aparece aqui.",
     foot: "Atualiza a cada 2 s · somente na sua rede local", pinTitle: "Liberar controles", pinText: "Digite o PIN definido nas configurações da Jobee'sLair.",
     pinBack: "Voltar", pinOk: "Liberar", pinWrong: "PIN errado. Tente de novo.", pinBlocked: "Muitas tentativas. Espere {s} s.",
-    noPin: "Defina um PIN nas configurações da Jobee'sLair para usar os controles." },
+    noPin: "Defina um PIN nas configurações da Jobee'sLair para usar os controles.",
+    limit: "Downloads simultâneos", connsLbl: "Conexões", connsHint: "ativas / alvo", connsWait: "o app decide", auto: "auto", manual: "manual",
+    backToAuto: "Voltar ao número do app", less: "Menos", more: "Mais", setOnPhone: "celular" },
   en: { sub: "Background downloads", online: "PS5 connected", offline: "PS5 not answering", connecting: "Connecting…",
     locked: "Controls", unlocked: "Unlocked", active: "Downloading", speed: "Speed", left: "Left",
     states: { downloading: "Downloading", connecting: "Connecting", verifying: "Verifying", queued: "Queued", paused: "Paused", completed: "Done", failed: "Failed", "needs-app": "Open the app", "waiting-app": "Waiting for app" },
@@ -142,7 +161,9 @@ const T = {
     empty: "No background downloads right now. When Jobee'sLair hands a download to the PS5, it shows here.",
     foot: "Refreshes every 2 s · on your local network only", pinTitle: "Unlock controls", pinText: "Enter the PIN set in Jobee'sLair's settings.",
     pinBack: "Back", pinOk: "Unlock", pinWrong: "Wrong PIN. Try again.", pinBlocked: "Too many tries. Wait {s} s.",
-    noPin: "Set a PIN in Jobee'sLair's settings to use the controls." }
+    noPin: "Set a PIN in Jobee'sLair's settings to use the controls.",
+    limit: "Simultaneous downloads", connsLbl: "Connections", connsHint: "active / target", connsWait: "the app decides", auto: "auto", manual: "manual",
+    backToAuto: "Back to the app's number", less: "Fewer", more: "More", setOnPhone: "phone" }
 };
 const L = T[(navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en"];
 document.documentElement.lang = L === T.pt ? "pt-BR" : "en";
@@ -157,6 +178,7 @@ const ICON = {
 $("sub").textContent = L.sub; $("lblActive").textContent = L.active; $("lblSpeed").textContent = L.speed; $("lblLeft").textContent = L.left;
 $("foot").textContent = L.foot; $("pinTitle").textContent = L.pinTitle; $("pinText").textContent = L.pinText;
 $("pinCancel").textContent = L.pinBack; $("pinOk").textContent = L.pinOk;
+$("lblLimit").textContent = L.limit; $("limitDown").setAttribute("aria-label", L.less); $("limitUp").setAttribute("aria-label", L.more);
 
 const GB = 1024 ** 3, MB = 1024 ** 2;
 const nf = (v, d) => v.toLocaleString(document.documentElement.lang, { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -164,31 +186,39 @@ const size = (b) => b >= GB ? `${nf(b / GB, 1)} GB` : `${nf(b / MB, 0)} MB`;
 const speed = (b) => b >= 1e6 ? `${nf(b * 8 / 1e6, 0)} Mbps` : b > 0 ? `${nf(b * 8 / 1e3, 0)} kbps` : "–";
 const eta = (s) => { if (!isFinite(s) || s <= 0) return "–"; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : m ? `${m} min` : `${s} s`; };
 
-let session = "", confirming = null, jobs = [], pinSet = true;
+let session = "", confirming = null, jobs = [], pinSet = true, limit = 0, maxLimit = 4, limitSet = false, maxConns = 64;
 const DEMO = location.protocol === "file:" || new URLSearchParams(location.search).has("demo");
 const demo = { t: Date.now(), jobs: [
-  { id: "b1", name: "Ghost of Tsushima Director's Cut", state: "downloading", written: 31.6 * GB, total: 48.2 * GB, bytesPerSecond: 38.5 * MB, connectionsActive: 32 },
-  { id: "b2", name: "Gran Turismo 7", state: "downloading", written: 12.1 * GB, total: 97.4 * GB, bytesPerSecond: 21.3 * MB, connectionsActive: 32 },
-  { id: "b3", name: "Astro Bot", state: "paused", written: 4.2 * GB, total: 41.7 * GB, bytesPerSecond: 0, connectionsActive: 0 },
-  { id: "b4", name: "Marvel's Spider-Man 2", state: "queued", written: 0, total: 98.9 * GB, bytesPerSecond: 0, connectionsActive: 0 },
-  { id: "b10", name: "Demon's Souls (MediaFire)", state: "waiting-app", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0 },
-  { id: "b5", name: "Returnal", state: "queued", written: 0, total: 60.3 * GB, bytesPerSecond: 0, connectionsActive: 0 },
-  { id: "b6", name: "Ratchet & Clank: Rift Apart", state: "queued", written: 0, total: 42.8 * GB, bytesPerSecond: 0, connectionsActive: 0 },
-  { id: "b7", name: "Demon's Souls", state: "queued", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0 },
-  { id: "b8", name: "Horizon Forbidden West", state: "failed", written: 7.9 * GB, total: 89.6 * GB, bytesPerSecond: 0, connectionsActive: 0, error: "Link do TorBox venceu e não foi renovado. Abra a Jobee'sLair para continuar." },
-  { id: "b9", name: "Stellar Blade", state: "completed", written: 33.4 * GB, total: 33.4 * GB, bytesPerSecond: 0, connectionsActive: 0 }
-] };
+  { id: "b1", name: "Ghost of Tsushima Director's Cut", state: "downloading", written: 31.6 * GB, total: 48.2 * GB, bytesPerSecond: 38.5 * MB, connectionsActive: 16, connections: 16, connectionsSet: false },
+  { id: "b2", name: "Gran Turismo 7", state: "downloading", written: 12.1 * GB, total: 97.4 * GB, bytesPerSecond: 21.3 * MB, connectionsActive: 16, connections: 32, connectionsSet: true },
+  { id: "b3", name: "Astro Bot", state: "paused", written: 4.2 * GB, total: 41.7 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b4", name: "Marvel's Spider-Man 2", state: "queued", written: 0, total: 98.9 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b10", name: "Demon's Souls (MediaFire)", state: "waiting-app", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 0, connectionsSet: false },
+  { id: "b5", name: "Returnal", state: "queued", written: 0, total: 60.3 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b6", name: "Ratchet & Clank: Rift Apart", state: "queued", written: 0, total: 42.8 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b7", name: "Demon's Souls", state: "queued", written: 0, total: 51.2 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false },
+  { id: "b8", name: "Horizon Forbidden West", state: "failed", written: 7.9 * GB, total: 89.6 * GB, bytesPerSecond: 0, connectionsActive: 0, error: "Link do TorBox venceu e não foi renovado. Abra a Jobee'sLair para continuar.", connections: 8, connectionsSet: false },
+  { id: "b9", name: "Stellar Blade", state: "completed", written: 33.4 * GB, total: 33.4 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false }
+], limit: 2, limitSet: false };
 async function api(method, path, body) {
   if (DEMO) {
     const dt = (Date.now() - demo.t) / 1000; demo.t = Date.now();
-    for (const j of demo.jobs) if (j.state === "downloading") j.written = Math.min(j.total, j.written + j.bytesPerSecond * dt * (0.9 + Math.random() * 0.2));
-    if (method === "POST") { const [, id, act] = path.split("/").slice(1); const j = demo.jobs.find((x) => x.id === id);
+    // Como o payload: as conexoes abertas sobem ate o alvo aos poucos (e descem quando ele baixa).
+    for (const j of demo.jobs) if (j.state === "downloading") {
+      j.written = Math.min(j.total, j.written + j.bytesPerSecond * dt * (0.9 + Math.random() * 0.2));
+      j.connectionsActive = j.connectionsActive < j.connections ? Math.min(j.connections, j.connectionsActive + 2) : j.connections;
+      j.bytesPerSecond = j.connectionsActive * 0.6 * MB;
+    }
+    if (method === "POST") { const [, , , id, act] = path.split("/"); const j = demo.jobs.find((x) => x.id === id);
       if (path === "/api/unlock") return body.pin === "1234" ? { status: 200, data: { session: "demo" } } : { status: 403, data: { retryIn: 0 } };
+      if (!session) return { status: 401, data: { error: "pin" } };
+      if (path === "/api/config") { Object.assign(demo, { limit: body.concurrency, limitSet: true }); return { status: 200, data: { ok: true, limit: demo.limit, limitSet: true } }; }
       if (j && act === "pause") Object.assign(j, { state: "paused", bytesPerSecond: 0, connectionsActive: 0 });
-      if (j && act === "resume") Object.assign(j, { state: "downloading", bytesPerSecond: 25 * MB, connectionsActive: 32 });
+      if (j && act === "resume") Object.assign(j, { state: "downloading", bytesPerSecond: 3 * MB, connectionsActive: 2 });
       if (j && act === "cancel") demo.jobs = demo.jobs.filter((x) => x !== j);
+      if (j && act === "connections") Object.assign(j, body.connections ? { connections: body.connections, connectionsSet: true } : { connections: j.state === "waiting-app" ? 0 : 8, connectionsSet: false });
       return { status: 200, data: { ok: true } }; }
-    return { status: 200, data: { jobs: demo.jobs.map((j) => ({ ...j })), limit: 2 } };
+    return { status: 200, data: { jobs: demo.jobs.map((j) => ({ ...j })), limit: demo.limit, maxLimit: 4, maxConnections: 64, limitSet: demo.limitSet, pinSet: true } };
   }
   const r = await fetch(path, { method, headers: { "Content-Type": "application/json", ...(session ? { "X-Session": session } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
   // Resposta cortada no caminho (Wi-Fi ruim): data fica null e quem chamou trata como falha, sem apagar a lista.
@@ -208,6 +238,7 @@ function render() {
   $("sumActive").textContent = `${active.length} / ${total.length}`;
   $("sumSpeed").textContent = speed(bps);
   $("sumLeft").textContent = leftBytes ? size(leftBytes) : "–";
+  limitBar();
   if (!jobs.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = L.empty; list.append(e); return; }
   for (const j of jobs) {
     const pct = j.total ? Math.min(100, j.written / j.total * 100) : 0;
@@ -223,7 +254,10 @@ function render() {
     if (j.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = j.error; el.append(e); }
     // So o app sabe baixar este (pagina de site, navegador...): sem botoes aqui; cancelar fica no app.
     if (j.state === "waiting-app") { const w = document.createElement("div"); w.className = "wait"; w.textContent = L.waitingApp; el.append(w); }
-    else if (j.state !== "completed") {
+    // glibren.8: as conexoes, em todo download que nao terminou (inclusive os que esperam o app).
+    if (j.state !== "completed") el.append(connRow(j, running));
+    if (j.state === "waiting-app" || j.state === "completed") { /* sem pausar/cancelar aqui */ }
+    else {
       if (confirming === j.id) {
         const c = document.createElement("div"); c.className = "confirm";
         c.innerHTML = `<div></div><div class="row"><button class="btn" type="button" data-no>${L.no}</button><button class="btn solid-danger" type="button" data-yes>${L.yes}</button></div>`;
@@ -243,6 +277,49 @@ function render() {
     list.append(el);
   }
 }
+// glibren.8: conexoes de um download (baixando ou na fila): − / + nos degraus abaixo, ate 64. Baixando, mostra
+// "ativas / alvo": quantas estao abertas agora e quantas ele busca. "manual" = escolhido aqui (prevalece sobre o app);
+// tocar nele volta ao numero do app.
+const STEPS = [1, 2, 4, 8, 16, 32, 64];
+function connRow(j, running) {
+  const row = document.createElement("div"); row.className = "conn";
+  const target = j.connections || 0;
+  const down = STEPS.filter((n) => n < (target || 8)).pop(), up = STEPS.find((n) => n > (target || 4) && n <= maxConns);
+  const shown = !target ? `<small>${L.auto}</small>` : running ? `<b>${j.connectionsActive || 0}</b><small>/${target}</small>` : `<b>${target}</b>`;
+  row.innerHTML = `<span class="lbl">${L.connsLbl}<small>${!target ? L.connsWait : running ? L.connsHint : ""}</small></span>` +
+    `<button type="button" class="mode${j.connectionsSet ? " set" : ""}" data-m>${j.connectionsSet ? L.manual : L.auto}</button>` +
+    `<div class="step"><button type="button" data-d aria-label="${L.less}">−</button><output>${shown}</output><button type="button" data-u aria-label="${L.more}">+</button></div>`;
+  const m = row.querySelector("[data-m]");
+  if (j.connectionsSet) { m.title = L.backToAuto; m.setAttribute("aria-label", `${L.manual} · ${L.backToAuto}`); m.onclick = () => guarded(() => setConns(j.id, 0)); }
+  else m.disabled = true;
+  const d = row.querySelector("[data-d]"), u = row.querySelector("[data-u]");
+  d.disabled = !down; u.disabled = !up;
+  d.onclick = () => guarded(() => setConns(j.id, down));
+  u.onclick = () => guarded(() => setConns(j.id, up));
+  return row;
+}
+async function setConns(id, n) {
+  const r = await api("POST", `/api/jobs/${id}/connections`, { connections: n });
+  if (r.status === 401) { session = ""; lockButton(); pending = () => setConns(id, n); openPin(); return; }
+  await refresh();
+}
+// Downloads simultaneos (1 ate maxLimit), no topo; "celular" quando o numero foi escolhido aqui (o app passa a usa-lo).
+function limitBar() {
+  $("ctlbar").hidden = !limit;
+  if (!limit) return;
+  $("limitVal").textContent = String(limit);
+  $("limitMode").textContent = L.setOnPhone;
+  $("limitMode").hidden = !limitSet;
+  $("limitDown").disabled = limit <= 1;
+  $("limitUp").disabled = limit >= maxLimit;
+}
+async function setLimit(n) {
+  const r = await api("POST", "/api/config", { concurrency: n });
+  if (r.status === 401) { session = ""; lockButton(); pending = () => setLimit(n); openPin(); return; }
+  await refresh();
+}
+$("limitDown").onclick = () => guarded(() => setLimit(limit - 1));
+$("limitUp").onclick = () => guarded(() => setLimit(limit + 1));
 let pending = null;
 function guarded(fn) { if (session) fn(); else { pending = fn; openPin(); } }
 // Sem PIN definido na Jobee'sLair, a janela so explica onde definir (os controles ficam fechados).
@@ -274,6 +351,7 @@ async function refresh() {
     const r = await api("GET", "/api/status");
     if (r.status !== 200 || !Array.isArray(r.data.jobs)) throw new Error();
     jobs = r.data.jobs || []; misses = 0; pinSet = r.data.pinSet !== false;
+    limit = Number(r.data.limit) || 0; maxLimit = Number(r.data.maxLimit) || 4; limitSet = r.data.limitSet === true; maxConns = Number(r.data.maxConnections) || 64;
     $("status").className = "status on"; $("statusText").textContent = L.online;
   } catch { if (++misses >= 3) { $("status").className = "status"; $("statusText").textContent = L.offline; } }
   render();
