@@ -31,6 +31,8 @@
 > videos and details (simple list with the phone upright, detailed with it on its side); Jobe Controle 0.2.
 > **glibren.10**: arrows and dots in the phone page's photo gallery, compact YouTube buttons (Trailer / Gameplay), and
 > the tabs and search on one line with the phone on its side.
+> **glibren.11**: with the phone on its side, the library's filters take the full width in two lines and the games stay
+> in view below them.
 > Download it from this fork's [releases](https://github.com/pristmc-code/JobeesLair-glibren/releases/latest);
 > its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
 > the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
