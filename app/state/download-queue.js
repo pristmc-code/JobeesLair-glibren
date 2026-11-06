@@ -28,7 +28,7 @@ import { readJSON } from './read-json.js';
 import { STAGING_SUFFIXES } from './extraction-staging.js';
 import { busyWhileOpen, mountedImages, shadowRequest, within2 } from './shadowmount.js';
 import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
-import { hostOf } from './download-tuning.js';
+import { hostGroup } from './download-tuning.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 import { mirrorsFor } from './download-mirrors.js';
 
@@ -1056,7 +1056,8 @@ import { mirrorsFor } from './download-mirrors.js';
     function transferTuning(holder, url, destination, legacy, job2) {
       const tuned = tuningFor(url);
       const lane = job2 ? lanes.get(job2) : null;
-      const host = hostOf(url);
+      // glibren.7: by the table's domain, so two TorBox downloads on different nodes still share its connections.
+      const host = hostGroup(url);
       if (lane) lane.host = host;
       const sharing = 1 + [...lanes.values()].filter((other) => other !== lane && other.transferring && other.host === host).length;
       if (sharing > 1) {

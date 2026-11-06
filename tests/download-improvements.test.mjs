@@ -10,7 +10,7 @@ import path from 'node:path';
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const load = (rel) => import(pathToFileURL(path.join(repo, rel)).href);
 const { createDownloadQueue, BUSY } = await load('app/state/download-queue.js');
-const { DEFAULT_TUNING, HOST_TUNING, rangeFor, tuningFor } = await load('app/state/download-tuning.js');
+const { DEFAULT_TUNING, HOST_TUNING, hostGroup, rangeFor, tuningFor } = await load('app/state/download-tuning.js');
 const { configure } = await load('app/i18n/core.js');
 const { DownloadFormats } = await load('ps5-react/runtime/js/download-formats.js');
 const en = JSON.parse(readFileSync(path.join(repo, 'app/i18n/locales/en.json'), 'utf8'));
@@ -841,4 +841,26 @@ test('handoff: a TorBox link is asked ahead (at most a few, one at a time) so th
   first.open();
   assert.equal((await settle(queue, t)).state, 'downloaded');
   assert.equal(asked.length, 1, 'the app downloads it with the link asked ahead, without a second TorBox request');
+});
+
+test('tuning (glibren.7): the TorBox CDN gets 8 connections, shared by every download from any of its nodes', () => {
+  assert.equal(tuningFor('https://nexus-244.latm.tb-cdn.cx/dld/x?token=').connections, 8);
+  assert.equal(hostGroup('https://nexus-244.latm.tb-cdn.cx/dld/x'), 'tb-cdn.cx');
+  assert.equal(hostGroup('https://store-031.weur.tb-cdn.cx/dld/y'), 'tb-cdn.cx', 'another node, the same group');
+  assert.equal(hostGroup('https://ia800300.us.archive.org/1/items/x/a.zip'), 'archive.org');
+  assert.equal(hostGroup('https://example.com/a.exfat'), 'example.com', 'a host not in the table is its own group');
+});
+
+test('simultaneous (glibren.7): two TorBox downloads on different CDN nodes share TorBox\'s 8 connections', async () => {
+  const fs = memoryFs();
+  const gates = [gated(), gated()];
+  const downloads = engine(fs, (options, index) => ({ gate: gates[index].gate, written: 1 }));
+  const queue = queueWith({ fs, downloads, concurrency: () => 2 });
+  const ids = [['Alpha', 'nexus-244.latm'], ['Beta', 'store-031.weur']].map(([name, node], i) => queue.enqueue(other(i + 1), image(`${name}.exfat`, `https://${node}.tb-cdn.cx/dld/${name}`), '/data'));
+  await until(queue, ids[1], () => downloads.requests.length === 2);
+  const byName = (name) => downloads.requests.find((options) => options.destination.endsWith(name));
+  assert.equal(byName('Alpha.exfat').connections, 8, 'the first: all of TorBox\'s 8');
+  assert.equal(byName('Beta.exfat').connections, 4, 'the second, on another node, shares them: 8 / 2');
+  for (const gate of gates) gate.open();
+  for (const id of ids) assert.equal((await settle(queue, id)).state, 'downloaded');
 });
