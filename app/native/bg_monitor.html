@@ -591,6 +591,15 @@ body.fopen{overflow:hidden}
   .vids{grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))}
   .shot{flex-basis:70%}
 }
+/* glibren.10: deitado, as abas e a busca dividem uma linha: sobra altura para os jogos */
+@media (orientation:landscape) and (max-height:520px){
+  .pinned{display:flex;flex-wrap:wrap;align-items:flex-start}
+  .pinned>*{flex:1 1 100%;min-width:0}
+  .pinned>.tabs{flex:0 1 340px;margin-right:0}
+  .pinned>.libbar{flex:1 1 300px;margin-left:10px}
+  .libbar input{min-height:38px;padding-top:6px;padding-bottom:6px}
+  .libbar .lock{min-height:38px}
+}
 @media (orientation:landscape) and (max-height:520px){ .tabs{margin-bottom:6px} .tabs button{min-height:30px} .filters{max-height:60vh} .fhero{display:none} .fhero:not([hidden])+.fbody{margin-top:0} }
 @media (prefers-reduced-motion:reduce){ .cv img,.shot img,.fhero img{transition:none} }
 </style>
