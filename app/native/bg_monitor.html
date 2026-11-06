@@ -710,7 +710,8 @@ body.fopen{overflow:hidden}
   })).sort((a, b) => a.title.localeCompare(b.title));
   function demoDetails(g) {
     const n = Number(g.id.slice(4)), hue = (n * 47) % 360;
-    const shots = Array.from({ length: 3 + n % 4 }, (_, i) => ({ url: demoArt(1280, 720, (hue + i * 40) % 360, g.title, `${i + 1}`), thumb: demoArt(480, 270, (hue + i * 40) % 360, g.title, `${i + 1}`) }));
+    // So no demo: a foto de verdade (screenshot da loja) nao tem texto por cima.
+    const shots = Array.from({ length: 3 + n % 4 }, (_, i) => ({ url: demoArt(1280, 720, (hue + i * 40) % 360, `Foto de exemplo ${i + 1}`, ""), thumb: demoArt(480, 270, (hue + i * 40) % 360, `Foto de exemplo ${i + 1}`, "") }));
     return { summary: `${g.title}: texto de exemplo do modo demo, no lugar do resumo da loja.`, about: ["Na página de verdade, aqui vem a descrição da loja (PlayStation Store/Steam) gravada pela Jobee'sLair junto com a Biblioteca TorBox.", "As fotos vêm direto do endereço do catálogo; no modo demo elas são desenhadas aqui mesmo, sem internet.", "Toque numa foto para ver em tela cheia e deslize para o lado."],
       shots, ...n % 11 === 5 ? {} : { cover: g.cover }, hero: demoArt(1600, 600, (hue + 20) % 360, "", ""), developer: "Estúdio Exemplo", publisher: "Editora Exemplo",
       releaseDate: `20${String(18 + n % 7)}-0${1 + n % 9}-1${n % 9}`, metacritic: 60 + (n * 7) % 40, stars: Math.round((3.4 + (n % 16) / 10) * 100) / 100, ratingCount: 1000 + n * 431,
