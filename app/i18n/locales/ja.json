@@ -297,6 +297,7 @@
   "files.byShadowMount": "ShadowMountがインストール",
   "files.confirmDelete": "もう一度押すと削除 · {size}",
   "files.deleteDownloading": "まだダウンロード中です。先にダウンロード画面でキャンセルしてください。",
+  "files.delete.selfKept": "削除しました。Jobee'sLair 自体はアンインストールされていません。それには専用の確認が必要です。",
   "files.deleteFailed": "このファイルを削除できませんでした。もう一度お試しください。",
   "files.deleted": "{name}を削除しました",
   "files.drives": "ドライブ",

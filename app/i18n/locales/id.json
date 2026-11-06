@@ -297,6 +297,7 @@
   "files.byShadowMount": "Dipasang oleh ShadowMount",
   "files.confirmDelete": "Tekan lagi untuk menghapus · {size}",
   "files.deleteDownloading": "Masih diunduh. Batalkan dulu di Unduhan.",
+  "files.delete.selfKept": "Dihapus. Jobee'sLair sendiri tidak dicopot: itu perlu konfirmasi tersendiri.",
   "files.deleteFailed": "File ini tidak dapat dihapus. Coba lagi.",
   "files.deleted": "{name} dihapus",
   "files.drives": "Drive",

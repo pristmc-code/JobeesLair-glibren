@@ -297,6 +297,7 @@
   "files.byShadowMount": "Установит ShadowMount",
   "files.confirmDelete": "Нажмите ещё раз, чтобы удалить · {size}",
   "files.deleteDownloading": "Она ещё загружается. Сначала отмените загрузку в разделе «Загрузки».",
+  "files.delete.selfKept": "Удалено. Сама Jobee'sLair не удалена: для этого нужно отдельное подтверждение.",
   "files.deleteFailed": "Не удалось удалить файл. Повторите попытку.",
   "files.deleted": "Удалено: {name}",
   "files.drives": "Диски",

@@ -297,6 +297,7 @@
   "files.byShadowMount": "由 ShadowMount 安装",
   "files.confirmDelete": "再按一次以删除 · {size}",
   "files.deleteDownloading": "它仍在下载。请先在“下载”中取消。",
+  "files.delete.selfKept": "已删除。Jobee'sLair 本身未被卸载：这需要单独确认。",
   "files.deleteFailed": "无法删除此文件，请重试。",
   "files.deleted": "已删除 {name}",
   "files.drives": "存储设备",

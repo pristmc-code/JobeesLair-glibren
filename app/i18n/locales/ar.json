@@ -297,6 +297,7 @@
   "files.byShadowMount": "يثبّته ShadowMount",
   "files.confirmDelete": "اضغط مرة أخرى للحذف · {size}",
   "files.deleteDownloading": "ما زالت قيد التحميل. ألغِها أولًا من التنزيلات.",
+  "files.delete.selfKept": "تم الحذف. لم تتم إزالة Jobee'sLair نفسه: يتطلب ذلك تأكيدًا خاصًا به.",
   "files.deleteFailed": "تعذر حذف هذا الملف. حاول مجددًا.",
   "files.deleted": "تم حذف {name}",
   "files.drives": "الأقراص",

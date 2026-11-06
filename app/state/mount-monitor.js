@@ -12,7 +12,7 @@
 // it still holds, and such a game is never moved or deleted.
 
 import { useEffect, useState } from 'react';
-import { launchedAt, within2 } from './shadowmount.js';
+import { launchedAt, mayBeWithin } from './shadowmount.js';
 
   var EVERY_MS = 2e4;
   function createMountMonitor({ client, fs, parse = () => null, onLaunch = () => {
@@ -66,7 +66,9 @@ import { launchedAt, within2 } from './shadowmount.js';
       refresh,
       snapshot: () => state,
       // The images ShadowMount has mounted now among `paths` (a game's files), from the last answer.
-      mountedAmong: (paths, root) => state.images.filter((image) => image.mounted && within2(image.path, paths, root)),
+      // MODIFIED (glibren.12): "may be among" (shadowmount.js within2): an answer that keeps files, never one
+      // that unmounts or uninstalls.
+      mountedAmong: (paths, root) => state.images.filter((image) => image.mounted && mayBeWithin(image.path, paths, root)),
       subscribe(listener) {
         listeners.add(listener);
         if (!timer) timer = setInterval(() => void refresh(), every);
