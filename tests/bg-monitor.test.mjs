@@ -20,7 +20,7 @@ test('bg_monitor_html.h esta em dia com bg_monitor.html (rode tools/bg-monitor/e
 
 test('a pagina embutida: fala so com a mesma origem, tem o aviso de PIN e o modo demo', () => {
   const page = readFileSync(embed.PAGE, 'utf8');
-  for (const route of ['/api/status', '/api/unlock', '`/api/jobs/${id}/${what}`']) assert.ok(page.includes(route), route);
+  for (const route of ['/api/status', '/api/unlock', '/api/power', '`/api/jobs/${id}/${what}`']) assert.ok(page.includes(route), route);
   assert.ok(!/https?:\/\//.test(page.replace(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/g, '')), 'nada de outro site');
   assert.match(page, /noPin/);
   assert.match(page, /has\("demo"\)/);

@@ -363,5 +363,74 @@ const pinned = document.querySelector(".pinned");
 addEventListener("scroll", () => pinned.classList.toggle("scrolled", scrollY > 4), { passive: true });
 refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
 </script>
+<!-- glibren: desligar o PS5 / modo de repouso (TV com defeito). Bloco separado para nao mexer no resto da pagina. -->
+<style>
+.power-row{display:flex;justify-content:center}
+.power-btn{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:6px 14px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--subtle);font-size:13.5px;cursor:pointer}
+.power-btn svg{width:15px;height:15px}
+.power-dialog .warn{color:var(--warn)}
+.power-dialog .note{font-size:13px;color:var(--subtle)}
+.power-dialog .done{color:var(--good);font-size:15px}
+</style>
+<div class="sheet" id="powerSheet" hidden>
+  <div class="dialog power-dialog" role="dialog" aria-labelledby="powerTitle">
+    <h2 id="powerTitle"></h2>
+    <p id="powerText"></p>
+    <p class="warn" id="powerWarn"></p>
+    <p class="note" id="powerNote"></p>
+    <div class="msg" id="powerMsg"></div>
+    <div class="row" id="powerRow"><button class="btn" type="button" id="powerBack"></button><button class="btn" type="button" id="powerRest"></button><button class="btn solid-danger" type="button" id="powerOff"></button></div>
+  </div>
+</div>
+<script>
+"use strict";
+(() => {
+  const P = {
+    pt: { button: "Desligar o PS5", title: "Desligar o PS5", text: "Desliga do jeito certo, como pelo menu de energia do PS5 (não é cortar a energia). Bom para quando a TV não mostra a imagem.",
+      warn: "Downloads em andamento param agora e continuam de onde pararam na próxima vez que o payload rodar.", warnN: "{n} download(s) em andamento vão parar agora e continuar de onde pararam na próxima vez que o payload rodar.",
+      note: "Desligado, o desbloqueio só volta rodando o exploit de novo. Em repouso tudo continua e esta página volta quando o PS5 acordar.",
+      back: "Voltar", rest: "Repouso", off: "Desligar", close: "Fechar", sending: "Enviando…",
+      offDone: "O PS5 está desligando. Espere a luz apagar antes de tirar da tomada.", restDone: "O PS5 está entrando em repouso (luz laranja).",
+      busy: "Já existe um pedido em andamento.", fail: "O PS5 não respondeu. Tente de novo." },
+    en: { button: "Turn off PS5", title: "Turn off PS5", text: "Turns it off the right way, as from the PS5 power menu (not cutting the power). Handy when the TV shows no picture.",
+      warn: "Downloads in progress stop now and continue where they left off the next time the payload runs.", warnN: "{n} download(s) in progress will stop now and continue where they left off the next time the payload runs.",
+      note: "Once off, the jailbreak only comes back by running the exploit again. In rest mode everything keeps running and this page comes back when the PS5 wakes up.",
+      back: "Back", rest: "Rest mode", off: "Turn off", close: "Close", sending: "Sending…",
+      offDone: "The PS5 is turning off. Wait for the light to go out before unplugging it.", restDone: "The PS5 is entering rest mode (orange light).",
+      busy: "A request is already in progress.", fail: "The PS5 did not answer. Try again." }
+  }[L === T.pt ? "pt" : "en"];
+  const power = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3v9"/><path d="M6.3 7.2a8 8 0 1 0 11.4 0"/></svg>';
+  const row = document.createElement("div"); row.className = "power-row";
+  row.innerHTML = `<button class="power-btn" type="button" id="powerOpen">${power}<span></span></button>`;
+  row.querySelector("span").textContent = P.button;
+  document.querySelector("main").append(row);
+  $("powerTitle").textContent = P.title; $("powerText").textContent = P.text; $("powerNote").textContent = P.note;
+  $("powerBack").textContent = P.back; $("powerRest").textContent = P.rest; $("powerOff").textContent = P.off;
+  const buttons = [$("powerRest"), $("powerOff")];
+  function openPower() {
+    const n = jobs.filter((j) => ["downloading", "connecting", "verifying"].includes(j.state)).length;
+    $("powerWarn").textContent = n ? P.warnN.replace("{n}", n) : P.warn;
+    $("powerMsg").textContent = ""; $("powerMsg").className = "msg"; $("powerBack").textContent = P.back;
+    for (const b of buttons) { b.hidden = false; b.disabled = false; }
+    $("powerSheet").hidden = false;
+    $("powerBack").focus();
+  }
+  async function send(action) {
+    for (const b of buttons) b.disabled = true;
+    $("powerMsg").className = "msg"; $("powerMsg").textContent = P.sending;
+    // Demo (?demo ou arquivo local): so mostra o resultado, sem chamar nada.
+    const r = DEMO ? { status: 200, data: { ok: true } } : await api("POST", "/api/power", { action }).catch(() => ({ status: 0, data: {} }));
+    if (r.status === 401) { $("powerSheet").hidden = true; session = ""; lockButton(); pending = openPower; openPin(); return; }
+    if (r.status !== 200) { $("powerMsg").textContent = r.status === 409 ? P.busy : P.fail; for (const b of buttons) b.disabled = false; return; }
+    $("powerMsg").className = "msg done"; $("powerMsg").textContent = action === "rest" ? P.restDone : P.offDone;
+    for (const b of buttons) b.hidden = true;
+    $("powerBack").textContent = P.close;
+  }
+  $("powerOpen").onclick = () => guarded(openPower);
+  $("powerBack").onclick = () => { $("powerSheet").hidden = true; };
+  $("powerRest").onclick = () => send("rest");
+  $("powerOff").onclick = () => send("off");
+})();
+</script>
 </body>
 </html>

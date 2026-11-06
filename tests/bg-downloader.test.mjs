@@ -715,3 +715,42 @@ test('glibren.8: downloads simultaneos pelo celular: valem na hora, gravados, o 
   assert.equal((await call(base, 'POST', '/config', { concurrency: 2 })).data.concurrencyBy, 'app');
   await stop(child);
 });
+
+// ---- glibren: desligar o PS5 / modo de repouso pela pagina do celular (POST /api/power) ----
+
+test('energia pelo celular: sem sessao 401; com sessao desliga/repousa depois de responder (no PC so anota); um pedido por vez', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const powerFile = path.join(base, 'power.txt');
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_POWER_FILE: powerFile, BGDL_NOTIFY_FILE: path.join(base, 'notify.txt') });
+  await up(base);
+  await pageUp();
+  const powered = () => (existsSync(powerFile) ? readFileSync(powerFile, 'utf8').split('\n').filter(Boolean) : []);
+  // Sem sessao (e sem PIN definido): nada acontece.
+  assert.equal((await page('/api/power', { method: 'POST', body: { action: 'off' } })).status, 401);
+  assert.equal((await page('/api/power', { method: 'POST', body: { action: 'off' }, session: '0'.repeat(32) })).status, 401);
+  assert.equal((await page('/api/power', { method: 'GET' })).status, 404, 'GET nunca desliga (pre-carregamento do navegador)');
+  assert.equal((await call(base, 'POST', '/config', pinConfig())).status, 200);
+  const { session } = (await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data;
+  assert.ok(session);
+  assert.equal((await page('/api/power', { method: 'POST', body: { action: 'explodir' }, session })).status, 400);
+  assert.equal((await page('/api/power', { method: 'POST', session })).status, 400, 'sem corpo');
+  // Com sessao: 200 na hora, e a chamada so vem depois do atraso (a resposta sai antes).
+  assert.equal((await page('/api/power', { method: 'POST', body: { action: 'rest' }, session })).status, 200);
+  assert.equal((await page('/api/power', { method: 'POST', body: { action: 'off' }, session })).status, 409, 'um pedido por vez');
+  assert.deepEqual(powered(), [], 'ainda nao: espera a resposta sair');
+  for (let i = 0; i < 80 && !powered().length; i++) await wait(100);
+  assert.deepEqual(powered(), ['rest']);
+  // Repouso: o processo segue vivo e aceita outro pedido.
+  assert.equal((await page('/api/status')).status, 200);
+  assert.equal((await page('/api/power', { method: 'POST', body: { action: 'off' }, session })).status, 200);
+  for (let i = 0; i < 80 && powered().length < 2; i++) await wait(100);
+  assert.deepEqual(powered(), ['rest', 'off']);
+  const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+  assert.match(log, /celular: pedido de energia: modo de repouso/);
+  assert.match(log, /energia: desligar \(pedido pelo celular\); gravando a fila e o disco/);
+  assert.match(log, /energia: desligar -> 0x00000000/);
+  assert.ok(existsSync(path.join(base, 'state/jobs.json')), 'a fila foi gravada antes');
+  assert.match(readFileSync(path.join(base, 'notify.txt'), 'utf8'), /desligando o PS5/);
+  await stop(child);
+});
