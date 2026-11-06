@@ -591,14 +591,22 @@ body.fopen{overflow:hidden}
   .vids{grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))}
   .shot{flex-basis:70%}
 }
-/* glibren.10: deitado, as abas e a busca dividem uma linha: sobra altura para os jogos */
+/* glibren.10: deitado, na biblioteca, as abas e a busca dividem uma linha e os filtros abertos ocupam a largura
+   toda em duas linhas (botoes; listas lado a lado): sobra altura para os jogos */
 @media (orientation:landscape) and (max-height:520px){
-  .pinned{display:flex;flex-wrap:wrap;align-items:flex-start}
-  .pinned>*{flex:1 1 100%;min-width:0}
-  .pinned>.tabs{flex:0 1 340px;margin-right:0}
-  .pinned>.libbar{flex:1 1 300px;margin-left:10px}
-  .libbar input{min-height:38px;padding-top:6px;padding-bottom:6px}
-  .libbar .lock{min-height:38px}
+  body.lib .pinned{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);align-items:start}
+  body.lib .pinned>*{grid-column:1/-1;min-width:0}
+  body.lib .pinned>.tabs{grid-column:1;margin-right:0}
+  body.lib .pinned>.libbar{display:contents}
+  body.lib .libbar>.srch{grid-column:2;margin:0 max(var(--pad),env(safe-area-inset-right)) 6px 10px}
+  body.lib .libbar input{min-height:38px;padding-top:6px;padding-bottom:6px}
+  body.lib .libbar .lock{min-height:38px}
+  body.lib .libbar>.filters{grid-column:1/-1;margin:0 max(var(--pad),env(safe-area-inset-right)) 8px max(var(--pad),env(safe-area-inset-left));flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:8px 10px;max-height:none;overflow:visible}
+  body.lib .filters .chips{flex:0 1 auto;gap:5px}
+  body.lib .filters .chip{min-height:30px;padding:3px 9px;font-size:13px}
+  body.lib .filters .sel{flex:1 1 100%;grid-template-columns:repeat(3,minmax(0,1fr))}
+  body.lib .filters .sel select{min-height:34px}
+  body.lib .filters .sel select:last-child{grid-column:auto}
 }
 @media (orientation:landscape) and (max-height:520px){ .tabs{margin-bottom:6px} .tabs button{min-height:30px} .filters{max-height:60vh} .fhero{display:none} .fhero:not([hidden])+.fbody{margin-top:0} }
 @media (prefers-reduced-motion:reduce){ .cv img,.shot img,.fhero img{transition:none} }
