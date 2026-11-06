@@ -40,6 +40,9 @@
 //     e no /jobs; o app adota o numero do celular (adoptConcurrency -> Configuracoes) uma vez por stamp, antes de mandar
 //     o seu, e nao o sobrescreve. As conexoes por download escolhidas no celular ficam no payload (connectionsSet), que
 //     as aplica ao job do mesmo item da fila (a "key", que agora vai tambem no POST /jobs).
+//   - glibren.12: a conversao para .exfat (download-queue.js queueConversion) roda no payload: convert(request) manda
+//     POST /convert e acompanha GET /convert (progresso, fim, erro com codigo); cancel() manda /convert/<id>/cancel. A
+//     mesma chave (o id do item da fila) de novo acompanha a que ja existe (o app reabriu com ela em andamento).
 //   - glibren: a Biblioteca TorBox na pagina do celular (POST /api/library/add no payload) deixa pedidos no payload
 //     (marcadores "waiting-app" com "library" no GET /jobs). Com o app aberto, a cada requestsMs, cada pedido vai a fila
 //     (onLibraryRequest -> phone-library.js) e sai do payload (forget); se a fila recusar, o motivo volta (refuse).
@@ -745,6 +748,68 @@ import { loadList, saveList } from './saved.js';
       }, requestsMs);
       watch?.unref?.();
     }
+    // glibren.12: a conversao para .exfat no payload. Devolve uma tarefa { subscribe, done, cancel, snapshot } como as de
+    // download: o progresso ({state, written, total}) a cada pollMs, `done` com a conversao pronta, ou falha com o erro
+    // dela ("space: ...", "not-direct: ...": download-queue.js trata pelo codigo). O payload sumindo no meio: o app o manda
+    // de novo e pergunta pela mesma chave (ele recomeca a conversao do zero, se a perdeu).
+    wrapper.convert = (request) => {
+      const listeners = /* @__PURE__ */ new Set();
+      let snapshot = { state: "queued", written: 0, total: null };
+      let id = null, token = "", cancelled = false;
+      const tell = (next) => {
+        snapshot = next;
+        for (const listener of listeners) listener(snapshot);
+      };
+      const start = async () => {
+        token = await ensurePayload();
+        if (!token) throw new Error("unavailable: the background helper (bg-downloader.elf) did not start");
+        const answer = await call(token, "POST", "/convert", request);
+        if (answer.status !== 200 && answer.status !== 201) throw new Error(`source: the helper refused the conversion (HTTP ${answer.status}: ${answer.data?.error ?? ""})`);
+        id = answer.data.id;
+        log(`${request.name}: conversion to .exfat ${answer.data.attached ? "followed again" : "handed to the payload"} (${id})`);
+      };
+      const done = (async () => {
+        await start();
+        let misses = 0;
+        for (; ; ) {
+          if (cancelled) call(token, "POST", `/convert/${id}/cancel`).catch(() => {});
+          await wait(pollMs);
+          let item = null;
+          try {
+            const answer = await call(token, "GET", "/convert");
+            if (answer.status !== 200) throw new Error(`HTTP ${answer.status}`);
+            item = (answer.data?.conversions ?? []).find((entry) => entry.id === id) ?? null;
+            misses = 0;
+          } catch (problem) {
+            // O payload caiu ou foi trocado: manda de novo e pergunta pela chave (no maximo ~30 tentativas seguidas).
+            if (++misses > 30) throw new Error(`unavailable: the background helper stopped answering (${problem?.message ?? problem})`);
+            await start().catch(() => {});
+            continue;
+          }
+          if (!item) {
+            await start();
+            continue;
+          }
+          tell({ state: item.state, written: Number(item.written) || 0, total: Number(item.total) || null });
+          if (item.state === "done") return item;
+          if (item.state === "failed") throw new Error(item.error || "write: the conversion failed");
+          if (item.state === "cancelled") throw Object.assign(new Error("Conversion cancelled."), { name: "AbortError" });
+        }
+      })();
+      return {
+        subscribe(listener) {
+          listeners.add(listener);
+          listener(snapshot);
+          return () => listeners.delete(listener);
+        },
+        done,
+        snapshot: () => snapshot,
+        cancel() {
+          cancelled = true;
+          if (id && token) call(token, "POST", `/convert/${id}/cancel`).catch(() => {});
+        }
+      };
+    };
     current = wrapper;
     return wrapper;
   }

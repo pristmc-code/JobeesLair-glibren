@@ -9,7 +9,8 @@ import { t } from '../i18n/core.js';
   var TONE = { downloading: "accent", preparing: "accent", installed: "good", played: "good", wontStart: "bad" };
   // The queue's states by stage, and the note each one adds (null: none).
   var DOWNLOADING = { queued: "queued", resolving: null, connecting: null, downloading: null, pausing: "pausing", paused: "paused", failed: "failed", "awaiting-browser": "browser" };
-  var PREPARING = { verifying: "verifying", extracting: "extracting", installing: "installing", downloaded: "waitingShadowMount", "installer-required": "installPackage", "extraction-required": "unpack", extracted: "notAGame", "file-downloaded": "notAGame", removing: "removing" };
+  // glibren.12: "converting" (to .exfat, in the background payload).
+  var PREPARING = { verifying: "verifying", extracting: "extracting", converting: "converting", installing: "installing", downloaded: "waitingShadowMount", "installer-required": "installPackage", "extraction-required": "unpack", extracted: "notAGame", "file-downloaded": "notAGame", removing: "removing" };
   /**
    * `job`: a queue snapshot (its `launch` is what ShadowMount's log said about the title's last launch).
    * Returns { stage, icon, tone ("accent" | "good" | "bad"), note (an i18n key or null), action }:

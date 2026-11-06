@@ -355,12 +355,15 @@ async function refresh() {
   try {
     const r = await api("GET", "/api/status");
     if (r.status !== 200 || !Array.isArray(r.data.jobs)) throw new Error();
-    jobs = r.data.jobs || []; misses = 0; pinSet = r.data.pinSet !== false;
+    jobs = r.data.jobs || []; misses = 0; pinSet = r.data.pinSet !== false; lastStatus = r.data;
     limit = Number(r.data.limit) || 0; maxLimit = Number(r.data.maxLimit) || 4; limitSet = r.data.limitSet === true; maxConns = Number(r.data.maxConnections) || 64;
     $("status").className = "status on"; $("statusText").textContent = L.online;
   } catch { if (++misses >= 3) { $("status").className = "status"; $("statusText").textContent = L.offline; } }
   render();
+  // glibren.12: as conversoes para .exfat e o BACKUP (bloco mais abaixo).
+  if (window.convHook) window.convHook(lastStatus);
 }
+let lastStatus = null;
 lockButton(); $("statusText").textContent = L.connecting;
 // Dentro do APK Jobe Controle: engrenagem para trocar o IP do PS5.
 if (window.JobeApp) { $("gear").hidden = false; $("gear").onclick = () => window.JobeApp.configurar(); }
@@ -435,6 +438,135 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
   $("powerBack").onclick = () => { $("powerSheet").hidden = true; };
   $("powerRest").onclick = () => send("rest");
   $("powerOff").onclick = () => send("off");
+})();
+</script>
+<!-- glibren.12: conversao para .exfat (o andamento, vindo do /api/status) e a pasta BACKUP (os originais guardados:
+     ver o tamanho e apagar por jogo, com o PIN). Bloco separado; usa api/guarded/openPin/session/size/nf da pagina. -->
+<style>
+.convlist{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
+.job.conv .tag{background:var(--panel2)}
+.job.conv.done .tag{color:var(--good)}
+.backup-row{display:flex;justify-content:center;margin:4px 0 8px}
+.backup-btn{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:6px 14px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--subtle);font-size:13.5px;cursor:pointer;max-width:100%}
+.backup-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bk-list{display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow-y:auto;margin:8px 0}
+.bk-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.bk-item b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.bk-item small{color:var(--subtle);grid-column:1}
+.bk-item .row{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
+.bk-note{font-size:13px;color:var(--subtle)}
+</style>
+<div class="sheet" id="bkSheet" hidden>
+  <div class="dialog">
+    <h2 id="bkTitle"></h2>
+    <p class="bk-note" id="bkText"></p>
+    <div class="bk-list" id="bkList"></div>
+    <div class="msg" id="bkMsg"></div>
+    <div class="row"><button class="btn" type="button" id="bkBack"></button></div>
+  </div>
+</div>
+<script>
+"use strict";
+(() => {
+  const C = {
+    pt: { converting: "Convertendo para EXFAT", verifying: "Conferindo o EXFAT", queued: "Na fila para EXFAT", done: "Pronto (EXFAT)", failed: "Conversão falhou",
+      errors: { space: "Falta espaço no disco para o .exfat.", "not-direct": "Não deu para converter direto do arquivo compactado: a Jobee'sLair extrai e converte.",
+        "not-a-game": "Não é o jogo (atualização ou DLC): fica como veio.", source: "Não deu para ler os arquivos do jogo.", write: "Não deu para gravar o .exfat.", verify: "O .exfat gravado não conferiu." },
+      openApp: "Abra a Jobee'sLair para tentar de novo ou usar sem converter.",
+      button: "Pasta BACKUP: {n} jogo(s), {s}", buttonEmpty: "Pasta BACKUP: vazia", title: "Pasta BACKUP",
+      text: "Os arquivos originais dos jogos convertidos para .exfat. Ficam até você apagar; apagar não mexe no jogo já convertido.",
+      empty: "Nada no BACKUP.", del: "Apagar", confirm: "Apagar o original de \"{g}\" ({s})? Não dá para desfazer.", yes: "Sim, apagar", no: "Não",
+      back: "Fechar", busy: "Esse original ainda está sendo convertido.", fail: "Não deu para apagar. Tente de novo.", files: "{n} arquivo(s)" },
+    en: { converting: "Converting to EXFAT", verifying: "Checking the EXFAT", queued: "Queued for EXFAT", done: "Ready (EXFAT)", failed: "Conversion failed",
+      errors: { space: "Not enough space on the drive for the .exfat.", "not-direct": "It could not be converted straight from the archive: Jobee'sLair extracts and converts it.",
+        "not-a-game": "Not the game (an update or DLC): it stays as it came.", source: "The game's files could not be read.", write: "The .exfat could not be written.", verify: "The written .exfat did not check out." },
+      openApp: "Open Jobee'sLair to try again or use it without converting.",
+      button: "BACKUP folder: {n} game(s), {s}", buttonEmpty: "BACKUP folder: empty", title: "BACKUP folder",
+      text: "The original files of the games converted to .exfat. They stay until you delete them; deleting does not touch the converted game.",
+      empty: "Nothing in BACKUP.", del: "Delete", confirm: "Delete the original of \"{g}\" ({s})? This cannot be undone.", yes: "Yes, delete", no: "No",
+      back: "Close", busy: "That original is still being converted.", fail: "It could not be deleted. Try again.", files: "{n} file(s)" }
+  }[L === T.pt ? "pt" : "en"];
+  const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+  const demoConv = [{ id: "c1", name: "Astro Bot", state: "converting", written: 18.2 * GB, total: 41.7 * GB, error: "" }, { id: "c2", name: "Stellar Blade", state: "done", written: 33.4 * GB, total: 33.4 * GB, error: "" }];
+  let demoBackup = [{ root: "/mnt/usb0", name: "Stellar Blade", bytes: 31.9 * GB, files: 12 }, { root: "/mnt/usb0", name: "Returnal", bytes: 58.2 * GB, files: 1 }];
+  let backup = { games: [], totalBytes: 0 }, confirmingBk = null;
+  const list = document.createElement("div"); list.className = "convlist dlonly";
+  $("list").before(list);
+  const row = document.createElement("div"); row.className = "backup-row dlonly";
+  row.innerHTML = '<button class="backup-btn" type="button" id="bkOpen"><span></span></button>';
+  $("foot").before(row);
+  $("bkTitle").textContent = C.title; $("bkText").textContent = C.text; $("bkBack").textContent = C.back;
+  function why(error) {
+    const code = /^([a-z-]+):/.exec(error || "")?.[1];
+    return code && C.errors[code] ? C.errors[code] : error || "";
+  }
+  function renderConversions(items) {
+    list.textContent = "";
+    for (const c of items) {
+      const pct = c.total ? Math.min(100, c.written / c.total * 100) : 0;
+      const el = document.createElement("article"); el.className = `job conv ${c.state}`;
+      const label = C[c.state] || c.state;
+      el.innerHTML = `<div class="top"><div class="name"></div><span class="tag"></span></div><div class="bar"><i style="width:${c.state === "done" ? 100 : pct}%"></i></div><div class="nums"></div>`;
+      el.querySelector(".name").textContent = c.name;
+      el.querySelector(".tag").textContent = c.state === "converting" ? `${label} ${nf(pct, 0)}%` : label;
+      el.querySelector(".nums").textContent = c.total ? `${size(c.written || 0)} ${L.of} ${size(c.total)}` : "";
+      if (c.state === "failed") { const e = document.createElement("div"); e.className = "err"; e.textContent = `${why(c.error)} ${C.openApp}`; el.append(e); }
+      list.append(el);
+    }
+  }
+  function renderButton() {
+    const n = backup.games.length;
+    $("bkOpen").querySelector("span").textContent = n ? fill(C.button, { n, s: size(backup.totalBytes) }) : C.buttonEmpty;
+  }
+  async function loadBackup() {
+    const r = DEMO ? { status: 200, data: { games: demoBackup, totalBytes: demoBackup.reduce((s, g) => s + g.bytes, 0) } } : await api("GET", "/api/backup").catch(() => ({ status: 0, data: {} }));
+    if (r.status === 200 && Array.isArray(r.data.games)) backup = { games: r.data.games, totalBytes: Number(r.data.totalBytes) || 0 };
+    renderButton();
+    if (!$("bkSheet").hidden) renderSheet();
+  }
+  function renderSheet() {
+    const box = $("bkList"); box.textContent = "";
+    if (!backup.games.length) { const e = document.createElement("div"); e.className = "bk-note"; e.textContent = C.empty; box.append(e); return; }
+    for (const g of backup.games) {
+      const item = document.createElement("div"); item.className = "bk-item";
+      item.innerHTML = '<b></b><button class="btn danger" type="button" data-d></button><small></small>';
+      item.querySelector("b").textContent = g.name;
+      item.querySelector("small").textContent = `${size(g.bytes)} · ${fill(C.files, { n: g.files })} · ${g.root}`;
+      const del = item.querySelector("[data-d]"); del.textContent = C.del;
+      const key = `${g.root}/${g.name}`;
+      if (confirmingBk === key) {
+        del.remove();
+        const c = document.createElement("div"); c.className = "row";
+        c.innerHTML = '<button class="btn" type="button" data-n></button><button class="btn solid-danger" type="button" data-y></button>';
+        c.querySelector("[data-n]").textContent = C.no; c.querySelector("[data-y]").textContent = C.yes;
+        c.querySelector("[data-n]").onclick = () => { confirmingBk = null; renderSheet(); };
+        c.querySelector("[data-y]").onclick = () => remove(g);
+        const q = document.createElement("small"); q.textContent = fill(C.confirm, { g: g.name, s: size(g.bytes) });
+        item.append(q, c);
+      } else {
+        del.onclick = () => guarded(() => { confirmingBk = key; $("bkSheet").hidden = false; renderSheet(); });
+      }
+      box.append(item);
+    }
+  }
+  async function remove(g) {
+    confirmingBk = null;
+    $("bkMsg").textContent = "";
+    let r;
+    if (DEMO) { demoBackup = demoBackup.filter((x) => x !== g); r = { status: 200 }; }
+    else r = await api("POST", "/api/backup/delete", { root: g.root, name: g.name }).catch(() => ({ status: 0, data: {} }));
+    if (r.status === 401) { session = ""; lockButton(); $("bkSheet").hidden = true; pending = () => { $("bkSheet").hidden = false; remove(g); }; openPin(); return; }
+    if (r.status !== 200) $("bkMsg").textContent = r.status === 409 ? C.busy : C.fail;
+    await loadBackup();
+  }
+  $("bkOpen").onclick = () => { confirmingBk = null; $("bkMsg").textContent = ""; $("bkSheet").hidden = false; renderSheet(); loadBackup(); };
+  $("bkBack").onclick = () => { $("bkSheet").hidden = true; confirmingBk = null; };
+  // A pagina chama a cada atualizacao (refresh) com o que o /api/status trouxe.
+  let ticks = 0;
+  window.convHook = (data) => {
+    renderConversions(DEMO ? demoConv : (data?.conversions || []).filter((c) => c.state !== "cancelled"));
+    if (ticks++ % 15 === 0) loadBackup(); // o BACKUP muda pouco: a cada ~30 s (e ao abrir a janela)
+  };
 })();
 </script>
 <!-- glibren: Biblioteca TorBox (a lista de jogos confirmados no TorBox que o app monta): ver, filtrar e incluir downloads.

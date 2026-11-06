@@ -25,7 +25,8 @@
       "source": "native/bg_downloader.c",
       "name": "bg-downloader.elf",
       "libs": ["-lSceUserService", "-lSceSystemService"],
-      "network": true
+      "network": true,
+      "archives": true
     }
   ],
   "filesystemAccess": "console",

@@ -32,6 +32,12 @@ test('a pagina embutida: fala so com a mesma origem, tem o aviso de PIN e o modo
   assert.match(page, /has\("demo"\)/);
 });
 
+test('glibren.12: a pagina mostra a conversao para .exfat e a pasta BACKUP (apagar com o PIN, confirmacao na pagina)', () => {
+  const page = readFileSync(embed.PAGE, 'utf8');
+  for (const piece of ['/api/backup', '/api/backup/delete', 'window.convHook', 'Convertendo para EXFAT', 'Pronto (EXFAT)', 'Converting to EXFAT', 'Ready (EXFAT)', 'Pasta BACKUP', 'guarded(() => { confirmingBk', '"not-direct"', 'errors: { space:']) assert.ok(page.includes(piece), piece);
+  assert.ok(!/\bconfirm\(|\balert\(/.test(page), 'sem caixa nativa do navegador');
+});
+
 test('phone-monitor: ligado por padrao, PIN guardado so como sal + SHA-256, configuracao para o payload', () => {
   assert.equal(monitor.phoneMonitorOn(), true);
   assert.deepEqual(monitor.phoneMonitorConfig(), { monitor: true, pinSalt: '', pinHash: '' });

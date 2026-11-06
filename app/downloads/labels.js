@@ -13,6 +13,7 @@ import { COMPLETE } from '../state/download-queue.js';
     "verifying",
     "pausing",
     "extracting",
+    "converting",
     "extractQueued",
     "finishing",
     "extracted",

@@ -30,6 +30,7 @@ import { debridStatus, setAllDebridKey, setTorBoxKey, testAllDebrid, testTorBox,
 import { HOMEBREW_ONLY } from '../edition.js';
 import { LIMITS as SPEED_LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
+import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
 import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
@@ -60,7 +61,7 @@ import { setNavigationHaptics, useNavigationHaptics } from './haptics.js';
 import { onStatusLight, setStatusLight, statusLightOn } from './lightBar.js';
 import { logical } from './scale.js';
 import { PRESETS, presetOf, useActiveTheme } from './themes.js';
-import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, useIsFocused } from '@ps5-react/core';
+import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, useIsFocused } from '@ps5-react/core';
 
   var CARD = { gap: 16, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, padding: 34 };
   var THUMB = { type: "tween", duration: 0.18, ease: "easeOut" };
@@ -386,12 +387,56 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       }, root ?? "auto")) })
     ] });
   }
+  // glibren.12: the BACKUP folder (the original files of the games converted to .exfat): how much it holds on every
+  // drive and, opened, each game; a game pressed twice (within 3 s, as a card's cancel) has its original deleted.
+  // A summary read when the card shows and on each open; nothing native asks.
+  function BackupRow({ roots }) {
+    const t2 = useT();
+    const [open, setOpen] = (0, useState)(false);
+    const [found, setFound] = (0, useState)({ games: [], totalBytes: 0 });
+    const [armed, setArmed] = (0, useState)(null);
+    const [problem, setProblem] = (0, useState)("");
+    const refresh = () => {
+      try {
+        setFound(listBackup(FileSystem, roots));
+      } catch (error) {
+        setProblem(error.message);
+      }
+    };
+    (0, useEffect)(refresh, [roots.join("|")]);
+    (0, useEffect)(() => {
+      if (!armed) return void 0;
+      const timer = setTimeout(() => setArmed(null), 3e3);
+      return () => clearTimeout(timer);
+    }, [armed]);
+    const summary = found.games.length ? t2("settings.backupSummary", { count: found.games.length, size: formatBytes(found.totalBytes) }) : t2("settings.backupEmpty");
+    const remove = (game) => {
+      setArmed(null);
+      setProblem("");
+      deleteBackup(FileSystem, game.root, game.name, (path) => downloadQueue().readsFrom?.(path) ?? false).then(refresh, (error) => setProblem(error.busy ? t2("settings.backupBusy") : t2("settings.backupFailed", { error: error.message })));
+    };
+    return jsxs(View, { children: [
+      jsx(Row, { focusKey: "settings:backup", name: t2("settings.backup"), detail: summary, hint: t2("settings.backupDetail"), end: jsx(Icon, { name: open ? "chevronUp" : "chevronDown", color: colors.muted }), onPress: () => {
+        setOpen(!open);
+        refresh();
+      } }),
+      ...open ? found.games.map((game) => jsx(Row, {
+        focusKey: `settings:backup:${game.path}`,
+        name: game.name,
+        detail: armed === game.path ? t2("settings.backupConfirm", { size: formatBytes(game.bytes) }) : `${formatBytes(game.bytes)} \xB7 ${driveName(game.root)}`,
+        end: jsx(Icon, { name: armed === game.path ? "delete" : "x", color: armed === game.path ? "#f87171" : colors.muted }),
+        onPress: () => armed === game.path ? remove(game) : setArmed(game.path)
+      }, game.path)) : [],
+      open && problem ? jsx(Callout, { tone: "error", children: problem }) : null
+    ] });
+  }
   // Drives, the speed limit and whether a download in parts opens the browser for its next part by itself.
   function DownloadsCard({ onPhonePin }) {
     const t2 = useT();
     const drives = useDrives();
     const autoParts = useAutoContinueParts();
     const background = useBackgroundDownloads();
+    const convertExfat = useConvertToExfat();
     const phone = usePhoneMonitor();
     const phoneHint = !phone.on ? t2("settings.phoneMonitorDetail") : phone.address ? t2("settings.phoneMonitorAddress", { url: phone.address }) : t2("settings.phoneMonitorNoAddress");
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
@@ -402,6 +447,9 @@ import { FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, u
       // MODIFIED (glibren.5): the background helper's pause when the app closes (0 to 30 s), only with the background
       // downloads on (without them nothing downloads while the app is closed).
       background ? jsx(View, { style: { paddingVertical: 8 }, children: jsx(PauseOnCloseRow, {}) }) : null,
+      // glibren.12: PS5 games to .exfat (state/exfat-convert.js), and the BACKUP folder with the originals.
+      jsx(Row, { focusKey: "settings:convertExfat", name: t2("settings.convertExfat"), hint: t2("settings.convertExfatDetail"), end: jsx(Switch, { on: convertExfat }), onPress: () => setConvertToExfat(!convertExfat) }),
+      jsx(BackupRow, { roots: drives.roots }),
       // glibren: a pagina do celular (state/phone-monitor.js): ver os downloads do segundo plano e, com o PIN, controla-los.
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitor", name: t2("settings.phoneMonitor"), hint: phoneHint, end: /* @__PURE__ */ (0, jsx)(Switch, { on: phone.on }), onPress: () => setPhoneMonitor(!phone.on) }),
       phone.on ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitorPin", name: t2(phone.hasPin ? "settings.phoneMonitorPinChange" : "settings.phoneMonitorPin"), hint: t2(phone.hasPin ? "settings.phoneMonitorPinDetail" : "settings.phoneMonitorNoPin"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", color: colors.muted }), onPress: () => onPhonePin(phone.hasPin ? "change" : "create") }) : null,

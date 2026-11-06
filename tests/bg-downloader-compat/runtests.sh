@@ -7,7 +7,7 @@ R=$(cd "$D/../.." && pwd)
 T=${BGTEST_DIR:-/tmp/bg-downloader-compat}
 export BGTEST_DIR=$T
 mkdir -p $T
-clang-18 -std=gnu11 -O2 -g -Wall -Wextra -Werror -o $T/bgdl-linux $R/app/native/bg_downloader.c -lcurl -lcrypto -lpthread || exit 1
+clang-18 -std=gnu11 -O2 -g -Wall -Wextra -Werror -o $T/bgdl-linux $R/app/native/bg_downloader.c -lcurl -lcrypto -larchive -lpthread || exit 1
 for f in test_server.py run_tests.py native_dl.cpp; do cp $D/$f $T/$f; done
 cd $T
 if [ ! -x native_dl ] || [ native_dl.cpp -nt native_dl ]; then

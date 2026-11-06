@@ -127,8 +127,8 @@ def app_payloads(app, config):
         raise ValueError("payloads must be an array of at most 8 entries")
     built = []
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) - {"source", "name", "libs", "network"}:
-            raise ValueError("each payload needs source and name, and may list libs and network")
+        if not isinstance(entry, dict) or set(entry) - {"source", "name", "libs", "network", "archives"}:
+            raise ValueError("each payload needs source and name, and may list libs, network and archives")
         source, name, libs = entry.get("source"), entry.get("name"), entry.get("libs", [])
         if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,40}\.elf", name):
             raise ValueError("a payload name is a lowercase file name ending in .elf")
@@ -142,7 +142,11 @@ def app_payloads(app, config):
         network = entry.get("network", False)
         if not isinstance(network, bool):
             raise ValueError("payload network is true or false")
-        built.append((app / source, name, libs, network))
+        # glibren.12: "archives": true also links the pinned libarchive (with liblzma, libbz2, zstd, zlib) into the payload.
+        archives = entry.get("archives", False)
+        if not isinstance(archives, bool):
+            raise ValueError("payload archives is true or false")
+        built.append((app / source, name, libs, network, archives))
     return built
 
 

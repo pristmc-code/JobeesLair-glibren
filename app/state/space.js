@@ -10,7 +10,10 @@ import { formatBytes } from './size.js';
     // Downloaded, waiting for its turn to be extracted (download-queue.js's extraction lane): it will write about its
     // archive's size again (the size it unpacks to is known only once it starts).
     if (job2.state === "extracting" && job2.phase === "queued") return Math.max(0, job2.total ?? job2.release?.sizeBytes ?? 0);
-    const factor = extracts(job2) && job2.state !== "extracting" ? 2 : 1;
+    // glibren.12: one converted to .exfat writes the image too (about its size again): archives already counted twice,
+    // a PS5 package now too. A conversion running needs what it has still to write.
+    if (job2.state === "converting") return Math.max(0, (job2.total ?? job2.release?.sizeBytes ?? 0) - (job2.written || 0));
+    const factor = (extracts(job2) || job2.convertPlanned) && job2.state !== "extracting" ? 2 : 1;
     return Math.max(0, (job2.total ?? job2.release?.sizeBytes ?? 0) * factor - job2.written);
   }
   var SHOWN = 3;

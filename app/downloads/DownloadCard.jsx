@@ -53,7 +53,7 @@ import { serviceName } from '../state/debrid.js';
   }
   // MODIFIED (0.5.0 Pre Release 3): a download in parts waiting on the browser opens it from here ("Wait"
   // while it counts down to opening it by itself), not from the game page.
-  function primary({ state, error: error2, parts, autoOpenAt, aheadAt }, run, openGame, ready) {
+  function primary({ state, error: error2, parts, autoOpenAt, aheadAt, convert }, run, openGame, ready) {
     if (state === "awaiting-browser" && autoOpenAt) return { icon: "pause", label: "downloads.action.waitPart", onPress: () => run("waitForPart") };
     // 0.5.0 Pre Release 4: the next part's browser about to open while this one downloads.
     if (aheadAt && BUSY.includes(state)) return { icon: "pause", label: "downloads.action.waitPart", onPress: () => run("waitForPart") };
@@ -66,6 +66,8 @@ import { serviceName } from '../state/debrid.js';
     if (state === "paused") return { icon: "play", label: "downloads.action.resume", onPress: () => run("resume") };
     // 0.5.4: a refusal Retry would only meet again (an archive the console can't unpack): the game page,
     // whose button then opens the list of sources.
+    // glibren.12: a conversion to .exfat that stopped: try it again (and "Use without converting" beside it).
+    if (state === "failed" && convert) return { icon: "restart", label: "downloads.action.retryConvert", onPress: () => run("retryConversion") };
     if (state === "failed" && finalError(error2, Boolean(parts))) return { icon: "list", label: "download.otherSource.label", onPress: openGame };
     if (state === "failed") return { icon: "download", label: "downloads.action.retry", onPress: () => run("resume") };
     // 0.5.5 (GitHub issue #2): a lone download whose link expired opens its host's page from here too, where the
@@ -181,7 +183,7 @@ import { serviceName } from '../state/debrid.js';
     const background = useBackgroundOwner(job2.downloadDestination) && BUSY.includes(state);
     const shown = shownState(job2);
     const complete = COMPLETE.includes(state);
-    const moving = BUSY.includes(state) && state !== "pausing";
+    const moving = BUSY.includes(state) && state !== "pausing" || state === "converting";
     const ready = readinessOf(job2);
     const tone = toneOf(job2, ready);
     const openGame = () => onOpenGame(job2);
@@ -201,7 +203,7 @@ import { serviceName } from '../state/debrid.js';
     const problem = explained && job2.retryAt ? { ...explained, action: t2("downloads.retryingSoon") } : explained;
     // The file's own title id is another game's (a PKG's header, download-queue.js noteTitle): said after any problem.
     const mismatch = job2.titleMismatch ? t2("downloads.titleMismatch", { found: job2.titleMismatch, expected: job2.titleId }) : "";
-    const note = !problem && !mismatch && background ? t2("downloads.background.hint") : problem ? problem.action ? t2("downloads.problem", { title: problem.title, action: problem.action }) : problem.title : mismatch || (ready.action === "seeWhy" ? t2("ready.seeWhyHint") : state === "downloaded" ? job2.message || t2("downloads.installHint") : state === "installer-required" ? job2.message || "" : "");
+    const note = !problem && !mismatch && background ? t2("downloads.background.hint") : problem ? problem.action ? t2("downloads.problem", { title: problem.title, action: problem.action }) : problem.title : mismatch || (ready.action === "seeWhy" ? t2("ready.seeWhyHint") : state === "downloaded" ? job2.message || t2("downloads.installHint") : state === "installer-required" || state === "converting" ? job2.message || "" : "");
     const cdn = isCdnProvider(release.provider);
     return /* @__PURE__ */ (0, jsxs)(View, { style: { width: CARD_WIDTH, flexDirection: "row", borderRadius: radius.lg, roundedClip: true, borderWidth: 1, borderColor: within ? colors.glow : colors.line, backgroundColor: within ? colors.surface2 : colors.surface }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, gap: 18, padding: 28 }, children: [
@@ -235,6 +237,8 @@ import { serviceName } from '../state/debrid.js';
             // 0.5.4: at least 230 wide, wider for a longer label ("Choose another source"), never cut.
             main ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", icon: main.icon, label: t2(main.label), style: { minWidth: 230 }, autoFocus, focusKey: primaryKey(job2.id), ...focusOf("main"), onPress: main.onPress }) : null,
             /* @__PURE__ */ (0, jsx)(Button2, { variant: main ? "secondary" : "primary", icon: "chevronRight", label: t2("downloads.action.gamePage"), style: { width: 210 }, autoFocus: main ? false : autoFocus, focusKey: main ? `downloads-page:${job2.id}` : primaryKey(job2.id), ...focusOf("page"), onPress: openGame }),
+            // glibren.12: the game as it came (folder published, archive extracted or package installed), original kept.
+            state === "failed" && job2.convert ? jsx(Button2, { variant: "secondary", icon: "folder", label: t2("downloads.action.useWithoutConverting"), focusKey: `downloads-plain:${job2.id}`, ...focusOf("plain"), onPress: () => run(job2, "skipConversion") }) : null,
             background ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", size: "icon", icon: "download", focusKey: `downloads-takeover:${job2.id}`, ...focusOf("takeover"), onPress: () => void takeOverDownload(job2.downloadDestination) }) : null,
             /* @__PURE__ */ (0, jsx)(CancelButton, { id: job2.id, action: clearAction(state), run: (name) => run(job2, name), ...focusOf("cancel") })
           ] }),

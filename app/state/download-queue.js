@@ -6,6 +6,9 @@
 // captured from the browser (browser-links.js, viking-capture.js): Vikingfile by its file's name, any
 // other host by a file link that names the game's title id. The gamer passes the page's check and never
 // types the link; one that names no game is shown to them first. Typing it in stays as the fallback.
+// MODIFIED (glibren.12): a PS5 game becomes an .exfat when its download ends (in the background payload, bg_convert.c):
+// archives and PS5 packages download straight into <drive>/BACKUP/<game>/ (the original, kept until the player deletes
+// it), PS4 packages into <drive>/PS4/ and install as before. See state/exfat-convert.js and the "glibren.12" notes.
 // MODIFIED: every image of a set is tracked, payloads are checked before ShadowMount can see them, and a
 // title counts as installed once ShadowMount reports it installed and managed from files it can reach.
 
@@ -31,6 +34,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
 import { hostOf } from './download-tuning.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 import { mirrorsFor } from './download-mirrors.js';
+import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platformOf, PS4_FOLDER } from './exfat-convert.js';
 
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
   var BUSY = ["queued", ...ACTIVE];
@@ -213,6 +217,10 @@ import { mirrorsFor } from './download-mirrors.js';
     autoOpenMs = 10e3,
     // glibren: how many downloads run at once, 1 to 4 (state/simultaneous-downloads.js, Settings).
     concurrency = () => 1,
+    // glibren.12: whether PS5 games become .exfat (state/exfat-convert.js, Settings), and who converts: the background
+    // payload through downloads.convert (background-downloads.js) unless `converter` is given (tests).
+    convertExfat = () => false,
+    converter = null,
     // 0.5.4: told each launch learned from ShadowMount's log, (title, {outcome, verdict, format, fixed, backport}),
     // for the players' numbers (state/online.js launched).
     onLaunch = () => {},
@@ -228,6 +236,8 @@ import { mirrorsFor } from './download-mirrors.js';
     // glibren: the downloads running now, up to concurrency() at once: job -> its lane { job, task, cancel,
     // transferring, renewDue, streamed, host }. With one, this is the one active download the queue always had.
     const lanes = /* @__PURE__ */ new Map();
+    // glibren.12: the conversions to .exfat being followed: job -> the payload's task (runConversion).
+    const conversions = /* @__PURE__ */ new Map();
     const limit = () => {
       const count = concurrency();
       return Number.isInteger(count) && count >= 1 && count <= 4 ? count : 1;
@@ -724,7 +734,7 @@ import { mirrorsFor } from './download-mirrors.js';
     const launchOf = (job2) => job2.artifact?.nextAction === "shadowmount" && ["installed", "attention"].includes(job2.state) && launches[titleOf(job2)]?.outcome ? launches[titleOf(job2)] : null;
     const snapshot = () => jobs.map((job2) => ({ ...job2, launch: launchOf(job2), fixIt: fixes[titleOf(job2)] ?? null }));
     const emit2 = () => {
-      const busy = captures.size > 0 || jobs.some((job2) => BUSY.includes(job2.state));
+      const busy = captures.size > 0 || jobs.some((job2) => BUSY.includes(job2.state) || job2.state === "converting");
       if (busy !== awake2) {
         awake2 = busy;
         // The console's rest-mode timer is held off while the queue has work (ps5-react Power.keepAwake): said in
@@ -921,6 +931,11 @@ import { mirrorsFor } from './download-mirrors.js';
         console.log(`[download-queue] ${job2.id}: a finished ".binary" stays as it is: ${error2.message}`);
       }
     }
+    // glibren.12: a conversion running when the app closed went on in the payload: followed again (by the same key; the
+    // payload answers with the one it has, finished or not, or starts it over clean when it lost it).
+    Promise.resolve().then(() => {
+      for (const job2 of jobs) if (job2.state === "converting") void runConversion(job2);
+    });
     const find = (id) => {
       const job2 = jobs.find((item) => item.id === id);
       if (!job2) throw new Error("Download is no longer in the queue.");
@@ -1266,6 +1281,15 @@ import { mirrorsFor } from './download-mirrors.js';
         job2.bytesPerSecond = 0;
         delete job2.renewal;
         delete job2.reresolved;
+        // glibren.12: a PS5 game's archive goes straight into an .exfat, and a PS5 package too (both downloaded into BACKUP).
+        if (job2.convertPlanned && !job2.noConvert && !job2.output && job2.artifact.nextAction === "extraction-required") {
+          queueConversion(job2, { kind: "archive", sources: [job2.downloadDestination] });
+          return;
+        }
+        if (job2.convertPlanned && !job2.noConvert && job2.state === "installer-required") {
+          queueConversion(job2, { kind: "pkg", source: job2.downloadDestination });
+          return;
+        }
         // Its extraction waits its turn in the extraction lane; the next download starts meanwhile.
         if ((job2.artifact.nextAction === "extraction-required" || job2.output) && archives) {
           queueExtraction(job2);
@@ -1726,7 +1750,8 @@ import { mirrorsFor } from './download-mirrors.js';
       if (inner) {
         const destination = `${job2.output}-inner`;
         console.log(`[download-queue] ${job2.id}: the archive held another (${inner}); unpacking it to ${destination}`);
-        await Promise.all(files.flatMap((path) => [path, `${path}.complete`]).filter((path) => fs.exists(path)).map((path) => fs.removeAsync(path)));
+        // glibren.12: an original kept in BACKUP stays there.
+        if (!job2.backupDir) await Promise.all(files.flatMap((path) => [path, `${path}.complete`]).filter((path) => fs.exists(path)).map((path) => fs.removeAsync(path)));
         job2.state = "extracting";
         job2.written = 0;
         job2.total = null;
@@ -1788,18 +1813,32 @@ import { mirrorsFor } from './download-mirrors.js';
         job2.message = t("downloads.extractedTo", { path: job2.output });
         const packaged = (result.artifacts || []).filter((path) => /\.(pkg|fpkg)$/i.test(path));
         const folder = packaged.length ? null : gameFolder(job2.output);
-        if (packaged.length) {
+        // glibren.12: a PS5 game's package or folder becomes an .exfat (the extracted files are the work folder, deleted
+        // once it checks out); a PS4 game's packages go to <drive>/PS4/ and install as before.
+        const converting = job2.convertPlanned && !job2.noConvert && job2.role === "game";
+        const ps5Package = converting ? packaged.find((path) => platformOf({ name: path.slice(path.lastIndexOf("/") + 1), titleId: job2.titleId }) === "ps5" && !/back[\s_.-]*port|patch|update|dlc/i.test(path)) : null;
+        if (ps5Package) {
+          queueConversion(job2, { kind: "pkg", source: `${job2.output}/${ps5Package}`, work: job2.output });
+        } else if (packaged.length) {
           job2.packages = packaged.map((path) => `${job2.output}/${path}`);
+          if (job2.backupDir) job2.packages = placePs4Packages(job2, job2.packages);
           job2.state = "installer-required";
           job2.message = t("downloads.packagesExtracted", { path: job2.output });
+        } else if (folder && converting && fs.exists(`${folder}/sce_sys/param.json`)) {
+          queueConversion(job2, { kind: "dir", source: folder, work: job2.output });
         } else if (folder) {
           await publishFolder(job2, folder);
         }
       }
       change();
       try {
-        await Promise.all(files.flatMap((path) => [path, `${path}.complete`]).filter((path) => !inner || fs.exists(path)).map((path) => fs.removeAsync(path)));
-        if (job2.release.parts) await fs.removeAsync(setDirectory(job2));
+        // glibren.12: the original downloaded into BACKUP is kept there (until the player deletes it).
+        if (!job2.backupDir) {
+          await Promise.all(files.flatMap((path) => [path, `${path}.complete`]).filter((path) => !inner || fs.exists(path)).map((path) => fs.removeAsync(path)));
+          if (job2.release.parts) await fs.removeAsync(setDirectory(job2));
+        } else {
+          await Promise.all(files.map((path) => `${path}.complete`).filter((path) => fs.exists(path)).map((path) => fs.removeAsync(path)));
+        }
       } catch (error2) {
         console.log("[download-queue] archive not deleted:", error2.message);
         job2.message = `${job2.message} ${t("downloads.archiveNotDeleted", { error: error2.message })}`;
@@ -1865,7 +1904,8 @@ import { mirrorsFor } from './download-mirrors.js';
       streaming = streamed;
       return streamed;
     }
-    const setDirectory = (job2) => `${job2.root}/downloads/sets/${job2.release.filename}`;
+    // glibren.12: a set converted (or kept as the original) downloads its volumes into its BACKUP folder.
+    const setDirectory = (job2) => job2.backupDir || `${job2.root}/downloads/sets/${job2.release.filename}`;
     // 0.5.4: a "set" whose first part is a whole disk image lists images, not an archive's volumes: one catalog numbers
     // each copy of a game's .exfat as a part (DREDGE's "part 1" and "part 2" are the same PPSA09076.exfat, Cult of the
     // Lamb's are its two regions'). Unpacking them as one archive could only fail, after downloading every one. The
@@ -1939,7 +1979,8 @@ import { mirrorsFor } from './download-mirrors.js';
       const lane = lanes.get(job2);
       try {
         for (let index = 0; index < job2.parts.length; index++) {
-          if (!streamed && index > 0 && job2.parts[0].completed && fs.exists(job2.parts[0].destination)) streamed = lane.streamed = streamSet(job2);
+          // glibren.12: one converted straight from its volumes is not extracted while it downloads.
+          if (!streamed && !(job2.convertPlanned && !job2.noConvert) && index > 0 && job2.parts[0].completed && fs.exists(job2.parts[0].destination)) streamed = lane.streamed = streamSet(job2);
           job2.partIndex = index;
           const part = job2.parts[index];
           if (job2.state === "pausing") return;
@@ -2072,9 +2113,165 @@ import { mirrorsFor } from './download-mirrors.js';
         }
       }
       if (job2.state === "pausing") return;
+      // glibren.12: a PS5 game's volumes go straight into an .exfat (the payload reads them with libarchive).
+      if (job2.convertPlanned && !job2.noConvert && !streamed) {
+        queueConversion(job2, { kind: "archive", sources: job2.parts.map((part) => part.destination) });
+        return;
+      }
       // Its extraction (or the rest of the one running while it downloaded) goes on in the extraction lane.
       if (!archives) throw new Error("Archive extraction requires the updated PS5 React runtime.");
       queueExtraction(job2, streamed);
+    }
+
+    // ---- glibren.12: conversion to .exfat (state/exfat-convert.js; the payload converts, bg_convert.c) ----
+    const convertEngine = () => converter ?? (typeof downloads.convert === "function" ? downloads : null);
+    // The passwords an archive is tried with, as the extraction does: the catalog's, then the known ones (at most 8).
+    const archivePasswords = (job2) => [...new Set([archivePassword(job2.release), ...KNOWN_PASSWORDS].filter((value) => typeof value === "string" && value))].slice(0, 8);
+    // PS4 packages unpacked from an archive kept in BACKUP: into <drive>/PS4/, where ShadowMount never looks, to install.
+    function placePs4Packages(job2, paths) {
+      const directory = `${job2.root}/${PS4_FOLDER}`;
+      fs.mkdir(directory, { recursive: true });
+      return paths.map((path) => {
+        if (platformOf({ name: path.slice(path.lastIndexOf("/") + 1), titleId: job2.titleId }) !== "ps4") return path;
+        const name = path.slice(path.lastIndexOf("/") + 1);
+        let to = `${directory}/${name}`;
+        for (let n = 2; fs.exists(to) && n < 100; n++) to = `${directory}/${name.replace(/(\.[^.]*)?$/, ` (${n})$1`)}`;
+        fs.rename(path, to);
+        console.log(`[download-queue] ${job2.id}: PS4 package ${name} placed in ${to}`);
+        return to;
+      });
+    }
+    function queueConversion(job2, spec) {
+      const owned2 = (path) => jobs.some((other) => other !== job2 && [other.artifact?.destination, other.convert?.output].includes(path));
+      const kept = job2.convert?.output;
+      const output = kept && !fs.exists(kept) && !owned2(kept) ? kept : exfatOutput(job2.root, { titleId: job2.titleId, fallback: job2.release.filename }, (path) => fs.exists(path) || owned2(path));
+      job2.convert = { kind: spec.kind, ...spec.sources ? { sources: spec.sources } : { source: spec.source }, ...spec.work ? { work: spec.work } : {}, output };
+      job2.state = "converting";
+      job2.written = 0;
+      job2.total = null;
+      job2.bytesPerSecond = 0;
+      job2.error = "";
+      job2.message = t("downloads.convert.queued");
+      console.log(`[download-queue] ${job2.id}: converting (${spec.kind}) to ${output}`);
+      change();
+      void runConversion(job2);
+    }
+    async function runConversion(job2) {
+      if (conversions.has(job2) || job2.state !== "converting" || !job2.convert) return;
+      const spec = job2.convert;
+      const request = {
+        key: job2.id,
+        name: job2.title,
+        kind: spec.kind,
+        root: job2.root,
+        output: spec.output,
+        label: exfatLabel(job2.titleId),
+        work: spec.work || "",
+        ...spec.kind === "archive" ? { source: spec.sources[0], sources: spec.sources, passwords: archivePasswords(job2) } : { source: spec.source }
+      };
+      let task;
+      try {
+        const engine = convertEngine();
+        if (!engine) throw new Error("unavailable: converting needs the background helper (bg-downloader.elf)");
+        task = engine.convert(request);
+      } catch (error2) {
+        await conversionFailed(job2, error2);
+        change();
+        return;
+      }
+      conversions.set(job2, task);
+      const off = task.subscribe?.((progress) => {
+        if (job2.state !== "converting") return;
+        job2.written = progress.written || 0;
+        job2.total = progress.total || null;
+        job2.message = t(progress.state === "verifying" ? "downloads.convert.verifying" : progress.state === "converting" ? "downloads.convert.running" : "downloads.convert.queued");
+        emit2();
+      }) ?? (() => {});
+      try {
+        const result = await task.done;
+        await conversionDone(job2, result);
+      } catch (error2) {
+        await conversionFailed(job2, error2);
+      } finally {
+        off();
+        conversions.delete(job2);
+        try {
+          change();
+        } catch {
+          emit2();
+        }
+        pump();
+      }
+    }
+    async function conversionDone(job2, result) {
+      const output = job2.convert.output;
+      if (!fs.exists(output)) throw new Error(`write: ${output} is not on the drive`);
+      const size = fs.stat(output)?.size ?? result?.imageBytes ?? 0;
+      const work = job2.convert.work;
+      if (work && job2.output && (job2.output === work || job2.output.startsWith(`${work}/`))) delete job2.output;
+      job2.artifact = { ...job2.artifact, format: "exfat", directory: `${job2.root}/homebrew`, destination: output, images: [output], nextAction: "shadowmount" };
+      job2.payload = [{ path: output, size }];
+      delete job2.publishTo;
+      delete job2.packages;
+      job2.converted = { from: job2.convert.kind, at: Date.now() };
+      delete job2.convert;
+      job2.state = "downloaded";
+      job2.written = job2.total = size;
+      job2.bytesPerSecond = 0;
+      job2.message = t("downloads.convert.done");
+      console.log(`[download-queue] ${job2.id}: converted to ${output} (${size} bytes); the original stays in ${job2.backupDir ?? "its folder"}`);
+      notifications.show(t("downloads.notice.complete"), job2.title);
+      // ShadowMount+ is asked to scan now (the payload asks too), so the game shows without waiting for its next scan.
+      if (platform === "ps5") shadowRequest2("scan", { reset_attempts: false }).catch((error2) => console.log(`[download-queue] ShadowMount scan not asked: ${error2.message}`));
+    }
+    async function conversionFailed(job2, error2) {
+      const message = String(error2?.message || error2 || "");
+      if (job2.cancelling) return;
+      const spec = job2.convert ?? {};
+      const code = errorCode(message);
+      console.log(`[download-queue] ${job2.id}: conversion (${spec.kind}) did not finish (${code}): ${message}`);
+      // An archive that cannot go straight into the image is extracted from BACKUP, then its folder or package converted.
+      if (code === "not-direct" && spec.kind === "archive" && archives) {
+        delete job2.convert;
+        job2.message = t("downloads.convert.extractFirst");
+        queueExtraction(job2);
+        return;
+      }
+      // A package that is not the game itself (an update, a DLC) is used as it came.
+      if (code === "not-a-game" && spec.kind === "pkg") {
+        await useWithoutConverting(job2, spec);
+        return;
+      }
+      job2.state = "failed";
+      job2.convert = { ...spec, error: message };
+      job2.error = t(`downloads.convert.error.${code}`, { detail: errorDetail(message) });
+      job2.message = "";
+      job2.bytesPerSecond = 0;
+      notifications.show(t("downloads.notice.failed"), job2.title);
+    }
+    // "Use without converting": what the download would have become before glibren.12 (the original stays in BACKUP).
+    async function useWithoutConverting(job2, spec = job2.convert) {
+      delete job2.convert;
+      job2.noConvert = true;
+      job2.error = "";
+      if (spec.kind === "archive") {
+        if (!archives) throw new Error("Archive extraction requires the updated PS5 React runtime.");
+        delete job2.output;
+        queueExtraction(job2);
+        change();
+        pump();
+        return;
+      }
+      if (spec.kind === "dir") {
+        await publishFolder(job2, spec.source);
+        change();
+        return;
+      }
+      job2.packages = [spec.source];
+      job2.state = "installer-required";
+      job2.message = t("downloads.convert.asPackage");
+      change();
+      if (canInstall() && !heldPackage(job2)) await install(job2, {});
     }
     // ---- The extraction lane ----
     // The files an extraction unpacks: the set's volumes, or the one downloaded file.
@@ -2171,7 +2368,7 @@ import { mirrorsFor } from './download-mirrors.js';
       const unmarked = lost.filter((job2) => job2.error !== DELETED);
       for (const job2 of unmarked) job2.error = DELETED;
       if (unmarked.length) change();
-      return jobs.filter((job2) => job2.root === root2 && (BUSY.includes(job2.state) || job2.state === "paused") && !lost.includes(job2));
+      return jobs.filter((job2) => job2.root === root2 && (BUSY.includes(job2.state) || ["paused", "converting"].includes(job2.state)) && !lost.includes(job2));
     }
     function pump(first) {
       pumpExtract();
@@ -2772,7 +2969,10 @@ import { mirrorsFor } from './download-mirrors.js';
         const existing = jobs.find((job2) => job2.id === id);
         if (existing) return existing.id;
         if (release.unavailableReason) throw new Error(release.unavailableReason);
-        const artifact2 = artifactFor(release, root2);
+        // glibren.12: with the conversion on, archives and PS5 packages download into <drive>/BACKUP/<game>/ and PS4 packages
+        // into <drive>/PS4/ (state/exfat-convert.js destinationFor); images and everything with it off, as before.
+        const plan = destinationFor({ on: convertExfat(), role: roleOf(release), artifact: artifactFor(release, root2), release, root: root2, title: game.title, titleId: game.titleId || game.id, game, taken: (path) => fs.exists(path) || jobs.some((job2) => job2.backupDir === path) });
+        const artifact2 = plan.artifact;
         if (fs.exists(artifact2.destination)) throw new Error("Destination already exists. Choose another release or inspect the existing file.");
         if (jobs.some((job2) => job2.artifact.destination === artifact2.destination)) throw new Error("Another queued release owns this filename.");
         const staged = stagedPath(artifact2, root2);
@@ -2797,7 +2997,8 @@ import { mirrorsFor } from './download-mirrors.js';
         if (release.sizeBytes) {
           const pending2 = holding(root2);
           const held = orphan ? Math.min(fs.stat(partial)?.size || 0, release.sizeBytes) : 0;
-          const need = stillNeeded({ release, artifact: artifact2, total: release.sizeBytes, written: held });
+          // glibren.12: one converted to .exfat needs room for the image too (about its size again), said before it starts.
+          const need = stillNeeded({ release, artifact: artifact2, total: release.sizeBytes, written: held, convertPlanned: plan.convert });
           const free = fs.diskUsage(root2).free;
           const shortfall = spaceShortfall(root2, need, free, pending2);
           // `shortfall` on the error says how much more the drive needs, for Make Room to free it.
@@ -2822,7 +3023,9 @@ import { mirrorsFor } from './download-mirrors.js';
           state: "queued",
           written: 0,
           total: release.sizeBytes || null,
-          error: ""
+          error: "",
+          ...plan.backupDir ? { backupDir: plan.backupDir } : {},
+          ...plan.convert ? { convertPlanned: true } : {}
         });
         try {
           if (orphan) Object.assign(jobs.at(-1), { rootIdentity: storageIdentity(jobs.at(-1)), adopted: true });
@@ -2864,8 +3067,29 @@ import { mirrorsFor } from './download-mirrors.js';
       get installs() {
         return canInstall();
       },
+      /** glibren.12: "Try again" on a conversion that failed: it starts over (the payload deletes what it wrote). */
+      retryConversion(id) {
+        const job2 = find(id);
+        if (job2.state !== "failed" || !job2.convert) return;
+        const { error: _error, ...spec } = job2.convert;
+        queueConversion(job2, spec);
+      },
+      /** glibren.12: "Use without converting": the folder is published, the archive extracted or the package installed, as before. */
+      async skipConversion(id) {
+        const job2 = find(id);
+        if (job2.state !== "failed" || !job2.convert) return;
+        await useWithoutConverting(job2, job2.convert);
+      },
+      /** glibren.12: whether a conversion still reads something under `path` (a BACKUP folder about to be deleted). */
+      readsFrom(path) {
+        return jobs.some((job2) => job2.state === "converting" && [job2.convert?.source, ...job2.convert?.sources ?? []].some((item) => item && (item === path || item.startsWith(`${path}/`))));
+      },
       resume(id) {
         const job2 = find(id);
+        if (job2.state === "failed" && job2.convert) {
+          this.retryConversion(id);
+          return;
+        }
         if (job2.state !== "paused" && job2.state !== "failed") return;
         delete job2.reresolved;
         delete job2.retryAt;
@@ -2967,7 +3191,7 @@ import { mirrorsFor } from './download-mirrors.js';
         if (deletions.has(job2)) return deletions.get(job2);
         // A finished job, or one stopped part-way (paused, failed, waiting on a browser) whose partial and
         // extracted files would otherwise stay behind; one that is running is cancelled instead.
-        if (lanes.has(job2) || extractor2?.job === job2) throw new Error(t("downloads.deleteRunning"));
+        if (lanes.has(job2) || extractor2?.job === job2 || conversions.has(job2)) throw new Error(t("downloads.deleteRunning"));
         if (!DELETABLE.includes(job2.state)) throw new Error(t("downloads.deleteBusy"));
         if (moves.has(job2)) throw new Error(t("move.busy"));
         // Resolves with { note } (what the gamer should know, or null) once the files are gone and the task
@@ -3129,6 +3353,16 @@ import { mirrorsFor } from './download-mirrors.js';
       async cancel(id) {
         const job2 = find(id);
         if (COMPLETE.includes(job2.state) || job2.state === "removing") return;
+        // glibren.12: a conversion is stopped in the payload (its .part goes there), then the job goes as a stopped one;
+        // the original in BACKUP stays.
+        if (job2.state === "converting") {
+          job2.cancelling = true;
+          conversions.get(job2)?.cancel?.();
+          for (let tries = 0; tries < 300 && conversions.has(job2); tries++) await wait(100);
+          delete job2.cancelling;
+          job2.state = "failed";
+          delete job2.convert;
+        }
         if (lanes.has(job2)) {
           job2.cancelling = true;
           this.pause(id);

@@ -39,6 +39,8 @@
 // - Repouso: SIGCONT e troca de IP (checada a cada 1 s) reabrem o servidor e reiniciam as conexoes.
 //   Notificacao do sistema ao concluir/falhar. sceSystemServicePowerTick so com "powerTick": true no config.json
 //   (desligado por padrao: chamada do sistema nunca validada fora de um app).
+// - glibren.12: conversao dos jogos de PS5 para .exfat (POST /convert, uma por vez, continua com o app fechado) e o
+//   BACKUP dos originais na pagina do celular (GET /api/backup, POST /api/backup/delete): ver bg_convert.c.
 // - Ao concluir: imagens .exfat/.ffpkg/.ffpfs/.ffpfsc vao para publishTo (<disco>/homebrew/<nome>) se o app nao
 //   estiver aberto; o resto fica "aguardando o app" (extrair/instalar quando a Jobe abrir).
 // - Fechar a Jobe (glibren-fechar): o payload percebe o fechamento (sceLncUtilGetAppId a cada 1 s, como o
@@ -3115,10 +3117,14 @@ static int refuse_field(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 
+// glibren.12: conversao para .exfat (exfat_writer.c + pkg_source.c + bg_convert.c, no mesmo arquivo compilado).
+#include "bg_convert.c"
+
 static void route(int fd, Request* r) {
   if (!token_ok(r->token)) { respond_error(fd, 401, "missing or wrong token"); return; }
   // glibren.5: logo depois de um POST /bye, uma chamada atrasada do app nao o faz "voltar a falar".
   if (strcmp(r->path, "/bye") && mono_ms() - g_bye_ms >= BYE_GRACE_MS) g_last_app_ms = mono_ms();
+  if (conv_route(fd, r)) return; // glibren.12: /convert
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
     char body[512], ip[64];
     current_ip(ip, sizeof ip);
@@ -3553,7 +3559,9 @@ static void monitor_status(Buf* b) {
     buf_fmt(b, ",\"connections\":%u,\"connectionsSet\":%s}", j->placeholder && !j->connections_set ? 0 : job_target_locked(j),
             j->connections_set ? "true" : "false");
   }
-  buf_fmt(b, "],\"limit\":%d,\"maxLimit\":%d,\"maxConnections\":%d,\"limitSet\":%s,\"pinSet\":%s}", g_max_running, MAX_WORKERS, MAX_CONNS,
+  buf_str(b, "]");
+  conv_status_json(b); // glibren.12: as conversoes para .exfat
+  buf_fmt(b, ",\"limit\":%d,\"maxLimit\":%d,\"maxConnections\":%d,\"limitSet\":%s,\"pinSet\":%s}", g_max_running, MAX_WORKERS, MAX_CONNS,
           g_concurrency_remote ? "true" : "false", g_pin_hash[0] ? "true" : "false");
   pthread_mutex_unlock(&g_lock);
 }
@@ -4769,6 +4777,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library")) { monitor_library(fd, query); return; }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library/game")) { monitor_library_game(fd, query); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/library/add")) { monitor_library_add(fd, r); return; }
+  if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {
     monitor_send(fd, 200, "text/html; charset=utf-8", BG_MONITOR_HTML, BG_MONITOR_HTML_SIZE);
     return;
@@ -4969,6 +4978,7 @@ int main(void) {
   load_jobs();
   load_config();
   pthread_mutex_unlock(&g_lock);
+  conv_start(); // glibren.12: conversions.json (uma parada no meio recomeca limpa)
   logk_("downloads simultaneos: %d; ate %d conexoes somadas; modo quieto ao fechar o app: %lld s; powerTick: %s; %d job(s) no jobs.json",
         g_max_running, CONN_BUDGET, (long long)(g_quiet_ms / 1000), g_power_tick ? "ligado" : "desligado", g_job_count);
   pthread_t server, monitor, workers[MAX_WORKERS];
@@ -4979,6 +4989,9 @@ int main(void) {
   while (started < MAX_WORKERS && !spawn_thread(downloader_loop, NULL, &workers[started])) ++started;
   if (!started) { logf_("threads nao criadas"); return 1; }
   if (started < MAX_WORKERS) logf_("so %d trabalhadores criados", started);
+  pthread_t converter;
+  const int converter_started = !spawn_thread(conv_loop, NULL, &converter);
+  if (!converter_started) logf_("conversao para .exfat: thread nao criada");
   char ip[64] = "", last_ip[64] = "";
   current_ip(last_ip, sizeof last_ip);
   int64_t last_save = mono_ms();
@@ -5063,6 +5076,10 @@ int main(void) {
   pthread_cond_broadcast(&g_wake_downloader);
   pthread_mutex_unlock(&g_lock);
   for (int i = 0; i < started; ++i) pthread_join(workers[i], NULL);
+  pthread_mutex_lock(&g_conv_lock);
+  pthread_cond_broadcast(&g_conv_wake);
+  pthread_mutex_unlock(&g_conv_lock);
+  if (converter_started) pthread_join(converter, NULL);
   pthread_join(server, NULL);
   if (monitor_started) pthread_join(monitor, NULL);
   pthread_mutex_lock(&g_lock);

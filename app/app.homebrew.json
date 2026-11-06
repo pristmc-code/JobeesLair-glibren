@@ -53,7 +53,8 @@
         "-lSceUserService",
         "-lSceSystemService"
       ],
-      "network": true
+      "network": true,
+      "archives": true
     }
   ],
   "filesystemAccess": "console",

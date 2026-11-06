@@ -193,6 +193,10 @@
             "type": "boolean",
             "description": "Links the pinned libcurl and OpenSSL ports into the payload, for HTTPS of its own (CA list: /system/common/cert/CA_LIST.cer)."
           },
+          "archives": {
+            "type": "boolean",
+            "description": "Links the pinned libarchive (RAR, RAR5, 7z, zip, tar; with liblzma, libbz2, zstd and zlib) into the payload (glibren.12: about 0.5 MB stripped)."
+          },
           "libs": {
             "type": "array",
             "items": {
