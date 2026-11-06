@@ -23,6 +23,10 @@
 //     POST /api/jobs/<id>/pause|resume|cancel
 //     POST /api/jobs/<id>/connections  glibren.8: {connections: 1..64 | 0/null = as do app} -> {ok, connections, connectionsSet}
 //     POST /api/config             glibren.8: {concurrency: 1..4} -> {ok, limit, limitSet}; o app adota o numero
+//     GET  /api/library[?filtros]  glibren: a Biblioteca TorBox (torbox-lista.json) resumida, filtrada e paginada; ver
+//     GET  /api/library/game?id=   "Biblioteca TorBox na pagina do celular" abaixo
+//     POST /api/library/add        {id, file?} com a sessao: o jogo entra na fila (pedido que o app poe na fila dele)
+//     POST /jobs/<id>/refuse       glibren: {error} o app nao conseguiu por na fila um pedido do celular (fica "failed")
 //     POST /secret                {service:"torbox", key} -> chave so em memoria (nunca gravada nem registrada)
 //     POST /quit                   encerra limpo (checkpoint gravado)
 //     POST /bye                    glibren.5: o app avisa que vai fechar (botao "Sair"): conta como fechado ja, sem
@@ -697,6 +701,81 @@ static int jp_id(JP* j, char* out, size_t cap) {
   return jp_text(j, out, cap);
 }
 
+// glibren: leitura tolerante (a Biblioteca TorBox e os pedidos do celular): texto longo e cortado (sem partir um
+// caractere UTF-8), numero vira texto, e um valor de outro tipo e pulado em vez de invalidar o arquivo todo.
+static void lower_ascii(char* text) {
+  for (; *text; ++text) *text = (char)tolower((unsigned char)*text);
+}
+static void copy_utf8(char* out, size_t cap, const char* text) {
+  size_t n = strnlen(text, cap - 1);
+  if (text[n]) while (n > 0 && ((unsigned char)text[n] & 0xc0) == 0x80) --n;
+  memcpy(out, text, n);
+  out[n] = 0;
+}
+static int lib_text(JP* j, char* out, size_t cap) {
+  out[0] = 0;
+  jp_ws(j);
+  if (j->p >= j->end) return 0;
+  if (*j->p == '"') {
+    const char* start = j->p;
+    if (jp_string(j, out, cap)) return 1;
+    j->p = start;
+    char* wide = malloc(8192);
+    if (wide && jp_string(j, wide, 8192)) {
+      copy_utf8(out, cap, wide);
+      free(wide);
+      return 1;
+    }
+    free(wide);
+    j->p = start;
+    out[0] = 0;
+    return jp_string(j, NULL, 0);
+  }
+  if (*j->p == '-' || isdigit((unsigned char)*j->p)) {
+    double d; uint64_t u; int integer;
+    if (!jp_number(j, &d, &u, &integer)) return 0;
+    if (integer) snprintf(out, cap, "%llu", (unsigned long long)u);
+    return 1;
+  }
+  return jp_skip(j);
+}
+// Um numero >= 0 (ou um texto com ele); outro valor vale 0.
+static int lib_uint(JP* j, uint64_t* out) {
+  *out = 0;
+  jp_ws(j);
+  if (j->p < j->end && (*j->p == '-' || isdigit((unsigned char)*j->p))) {
+    double d; uint64_t u; int integer;
+    if (!jp_number(j, &d, &u, &integer)) return 0;
+    *out = integer ? u : d > 0 && d < 1.8e19 ? (uint64_t)d : 0;
+    return 1;
+  }
+  if (j->p < j->end && *j->p == '"') {
+    char text[32];
+    if (!lib_text(j, text, sizeof text)) return 0;
+    *out = strtoull(text, NULL, 10);
+    return 1;
+  }
+  return jp_skip(j);
+}
+// Uma lista JSON: `item` le cada elemento (1 ok, 0 para tudo). Outro valor no lugar da lista e pulado.
+typedef int (*ItemFn)(JP* j, void* ctx);
+static int jp_array(JP* j, ItemFn item, void* ctx) {
+  jp_ws(j);
+  if (j->p >= j->end) return 0;
+  if (*j->p != '[') return jp_skip(j);
+  if (++j->depth > 16) return 0;
+  ++j->p;
+  jp_ws(j);
+  if (j->p < j->end && *j->p == ']') { ++j->p; --j->depth; return 1; }
+  for (;;) {
+    if (!item(j, ctx)) return 0;
+    jp_ws(j);
+    if (j->p < j->end && *j->p == ',') { ++j->p; continue; }
+    if (j->p < j->end && *j->p == ']') { ++j->p; --j->depth; return 1; }
+    return 0;
+  }
+}
+
 // ---- Jobs -----------------------------------------------------------------------------------------------
 
 enum { CTL_NONE, CTL_PAUSE, CTL_CANCEL, CTL_RELEASE, CTL_STOP };
@@ -724,6 +803,14 @@ typedef struct {
   // na fila do app. `followed`: o app abriu e acompanha este job (so na memoria).
   int ahead, placeholder, followed, order;
   char key[40];
+  // glibren: pedido da Biblioteca TorBox feito no celular (POST /api/library/add): um marcador que so o app tira
+  // (forget, depois de por o jogo na fila dele). O jogo da lista (id), o torrent (hash), o arquivo escolhido ("" com
+  // lib_whole = o torrent inteiro), o codigo e a plataforma. Gravado em jobs.json ("library").
+  int requested, lib_whole;
+  char lib_id[96], lib_hash[72], lib_file[256], lib_code[16], lib_platform[4];
+  // De onde vem o arquivo (files[].via da lista): "torrent" (lib_hash = infohash), "webdl" (lib_hash = MD5 do link do
+  // catalogo; lib_release = a fonte no app) ou "account" (item ja na conta: lib_item_kind/lib_item_id + lib_file_id).
+  char lib_via[12], lib_release[96], lib_item_kind[12], lib_item_id[32], lib_file_id[32];
   char error[600];
   int awaiting_app, renewals;
   uint64_t written, total;
@@ -836,8 +923,22 @@ static void job_json_as(Buf* b, const Job* j, int for_disk) {
   buf_fmt(b, ",\"zip\":%s}", j->zip ? "true" : "false");
   buf_fmt(b, ",\"linkAt\":%lld,\"created\":%lld,\"updated\":%lld,\"awaitingApp\":%s,\"renewals\":%d",
           (long long)(hide && j->link_at ? 1 : j->link_at), (long long)j->created, (long long)j->updated, j->awaiting_app ? "true" : "false", j->renewals);
-  buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u,\"retries\":%u,\"owner\":\"payload\"}",
+  buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u,\"retries\":%u,\"owner\":\"payload\"",
           (unsigned long long)j->written, (unsigned long long)j->total, j->bytes_per_second, j->active_connections, j->retries);
+  if (j->requested) {
+    buf_str(b, ",\"library\":{\"id\":"); buf_json(b, j->lib_id);
+    buf_str(b, ",\"hash\":"); buf_json(b, j->lib_hash);
+    buf_str(b, ",\"file\":"); buf_json(b, j->lib_file);
+    buf_str(b, ",\"code\":"); buf_json(b, j->lib_code);
+    buf_str(b, ",\"platform\":"); buf_json(b, j->lib_platform);
+    buf_str(b, ",\"via\":"); buf_json(b, j->lib_via);
+    buf_str(b, ",\"release\":"); buf_json(b, j->lib_release);
+    buf_str(b, ",\"item\":{\"kind\":"); buf_json(b, j->lib_item_kind);
+    buf_str(b, ",\"id\":"); buf_json(b, j->lib_item_id);
+    buf_str(b, "},\"fileId\":"); buf_json(b, j->lib_file_id);
+    buf_fmt(b, ",\"whole\":%s,\"size\":%llu}", j->lib_whole ? "true" : "false", (unsigned long long)j->total);
+  }
+  buf_str(b, "}");
 }
 
 // O job como a API local (127.0.0.1, com token de sessao) o mostra ao app: com o link inteiro.
@@ -913,6 +1014,31 @@ static int source_field(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 
+static int library_item_field(JP* jp, const char* key, void* ctx) {
+  Job* j = ctx;
+  if (!strcmp(key, "kind")) return lib_text(jp, j->lib_item_kind, sizeof j->lib_item_kind) ? 1 : -1;
+  if (!strcmp(key, "id")) return lib_text(jp, j->lib_item_id, sizeof j->lib_item_id) ? 1 : -1;
+  return 0;
+}
+static int library_field(JP* jp, const char* key, void* ctx) {
+  Job* j = ctx;
+  if (!strcmp(key, "id")) return lib_text(jp, j->lib_id, sizeof j->lib_id) ? 1 : -1;
+  if (!strcmp(key, "hash")) return lib_text(jp, j->lib_hash, sizeof j->lib_hash) ? 1 : -1;
+  if (!strcmp(key, "file")) return lib_text(jp, j->lib_file, sizeof j->lib_file) ? 1 : -1;
+  if (!strcmp(key, "code")) return lib_text(jp, j->lib_code, sizeof j->lib_code) ? 1 : -1;
+  if (!strcmp(key, "platform")) return lib_text(jp, j->lib_platform, sizeof j->lib_platform) ? 1 : -1;
+  if (!strcmp(key, "whole")) return jp_bool(jp, &j->lib_whole) ? 1 : -1;
+  if (!strcmp(key, "via")) return lib_text(jp, j->lib_via, sizeof j->lib_via) ? 1 : -1;
+  if (!strcmp(key, "release")) return lib_text(jp, j->lib_release, sizeof j->lib_release) ? 1 : -1;
+  if (!strcmp(key, "fileId")) return lib_text(jp, j->lib_file_id, sizeof j->lib_file_id) ? 1 : -1;
+  if (!strcmp(key, "item")) {
+    jp_ws(jp);
+    if (jp->p >= jp->end || *jp->p != '{') return jp_skip(jp) ? 1 : -1;
+    return jp_object(jp, library_item_field, j) ? 1 : -1;
+  }
+  return 0;
+}
+
 static int job_field(JP* jp, const char* key, void* ctx) {
   Job* j = ((JobParse*)ctx)->job;
   uint64_t number;
@@ -952,6 +1078,12 @@ static int job_field(JP* jp, const char* key, void* ctx) {
     if (jp_literal(jp, "null")) return 1;
     return jp_object(jp, source_field, j) ? 1 : -1;
   }
+  if (!strcmp(key, "library")) {
+    jp_ws(jp);
+    if (jp_literal(jp, "null")) return 1;
+    j->requested = 1;
+    return jp_object(jp, library_field, j) ? 1 : -1;
+  }
   return 0;
 }
 
@@ -985,10 +1117,14 @@ static int validate_job(Job* j, char* error, size_t cap) {
     if (!j->key[0] || !safe_token_text(j->key)) { snprintf(error, cap, "a waiting item needs its key"); return 0; }
     j->url[0] = j->destination[0] = j->storage_root[0] = j->publish_to[0] = 0;
     j->ahead = 0;
+    if (j->requested && (!j->lib_id[0] || !(j->lib_hash[0] || j->lib_release[0] || j->lib_item_id[0]))) j->requested = 0;
     // MODIFIED (glibren.8): um marcador pausado (no app ou no celular) volta pausado ao reabrir o payload.
-    if (strcmp(j->state, "paused") && strcmp(j->state, "cancelled")) snprintf(j->state, sizeof j->state, "waiting-app");
+    // glibren: um pedido do celular que o app nao conseguiu por na fila continua "failed" (com o motivo).
+    if (strcmp(j->state, "paused") && strcmp(j->state, "cancelled") && !(j->requested && !strcmp(j->state, "failed")))
+      snprintf(j->state, sizeof j->state, "waiting-app");
     return 1;
   }
+  j->requested = 0; // so marcadores
   if (j->key[0] && !safe_token_text(j->key)) { snprintf(error, cap, "invalid key"); return 0; }
   if (!safe_url(j->url)) { snprintf(error, cap, "url must be an http(s) URL without spaces"); return 0; }
   if (!safe_path(j->destination)) { snprintf(error, cap, "destination must be an absolute file path"); return 0; }
@@ -2527,7 +2663,7 @@ static void save_config_locked(void) {
 // ---- Servidor HTTP (127.0.0.1) --------------------------------------------------------------------------
 
 typedef struct {
-  char method[8], path[256];
+  char method[8], path[1024]; // glibren: 1024 para a busca e os filtros da Biblioteca TorBox na URL
   char token[128];
   char session[48]; // X-Session: a sessao aberta pelo PIN na pagina do celular
   size_t content_length;
@@ -2585,7 +2721,7 @@ static int read_request(int fd, Request* r) {
   *end = 0;
   char* line_end = strstr(head, "\r\n");
   if (line_end) *line_end = 0;
-  if (sscanf(head, "%7s %255s", r->method, r->path) != 2) return 400;
+  if (sscanf(head, "%7s %1023s", r->method, r->path) != 2) return 400;
   for (char* line = line_end ? line_end + 2 : NULL; line && *line;) {
     char* next = strstr(line, "\r\n");
     if (next) *next = 0;
@@ -2658,6 +2794,7 @@ static void handle_create(int fd, Request* r) {
   if (!jp_object(&jp, job_field, &parse)) { free(j); respond_error(fd, 400, "invalid JSON body"); return; }
   j->id[0] = 0; j->state[0] = 0; j->error[0] = 0; j->by[0] = 0; j->published[0] = 0; j->awaiting_app = 0; j->renewals = 0; j->written = j->total = 0;
   j->connections_set = 0; // glibren.8: so o celular escolhe (POST /api/jobs/<id>/connections, ou /jobs/<id>/connections)
+  j->requested = 0;        // glibren: pedidos da Biblioteca TorBox so nascem no celular
   if (!validate_job(j, error, sizeof error)) { free(j); respond_error(fd, 400, error); return; }
   pthread_mutex_lock(&g_lock);
   for (int i = 0; i < g_job_count; ++i) {
@@ -2770,6 +2907,7 @@ static void handle_queue(int fd, Request* r) {
       Job* j = q->job;
       j->id[0] = j->state[0] = j->error[0] = j->by[0] = j->published[0] = 0;
       j->placeholder = 0;
+      j->requested = 0;
       j->connections_set = 0; // glibren.8: so o celular escolhe
       snprintf(j->key, sizeof j->key, "%s", q->key);
       if (!j->name[0]) snprintf(j->name, sizeof j->name, "%s", q->name);
@@ -2833,7 +2971,7 @@ static void handle_queue(int fd, Request* r) {
   int removed = 0;
   for (int k = g_job_count - 1; k >= 0; --k) {
     Job* j = g_jobs[k];
-    if (seen[k] || (!j->ahead && !j->placeholder) || j->followed) continue;
+    if (seen[k] || (!j->ahead && !j->placeholder) || j->followed || j->requested) continue;
     if (j->running) { j->ctl = CTL_RELEASE; ++removed; continue; }
     if (!j->placeholder && terminal(j->state)) continue;
     remove_job_locked(j);
@@ -2872,7 +3010,8 @@ static int job_action_locked(Job* j, const char* action, int remote, int* remove
       snprintf(j->by, sizeof j->by, "%s", by);
     } else if (j->running && j->ctl == CTL_PAUSE) { j->ctl = CTL_NONE; snprintf(j->by, sizeof j->by, "%s", by); }
   } else if (!strcmp(action, "cancel")) {
-    if (j->running) { j->ctl = CTL_CANCEL; snprintf(j->by, sizeof j->by, "%s", by); }
+    if (j->requested && !j->running) { remove_job_locked(j); *removed = 1; } // glibren: pedido do celular: so sai
+    else if (j->running) { j->ctl = CTL_CANCEL; snprintf(j->by, sizeof j->by, "%s", by); }
     else if (strcmp(j->state, "completed")) {
       if (!j->placeholder) remove_partials(j); // um marcador nao tem arquivo (destino vazio)
       snprintf(j->state, sizeof j->state, "cancelled"); snprintf(j->by, sizeof j->by, "%s", by);
@@ -2958,6 +3097,12 @@ static void handle_action(int fd, const char* id, const char* action) {
   pthread_mutex_unlock(&g_lock);
   respond(fd, status, b.data ? b.data : "{}");
   free(b.data);
+}
+
+typedef struct { char error[400]; } RefuseBody;
+static int refuse_field(JP* jp, const char* key, void* ctx) {
+  if (!strcmp(key, "error")) return lib_text(jp, ((RefuseBody*)ctx)->error, sizeof ((RefuseBody*)ctx)->error) ? 1 : -1;
+  return 0;
 }
 
 static void route(int fd, Request* r) {
@@ -3075,6 +3220,28 @@ static void route(int fd, Request* r) {
         if (!ok) respond_error(fd, 404, "no such job (or it has ended)");
         else respond(fd, 200, b.data ? b.data : "{}");
         free(b.data);
+        return;
+      }
+      // glibren: o app nao conseguiu por na fila um pedido da Biblioteca TorBox: fica "failed" com o motivo (o celular
+      // mostra; Retomar ou pedir de novo volta a "waiting-app").
+      if (!strcmp(action, "refuse")) {
+        RefuseBody refuse;
+        memset(&refuse, 0, sizeof refuse);
+        JP jp = {r->body, r->body + r->content_length, 0};
+        if (r->content_length && !jp_object(&jp, refuse_field, &refuse)) { respond_error(fd, 400, "expected {error}"); return; }
+        pthread_mutex_lock(&g_lock);
+        Job* j = find_job_locked(id);
+        const int ok = j && j->requested && !j->running;
+        if (ok) {
+          snprintf(j->state, sizeof j->state, "failed");
+          copy_utf8(j->error, sizeof j->error, refuse.error[0] ? refuse.error : "Jobee'sLair could not queue it");
+          j->by[0] = 0;
+          j->updated = now_s();
+          save_jobs_locked();
+        }
+        pthread_mutex_unlock(&g_lock);
+        if (!ok) respond_error(fd, 404, "no such request");
+        else respond(fd, 200, "{\"ok\":true}");
         return;
       }
       handle_action(fd, id, action);
@@ -3366,7 +3533,8 @@ static void monitor_status(Buf* b) {
     buf_str(b, ",\"by\":"); buf_json(b, j->by);
     buf_str(b, ",\"error\":"); buf_json(b, error);
     // glibren: through a debrid service: its name only (no item, link or key), for the page's "via TorBox".
-    if (!strcmp(j->provider, "torbox")) buf_str(b, ",\"via\":\"TorBox\"");
+    if (j->requested) buf_str(b, ",\"requested\":true,\"via\":\"TorBox\""); // glibren: pedido pela Biblioteca TorBox
+    else if (!strcmp(j->provider, "torbox")) buf_str(b, ",\"via\":\"TorBox\"");
     else if (!strcmp(j->provider, "alldebrid")) buf_str(b, ",\"via\":\"AllDebrid\"");
     buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u", (unsigned long long)j->written,
             (unsigned long long)(j->total ? j->total : j->expected_bytes), j->bytes_per_second, j->active_connections);
@@ -3597,9 +3765,764 @@ static void monitor_power(int fd, Request* r) {
   monitor_json(fd, 200, "{\"ok\":true}");
 }
 
+
+// ---- glibren: Biblioteca TorBox na pagina do celular ----------------------------------------------------------
+// A lista de jogos confirmados no TorBox que o app monta (Configuracoes da Jobee'sLair) e grava em
+// /data/JobeesLair/torbox-lista.json (BGDL_LIBRARY nos testes):
+//   {"version":1, "builtAt":"<ISO>", "games":[{"id", "title", "code", "platform":"ps5|ps4", "genres":[...], "sizeBytes",
+//    "formats":[...], "hash", "files":[{"name", "size", "format"}], "cover"}]}
+// Campos ausentes ou de outro tipo sao tolerados (um jogo sem id usa o hash; sem os dois, fica de fora; sem tamanho, a
+// soma dos arquivos; sem formatos, os dos arquivos; sem plataforma, a do codigo PPSA/CUSA). Na memoria fica so um indice
+// compacto (sem os nomes dos arquivos nem a capa), relido quando o arquivo muda; os arquivos de um jogo sao lidos do
+// disco so quando pedidos.
+//   GET  /api/library?q=&platform=ps5|ps4&format=exfat,pkg&genre=A,B&minSize=&maxSize=&sort=title|big|small&offset=&limit=
+//        -> {ok, builtAt, partial, total, count, offset, limit, games:[{id, title, code, platform, sizeBytes, formats,
+//            genres, files, queued}], facets:{platforms:{ps5, ps4, other}, sizes:{lt10, 10to30, 30to60, gt60, unknown},
+//            formats:[{name, count}], genres:[{name, count}]}}
+//        Tamanhos em bytes (minSize inclusivo, maxSize exclusivo; GiB nas faixas). As contagens de cada filtro valem com os
+//        outros filtros aplicados. Sem sessao, como /api/status: nada de segredo sai (nem hash, nem caminho).
+//        404 {"error":"no-library"} sem o arquivo; 500 {"error":"bad-library"} quando nada se aproveita dele.
+//   GET  /api/library/game?id=  -> {ok, game:{...}, files:[{name, size, format, piece}], suggested:"<arquivo>"|""}
+//        ("" = o torrent inteiro, como um zip).
+//   POST /api/library/add {id, file?, whole?} (sessao do PIN) -> {ok, id, appOpen} | {ok, already, id}
+//        Vira um marcador "waiting-app" pedido pelo celular (requested), que a fila do app (POST /queue) nao tira.
+//        Quem baixa e o app: aberto (ou ao abrir) ele le os pedidos no GET /jobs ("library"), poe o jogo na fila dele pelo
+//        TorBox (o mesmo caminho do "Procurar no TorBox", no disco padrao das Configuracoes) e tira o pedido (forget); se
+//        nao der, POST /jobs/<id>/refuse {error} e o celular ve o motivo (Retomar pede de novo).
+#define LIB_MAX_BYTES (64u * 1024 * 1024)
+#define LIB_MAX_GAMES 50000
+#define LIB_GENRES 64
+#define LIB_FORMATS 32
+#define LIB_FILES 256
+#define LIB_PAGE 200
+#define LIB_GIB (1024ull * 1024 * 1024)
+
+typedef struct {
+  char id[96], title[160], code[16], hash[72];
+  uint64_t size, genres;
+  uint32_t formats;
+  uint8_t platform; // 0 nao sabido, 1 ps5, 2 ps4
+  uint16_t files;
+} LibGame;
+// Um arquivo da lista: via "torrent" (hash = infohash), "webdl" (hash = MD5 do link; release = a fonte no app) ou
+// "account" (item {kind, id} na conta TorBox, file = o id do arquivo); piece = parte de um arquivo dividido.
+typedef struct {
+  char name[256], format[16], via[12], hash[72], release[96], item_kind[12], item_id[32], file_id[32];
+  uint64_t size;
+  int piece;
+} LibFile;
+typedef struct {
+  LibGame* games;
+  int count, cap, partial, skipped;
+  char built[40];
+  char genres[LIB_GENRES][48];
+  int genre_count;
+  char formats[LIB_FORMATS][16];
+  int format_count;
+} LibIndex;
+typedef struct {
+  LibIndex* index;
+  LibGame game;
+  uint64_t files_size;
+  uint32_t listed_formats, file_formats;
+  const char* want; // so o jogo com este id, com os arquivos (files)
+  LibFile* files;
+  int file_count, found;
+} LibParse;
+
+static pthread_mutex_t g_lib_lock = PTHREAD_MUTEX_INITIALIZER; // antes de g_lock, nunca depois
+static char g_lib_path[600];
+static LibIndex* g_lib;
+static int g_lib_state; // 0 nao lido, 1 lido, 2 sem o arquivo, 3 invalido
+static int64_t g_lib_mtime, g_lib_checked;
+static uint64_t g_lib_bytes;
+
+// A ordem dos formatos (como o "Procurar no TorBox"): imagens primeiro (exFAT antes), depois pacotes, depois arquivos.
+static const char* const LIB_RANK[] = {"exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip", "tar"};
+static int lib_rank(const char* format) {
+  for (size_t i = 0; i < sizeof LIB_RANK / sizeof *LIB_RANK; ++i) if (!strcmp(format, LIB_RANK[i])) return (int)i;
+  return 99;
+}
+static const char* base_name(const char* path) {
+  const char* slash = strrchr(path, '/');
+  return slash ? slash + 1 : path;
+}
+static void format_of_name(const char* name, char* out, size_t cap) {
+  out[0] = 0;
+  const char* dot = strrchr(base_name(name), '.');
+  if (!dot) return;
+  char ext[16];
+  copy_text(ext, sizeof ext, dot + 1);
+  lower_ascii(ext);
+  if (lib_rank(ext) < 99) copy_text(out, cap, ext);
+}
+// Um pedaco de um arquivo dividido ("Jogo.part2.rar", "Jogo.rar.001", "Jogo.r01"): nao serve sozinho.
+static int lib_piece(const char* name) {
+  char low[256];
+  copy_text(low, sizeof low, base_name(name));
+  lower_ascii(low);
+  const size_t n = strlen(low);
+  if (n >= 4 && low[n - 4] == '.' && (low[n - 3] == 'r' || low[n - 3] == 'z') && isdigit((unsigned char)low[n - 2]) && isdigit((unsigned char)low[n - 1])) return 1;
+  if (n >= 4 && low[n - 4] == '.' && isdigit((unsigned char)low[n - 3]) && isdigit((unsigned char)low[n - 2]) && isdigit((unsigned char)low[n - 1])) {
+    static const char* const outer[] = {".rar", ".zip", ".7z", ".tar"};
+    for (size_t i = 0; i < 4; ++i) {
+      const size_t e = strlen(outer[i]);
+      if (n >= 4 + e && !strncmp(low + n - 4 - e, outer[i], e)) return 1;
+    }
+  }
+  const char* dot = strrchr(low, '.');
+  if (dot && (!strcmp(dot, ".rar") || !strcmp(dot, ".zip") || !strcmp(dot, ".7z"))) {
+    const char* p = dot;
+    int digits = 0;
+    while (p > low && isdigit((unsigned char)p[-1])) { --p; ++digits; }
+    if (digits >= 1 && digits <= 4 && p - low >= 5 && !strncmp(p - 5, ".part", 5)) return 1;
+  }
+  return 0;
+}
+// O numero do nome na tabela (genero ou formato), criando-o se couber; -1 sem lugar ou sem nome.
+static int lib_intern(char* table, size_t width, int* count, int max, const char* name) {
+  if (!name[0]) return -1;
+  for (int i = 0; i < *count; ++i) if (!strcasecmp(table + (size_t)i * width, name)) return i;
+  if (*count >= max) return -1;
+  copy_utf8(table + (size_t)*count * width, width, name);
+  return (*count)++;
+}
+static int lib_genre_item(JP* j, void* ctx) {
+  LibParse* p = ctx;
+  char name[48];
+  if (!lib_text(j, name, sizeof name)) return 0;
+  const int slot = lib_intern(&p->index->genres[0][0], sizeof p->index->genres[0], &p->index->genre_count, LIB_GENRES, name);
+  if (slot >= 0) p->game.genres |= 1ull << slot;
+  return 1;
+}
+static int lib_format_item(JP* j, void* ctx) {
+  LibParse* p = ctx;
+  char name[16];
+  if (!lib_text(j, name, sizeof name)) return 0;
+  lower_ascii(name);
+  if (name[0] == '.') memmove(name, name + 1, strlen(name));
+  const int slot = lib_intern(&p->index->formats[0][0], sizeof p->index->formats[0], &p->index->format_count, LIB_FORMATS, name);
+  if (slot >= 0) p->listed_formats |= 1u << slot;
+  return 1;
+}
+// Uma lista, ou um valor so no lugar dela ("genres": "Acao").
+static int lib_list(JP* j, ItemFn item, void* ctx) {
+  jp_ws(j);
+  if (j->p < j->end && *j->p == '"') return item(j, ctx);
+  return jp_array(j, item, ctx);
+}
+static int lib_file_item_field(JP* jp, const char* key, void* ctx) {
+  LibFile* f = ctx;
+  if (!strcmp(key, "kind")) return lib_text(jp, f->item_kind, sizeof f->item_kind) ? 1 : -1;
+  if (!strcmp(key, "id")) return lib_text(jp, f->item_id, sizeof f->item_id) ? 1 : -1;
+  return 0;
+}
+static int lib_file_field(JP* jp, const char* key, void* ctx) {
+  LibFile* f = ctx;
+  if (!strcmp(key, "via")) { if (!lib_text(jp, f->via, sizeof f->via)) return -1; lower_ascii(f->via); return 1; }
+  if (!strcmp(key, "hash")) { if (!lib_text(jp, f->hash, sizeof f->hash)) return -1; lower_ascii(f->hash); return 1; }
+  if (!strcmp(key, "release")) return lib_text(jp, f->release, sizeof f->release) ? 1 : -1;
+  if (!strcmp(key, "file")) return lib_text(jp, f->file_id, sizeof f->file_id) ? 1 : -1;
+  if (!strcmp(key, "piece")) { jp_ws(jp); if (jp->p < jp->end && (*jp->p == 't' || *jp->p == 'f' || *jp->p == 'n')) return jp_bool(jp, &f->piece) ? 1 : -1; return jp_skip(jp) ? 1 : -1; }
+  if (!strcmp(key, "item")) {
+    jp_ws(jp);
+    if (jp->p >= jp->end || *jp->p != '{') return jp_skip(jp) ? 1 : -1;
+    return jp_object(jp, lib_file_item_field, f) ? 1 : -1;
+  }
+  if (!strcmp(key, "name")) return lib_text(jp, f->name, sizeof f->name) ? 1 : -1;
+  if (!strcmp(key, "size")) return lib_uint(jp, &f->size) ? 1 : -1;
+  if (!strcmp(key, "format")) return lib_text(jp, f->format, sizeof f->format) ? 1 : -1;
+  return 0;
+}
+static int lib_file_item(JP* j, void* ctx) {
+  LibParse* p = ctx;
+  jp_ws(j);
+  if (j->p >= j->end || *j->p != '{') return jp_skip(j);
+  LibFile f;
+  memset(&f, 0, sizeof f);
+  if (!jp_object(j, lib_file_field, &f)) return 0;
+  lower_ascii(f.format);
+  if (!f.format[0]) format_of_name(f.name, f.format, sizeof f.format);
+  if (lib_piece(f.name)) f.piece = 1;
+  // Sem "via": um infohash (40 hex) e de torrent; um item da conta, da conta.
+  if (!f.via[0]) snprintf(f.via, sizeof f.via, "%s", f.item_id[0] ? "account" : strlen(f.hash) == 40 ? "torrent" : "");
+  p->files_size += f.size;
+  if (p->game.files < 65535) ++p->game.files;
+  // So os formatos conhecidos (um .nfo ou .txt do lado do jogo nao vira filtro).
+  if (lib_rank(f.format) < 99) {
+    const int slot = lib_intern(&p->index->formats[0][0], sizeof p->index->formats[0], &p->index->format_count, LIB_FORMATS, f.format);
+    if (slot >= 0) p->file_formats |= 1u << slot;
+  }
+  if (p->files && p->file_count < LIB_FILES) p->files[p->file_count++] = f;
+  return 1;
+}
+static int lib_game_field(JP* jp, const char* key, void* ctx) {
+  LibParse* p = ctx;
+  LibGame* g = &p->game;
+  if (!strcmp(key, "id")) return lib_text(jp, g->id, sizeof g->id) ? 1 : -1;
+  if (!strcmp(key, "title")) return lib_text(jp, g->title, sizeof g->title) ? 1 : -1;
+  if (!strcmp(key, "code")) {
+    if (!lib_text(jp, g->code, sizeof g->code)) return -1;
+    for (char* c = g->code; *c; ++c) *c = (char)toupper((unsigned char)*c);
+    return 1;
+  }
+  if (!strcmp(key, "platform")) {
+    char value[32];
+    if (!lib_text(jp, value, sizeof value)) return -1;
+    g->platform = strchr(value, '5') ? 1 : strchr(value, '4') ? 2 : 0;
+    return 1;
+  }
+  if (!strcmp(key, "hash")) {
+    if (!lib_text(jp, g->hash, sizeof g->hash)) return -1;
+    lower_ascii(g->hash);
+    return 1;
+  }
+  if (!strcmp(key, "sizeBytes")) return lib_uint(jp, &g->size) ? 1 : -1;
+  if (!strcmp(key, "genres")) return lib_list(jp, lib_genre_item, p) ? 1 : -1;
+  if (!strcmp(key, "formats")) return lib_list(jp, lib_format_item, p) ? 1 : -1;
+  if (!strcmp(key, "files")) return jp_array(jp, lib_file_item, p) ? 1 : -1;
+  return 0;
+}
+static int lib_game_item(JP* j, void* ctx) {
+  LibParse* p = ctx;
+  jp_ws(j);
+  if (j->p >= j->end || *j->p != '{') { ++p->index->skipped; return jp_skip(j); }
+  memset(&p->game, 0, sizeof p->game);
+  p->files_size = 0;
+  p->listed_formats = p->file_formats = 0;
+  p->file_count = 0;
+  if (!jp_object(j, lib_game_field, p)) return 0;
+  LibGame* g = &p->game;
+  if (!g->id[0]) snprintf(g->id, sizeof g->id, "%s", g->hash);
+  if (!g->id[0]) { ++p->index->skipped; return 1; }
+  if (!g->title[0]) snprintf(g->title, sizeof g->title, "%s", g->code[0] ? g->code : g->id);
+  if (!g->platform) g->platform = !strncmp(g->code, "PPSA", 4) ? 1 : !strncmp(g->code, "CUSA", 4) ? 2 : 0;
+  if (!g->size) g->size = p->files_size;
+  g->formats = p->listed_formats ? p->listed_formats : p->file_formats;
+  if (p->want) {
+    if (strcmp(g->id, p->want)) return 1;
+    p->found = 1;
+    return 0; // achou: o resto do arquivo nao interessa
+  }
+  LibIndex* x = p->index;
+  if (x->count >= LIB_MAX_GAMES) { x->partial = 1; return 0; }
+  if (x->count == x->cap) {
+    const int cap = x->cap ? x->cap * 2 : 256;
+    LibGame* next = realloc(x->games, sizeof *next * (size_t)cap);
+    if (!next) { x->partial = 1; return 0; }
+    x->games = next;
+    x->cap = cap;
+  }
+  x->games[x->count++] = *g;
+  return 1;
+}
+static int lib_top_field(JP* jp, const char* key, void* ctx) {
+  LibParse* p = ctx;
+  if (!strcmp(key, "builtAt")) return lib_text(jp, p->index->built, sizeof p->index->built) ? 1 : -1;
+  if (!strcmp(key, "games")) return jp_array(jp, lib_game_item, p) ? 1 : -1;
+  return 0;
+}
+static LibIndex* lib_index_new(void) { return calloc(1, sizeof(LibIndex)); }
+static void lib_index_free(LibIndex* x) {
+  if (!x) return;
+  free(x->games);
+  free(x);
+}
+// Le o arquivo (com g_lib_lock): -> 1 lido (p->index; com p->want, p->found diz se achou), 2 sem o arquivo, 3 invalido.
+static int lib_read(LibParse* p) {
+  size_t size = 0;
+  errno = 0;
+  char* text = read_text(g_lib_path, LIB_MAX_BYTES, &size);
+  if (!text) return errno == ENOENT ? 2 : 3;
+  JP jp = {text, text + size, 0};
+  const int whole = jp_object(&jp, lib_top_field, p);
+  free(text);
+  if (p->want) return 1;
+  if (!whole) p->index->partial = 1;
+  return whole || p->index->count ? 1 : 3;
+}
+static int lib_title_order(const void* a, const void* b) {
+  const LibGame* x = a;
+  const LibGame* y = b;
+  const int c = strcasecmp(x->title, y->title);
+  return c ? c : strcmp(x->id, y->id);
+}
+// O indice em dia (com g_lib_lock): relido quando o arquivo muda (olhado no maximo a cada 2 s). -> g_lib_state.
+static int lib_refresh_locked(void) {
+  const int64_t now = mono_ms();
+  if (g_lib_state && now - g_lib_checked < 2000) return g_lib_state;
+  g_lib_checked = now;
+  struct stat st;
+  if (stat(g_lib_path, &st)) {
+    if (g_lib_state != 2) logf_("biblioteca TorBox: sem o arquivo da lista");
+    lib_index_free(g_lib);
+    g_lib = NULL;
+    return g_lib_state = 2;
+  }
+  if ((g_lib_state == 1 || g_lib_state == 3) && (int64_t)st.st_mtime == g_lib_mtime && (uint64_t)st.st_size == g_lib_bytes) return g_lib_state;
+  g_lib_mtime = (int64_t)st.st_mtime;
+  g_lib_bytes = (uint64_t)st.st_size;
+  LibParse p;
+  memset(&p, 0, sizeof p);
+  p.index = lib_index_new();
+  if (!p.index) return g_lib_state ? g_lib_state : 3;
+  const int64_t started = mono_ms();
+  const int state = lib_read(&p);
+  if (state != 1) {
+    lib_index_free(p.index);
+    lib_index_free(g_lib);
+    g_lib = NULL;
+    logf_("biblioteca TorBox: lista %s", state == 2 ? "sumiu" : "invalida (nenhum jogo lido)");
+    return g_lib_state = state;
+  }
+  if (p.index->count > 1) qsort(p.index->games, (size_t)p.index->count, sizeof(LibGame), lib_title_order);
+  lib_index_free(g_lib);
+  g_lib = p.index;
+  logf_("biblioteca TorBox: %d jogo(s) lido(s) em %lld ms (%llu KiB)%s%s", g_lib->count, (long long)(mono_ms() - started),
+        (unsigned long long)(g_lib_bytes / 1024), g_lib->partial ? "; lista cortada ou com erro, lido ate onde deu" : "",
+        g_lib->skipped ? "; alguns itens sem id pulados" : "");
+  return g_lib_state = 1;
+}
+
+// ---- Consulta (filtros da URL) ----
+typedef struct {
+  char q[200], formats[256], genres[512];
+  int platform;   // 0 todas, 1 ps5, 2 ps4
+  int sort;       // 0 titulo, 1 maiores, 2 menores
+  int offset, limit;
+  uint64_t min, max; // max 0 = sem limite
+  uint32_t format_mask;
+  uint64_t genre_mask;
+  int format_none, genre_none; // so nomes desconhecidos pedidos: nada casa
+} LibQuery;
+enum { LIB_DIM_PLATFORM = 1, LIB_DIM_FORMAT = 2, LIB_DIM_GENRE = 4, LIB_DIM_SIZE = 8 };
+
+static int hex_digit(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+static void url_decode(const char* in, size_t n, char* out, size_t cap) {
+  size_t k = 0;
+  for (size_t i = 0; i < n && k + 1 < cap; ++i) {
+    char c = in[i];
+    if (c == '+') c = ' ';
+    else if (c == '%' && i + 2 < n && hex_digit(in[i + 1]) >= 0 && hex_digit(in[i + 2]) >= 0) {
+      c = (char)(hex_digit(in[i + 1]) * 16 + hex_digit(in[i + 2]));
+      i += 2;
+    }
+    if (c) out[k++] = c;
+  }
+  out[k] = 0;
+}
+static void lib_query_parse(const char* query, LibQuery* q) {
+  memset(q, 0, sizeof *q);
+  q->limit = 40;
+  for (const char* p = query ? query : ""; *p;) {
+    const size_t n = strcspn(p, "&");
+    const char* eq = memchr(p, '=', n);
+    const size_t key_size = eq ? (size_t)(eq - p) : n;
+    char key[24], value[600];
+    url_decode(p, key_size, key, sizeof key);
+    if (eq) url_decode(eq + 1, n - key_size - 1, value, sizeof value);
+    else value[0] = 0;
+    if (!strcmp(key, "q")) { copy_utf8(q->q, sizeof q->q, value); lower_ascii(q->q); }
+    else if (!strcmp(key, "platform")) { lower_ascii(value); q->platform = !strcmp(value, "ps5") ? 1 : !strcmp(value, "ps4") ? 2 : 0; }
+    else if (!strcmp(key, "format")) copy_utf8(q->formats, sizeof q->formats, value);
+    else if (!strcmp(key, "genre")) copy_utf8(q->genres, sizeof q->genres, value);
+    else if (!strcmp(key, "minSize")) q->min = strtoull(value, NULL, 10);
+    else if (!strcmp(key, "maxSize")) q->max = strtoull(value, NULL, 10);
+    else if (!strcmp(key, "offset")) { const long v = strtol(value, NULL, 10); q->offset = v < 0 ? 0 : v > LIB_MAX_GAMES ? LIB_MAX_GAMES : (int)v; }
+    else if (!strcmp(key, "limit")) { const long v = strtol(value, NULL, 10); q->limit = v < 1 ? 1 : v > LIB_PAGE ? LIB_PAGE : (int)v; }
+    else if (!strcmp(key, "sort")) q->sort = !strcmp(value, "big") ? 1 : !strcmp(value, "small") ? 2 : 0;
+    p += n;
+    if (*p == '&') ++p;
+  }
+}
+// Nomes separados por virgula -> mascara dos que o indice conhece; *none quando so vieram desconhecidos.
+static uint64_t lib_names_mask(const char* list, const char* table, size_t width, int count, int* none) {
+  uint64_t mask = 0;
+  int asked = 0;
+  *none = 0;
+  for (const char* p = list; *p;) {
+    const size_t n = strcspn(p, ",");
+    char name[64];
+    size_t start = 0, end = n;
+    while (start < n && p[start] == ' ') ++start;
+    while (end > start && p[end - 1] == ' ') --end;
+    if (end > start && end - start < sizeof name) {
+      memcpy(name, p + start, end - start);
+      name[end - start] = 0;
+      if (name[0] == '.') memmove(name, name + 1, strlen(name));
+      asked = 1;
+      for (int i = 0; i < count; ++i) if (!strcasecmp(table + (size_t)i * width, name)) mask |= 1ull << i;
+    }
+    p += n;
+    if (*p == ',') ++p;
+  }
+  *none = asked && !mask;
+  return mask;
+}
+// Cada palavra da busca no titulo, no codigo ou no id (so letras ASCII sem diferenca de caixa).
+static int lib_text_match(const LibGame* g, const char* query) {
+  char hay[300], word[64];
+  snprintf(hay, sizeof hay, "%s %s %s", g->title, g->code, g->id);
+  lower_ascii(hay);
+  for (const char* p = query; *p;) {
+    while (*p == ' ') ++p;
+    const size_t n = strcspn(p, " ");
+    if (!n) break;
+    if (n < sizeof word) {
+      memcpy(word, p, n);
+      word[n] = 0;
+      if (!strstr(hay, word)) return 0;
+    }
+    p += n;
+  }
+  return 1;
+}
+static int lib_match(const LibGame* g, const LibQuery* q, int skip) {
+  if (!(skip & LIB_DIM_PLATFORM) && q->platform && g->platform != q->platform) return 0;
+  if (!(skip & LIB_DIM_FORMAT) && (q->format_none || (q->format_mask && !(g->formats & q->format_mask)))) return 0;
+  if (!(skip & LIB_DIM_GENRE) && (q->genre_none || (q->genre_mask && !(g->genres & q->genre_mask)))) return 0;
+  if (!(skip & LIB_DIM_SIZE) && (q->min || q->max) && (!g->size || g->size < q->min || (q->max && g->size >= q->max))) return 0;
+  return 1;
+}
+static int lib_size_bucket(uint64_t size) {
+  if (!size) return 4;
+  return size < 10 * LIB_GIB ? 0 : size < 30 * LIB_GIB ? 1 : size < 60 * LIB_GIB ? 2 : 3;
+}
+// Ja na fila (com g_lock): um pedido do celular deste jogo, ou um download nao terminado com o mesmo nome.
+static int lib_queued_locked(const LibGame* g) {
+  for (int i = 0; i < g_job_count; ++i) {
+    const Job* j = g_jobs[i];
+    if (!strcmp(j->state, "cancelled")) continue;
+    if (j->requested) { if (!strcmp(j->lib_id, g->id)) return 1; continue; }
+    if (!terminal(j->state) && !strcasecmp(j->name, g->title)) return 1;
+  }
+  return 0;
+}
+static void lib_names_json(Buf* b, const char* table, size_t width, int count, uint64_t mask) {
+  int first = 1;
+  buf_str(b, "[");
+  for (int i = 0; i < count; ++i) {
+    if (!(mask & (1ull << i))) continue;
+    if (!first) buf_str(b, ",");
+    first = 0;
+    buf_json(b, table + (size_t)i * width);
+  }
+  buf_str(b, "]");
+}
+static void lib_game_json(Buf* b, const LibIndex* x, const LibGame* g, int queued) {
+  buf_str(b, "{\"id\":"); buf_json(b, g->id);
+  buf_str(b, ",\"title\":"); buf_json(b, g->title);
+  buf_str(b, ",\"code\":"); buf_json(b, g->code);
+  buf_fmt(b, ",\"platform\":\"%s\",\"sizeBytes\":%llu,\"files\":%u,\"queued\":%s,\"formats\":", g->platform == 1 ? "ps5" : g->platform == 2 ? "ps4" : "",
+          (unsigned long long)g->size, (unsigned)g->files, queued ? "true" : "false");
+  lib_names_json(b, &x->formats[0][0], sizeof x->formats[0], x->format_count, g->formats);
+  buf_str(b, ",\"genres\":");
+  lib_names_json(b, &x->genres[0][0], sizeof x->genres[0], x->genre_count, g->genres);
+  buf_str(b, "}");
+}
+// Contagens de um filtro (formatos ou generos), da maior para a menor.
+static void lib_facet_json(Buf* b, const char* table, size_t width, int count, const int* counts) {
+  int order[64];
+  for (int i = 0; i < count; ++i) {
+    int k = i;
+    while (k > 0 && counts[order[k - 1]] < counts[i]) { order[k] = order[k - 1]; --k; }
+    order[k] = i;
+  }
+  buf_str(b, "[");
+  for (int i = 0; i < count; ++i) {
+    if (i) buf_str(b, ",");
+    buf_str(b, "{\"name\":");
+    buf_json(b, table + (size_t)order[i] * width);
+    buf_fmt(b, ",\"count\":%d}", counts[order[i]]);
+  }
+  buf_str(b, "]");
+}
+typedef struct { uint64_t size; int index; } LibOrder;
+static int lib_big_first(const void* a, const void* b) {
+  const LibOrder* x = a;
+  const LibOrder* y = b;
+  return x->size != y->size ? (x->size < y->size ? 1 : -1) : x->index - y->index;
+}
+static int lib_small_first(const void* a, const void* b) {
+  const LibOrder* x = a;
+  const LibOrder* y = b;
+  // Tamanho desconhecido (0) vai para o fim.
+  const uint64_t sx = x->size ? x->size : UINT64_MAX, sy = y->size ? y->size : UINT64_MAX;
+  return sx != sy ? (sx < sy ? -1 : 1) : x->index - y->index;
+}
+
+static void monitor_library(int fd, const char* query) {
+  LibQuery* q = calloc(1, sizeof *q);
+  if (!q) { monitor_json(fd, 500, "{\"error\":\"out of memory\"}"); return; }
+  lib_query_parse(query, q);
+  pthread_mutex_lock(&g_lib_lock);
+  const int state = lib_refresh_locked();
+  if (state != 1 || !g_lib) {
+    pthread_mutex_unlock(&g_lib_lock);
+    free(q);
+    if (state == 2) monitor_json(fd, 404, "{\"error\":\"no-library\"}");
+    else monitor_json(fd, 500, "{\"error\":\"bad-library\"}");
+    return;
+  }
+  const LibIndex* x = g_lib;
+  q->format_mask = (uint32_t)lib_names_mask(q->formats, &x->formats[0][0], sizeof x->formats[0], x->format_count, &q->format_none);
+  q->genre_mask = lib_names_mask(q->genres, &x->genres[0][0], sizeof x->genres[0], x->genre_count, &q->genre_none);
+  LibOrder* matches = malloc(sizeof *matches * (size_t)(x->count + 1));
+  if (!matches) { pthread_mutex_unlock(&g_lib_lock); free(q); monitor_json(fd, 500, "{\"error\":\"out of memory\"}"); return; }
+  int platforms[3] = {0}, sizes[5] = {0}, formats[LIB_FORMATS] = {0}, genres[LIB_GENRES] = {0}, count = 0;
+  for (int i = 0; i < x->count; ++i) {
+    const LibGame* g = &x->games[i];
+    if (q->q[0] && !lib_text_match(g, q->q)) continue;
+    if (lib_match(g, q, LIB_DIM_PLATFORM)) ++platforms[g->platform < 3 ? g->platform : 0];
+    if (lib_match(g, q, LIB_DIM_SIZE)) ++sizes[lib_size_bucket(g->size)];
+    if (lib_match(g, q, LIB_DIM_FORMAT)) for (int k = 0; k < x->format_count; ++k) if (g->formats & (1u << k)) ++formats[k];
+    if (lib_match(g, q, LIB_DIM_GENRE)) for (int k = 0; k < x->genre_count; ++k) if (g->genres & (1ull << k)) ++genres[k];
+    if (lib_match(g, q, 0)) { matches[count].size = g->size; matches[count].index = i; ++count; }
+  }
+  if (q->sort && count > 1) qsort(matches, (size_t)count, sizeof *matches, q->sort == 1 ? lib_big_first : lib_small_first);
+  Buf b = {0};
+  buf_str(&b, "{\"ok\":true,\"builtAt\":");
+  buf_json(&b, x->built);
+  buf_fmt(&b, ",\"partial\":%s,\"total\":%d,\"count\":%d,\"offset\":%d,\"limit\":%d,\"games\":[", x->partial ? "true" : "false", x->count, count,
+          q->offset, q->limit);
+  pthread_mutex_lock(&g_lock);
+  for (int i = q->offset, shown = 0; i < count && shown < q->limit; ++i, ++shown) {
+    if (shown) buf_str(&b, ",");
+    const LibGame* g = &x->games[matches[i].index];
+    lib_game_json(&b, x, g, lib_queued_locked(g));
+  }
+  pthread_mutex_unlock(&g_lock);
+  buf_fmt(&b, "],\"facets\":{\"platforms\":{\"ps5\":%d,\"ps4\":%d,\"other\":%d},\"sizes\":{\"lt10\":%d,\"10to30\":%d,\"30to60\":%d,\"gt60\":%d,\"unknown\":%d},\"formats\":",
+          platforms[1], platforms[2], platforms[0], sizes[0], sizes[1], sizes[2], sizes[3], sizes[4]);
+  lib_facet_json(&b, &x->formats[0][0], sizeof x->formats[0], x->format_count, formats);
+  buf_str(&b, ",\"genres\":");
+  lib_facet_json(&b, &x->genres[0][0], sizeof x->genres[0], x->genre_count, genres);
+  buf_str(&b, "}}");
+  pthread_mutex_unlock(&g_lib_lock);
+  free(matches);
+  free(q);
+  if (b.failed || !b.data) monitor_json(fd, 500, "{\"error\":\"out of memory\"}");
+  else monitor_send(fd, 200, "application/json", b.data, b.size);
+  free(b.data);
+}
+
+// O jogo `id` com os arquivos, relido do arquivo. -> 1 achou, 0 nao achou, 2 sem o arquivo, 3 invalido.
+static int lib_find(const char* id, LibParse* p) {
+  memset(p, 0, sizeof *p);
+  p->index = lib_index_new();
+  p->files = calloc(LIB_FILES, sizeof(LibFile));
+  p->want = id;
+  if (!p->index || !p->files || !id[0]) return 3;
+  pthread_mutex_lock(&g_lib_lock);
+  const int state = lib_read(p);
+  pthread_mutex_unlock(&g_lib_lock);
+  return state != 1 ? state : p->found;
+}
+static void lib_find_free(LibParse* p) {
+  lib_index_free(p->index);
+  free(p->files);
+}
+// O hash de um torrent: 40 hex (ou 64, v2) ou 32 letras base32.
+static int lib_hash_ok(const char* hash) {
+  const size_t n = strlen(hash);
+  if (n != 32 && n != 40 && n != 64) return 0;
+  for (const char* p = hash; *p; ++p) if (!isalnum((unsigned char)*p)) return 0;
+  return 1;
+}
+// Um arquivo que o app sabe pedir: torrent com infohash, webdl com a fonte do catalogo, ou item da conta com o arquivo.
+static int lib_file_ok(const LibFile* f, const LibGame* g) {
+  if (!strcmp(f->via, "account")) return f->item_id[0] && f->file_id[0];
+  if (!strcmp(f->via, "webdl")) return f->release[0] != 0;
+  if (!strcmp(f->via, "torrent") || !f->via[0]) return lib_hash_ok(f->hash[0] ? f->hash : g->hash);
+  return 0;
+}
+// O torrent inteiro (como um zip): o primeiro arquivo de torrent (pelo infohash) ou de um torrent da conta; -1 sem.
+static int lib_whole_source(const LibParse* p) {
+  for (int i = 0; i < p->file_count; ++i) {
+    const LibFile* f = &p->files[i];
+    if ((!strcmp(f->via, "torrent") || !f->via[0]) && lib_hash_ok(f->hash[0] ? f->hash : p->game.hash)) return i;
+    if (!strcmp(f->via, "account") && !strcmp(f->item_kind, "torrent") && f->item_id[0]) return i;
+  }
+  return p->file_count == 0 && lib_hash_ok(p->game.hash) ? LIB_FILES : -1; // sem arquivos: o hash do jogo
+}
+// O arquivo que "Baixar" pega sem escolha: o de melhor formato (exFAT primeiro, como o "Procurar no TorBox"), o maior no
+// empate, nunca um pedaco de arquivo dividido. -1: o torrent inteiro (como um zip).
+static int lib_suggest(const LibParse* p) {
+  int best = -1;
+  for (int i = 0; i < p->file_count; ++i) {
+    const LibFile* f = &p->files[i];
+    const int rank = lib_rank(f->format);
+    if (rank >= 99 || f->piece || !lib_file_ok(f, &p->game)) continue;
+    if (best < 0 || rank < lib_rank(p->files[best].format) || (rank == lib_rank(p->files[best].format) && f->size > p->files[best].size)) best = i;
+  }
+  if (best < 0 && p->file_count == 1 && !p->files[0].piece && lib_file_ok(&p->files[0], &p->game)) best = 0;
+  return best;
+}
+static void monitor_library_game(int fd, const char* query) {
+  char id[96] = "";
+  for (const char* p = query ? query : ""; *p;) {
+    const size_t n = strcspn(p, "&");
+    if (n > 3 && !strncmp(p, "id=", 3)) url_decode(p + 3, n - 3, id, sizeof id);
+    p += n;
+    if (*p == '&') ++p;
+  }
+  LibParse p;
+  const int found = lib_find(id, &p);
+  if (found != 1) {
+    lib_find_free(&p);
+    monitor_json(fd, 404, found == 2 ? "{\"error\":\"no-library\"}" : "{\"error\":\"not-found\"}");
+    return;
+  }
+  const int suggested = lib_suggest(&p);
+  Buf b = {0};
+  pthread_mutex_lock(&g_lock);
+  const int queued = lib_queued_locked(&p.game);
+  pthread_mutex_unlock(&g_lock);
+  buf_str(&b, "{\"ok\":true,\"game\":");
+  lib_game_json(&b, p.index, &p.game, queued);
+  buf_str(&b, ",\"files\":[");
+  for (int i = 0; i < p.file_count; ++i) {
+    if (i) buf_str(&b, ",");
+    buf_str(&b, "{\"name\":");
+    buf_json(&b, p.files[i].name);
+    buf_fmt(&b, ",\"size\":%llu,\"format\":", (unsigned long long)p.files[i].size);
+    buf_json(&b, p.files[i].format);
+    buf_str(&b, ",\"via\":");
+    buf_json(&b, p.files[i].via);
+    buf_fmt(&b, ",\"piece\":%s,\"ok\":%s}", p.files[i].piece ? "true" : "false", lib_file_ok(&p.files[i], &p.game) ? "true" : "false");
+  }
+  buf_fmt(&b, "],\"wholeOk\":%s,\"suggested\":", lib_whole_source(&p) >= 0 ? "true" : "false");
+  buf_json(&b, suggested >= 0 ? p.files[suggested].name : "");
+  buf_str(&b, "}");
+  lib_find_free(&p);
+  if (b.failed || !b.data) monitor_json(fd, 500, "{\"error\":\"out of memory\"}");
+  else monitor_send(fd, 200, "application/json", b.data, b.size);
+  free(b.data);
+}
+
+typedef struct { char id[96], file[256]; int whole; } AddBody;
+static int add_field(JP* jp, const char* key, void* ctx) {
+  AddBody* a = ctx;
+  if (!strcmp(key, "id")) return lib_text(jp, a->id, sizeof a->id) ? 1 : -1;
+  if (!strcmp(key, "file")) return lib_text(jp, a->file, sizeof a->file) ? 1 : -1;
+  if (!strcmp(key, "whole")) return jp_bool(jp, &a->whole) ? 1 : -1;
+  return jp_skip(jp) ? 1 : -1;
+}
+// A fonte do pedido no job: o arquivo escolhido (ou, inteiro, o torrent do arquivo `from`; sem arquivo, o hash do jogo).
+static void lib_request_source(Job* j, const LibGame* g, const LibFile* from, int whole) {
+  j->lib_whole = whole;
+  snprintf(j->lib_hash, sizeof j->lib_hash, "%s", from && from->hash[0] ? from->hash : g->hash);
+  snprintf(j->lib_via, sizeof j->lib_via, "%s", from && from->via[0] ? from->via : "torrent");
+  snprintf(j->lib_release, sizeof j->lib_release, "%s", from ? from->release : "");
+  snprintf(j->lib_item_kind, sizeof j->lib_item_kind, "%s", from ? from->item_kind : "");
+  snprintf(j->lib_item_id, sizeof j->lib_item_id, "%s", from ? from->item_id : "");
+  snprintf(j->lib_file_id, sizeof j->lib_file_id, "%s", from && !whole ? from->file_id : "");
+  copy_text(j->lib_file, sizeof j->lib_file, from && !whole ? from->name : "");
+}
+static void monitor_library_add(int fd, Request* r) {
+  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  AddBody a;
+  memset(&a, 0, sizeof a);
+  JP jp = {r->body, r->body + r->content_length, 0};
+  if (!r->body || !jp_object(&jp, add_field, &a) || !a.id[0]) { monitor_json(fd, 400, "{\"error\":\"id\"}"); return; }
+  LibParse p;
+  const int found = lib_find(a.id, &p);
+  if (found != 1) {
+    lib_find_free(&p);
+    monitor_json(fd, 404, found == 2 ? "{\"error\":\"no-library\"}" : "{\"error\":\"not-found\"}");
+    return;
+  }
+  const LibGame* g = &p.game;
+  int chosen = -1, whole = a.whole;
+  if (!whole && a.file[0]) {
+    for (int i = 0; i < p.file_count && chosen < 0; ++i) if (!strcmp(p.files[i].name, a.file)) chosen = i;
+    if (chosen < 0) { lib_find_free(&p); monitor_json(fd, 400, "{\"error\":\"file\"}"); return; }
+    // Uma parte de arquivo dividido so vale com as outras: o torrent inteiro.
+    if (p.files[chosen].piece) { lib_find_free(&p); monitor_json(fd, 400, "{\"error\":\"piece\"}"); return; }
+    if (!lib_file_ok(&p.files[chosen], g)) { lib_find_free(&p); monitor_json(fd, 400, "{\"error\":\"no-source\"}"); return; }
+  } else if (!whole) {
+    chosen = lib_suggest(&p);
+    whole = chosen < 0;
+  }
+  // O torrent inteiro: de um arquivo de torrent (ou do hash do jogo, sem arquivos).
+  const int source = whole ? lib_whole_source(&p) : chosen;
+  if (source < 0) { lib_find_free(&p); monitor_json(fd, 400, "{\"error\":\"no-source\"}"); return; }
+  const LibFile* from = source < p.file_count ? &p.files[source] : NULL;
+  const uint64_t size = !whole && from && from->size ? from->size : g->size;
+  char answer[160], id[24];
+  pthread_mutex_lock(&g_lock);
+  Job* same = NULL;
+  for (int i = 0; i < g_job_count && !same; ++i) {
+    Job* j = g_jobs[i];
+    if (j->requested ? !strcmp(j->lib_id, g->id) : !terminal(j->state) && !strcasecmp(j->name, g->title)) same = j;
+  }
+  if (same && same->requested && !strcmp(same->state, "failed")) {
+    // Pedido que o app nao conseguiu por na fila: tenta de novo (com o arquivo escolhido agora).
+    snprintf(same->state, sizeof same->state, "waiting-app");
+    same->error[0] = 0;
+    lib_request_source(same, g, from, whole);
+    same->total = size;
+    same->updated = now_s();
+    save_jobs_locked();
+    same = NULL;
+    snprintf(answer, sizeof answer, "{\"ok\":true,\"retried\":true,\"appOpen\":%s}", app_away() ? "false" : "true");
+  } else if (same) {
+    copy_text(id, sizeof id, same->id);
+    snprintf(answer, sizeof answer, "{\"ok\":true,\"already\":true,\"id\":\"%s\"}", id);
+  } else if (g_job_count >= MAX_JOBS) {
+    pthread_mutex_unlock(&g_lock);
+    lib_find_free(&p);
+    monitor_json(fd, 409, "{\"error\":\"full\"}");
+    return;
+  } else {
+    Job* j = calloc(1, sizeof *j);
+    if (!j) { pthread_mutex_unlock(&g_lock); lib_find_free(&p); monitor_json(fd, 500, "{\"error\":\"out of memory\"}"); return; }
+    Hash h;
+    char digest[65];
+    hash_init(&h);
+    hash_text0(&h, g->id);
+    if (!hash_finish(&h, digest)) snprintf(digest, sizeof digest, "%032x", g_next_id + 1);
+    snprintf(j->key, sizeof j->key, "lib-%.24s", digest);
+    j->placeholder = 1;
+    j->requested = 1;
+    snprintf(j->id, sizeof j->id, "b%u", ++g_next_id);
+    snprintf(j->state, sizeof j->state, "waiting-app");
+    copy_utf8(j->name, sizeof j->name, g->title);
+    j->total = size;
+    j->order = 100000; // depois da fila do app
+    j->created = j->updated = now_s();
+    snprintf(j->lib_id, sizeof j->lib_id, "%s", g->id);
+    snprintf(j->lib_code, sizeof j->lib_code, "%s", g->code);
+    snprintf(j->lib_platform, sizeof j->lib_platform, "%s", g->platform == 1 ? "ps5" : g->platform == 2 ? "ps4" : "");
+    lib_request_source(j, g, from, whole);
+    g_jobs[g_job_count++] = j;
+    save_jobs_locked();
+    pthread_cond_broadcast(&g_wake_downloader);
+    copy_text(id, sizeof id, j->id);
+    snprintf(answer, sizeof answer, "{\"ok\":true,\"id\":\"%s\",\"appOpen\":%s}", id, app_away() ? "false" : "true");
+  }
+  const int created = !strstr(answer, "already");
+  const int away = app_away();
+  pthread_mutex_unlock(&g_lock);
+  if (created) {
+    logf_("celular: pedido da Biblioteca TorBox: %s (%s)", g->title, whole ? "o torrent inteiro" : chosen >= 0 ? base_name(p.files[chosen].name) : "?");
+    // Com o app fechado, o PS5 avisa que o pedido espera a Jobee'sLair abrir.
+    if (away) {
+      char text[400];
+      snprintf(text, sizeof text, "Jobee'sLair: %.200s entrou na fila pelo celular. Abra a Jobee'sLair para baixar.", g->title);
+      notify(text);
+    }
+  }
+  lib_find_free(&p);
+  monitor_json(fd, 200, answer);
+}
+
 static void monitor_route(int fd, Request* r, uint32_t ip) {
   char* query = strchr(r->path, '?');
-  if (query) *query = 0;
+  if (query) *query++ = 0;
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library")) { monitor_library(fd, query); return; }
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library/game")) { monitor_library_game(fd, query); return; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/library/add")) { monitor_library_add(fd, r); return; }
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {
     monitor_send(fd, 200, "text/html; charset=utf-8", BG_MONITOR_HTML, BG_MONITOR_HTML_SIZE);
     return;
@@ -3735,6 +4658,8 @@ int main(void) {
   signal(SIGABRT, on_fatal);
   signal(SIGSYS, on_fatal);
   snprintf(g_dir, sizeof g_dir, "%s", env_or("BGDL_DIR", "/data/JobeesLair/bg"));
+  // glibren: a Biblioteca TorBox que o app grava (Configuracoes); outro caminho so nos testes.
+  snprintf(g_lib_path, sizeof g_lib_path, "%s", env_or("BGDL_LIBRARY", "/data/JobeesLair/torbox-lista.json"));
   g_port = atoi(env_or("BGDL_PORT", "34200"));
   if (g_port <= 0 || g_port > 65535) g_port = DEFAULT_PORT;
   g_monitor_port = atoi(env_or("BGDL_MONITOR_PORT", "34201"));
