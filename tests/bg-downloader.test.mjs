@@ -1272,6 +1272,46 @@ test('glibren.13: biblioteca TorBox: arquivo de jogo de 170 B e copia quebrada (
   }
 });
 
+test('glibren.16: biblioteca TorBox: conjunto em partes ("parts") e uma opcao so, atras do arquivo unico do mesmo formato; "Baixar" aceita', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const file = path.join(base, 'torbox-lista.json');
+  const list = library(3);
+  const parts = [1, 2, 3].map((n) => ({ hash: String(n).repeat(32), name: `Set.part${n}.rar`, size: 15 * GiB }));
+  // So o conjunto (como a app grava: via webdl, release = o id do conjunto, parts = as partes).
+  list.games.push({ id: 'set', title: 'So em partes', code: 'PPSA20010', files: [
+    { name: 'Set (3 partes)', size: 45 * GiB, format: 'rar', via: 'webdl', hash: parts[0].hash, release: 'set-abc', parts }] });
+  // Conjunto e arquivo unico do mesmo formato: o unico e o recomendado, mesmo menor.
+  list.games.push({ id: 'both', title: 'Unico e partes', code: 'PPSA20011', files: [
+    { name: 'Both (3 partes)', size: 45 * GiB, format: 'rar', via: 'webdl', hash: parts[0].hash, release: 'set-def', parts },
+    { name: 'Both.rar', size: 40 * GiB, format: 'rar', via: 'webdl', hash: 'ab'.repeat(16), release: 'rel-both' }] });
+  writeFileSync(file, JSON.stringify(list));
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file });
+  try {
+    await up(base);
+    await pageUp();
+    const session = await unlocked(base);
+    const set = (await page('/api/library/game?id=set')).data;
+    assert.deepEqual(set.files.map((f) => [f.name, f.parts, f.piece, f.ok, f.broken]), [['Set (3 partes)', 3, false, true, false]]);
+    assert.equal(set.suggested, 'Set (3 partes)');
+    assert.ok(!JSON.stringify(set).includes('set-abc') && !JSON.stringify(set).includes('1'.repeat(32)), 'nem fonte nem hash na pagina');
+    const both = (await page('/api/library/game?id=both')).data;
+    assert.equal(both.suggested, 'Both.rar');
+    assert.equal(both.files.find((f) => f.name === 'Both.rar').parts, undefined, '"parts" so no conjunto');
+    const add = await page('/api/library/add', { method: 'POST', session, body: { id: 'set', file: 'Set (3 partes)' } });
+    assert.equal(add.status, 200);
+    const job = (await call(base, 'GET', '/jobs')).data.jobs.find((item) => item.id === add.data.id);
+    assert.deepEqual([job.library.via, job.library.release, job.library.file, job.library.whole, job.library.hash], ['webdl', 'set-abc', 'Set (3 partes)', false, '1'.repeat(32)]);
+    const shownJob = (await page('/api/status')).data.jobs.find((item) => item.id === add.data.id);
+    assert.equal(shownJob.parts, 3, 'a fila do celular mostra "3 partes"');
+    const auto = await page('/api/library/add', { method: 'POST', session, body: { id: 'both' } });
+    const autoJob = (await call(base, 'GET', '/jobs')).data.jobs.find((item) => item.id === auto.data.id);
+    assert.deepEqual([autoJob.library.release, autoJob.library.file], ['rel-both', 'Both.rar'], 'sem escolha: o arquivo unico');
+  } finally {
+    await stop(child);
+  }
+});
+
 test('biblioteca TorBox: incluir download pelo celular (sessao, duplicado, arquivo escolhido, recusa do app, cancelar, reinicio)', { skip }, async () => {
   monitorPort = await freePort();
   const base = workspace();

@@ -59,7 +59,7 @@ import { originOf } from './link-formats.js';
   var STATE_DIR = "/data/JobeesLair/bg";
   var PORT = 34200;
   // glibren.13: a versao do protocolo do bg-downloader.elf deste app (BG_API em app/native/bg_downloader.c, no /health).
-  var PAYLOAD_API = 13;
+  var PAYLOAD_API = 14;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 

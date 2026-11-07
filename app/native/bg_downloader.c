@@ -90,7 +90,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 13
+#define BG_API 14
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -4352,7 +4352,7 @@ static void monitor_power(int fd, Request* r) {
 //        outros filtros aplicados. Sem sessao, como /api/status: nada de segredo sai (nem hash, nem caminho).
 //        404 {"error":"no-library"} sem o arquivo; 500 {"error":"bad-library"} quando nada se aproveita dele.
 //        glibren.9: cada jogo leva "cover" (https) quando a lista tem.
-//   GET  /api/library/game?id=  -> {ok, game:{...}, files:[{name, size, format, piece}], suggested:"<arquivo>"|"",
+//   GET  /api/library/game?id=  -> {ok, game:{...}, files:[{name, size, format, piece, parts?}], suggested:"<arquivo>"|"",
 //        details?:{...a ficha...}} ("" = o torrent inteiro, como um zip; sem a ficha do jogo, sem "details").
 //   POST /api/library/add {id, file?, whole?} (sessao do PIN) -> {ok, id, appOpen} | {ok, already, id}
 //        Vira um marcador "waiting-app" pedido pelo celular (requested), que a fila do app (POST /queue) nao tira.
@@ -4377,10 +4377,13 @@ typedef struct {
 } LibGame;
 // Um arquivo da lista: via "torrent" (hash = infohash), "webdl" (hash = MD5 do link; release = a fonte no app) ou
 // "account" (item {kind, id} na conta TorBox, file = o id do arquivo); piece = parte de um arquivo dividido.
+// glibren.16: parts = quantas partes tem um conjunto em partes que o TorBox guarda inteiro (o "parts" da lista: a lista
+// das partes, ou so o numero); 0 num arquivo unico. O app baixa todas pelo `release` (o id do conjunto).
 typedef struct {
   char name[256], format[16], via[12], hash[72], release[96], item_kind[12], item_id[32], file_id[32];
   uint64_t size;
   int piece;
+  unsigned parts;
 } LibFile;
 typedef struct {
   LibGame* games;
@@ -4508,6 +4511,12 @@ static int lib_file_item_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "id")) return lib_text(jp, f->item_id, sizeof f->item_id) ? 1 : -1;
   return 0;
 }
+// glibren.16: conta os itens de uma lista (as partes de um conjunto), pulando cada um.
+static int lib_count_item(JP* j, void* ctx) {
+  unsigned* n = ctx;
+  if (*n < 999) ++*n;
+  return jp_skip(j);
+}
 static int lib_file_field(JP* jp, const char* key, void* ctx) {
   LibFile* f = ctx;
   if (!strcmp(key, "via")) { if (!lib_text(jp, f->via, sizeof f->via)) return -1; lower_ascii(f->via); return 1; }
@@ -4523,6 +4532,17 @@ static int lib_file_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "name")) return lib_text(jp, f->name, sizeof f->name) ? 1 : -1;
   if (!strcmp(key, "size")) return lib_uint(jp, &f->size) ? 1 : -1;
   if (!strcmp(key, "format")) return lib_text(jp, f->format, sizeof f->format) ? 1 : -1;
+  if (!strcmp(key, "parts")) {
+    jp_ws(jp);
+    if (jp->p < jp->end && *jp->p == '[') return jp_array(jp, lib_count_item, &f->parts) ? 1 : -1;
+    if (jp->p < jp->end && isdigit((unsigned char)*jp->p)) {
+      uint64_t n = 0;
+      if (!jp_uint(jp, &n)) return -1;
+      f->parts = n > 999 ? 999 : (unsigned)n;
+      return 1;
+    }
+    return jp_skip(jp) ? 1 : -1;
+  }
   return 0;
 }
 static int lib_file_item(JP* j, void* ctx) {
@@ -4957,7 +4977,10 @@ static int lib_suggest(const LibParse* p) {
     const LibFile* f = &p->files[i];
     const int rank = lib_rank(f->format);
     if (rank >= 99 || f->piece || lib_file_broken(f) || !lib_file_ok(f, &p->game)) continue;
-    if (best < 0 || rank < lib_rank(p->files[best].format) || (rank == lib_rank(p->files[best].format) && f->size > p->files[best].size)) best = i;
+    // glibren.16: no mesmo formato, o arquivo unico vence o conjunto em partes (menos coisa para baixar e juntar).
+    const int set = f->parts > 1, best_set = best >= 0 && p->files[best].parts > 1;
+    if (best < 0 || rank < lib_rank(p->files[best].format) ||
+        (rank == lib_rank(p->files[best].format) && (set < best_set || (set == best_set && f->size > p->files[best].size)))) best = i;
   }
   if (best < 0 && p->file_count == 1 && !p->files[0].piece && !lib_file_broken(&p->files[0]) && lib_file_ok(&p->files[0], &p->game)) best = 0;
   return best;
@@ -5192,6 +5215,8 @@ static void monitor_library_game(int fd, const char* query) {
     buf_json(&b, p.files[i].format);
     buf_str(&b, ",\"via\":");
     buf_json(&b, p.files[i].via);
+    // glibren.16: "parts" so num conjunto em partes (a pagina mostra "RAR · 3 partes · 45 GB").
+    if (p.files[i].parts > 1) buf_fmt(&b, ",\"parts\":%u", p.files[i].parts);
     buf_fmt(&b, ",\"piece\":%s,\"ok\":%s,\"broken\":%s}", p.files[i].piece ? "true" : "false", lib_file_ok(&p.files[i], &p.game) ? "true" : "false",
             lib_file_broken(&p.files[i]) ? "true" : "false");
   }
@@ -5233,6 +5258,8 @@ static void lib_request_source(Job* j, const LibGame* g, const LibFile* from, in
       unsigned n = 0;
       for (int i = 0; i < p->file_count; ++i) if (p->files[i].piece && !strcmp(p->files[i].hash, from->hash)) ++n;
       j->parts = n > 999 ? 999 : n;
+    } else if (from->parts > 1 && !whole) {
+      j->parts = from->parts; // glibren.16: um conjunto em partes do catalogo (o app baixa cada parte pelo TorBox)
     }
   }
   snprintf(j->lib_hash, sizeof j->lib_hash, "%s", from && from->hash[0] ? from->hash : g->hash);
