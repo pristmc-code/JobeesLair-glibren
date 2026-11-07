@@ -2,8 +2,17 @@
 
 A catalog feed is a JSON file, served over `http://` or `https://`, that adds games to Jobee'sLair
 or adds sources to games its catalog already lists. Add one in **Settings → Storage & feeds → Add a feed**
-by typing its full address, or from the phone companion's **Feeds** tab. Up to 4 feeds, each at most 2 MiB.
+by typing its full address, or from the phone companion's **Feeds** tab. As many feeds as you like (a
+safety ceiling of 50), each at most 2 MiB.
 Step-by-step instructions, including hosting a feed, are in [INSTALLATION-GUIDE.md](INSTALLATION-GUIDE.md#catalog-feeds).
+
+A feed can also be a `.json` file already on the console (glibren fork): **Settings → Storage & feeds → Add a
+file from the PS5** opens a picker over the internal drive (`/data`) and the USB / extended drives
+(`/mnt/usbN`, `/mnt/extN`); typing a path such as `/data/feeds/catalog.json` (or a `file://` address) in
+**Add a feed** works too. The link keeps the file's path, and the file is read again every time the app opens
+and on **Refresh feeds**, so an edited file shows the next time Jobee'sLair opens. A file that is missing (its
+drive unplugged) keeps its link and the games of its last good read, and Settings says why it could not be read.
+**Remove link** removes only the link: the file itself is never changed or deleted. A file has no mirrors.
 
 > [!WARNING]
 > Only add feeds that point to content you legally own or have explicit permission to download, such as your

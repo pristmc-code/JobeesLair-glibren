@@ -85,7 +85,7 @@ or disappear: anyone can read, build, fix and fork it.
 - **Homebrew, its own section:** 200+ open-source PS5 apps, emulators, ports and payloads, each with its
   own art, installed and kept up to date straight from its author's GitHub release (nothing is rehosted).
   Apps land in `homebrew/` for ShadowMount+; payloads run through your ELF loader with one button.
-- **Browse and download** a bundled catalog of games, plus up to 4 catalog feeds of your own
+- **Browse and download** a bundled catalog of games, plus as many catalog feeds of your own as you like (web addresses or `.json` files on the console)
   (with mirror addresses, so a feed survives its domain going down). Downloads go straight to internal
   storage or a USB drive.
 - **Labels every source** before you download: what it is (Folder Dump, .exfat Image, FFPKG, Backport),

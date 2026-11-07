@@ -8,18 +8,25 @@
 // then the mirrors, and stops at the first that gives a usable feed. So a feed whose domain is taken down
 // keeps refreshing from a mirror, and when every address is down the last good copy on the console is
 // kept. Nothing here touches the download handlers: a feed only ever supplies catalog records.
+//
+// glibren.14: a feed can also be a .json file on the console (state/local-feed.js): its entry in feeds.json is the
+// file's path. It is read from the disk at every launch, as the catalog loads (so an edited file shows the next time
+// the app opens), and again on Refresh feeds. A file that is missing or unreadable (its drive unplugged) keeps its
+// link and the games of its last good read, as a feed whose every address is down keeps its last good copy. Removing
+// the link never touches the file itself. No mirrors for a file.
 
 import { useEffect, useState } from 'react';
 import { MAX_MIRRORS, feedDocument, parseFeed, parseFeedAsync, stableKey, stableKeyAsync } from './feed-format.js';
 import { isoStamp } from './clock.js';
 import { DATA_DIR, LEGACY_DATA_DIR } from './data-dir.js';
 import { webURL } from './download-sources.js';
+import { checkLocalPath, isLocalFeed } from './local-feed.js';
 import { savedList } from './saved.js';
 import { FileSystem, Http } from '@ps5-react/core';
 
-  // The JS heap is 32 MiB for everything: a few modest feeds, each read whole. MODIFIED (0.5.1): the live
-  // catalog below takes one of the four places, so a player adds up to three of their own.
-  var MAX_FEEDS = 3, MAX_BYTES = 2 * 1024 * 1024;
+  // The JS heap is 32 MiB for everything: a few modest feeds, each read whole. glibren.14: no longer three of the
+  // player's own; MAX_FEEDS is only a safety ceiling, far above what anyone links.
+  var MAX_FEEDS = 50, MAX_BYTES = 2 * 1024 * 1024;
   // MODIFIED (0.5.1): the live catalog, built every few hours from the public Pegasus catalogs
   // (tools/catalog/live-feed.mjs, .github/workflows/catalog-live.yml): games and links newer than this build's
   // bundled catalog. Every console reads it like a feed the player added, without being listed in Settings,
@@ -57,20 +64,104 @@ import { FileSystem, Http } from '@ps5-react/core';
     indexes.set(url, games.map(({ game: game2 }) => [game2.id, game2.direct ? 1 : 0]));
     indexVersion++;
   };
-  var summary = (cache) => ({ name: cache.name, games: cache.games, fetchedAt: cache.fetchedAt, from: cache.from ?? cache.url, mirrors: Array.isArray(cache.mirrors) ? cache.mirrors : [], hash: cache.hash, etag: typeof cache.etag === "string" ? cache.etag : null });
+  var summary = (cache) => ({ name: cache.name, games: cache.games, fetchedAt: cache.fetchedAt, from: cache.from ?? cache.url, mirrors: Array.isArray(cache.mirrors) ? cache.mirrors : [], hash: cache.hash, etag: typeof cache.etag === "string" ? cache.etag : null, stamp: typeof cache.stamp === "string" ? cache.stamp : null });
+  // glibren.14: a linked file, read off the disk. Its size and time say whether it changed since the cached copy;
+  // they also stand for its hash (`loaded` and the "reopen to see it" notice compare them).
+  var stampOf = (info) => `${info.size ?? ""}:${info.modified ?? ""}`;
+  function statLocal(path) {
+    let info;
+    try {
+      info = FileSystem.stat(path);
+    } catch (error2) {
+      throw new Error(`File not readable (${error2.message}).`);
+    }
+    if (!info) throw new Error("File not found. Is its drive connected?");
+    if (info.isDirectory) throw new Error("That is a folder, not a file.");
+    if (typeof info.size === "number" && info.size > MAX_BYTES) throw new Error("The file is larger than 2 MiB.");
+    return info;
+  }
+  function readLocalDocument(path) {
+    let text2;
+    try {
+      text2 = FileSystem.readFile(path);
+    } catch (error2) {
+      throw new Error(`File not readable (${error2.message}).`);
+    }
+    if (typeof text2 !== "string") throw new Error("File not readable.");
+    if (text2.length > MAX_BYTES) throw new Error("The file is larger than 2 MiB.");
+    try {
+      return JSON.parse(text2);
+    } catch {
+      throw new Error("Not JSON.");
+    }
+  }
+  // The cache of a file's good read: the same form as a fetched feed's, with the file's stamp.
+  function saveLocal(url, feed, stamp) {
+    const text2 = JSON.stringify(feedDocument({ ...feed, mirrors: [] }));
+    const cache = { url, from: url, hash: `file:${stamp}`, etag: null, stamp, fetchedAt: isoStamp(Date.now()), name: feed.name, games: feed.games.length, skipped: feed.skipped, mirrors: [] };
+    try {
+      FileSystem.mkdir(DIR, { recursive: true });
+      FileSystem.writeFile(`${cacheFile(url)}.tmp`, `${JSON.stringify(cache).slice(0, -1)},"document":${text2}}`);
+      FileSystem.rename(`${cacheFile(url)}.tmp`, cacheFile(url));
+    } catch (error2) {
+      console.log(`feeds: copy of ${url} not kept: ${error2.message}`);
+    }
+    meta.set(url, summary(cache));
+    setIndex(url, feed.games);
+    return cache;
+  }
+  // At launch: the file as it is on the disk now, or (missing, unreadable, not a feed) its last good read, with the
+  // reason in its status. The cached copy stands in for the file when its stamp says nothing changed.
+  function loadLocal(url) {
+    const cache = readCache(url);
+    let failure = null;
+    try {
+      const info = statLocal(url);
+      const stamp = stampOf(info);
+      if (cache && cache.stamp === stamp) {
+        const feed2 = parseFeed(cache.document, url);
+        loaded.set(url, cache.hash);
+        meta.set(url, { ...summary(cache), fetchedAt: isoStamp(Date.now()) });
+        setIndex(url, feed2.games);
+        return feed2;
+      }
+      const feed = parseFeed(readLocalDocument(url), url);
+      if (!feed.games.length) throw new Error("No usable games in this file.");
+      const saved = saveLocal(url, feed, stamp);
+      loaded.set(url, saved.hash);
+      console.log(`feeds: ${url}: read, ${feed.games.length} games, ${feed.skipped} skipped`);
+      return feed;
+    } catch (error2) {
+      failure = error2;
+    }
+    console.log(`feeds: ${url} not read: ${failure.message}`);
+    status.set(url, { state: "failed", error: failure.message });
+    if (!cache) return null;
+    const feed = parseFeed(cache.document, url);
+    loaded.set(url, cache.hash);
+    meta.set(url, summary(cache));
+    setIndex(url, feed.games);
+    return feed;
+  }
   // Every listed feed's cached games, validated again: { game, page, releases } as parseFeed gives them.
   // The store ratings the feeds carry (0.5.1), [stars, count] by title ID; the live catalog's first, as it is listed first.
   var feedRatings = {};
   function loadFeedGames() {
     const out = [];
     for (const url of allFeeds()) {
-      const cache = readCache(url);
-      if (!cache) continue;
+      const cache = isLocalFeed(url) ? null : readCache(url);
+      if (!cache && !isLocalFeed(url)) continue;
       try {
-        const feed = parseFeed(cache.document, url);
-        loaded.set(url, cache.hash);
-        meta.set(url, summary(cache));
-        setIndex(url, feed.games);
+        let feed;
+        if (isLocalFeed(url)) {
+          feed = loadLocal(url);
+          if (!feed) continue;
+        } else {
+          feed = parseFeed(cache.document, url);
+          loaded.set(url, cache.hash);
+          meta.set(url, summary(cache));
+          setIndex(url, feed.games);
+        }
         // glibren.9: each game says which feed it came from (the TorBox library's sources, state/torbox-library.js).
         for (const item of feed.games) item.feed = url;
         out.push(...feed.games);
@@ -114,8 +205,10 @@ import { FileSystem, Http } from '@ps5-react/core';
     const list = mirrorStore.get()[url];
     return Array.isArray(list) ? list.filter((item) => typeof item === "string") : [];
   };
-  // Every mirror of a feed: the player's, then the ones the feed names itself.
-  var mirrorsOf = (url) => [...new Set([...userMirrors(url), ...meta.get(url)?.mirrors ?? []])].filter((mirror) => mirror !== url);
+  // Every mirror of a feed: the player's, then the ones the feed names itself (none for a file on the console).
+  var mirrorsOf = (url) => isLocalFeed(url) ? [] : [...new Set([...userMirrors(url), ...meta.get(url)?.mirrors ?? []])].filter((mirror) => mirror !== url);
+  // glibren.14: what the player typed or picked: a file's path (or file:// address), else a web address.
+  var addressOf = (value) => /^\s*(?:\/|file:\/\/)/i.test(value || "") ? checkLocalPath(value) : checkURL(value);
   // The addresses a refresh tries, in order: the one that worked last, the feed's own, then its mirrors.
   function sourcesOf(url) {
     const all = [url, ...mirrorsOf(url)];
@@ -163,7 +256,32 @@ import { FileSystem, Http } from '@ps5-react/core';
     feed.etag = etag;
     return feed;
   }
+  // glibren.14: a linked file, read again (Refresh feeds, and the refresh after launch): an unchanged stamp reads
+  // nothing; a missing or broken file keeps its last good read and says why.
+  async function refreshLocal(url) {
+    setStatus(url, { state: "refreshing" });
+    try {
+      const info = statLocal(url);
+      const stamp = stampOf(info);
+      const known = meta.get(url);
+      if (known && known.stamp === stamp) {
+        meta.set(url, { ...known, fetchedAt: isoStamp(Date.now()) });
+        setStatus(url, { state: "ok", changed: loaded.get(url) !== known.hash });
+        return;
+      }
+      const feed = await parseFeedAsync(readLocalDocument(url), url, nextFrame);
+      if (!feed.games.length) throw new Error("No usable games in this file.");
+      if (!listed(url)) return;
+      const cache = saveLocal(url, feed, stamp);
+      setStatus(url, { state: "ok", changed: loaded.get(url) !== cache.hash });
+      console.log(`feeds: ${url}: read, ${feed.games.length} games, ${feed.skipped} skipped`);
+    } catch (error2) {
+      console.log(`feeds: ${url} not read: ${error2.message}`);
+      if (listed(url)) setStatus(url, { state: "failed", error: error2.message });
+    }
+  }
   async function fetchFeed(url) {
+    if (isLocalFeed(url)) return refreshLocal(url);
     setStatus(url, { state: "refreshing" });
     try {
       const sources = sourcesOf(url);
@@ -223,17 +341,24 @@ import { FileSystem, Http } from '@ps5-react/core';
     })());
   }
   // Adds a feed and fetches it; throws (for the address dialog to show) when it cannot be added.
+  // glibren.14: a path (or file://) links a file on the console instead; it must be there when it is linked.
   function addFeed(value) {
-    const url = checkURL(value);
+    const url = addressOf(value);
     const urls = feedList.get();
     if (urls.includes(url) || url === LIVE_FEED) throw new Error("That feed is already added.");
     if (urls.length >= MAX_FEEDS) throw new Error(`Up to ${MAX_FEEDS} feeds. Remove one first.`);
+    if (isLocalFeed(url)) statLocal(url);
     feedList.set([...urls, url]);
     void refreshFeed(url);
+  }
+  // glibren.14: Settings' "Add a file from the PS5" (ui/FeedFilePicker.jsx): only a path.
+  function addLocalFeed(path) {
+    addFeed(checkLocalPath(path));
   }
   // Adds a fallback address for a feed (kept in feed-mirrors.json); throws when it cannot be added.
   function addMirror(feedUrl, value) {
     if (!listed(feedUrl)) throw new Error("No such feed.");
+    if (isLocalFeed(feedUrl)) throw new Error("A file on the console has no mirrors.");
     const mirror = checkURL(value);
     if (mirror === feedUrl) throw new Error("That is the feed's own address.");
     const mine = userMirrors(feedUrl);
@@ -279,14 +404,15 @@ import { FileSystem, Http } from '@ps5-react/core';
     const urls = feedList.get();
     const index = urls.indexOf(from);
     if (index < 0) throw new Error("No such feed.");
-    const url = checkURL(value);
+    const url = addressOf(value);
     if (url === from) {
       void refreshFeed(url);
       return;
     }
     if (urls.includes(url) || url === LIVE_FEED) throw new Error("That feed is already added.");
+    if (isLocalFeed(url)) statLocal(url);
     feedList.set(urls.map((item, at) => at === index ? url : item));
-    const mine = userMirrors(from).filter((mirror) => mirror !== url);
+    const mine = isLocalFeed(url) ? [] : userMirrors(from).filter((mirror) => mirror !== url);
     const next = { ...mirrorStore.get() };
     delete next[from];
     if (mine.length) next[url] = mine;
@@ -302,6 +428,8 @@ import { FileSystem, Http } from '@ps5-react/core';
       const known = meta.get(url);
       return {
         url,
+        // glibren.14: a file on the console (`url` is its path); `fetchedAt` is when it was last read.
+        local: isLocalFeed(url),
         name: known?.name ?? null,
         games: known?.games ?? 0,
         fetchedAt: known?.fetchedAt ?? null,
@@ -342,4 +470,4 @@ import { FileSystem, Http } from '@ps5-react/core';
 /** glibren.9: a feed's name as its last good copy says (null when none is cached). */
 var feedName = (url) => meta.get(url)?.name ?? null;
 
-export { LIVE_FEED, MAX_FEEDS, feedName, MAX_MIRRORS, addFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };
+export { LIVE_FEED, MAX_FEEDS, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };

@@ -41,7 +41,9 @@ import { useNavActions } from '../state/nav.jsx';
 import { downloadQueue, driveName } from '../state/downloads.js';
 import { useDrives } from '../state/drives.js';
 import { setDefaultDrive, useDefaultDrive } from '../state/last-drive.js';
-import { MAX_FEEDS, MAX_MIRRORS, addFeed, addMirror, refreshFeeds, removeFeed, removeMirror, useFeeds } from '../state/feeds.js';
+import { MAX_FEEDS, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, refreshFeeds, removeFeed, removeMirror, useFeeds } from '../state/feeds.js';
+import { isoStamp, parseStamp } from '../state/clock.js';
+import { FeedFilePicker } from './FeedFilePicker.jsx';
 import { formatBytes } from '../state/size.js';
 import { applyStoreMode, useStoreMode } from '../state/store-mode.js';
 import { cancelLibrary, librarySources, librarySummary, startLibrary, useLibraryProgress } from '../state/torbox-library-run.js';
@@ -61,7 +63,7 @@ import { setNavigationHaptics, useNavigationHaptics } from './haptics.js';
 import { onStatusLight, setStatusLight, statusLightOn } from './lightBar.js';
 import { logical } from './scale.js';
 import { PRESETS, presetOf, useActiveTheme } from './themes.js';
-import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, useIsFocused } from '@ps5-react/core';
+import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, View, motion, useIsFocused } from '@ps5-react/core';
 
   var CARD = { gap: 16, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, padding: 34 };
   var THUMB = { type: "tween", duration: 0.18, ease: "easeOut" };
@@ -265,7 +267,29 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
     ] });
   }
   var hostOf = (url) => /^https?:\/\/([^/?#]+)/i.exec(url)?.[1] ?? url;
+  // glibren.14: when a file on the console was read, in the console's own time: "07/11/2026 14:05".
+  function readTime(stamp) {
+    const ms = parseStamp(stamp);
+    if (ms == null) return "—";
+    let offset = 0;
+    try {
+      offset = Number(DeviceInfo.utcOffset(ms)) || 0;
+    } catch {
+    }
+    const local = isoStamp(ms + offset * 6e4);
+    return `${formatDate2(local.slice(0, 10))} ${local.slice(11, 16)}`;
+  }
+  // A file on the console: its path, its games and when it was read; unreadable, why, and what is still shown.
+  function localDetail(t2, feed) {
+    if (feed.state === "refreshing") return `${feed.url} \xB7 ${t2("settings.feeds.refreshing")}`;
+    if (feed.state === "failed") {
+      const kept = feed.games ? ` ${t2("settings.feeds.localKept", { count: feed.games })}` : "";
+      return `${feed.url} \xB7 ${t2("settings.feeds.localFailed", { error: feed.error })}${kept}`;
+    }
+    return `${feed.url} \xB7 ${t2("settings.feeds.localGames", { count: feed.games, date: feed.fetchedAt ? readTime(feed.fetchedAt) : "—" })}`;
+  }
   function feedDetail(t2, feed) {
+    if (feed.local) return localDetail(t2, feed);
     if (feed.state === "refreshing") return t2("settings.feeds.refreshing");
     if (feed.state === "failed") return t2("settings.feeds.failed", { error: feed.error });
     const base = t2("settings.feeds.games", { count: feed.games, date: feed.fetchedAt ? formatDate2(feed.fetchedAt.slice(0, 10)) : "—" });
@@ -294,11 +318,14 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
         focusKey: `settings:feed:${feed.url}`,
         name: feed.name ?? feed.url,
         detail: feedDetail(t2, feed),
-        end: /* @__PURE__ */ (0, jsx)(Icon, { name: feed.state === "failed" ? "alert" : "layers", color: feed.state === "failed" ? "#f87171" : colors.muted }),
+        end: /* @__PURE__ */ (0, jsx)(Icon, { name: feed.state === "failed" ? "alert" : feed.local ? "file" : "layers", color: feed.state === "failed" ? "#f87171" : colors.muted }),
         onPress: () => setOpen((value) => !value)
       }),
-      /* @__PURE__ */ (0, jsxs)(Menu, { open, onClose: () => setOpen(false), rows: feed.own.length + 3, children: [
-        feed.own.length < MAX_MIRRORS ? /* @__PURE__ */ (0, jsx)(MenuItem, { label: t2("settings.feeds.addMirror"), autoFocus: true, onSelect: () => onMirror(feed.url) }) : null,
+      // glibren.14: a file on the console has no mirrors; removing it removes only the link, never the file.
+      feed.local ? jsx(Menu, { open, onClose: () => setOpen(false), rows: 1, children: [
+        jsx(MenuItem, { label: t2("settings.feeds.removeLink"), autoFocus: true, onSelect: () => removeFeed(feed.url) }, "remove")
+      ] }) : /* @__PURE__ */ (0, jsxs)(Menu, { open, onClose: () => setOpen(false), rows: feed.own.length + 3, children: [
+        feed.own.length < MAX_MIRRORS ?/* @__PURE__ */ (0, jsx)(MenuItem, { label: t2("settings.feeds.addMirror"), autoFocus: true, onSelect: () => onMirror(feed.url) }) : null,
         ...feed.own.map((mirror) => /* @__PURE__ */ (0, jsx)(MenuItem, { label: t2("settings.feeds.removeMirror", { host: hostOf(mirror) }), onSelect: () => removeMirror(feed.url, mirror) }, mirror)),
         /* @__PURE__ */ (0, jsx)(MenuDivider, {}),
         /* @__PURE__ */ (0, jsx)(MenuItem, { label: t2("settings.feeds.removeFeed"), onSelect: () => removeFeed(feed.url) })
@@ -477,13 +504,15 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
       ...drives.roots.map((root) => /* @__PURE__ */ (0, jsx)(Drive, { root, usage: drives.usage[root] }, root))
     ] });
   }
-  function FeedsCard({ onAdd, onMirror }) {
+  // glibren.14: no limit of three feeds any more (MAX_FEEDS is only a safety ceiling), and "Add a file from the PS5".
+  function FeedsCard({ onAdd, onAddFile, onMirror }) {
     const t2 = useT();
     const feeds = useFeeds();
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
       /* @__PURE__ */ (0, jsx)(CardHead, { icon: "layers", title: t2("settings.card.feeds") }),
       ...feeds.map((feed) => /* @__PURE__ */ (0, jsx)(FeedRow, { feed, onMirror }, feed.url)),
-      feeds.length < MAX_FEEDS ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:feeds:add", name: t2("settings.feeds.add"), hint: `${t2("settings.feeds.detail")} ${t2("settings.feeds.addHint", { count: MAX_FEEDS })}.`, end: /* @__PURE__ */ (0, jsx)(Icon, { name: "external", color: colors.muted }), onPress: onAdd }) : null,
+      feeds.length < MAX_FEEDS ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:feeds:add", name: t2("settings.feeds.add"), hint: t2("settings.feeds.detail"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "external", color: colors.muted }), onPress: onAdd }) : null,
+      feeds.length < MAX_FEEDS ? jsx(Row, { focusKey: "settings:feeds:addFile", name: t2("settings.feeds.addFile"), hint: t2("settings.feeds.addFileHint"), end: jsx(Icon, { name: "folder", color: colors.muted }), onPress: onAddFile }) : null,
       feeds.length ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:feeds:refresh", name: t2("settings.feeds.refresh"), detail: feeds.some((feed) => feed.state === "refreshing") ? t2("settings.feeds.refreshing") : null, hint: t2("settings.feeds.refreshHint"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "restart", color: colors.muted }), onPress: () => void refreshFeeds() }) : null,
       feeds.some((feed) => feed.restart) ? /* @__PURE__ */ (0, jsx)(Callout, { children: t2("settings.feeds.restart") }) : null
     ] });
@@ -623,7 +652,7 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
     const [open, setOpen] = (0, useState)(false);
     const steps = [
       [t2("settings.guide.find"), t2("settings.guide.findDetail")],
-      [t2("settings.guide.console"), t2("settings.guide.consoleDetail", { count: MAX_FEEDS })],
+      [t2("settings.guide.console"), t2("settings.guide.consoleDetail")],
       [t2("settings.guide.phone"), t2("settings.guide.phoneDetail", { url: companion.url || "http://192.168.x.x:34177/" })],
       [t2("settings.guide.mirrors"), t2("settings.guide.mirrorsDetail", { count: MAX_MIRRORS })],
       [t2("settings.guide.refresh"), t2("settings.guide.refreshDetail")],
@@ -789,6 +818,8 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
     const { focusLater } = useNavActions();
     const [category, setCategory] = (0, useState)(start);
     const [adding, setAdding] = (0, useState)(false);
+    // glibren.14: the file picker of "Add a file from the PS5", over the drives plugged in.
+    const [pickingFile, setPickingFile] = (0, useState)(false);
     const [mirrorOf, setMirrorOf] = (0, useState)(null);
     const [pinMode, setPinMode] = (0, useState)(null);
     const [phonePinMode, setPhonePinMode] = (0, useState)(null);
@@ -804,7 +835,7 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
     const cards = {
       companion: [/* @__PURE__ */ (0, jsx)(CompanionCard, { onChoosePin: setPinMode }, "companion")],
       downloads: [/* @__PURE__ */ (0, jsx)(DownloadsCard, { onPhonePin: setPhonePinMode }, "downloads")],
-      feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onMirror: setMirrorOf }, "feeds")],
+      feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onAddFile: () => setPickingFile(true), onMirror: setMirrorOf }, "feeds")],
       debrid: [/* @__PURE__ */ (0, jsx)(DebridCard, { onKey: () => setKeying(true), onAllDebridKey: () => setKeyingAll(true) }, "debrid")],
       torboxLibrary: [jsx(TorBoxLibraryCard, {}, "torboxLibrary")],
       look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver")],
@@ -848,6 +879,10 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
       adding ? /* @__PURE__ */ (0, jsx)(URLDialog, { title: t2("settings.feeds.add"), detail: t2("settings.feeds.addDetail"), submit: addFeed, onClose: () => {
         setAdding(false);
         closed("settings:feeds:add");
+      } }) : null,
+      pickingFile ? jsx(FeedFilePicker, { onPick: addLocalFeed, onClose: () => {
+        setPickingFile(false);
+        closed("settings:feeds:addFile");
       } }) : null,
       mirrorOf ? /* @__PURE__ */ (0, jsx)(URLDialog, { title: t2("settings.feeds.addMirror"), detail: t2("settings.feeds.mirrorDetail"), submit: (value) => addMirror(mirrorOf, value), onClose: () => {
         const url = mirrorOf;

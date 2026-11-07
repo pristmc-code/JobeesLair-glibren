@@ -246,6 +246,8 @@ import { youtubeId } from './youtube.js';
     }
     return { version: 1, name: document2.name, games: [...byId.values()] };
   }
+  // A feed without a name is called after its site, or (glibren.14: a file on the console) after its file.
+  var defaultName = (url) => url.startsWith("/") ? text(url.slice(url.lastIndexOf("/") + 1).replace(/\.json$/i, ""), 80) || url : webURL(url).host;
   // The feed at `url`, validated: its name, games, and how many entries were dropped. Throws when the
   // document is not a feed at all.
   // As steps, yielding after every `batch` games (parseFeedAsync paces them; parseFeed does not).
@@ -273,7 +275,7 @@ import { youtubeId } from './youtube.js';
     }
     // Addresses the publisher says the same feed is also served from, tried when this one is down.
     const mirrors = [...new Set(list(document2.mirrors, 16, httpURL))].filter((mirror) => mirror !== url).slice(0, MAX_MIRRORS);
-    return { name: text(document2.name, 80) || webURL(url).host, games: games2, skipped: offered.length - games2.length, mirrors, ratings: ratingsOf(document2.ratings) };
+    return { name: text(document2.name, 80) || defaultName(url), games: games2, skipped: offered.length - games2.length, mirrors, ratings: ratingsOf(document2.ratings) };
   }
   // 0.5.1: a feed's store ratings, { "PPSA21564": [4.77, 76635] }: any title's, listed in the feed or not (the
   // live catalog rates every game the app has). Up to MAX_RATINGS, stars 1-5 and a whole count.
