@@ -46,6 +46,8 @@
 > **glibren.14**: R3 switches between the full store and the TorBox store (hint in the footer); catalog feeds without the
 > limit of 3 and from a .json file on the PS5, read again at every launch; a broken TorBox copy (an error page instead of
 > the game) fails once with the reason instead of renewing the link in a loop; an old payload left running is replaced.
+> **glibren.15**: after an in-app update, the app is reopened only when ShadowMount+ has the new image ready (it waits,
+> then tries again a few times) instead of failing with "can't start the game/app"; if it still cannot, a notification asks to open it.
 
 <p align="center">
   <b>English</b> ·
