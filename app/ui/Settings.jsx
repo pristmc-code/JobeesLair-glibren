@@ -28,7 +28,7 @@ import { autoReportsChoice, reportCode, reportRelay, sendReport, setAutoReports,
 import { online, useOnline } from '../state/online.js';
 import { debridStatus, setAllDebridKey, setTorBoxKey, testAllDebrid, testTorBox, useDebrid } from '../state/debrid.js';
 import { HOMEBREW_ONLY } from '../edition.js';
-import { LIMITS as SPEED_LIMITS, setSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
+import { MAX_SPEED_LIMIT, setSpeedLimit, stepSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
@@ -313,28 +313,31 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
       /* @__PURE__ */ (0, jsx)(Text, { style: text(21, chosen ? colors.accentFg : focused ? colors.fg : colors.muted, { fontWeight: 600 }), children: label })
     ] });
   }
-  // MODIFIED (glibren.13): nine choices (the phone page's list) in two rows: "no limit" and the four fastest, then the
-  // four slowest under them (an empty slot under "no limit" keeps the columns lined up).
+  // MODIFIED (glibren.13): any whole MB/s from 0 ("no limit") to 1000, as the phone page: − / + step 1 MB/s (−10 / +10
+  // for big jumps with the controller), the value between them, and "no limit" to go back to 0. Each press applies.
   function SpeedLimitRow() {
     const t2 = useT();
     const limit = useSpeedLimit();
-    const pill = (value) => /* @__PURE__ */ (0, jsx)(View, {
-      focusKey: `settings:speed:${value}`,
+    const key = (id, label, onPress, options = {}) => /* @__PURE__ */ (0, jsx)(View, {
+      focusKey: `settings:speed:${id}`,
+      // Always focusable (focus never vanishes at 0 or 1000); at an edge a press changes nothing.
       focusable: true,
-      onPress: () => setSpeedLimit(value),
-      style: { position: "relative", flex: value ? 1 : 2, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: value === limit ? colors.accent : colors.surface2 },
-      children: /* @__PURE__ */ (0, jsx)(SpeedFace, { label: value ? t2("units.speed", { n: String(value) }) : t2("settings.speedUnlimited"), chosen: value === limit })
-    }, value);
-    const half = Math.ceil(SPEED_LIMITS.length / 2);
+      onPress,
+      style: { position: "relative", flex: options.flex ?? 1, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: options.chosen ? colors.accent : colors.surface2, opacity: options.disabled ? 0.45 : 1 },
+      children: /* @__PURE__ */ (0, jsx)(SpeedFace, { label, chosen: Boolean(options.chosen) })
+    }, id);
     return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10 }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
         /* @__PURE__ */ (0, jsx)(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.speedLimit") }),
         /* @__PURE__ */ (0, jsx)(Text, { style: text(20, colors.muted), children: t2("settings.speedLimitDetail") })
       ] }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 12 }, children: SPEED_LIMITS.slice(0, half).map(pill) }),
-      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12 }, children: [
-        /* @__PURE__ */ (0, jsx)(View, { style: { flex: 2 } }, "slot"),
-        ...SPEED_LIMITS.slice(half).map(pill)
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12, alignItems: "center" }, children: [
+        key("down10", "−10", () => stepSpeedLimit(-10), { disabled: limit <= 0 }),
+        key("down", "−", () => stepSpeedLimit(-1), { disabled: limit <= 0 }),
+        /* @__PURE__ */ (0, jsx)(View, { style: { flex: 2, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 2, borderColor: limit ? colors.accent : colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: text(23, colors.fg, { fontWeight: 700 }), children: limit ? t2("units.speed", { n: String(limit) }) : t2("settings.speedUnlimited") }) }, "value"),
+        key("up", "+", () => stepSpeedLimit(1), { disabled: limit >= MAX_SPEED_LIMIT }),
+        key("up10", "+10", () => stepSpeedLimit(10), { disabled: limit >= MAX_SPEED_LIMIT }),
+        key("none", t2("settings.speedUnlimited"), () => setSpeedLimit(0), { flex: 2, chosen: limit === 0 })
       ] })
     ] });
   }

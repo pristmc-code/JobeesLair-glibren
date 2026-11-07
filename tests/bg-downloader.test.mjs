@@ -739,10 +739,15 @@ test('glibren.13: limite de velocidade segura a soma de 2 jobs x 8 conexoes, mud
   assert.deepEqual([status.speedLimit, status.maxSpeedLimit, status.speedLimitSet], [0, 1000, false]);
   // Sem sessao, nada muda; fora de 0..1000, fracao, texto ou corpo vazio: 400.
   assert.equal((await page('/api/config', { method: 'POST', body: { speedLimit: 2 } })).status, 401);
-  for (const bad of [{ speedLimit: 1001 }, { speedLimit: 1.5 }, { speedLimit: 'dois' }, {}]) {
+  for (const bad of [{ speedLimit: 1001 }, { speedLimit: -1 }, { speedLimit: 1.5 }, { speedLimit: 'dois' }, {}]) {
     assert.equal((await page('/api/config', { method: 'POST', body: bad, session })).status, 400, JSON.stringify(bad));
   }
   assert.equal((await call(base, 'POST', '/config', { speedLimit: 1001 })).status, 400);
+  assert.equal((await call(base, 'POST', '/config', { speedLimit: -1 })).status, 400);
+  // Qualquer inteiro 0..1000, sem arredondar para uma lista (o celular digita o valor).
+  assert.equal((await page('/api/config', { method: 'POST', body: { speedLimit: 37 }, session })).data.speedLimit, 37);
+  assert.equal((await call(base, 'GET', '/health')).data.speedLimit, 37);
+  assert.equal((await call(base, 'POST', '/config', { speedLimit: 1000 })).data.speedLimit, 1000);
   const set = await page('/api/config', { method: 'POST', body: { speedLimit: 1 }, session });
   assert.deepEqual(set.data, { ok: true, limit: 2, limitSet: false, speedLimit: 1, speedLimitSet: true });
   let health = (await call(base, 'GET', '/health')).data;
@@ -783,7 +788,8 @@ test('glibren.13: limite de velocidade segura a soma de 2 jobs x 8 conexoes, mud
     assert.equal(sha(readFileSync(path.join(base, 'disk/downloads', `s${i + 1}.bin`))), sha(files[`s${i + 1}.bin`]), 'nada se perdeu com as pausas');
   }
   const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
-  assert.ok(log.includes('celular: limite de velocidade 0 -> 1 MB/s'), log);
+  assert.ok(log.includes('celular: limite de velocidade 0 -> 37 MB/s'), log);
+  assert.ok(log.includes('celular: limite de velocidade 1000 -> 1 MB/s'), log);
   assert.ok(log.includes('limite de velocidade: 1 -> 4 MB/s'), log);
   // Gravado: volta igual depois de reiniciar (o do celular, com o stamp).
   assert.equal((await page('/api/config', { method: 'POST', body: { speedLimit: 3 }, session })).status, 200);

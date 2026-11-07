@@ -693,22 +693,22 @@ test('glibren.13: o limite de velocidade vai no POST /config, muda ao vivo, e o 
   limit = 0;
   await wrapper.refreshConfig();
   assert.equal(payload.configs.at(-1).speedLimit, 0);
-  // O celular escolhe 5 MB/s: o acompanhamento (GET /jobs) traz o stamp novo e o app adota, sem mandar o 0 antigo.
+  // O celular escolhe 37 MB/s (digitado; sem arredondar): o acompanhamento (GET /jobs) traz o stamp novo e o app adota, sem mandar o 0 antigo.
   const before = payload.configs.length;
-  Object.assign(remote, { speedLimit: 5, speedLimitBy: 'remote', speedLimitStamp: 1 });
+  Object.assign(remote, { speedLimit: 37, speedLimitBy: 'remote', speedLimitStamp: 1 });
   await wait(60);
-  assert.deepEqual(adopted, [5]);
-  assert.ok(payload.configs.slice(before).every((config) => config.speedLimit === 5), JSON.stringify(payload.configs.slice(before)));
-  // O mesmo stamp de novo nao e adotado outra vez: o jogador muda no app e o app nao volta ao 5.
+  assert.deepEqual(adopted, [37]);
+  assert.ok(payload.configs.slice(before).every((config) => config.speedLimit === 37), JSON.stringify(payload.configs.slice(before)));
+  // O mesmo stamp de novo nao e adotado outra vez: o jogador muda no app e o app nao volta ao 37.
   limit = 25;
   await wrapper.refreshConfig();
   await wait(40);
-  assert.deepEqual(adopted, [5], 'nao desfaz a escolha feita no app');
+  assert.deepEqual(adopted, [37], 'nao desfaz a escolha feita no app');
   assert.equal(payload.configs.at(-1).speedLimit, 25);
   // Um valor estranho do payload nao e adotado.
   Object.assign(remote, { speedLimit: -1, speedLimitStamp: 2 });
   await wait(40);
-  assert.deepEqual(adopted, [5]);
+  assert.deepEqual(adopted, [37]);
   for (const job of payload.jobs) job.state = 'completed';
   await wait(30);
 });

@@ -19,41 +19,54 @@ Object.assign(core.FileSystem, {
 });
 const SETTINGS = '/download0/JobeesLair/settings.json';
 
-test('a saved limit no longer offered becomes the nearest one; setting one saves and applies it in bytes', async () => {
+test('glibren.13: any whole MB/s from 0 to 1000 (an old save still counts); setting one saves and applies it in bytes', async () => {
   files.set(SETTINGS, JSON.stringify({ vibration: true, speedLimit: 40 }));
-  const { LIMITS, applySpeedLimit, setSpeedLimit, onSpeedLimit } = await load('app/state/speed-limit.js');
-  // glibren.13: the phone page offers the same list; the old choices (25, 10, 5) are still in it.
-  assert.deepEqual(LIMITS, [0, 50, 25, 15, 10, 5, 3, 2, 1]);
+  const { MAX_SPEED_LIMIT, applySpeedLimit, setSpeedLimit, onSpeedLimit } = await load('app/state/speed-limit.js');
+  assert.equal(MAX_SPEED_LIMIT, 1000, 'the most the background payload takes');
   const heard = [];
   const stop = onSpeedLimit((limit) => heard.push(limit));
   applySpeedLimit();
-  assert.deepEqual(applied, [50 * 1024 ** 2], '40 MB/s is not offered: the nearest, 50');
-  setSpeedLimit(10);
-  assert.equal(applied.at(-1), 10 * 1024 ** 2);
-  assert.deepEqual(JSON.parse(files.get(SETTINGS)), { vibration: true, speedLimit: 10 }, 'the other settings kept');
-  setSpeedLimit(7);
-  assert.equal(applied.length, 2, 'a value not offered is ignored');
+  assert.deepEqual(applied, [40 * 1024 ** 2], 'the saved 40 MB/s as it was (no list to round to)');
+  setSpeedLimit(37);
+  assert.equal(applied.at(-1), 37 * 1024 ** 2);
+  assert.deepEqual(JSON.parse(files.get(SETTINGS)), { vibration: true, speedLimit: 37 }, 'the other settings kept');
+  for (const bad of [1001, -1, 2.5, '7', null]) setSpeedLimit(bad);
+  assert.equal(applied.length, 2, 'out of range, fractions and text are ignored');
   setSpeedLimit(0);
   assert.equal(applied.at(-1), 0);
   assert.deepEqual(JSON.parse(files.get(SETTINGS)), { vibration: true }, 'no limit: nothing saved');
-  assert.deepEqual(heard, [10, 0], 'onSpeedLimit hears each change (not the ignored one)');
+  assert.deepEqual(heard, [37, 0], 'onSpeedLimit hears each change (not the ignored ones)');
   stop();
   setSpeedLimit(1);
-  assert.deepEqual(heard, [10, 0], 'and stops when asked');
+  assert.deepEqual(heard, [37, 0], 'and stops when asked');
   assert.equal(applied.at(-1), 1024 ** 2);
 });
 
-test('glibren.13: a limit chosen on the phone page is adopted as the nearest one offered', async () => {
+test('glibren.13: − / + step by 1 MB/s and stay within 0..1000', async () => {
+  const { setSpeedLimit, stepSpeedLimit, speedLimitNow } = await load('app/state/speed-limit.js');
+  setSpeedLimit(1);
+  stepSpeedLimit(-1);
+  assert.equal(speedLimitNow(), 0, '1 − 1 = no limit');
+  stepSpeedLimit(-1);
+  assert.equal(speedLimitNow(), 0, 'never below 0');
+  stepSpeedLimit(1);
+  stepSpeedLimit(1);
+  assert.equal(speedLimitNow(), 2);
+  setSpeedLimit(999);
+  stepSpeedLimit(10);
+  assert.equal(speedLimitNow(), 1000, 'never above 1000');
+});
+
+test('glibren.13: a limit chosen on the phone page is adopted exactly (37 stays 37)', async () => {
   const { adoptSpeedLimit, speedLimitNow } = await load('app/state/speed-limit.js');
-  adoptSpeedLimit(25);
-  assert.equal(speedLimitNow(), 25);
-  adoptSpeedLimit(12);
-  assert.equal(speedLimitNow(), 10);
-  assert.equal(applied.at(-1), 10 * 1024 ** 2);
+  adoptSpeedLimit(37);
+  assert.equal(speedLimitNow(), 37);
+  assert.equal(applied.at(-1), 37 * 1024 ** 2);
   adoptSpeedLimit(0);
   assert.equal(speedLimitNow(), 0);
   adoptSpeedLimit(-3);
   adoptSpeedLimit('5');
+  adoptSpeedLimit(NaN);
   assert.equal(speedLimitNow(), 0, 'nonsense is ignored');
 });
 

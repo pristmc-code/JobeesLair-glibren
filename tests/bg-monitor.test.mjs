@@ -69,16 +69,17 @@ test('glibren.12: a pagina tem as secoes, o sistema/arquivo nos cards, os cancel
   assert.ok(!page.includes('list.before(row)'), 'o botao do BACKUP fica no fim, nao no topo');
 });
 
-test('glibren.13: velocidades em MB/s (nunca Mbps) e o seletor de velocidade maxima com a mesma lista do app', async () => {
+test('glibren.13: velocidades em MB/s (nunca Mbps) e a velocidade maxima livre (− campo +, Sem limite, Aplicar)', async () => {
   const page = readFileSync(embed.PAGE, 'utf8');
   assert.ok(!/Mbps|kbps|\* 8 \//.test(page), 'nada em megabits');
   assert.match(page, /MB\/s/);
   assert.match(page, /KB\/s/);
-  const { LIMITS } = await load('app/state/speed-limit.js');
-  const list = /const SPEEDS = \[([^\]]*)\]/.exec(page);
-  assert.ok(list, 'a lista da pagina');
-  assert.deepEqual(list[1].split(',').map(Number), LIMITS, 'a mesma lista das Configuracoes do app');
-  for (const piece of ['id="speedBtn"', 'id="speedBtn2"', 'id="secPick"', '{ speedLimit: v }', 'r.data.speedLimit', 'guarded(() => setSpeed(v))', 'Sem limite', 'No limit', 'Velocidade máxima', 'Maximum speed']) assert.ok(page.includes(piece), piece);
+  assert.ok(!/const SPEEDS = \[/.test(page), 'sem lista fixa de velocidades');
+  const { MAX_SPEED_LIMIT } = await load('app/state/speed-limit.js');
+  assert.match(page, new RegExp(`maxSpeed = ${MAX_SPEED_LIMIT}\\b`), 'o mesmo teto do app e do payload');
+  for (const piece of ['id="speedBtn"', 'id="speedBtn2"', 'id="secPick"', '{ speedLimit: v }', 'r.data.speedLimit', 'r.data.maxSpeedLimit', 'guarded(() => setSpeed(v))',
+    'input.inputMode = "numeric"', 'hold(minus, -1); hold(plus, 1)', 'e.key === "Enter"', 'none.onclick = () => put(0)', 'L.speedBad', 'menuKind !== "speed"',
+    'Sem limite', 'No limit', 'Aplicar', 'Apply', 'Velocidade máxima', 'Maximum speed']) assert.ok(page.includes(piece), piece);
   // A mesma conta da pagina (MB = 1024 * 1024), num pedaco isolado.
   const fn = /const speed = \(b\) => [^\n]+/.exec(page)[0];
   const speed = new Function('MB', 'nf', `${fn}; return speed;`)(1024 ** 2, (v, d) => v.toFixed(d));

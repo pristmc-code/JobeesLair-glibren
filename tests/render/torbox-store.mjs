@@ -95,4 +95,17 @@ assert.ok(settings.keys['settings:tblib:build'] && settings.keys['settings:tblib
 settings.keys['settings:tblib:store'].onPress();
 assert.equal(mode.storeMode(), 'full', 'the switch in Settings goes back to the full store');
 assert.equal(games.length, full);
-console.log(`OK: TorBox store bar and Settings card (${ids.length} confirmed ids)`);
+// glibren.13: o limite de velocidade em Configuracoes: − / + (e −10 / +10) focaveis, o valor entre eles e "Sem limite".
+const speedRow = () => draw('Configurações > Downloads (limite de velocidade)', { type: SettingsScreen, props: { onBack() {}, start: 'downloads' } });
+let speedCard = speedRow();
+for (const id of ['down10', 'down', 'up', 'up10', 'none']) assert.ok(speedCard.keys[`settings:speed:${id}`]?.focusable, `settings:speed:${id}`);
+assert.ok(speedCard.texts.includes('No limit'), speedCard.texts.join('|'));
+speedCard.keys['settings:speed:up'].onPress();
+speedCard.keys['settings:speed:up10'].onPress();
+speedCard = speedRow();
+assert.ok(speedCard.texts.includes('11 MB/s'), `0 + 1 + 10: ${speedCard.texts.join('|')}`);
+speedCard.keys['settings:speed:down'].onPress();
+assert.ok(speedRow().texts.includes('10 MB/s'));
+speedRow().keys['settings:speed:none'].onPress();
+assert.ok(speedRow().texts.includes('No limit'));
+console.log(`OK: TorBox store bar and Settings card (${ids.length} confirmed ids); speed limit − / +`);

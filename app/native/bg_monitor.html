@@ -128,6 +128,18 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 .secmenu button.on{background:var(--accent);color:#fff}
 .secmenu button b{font-variant-numeric:tabular-nums;color:inherit;opacity:.85}
 .secmenu .mh{padding:6px 10px 4px;color:var(--subtle);font-size:12px;line-height:1.3}
+/* glibren.13: painel da velocidade maxima: − campo + (alvos de 44 px), Sem limite e Aplicar */
+.secmenu.spdpanel{width:min(300px,calc(100vw - 16px));padding:8px;gap:8px}
+.spdpanel .mh{padding:0 2px}
+.sprow{display:flex;gap:8px;align-items:center;min-width:0}
+.spdpanel .spk{flex:none;width:44px;height:44px;min-height:44px;padding:0;justify-content:center;align-items:center;border:1px solid var(--line-hi);border-radius:8px;background:var(--raise);color:var(--fg);font-size:24px;font-weight:700;line-height:1;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.spdpanel .spk:active{background:var(--line-hi)}
+#speedInput{flex:1 1 auto;width:0;min-width:0;height:44px;padding:0 8px;border:1px solid var(--line-hi);border-radius:8px;background:var(--deep);color:var(--fg);font:inherit;font-size:20px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums;outline:none}
+#speedInput:focus{border-color:var(--ice)}
+.spu{flex:none;color:var(--muted);font-size:13px}
+.spdpanel .btn{min-height:44px;justify-content:center;background:var(--raise);border:1px solid var(--line-hi)}
+.spdpanel .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.spdpanel .msg{min-height:0;padding:0 2px}
 .cancelled{display:flex;flex-direction:column;gap:8px}
 .cancelled .head{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--subtle);font-size:13px}
 .cancelled .head .btn{flex:none;min-height:34px}
@@ -212,7 +224,8 @@ const T = {
     sections: { all: "Tudo", downloading: "Baixando", queue: "Na fila", extracting: "Descompactando", converting: "Convertendo", done: "Finalizados", cancelled: "Cancelados", backup: "Backup" },
     show: "Mostrar", emptySection: "Nada nesta seção agora.", extractingWait: "Descompactando na Jobee'sLair: o PS5 faz isso no app.",
     cancelledHead: "Cancelados recentemente (os últimos 20)", clear: "Limpar", cancelledAt: "cancelado em {t}",
-    speedMax: "Máx.", noLimit: "Sem limite", speedMenu: "Velocidade máxima: a soma de todos os downloads do PS5. É a mesma opção das Configurações da Jobee'sLair.",
+    speedMax: "Máx.", noLimit: "Sem limite", speedMenu: "Velocidade máxima: a soma de todos os downloads do PS5 (0 = sem limite). É a mesma opção das Configurações da Jobee'sLair.",
+    apply: "Aplicar", speedBad: "Digite um número inteiro de 0 a {max}.",
     speedTitle: "Velocidade máxima dos downloads", speedPhone: "escolhida no celular", sectionTitle: "Seção mostrada" },
   en: { sub: "Background downloads", online: "PS5 connected", offline: "PS5 not answering", connecting: "Connecting…",
     locked: "Controls", unlocked: "Unlocked", active: "Downloading", speed: "Speed", left: "Left",
@@ -233,7 +246,8 @@ const T = {
     sections: { all: "All", downloading: "Downloading", queue: "Queued", extracting: "Extracting", converting: "Converting", done: "Finished", cancelled: "Cancelled", backup: "Backup" },
     show: "Show", emptySection: "Nothing in this section right now.", extractingWait: "Extracting in Jobee'sLair: the PS5 does it in the app.",
     cancelledHead: "Recently cancelled (the last 20)", clear: "Clear", cancelledAt: "cancelled on {t}",
-    speedMax: "Max", noLimit: "No limit", speedMenu: "Maximum speed: all of the PS5's downloads together. The same option as in Jobee'sLair's Settings.",
+    speedMax: "Max", noLimit: "No limit", speedMenu: "Maximum speed: all of the PS5's downloads together (0 = no limit). The same option as in Jobee'sLair's Settings.",
+    apply: "Apply", speedBad: "Type a whole number from 0 to {max}.",
     speedTitle: "Maximum download speed", speedPhone: "set on the phone", sectionTitle: "Section shown" }
 };
 const L = T[(navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en"];
@@ -259,10 +273,8 @@ const speed = (b) => b >= MB ? `${nf(b / MB, b >= 10 * MB ? 0 : 1)} MB/s` : b > 
 const eta = (s) => { if (!isFinite(s) || s <= 0) return "–"; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : m ? `${m} min` : `${s} s`; };
 
 let session = "", confirming = null, jobs = [], pinSet = true, limit = 0, maxLimit = 4, limitSet = false, maxConns = 64;
-// glibren.13: limite de velocidade (MB/s; 0 = sem limite; null = payload antigo, sem o botao). A mesma lista do app
-// (app/state/speed-limit.js LIMITS).
-const SPEEDS = [0, 50, 25, 15, 10, 5, 3, 2, 1];
-let speedLimit = null, speedLimitSet = false;
+// glibren.13: limite de velocidade (MB/s inteiro de 0 a maxSpeed; 0 = sem limite; null = payload antigo, sem o botao).
+let speedLimit = null, speedLimitSet = false, maxSpeed = 1000;
 const DEMO = location.protocol === "file:" || new URLSearchParams(location.search).has("demo");
 const demo = { t: Date.now(), jobs: [
   { id: "b1", name: "Ghost of Tsushima Director's Cut", state: "downloading", via: "TorBox", format: "exfat", platform: "ps5", code: "PPSA01784", file: "Ghost.of.Tsushima.DC.PPSA01784.exfat", written: 31.6 * GB, total: 48.2 * GB, bytesPerSecond: 38.5 * MB, connectionsActive: 16, connections: 16, connectionsSet: false },
@@ -451,7 +463,7 @@ function renderSections() {
   const btn = $("secBtn"); btn.textContent = ""; btn.title = L.sectionTitle; btn.setAttribute("aria-label", `${L.show}: ${L.sections[section]} ${n[section]}`);
   const cur = document.createElement("b"); cur.textContent = `${L.sections[section]} ${n[section]}`; btn.append(cur, document.createTextNode(" ▾"));
   renderSpeed();
-  if (secMenu) fillMenu(n);
+  if (secMenu && menuKind !== "speed") fillMenu(n); // o painel da velocidade nao e refeito (o jogador pode estar digitando)
 }
 const speedText = (v) => v ? `${v} MB/s` : L.noLimit;
 function renderSpeed() {
@@ -483,18 +495,51 @@ function fillSecMenu(n) {
     secMenu.append(b);
   }
 }
+// glibren.13: o painel da velocidade maxima: [−] [campo] MB/s [+] (passo 1; segurar repete, cada vez mais rapido),
+// "Sem limite" (poe 0) e "Aplicar" (ou Enter no campo; uma vez so, com o PIN). Fica como o jogador deixou nas
+// atualizacoes a cada 2 s (so e montado ao abrir).
 function fillSpeedMenu() {
-  secMenu.textContent = "";
-  const h = document.createElement("div"); h.className = "mh"; h.textContent = L.speedMenu; secMenu.append(h);
-  for (const v of SPEEDS) {
-    const on = v === speedLimit;
-    const b = document.createElement("button"); b.type = "button"; b.className = on ? "on" : ""; b.setAttribute("role", "menuitemradio"); b.setAttribute("aria-checked", String(on));
-    const t = document.createElement("span"); t.textContent = speedText(v);
-    const c = document.createElement("b"); c.textContent = on ? "✓" : "";
-    b.append(t, c);
-    b.onclick = () => { closeSecMenu(); if (!on) guarded(() => setSpeed(v)); };
-    secMenu.append(b);
-  }
+  secMenu.textContent = ""; secMenu.classList.add("spdpanel"); secMenu.removeAttribute("role");
+  const h = document.createElement("div"); h.className = "mh"; h.textContent = L.speedMenu;
+  const row = document.createElement("div"); row.className = "sprow";
+  const minus = document.createElement("button"); minus.type = "button"; minus.className = "spk"; minus.textContent = "−"; minus.setAttribute("aria-label", L.less);
+  const input = document.createElement("input"); input.id = "speedInput"; input.type = "text"; input.inputMode = "numeric"; input.setAttribute("pattern", "[0-9]*");
+  input.maxLength = 4; input.autocomplete = "off"; input.value = String(speedLimit ?? 0); input.setAttribute("aria-label", L.speedTitle);
+  const unit = document.createElement("span"); unit.className = "spu"; unit.textContent = "MB/s";
+  const plus = document.createElement("button"); plus.type = "button"; plus.className = "spk"; plus.textContent = "+"; plus.setAttribute("aria-label", L.more);
+  row.append(minus, input, unit, plus);
+  const acts = document.createElement("div"); acts.className = "sprow";
+  const none = document.createElement("button"); none.type = "button"; none.className = "btn"; none.id = "speedNone"; none.textContent = L.noLimit;
+  const ok = document.createElement("button"); ok.type = "button"; ok.className = "btn primary"; ok.id = "speedApply"; ok.textContent = L.apply;
+  acts.append(none, ok);
+  const msg = document.createElement("div"); msg.className = "msg"; msg.id = "speedMsg";
+  secMenu.append(h, row, acts, msg);
+  const read = () => { const t = input.value.trim(); return /^\d{1,4}$/.test(t) && Number(t) <= maxSpeed ? Number(t) : null; };
+  const put = (v) => { input.value = String(Math.min(maxSpeed, Math.max(0, v))); msg.textContent = ""; };
+  const step = (d) => put((read() ?? speedLimit ?? 0) + d);
+  // Segurar: um passo na hora, outro depois de 400 ms e entao cada vez mais rapido (ate 40 ms; de 5 em 5 depois de
+  // 30 repeticoes e de 10 em 10 depois de 60, para chegar longe). Teclado (Enter/espaco): um passo por clique.
+  const hold = (b, d) => {
+    let timer = 0, n = 0;
+    const stop = () => { clearTimeout(timer); timer = 0; };
+    const again = () => { ++n; step(d * (n > 60 ? 10 : n > 30 ? 5 : 1)); timer = setTimeout(again, Math.max(40, 160 - n * 8)); };
+    b.addEventListener("pointerdown", (e) => { e.preventDefault(); stop(); n = 0; step(d); timer = setTimeout(again, 400); });
+    for (const ev of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(ev, stop);
+    b.addEventListener("click", (e) => { if (e.detail === 0) step(d); });
+  };
+  hold(minus, -1); hold(plus, 1);
+  none.onclick = () => put(0);
+  const apply = () => {
+    const v = read();
+    if (v === null) { msg.textContent = L.speedBad.replace("{max}", maxSpeed); input.focus(); return; }
+    closeSecMenu();
+    if (v !== speedLimit) guarded(() => setSpeed(v));
+  };
+  ok.onclick = apply;
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+  input.addEventListener("input", () => { msg.textContent = ""; });
+  // Com mouse, o campo ja vem selecionado; no celular nao (o teclado cobriria o painel antes de tocar no campo).
+  if (matchMedia("(pointer:fine)").matches) setTimeout(() => { input.focus({ preventScroll: true }); input.select(); }, 30);
 }
 function closeSecMenu() { if (secMenu) { secMenu.remove(); secMenu = null; menuFor = null; menuKind = ""; } }
 function openMenu(anchor, kind) {
@@ -621,6 +666,7 @@ async function refresh() {
     jobs = r.data.jobs || []; misses = 0; pinSet = r.data.pinSet !== false; lastStatus = r.data;
     limit = Number(r.data.limit) || 0; maxLimit = Number(r.data.maxLimit) || 4; limitSet = r.data.limitSet === true; maxConns = Number(r.data.maxConnections) || 64;
     speedLimit = Number.isInteger(r.data.speedLimit) && r.data.speedLimit >= 0 ? r.data.speedLimit : null; speedLimitSet = r.data.speedLimitSet === true;
+    maxSpeed = Number.isInteger(r.data.maxSpeedLimit) && r.data.maxSpeedLimit > 0 ? r.data.maxSpeedLimit : 1000;
     $("status").className = "status on"; $("statusText").textContent = L.online;
   } catch { if (++misses >= 3) { $("status").className = "status"; $("statusText").textContent = L.offline; } }
   render();
