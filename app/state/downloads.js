@@ -14,6 +14,7 @@ import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
 import { createBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from './background-downloads.js';
 import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
+import { adoptSpeedLimit, onSpeedLimit, speedLimitNow } from './speed-limit.js';
 import { recordCapture } from './capture-hosts.js';
 import { queueLibraryRequest } from './phone-library.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
@@ -75,6 +76,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       pauseOnCloseSeconds,
       // MODIFIED (glibren.8): os downloads simultaneos escolhidos na pagina do celular / APK viram os das Configuracoes.
       adoptConcurrency: setSimultaneousDownloads,
+      // glibren.13: o limite de velocidade das Configuracoes vale tambem no payload; o escolhido no celular volta para ca.
+      speedLimit: speedLimitNow,
+      adoptSpeedLimit,
       // glibren: um jogo pedido na Biblioteca TorBox do celular entra nesta fila, pelo TorBox, no disco padrao.
       onLibraryRequest: (request) => queueLibraryRequest(request, { queue: downloadQueue(), roots: storageRoots(), getGame })
     }),
@@ -108,6 +112,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   setPhoneMonitorProbe(() => background?.refreshConfig?.());
   // MODIFIED (glibren.5): mudar o tempo da pausa ao fechar o app chega ao payload no ar na hora.
   onPauseOnClose(() => background?.refreshConfig?.());
+  // glibren.13: mudar o limite de velocidade (Configuracoes, ou adotado do celular) chega ao payload no ar na hora.
+  onSpeedLimit(() => background?.refreshConfig?.());
   // 0.5.4: the first time with stats on, the launches known from before go to the players' numbers too.
   function reportPastLaunches() {
     try {

@@ -18,11 +18,12 @@
 //     POST /jobs/<id>/connections  glibren.8: {connections: 1..64 | 0 = as do app}, o mesmo do celular (abaixo)
 //   Pagina do celular (porta 34201, sem token; as acoes exigem a sessao do PIN em X-Session):
 //     GET  /api/status             {jobs:[{..., connectionsActive, connections (alvo), connectionsSet}], limit, maxLimit,
-//                                  maxConnections, limitSet, pinSet}
+//                                  maxConnections, limitSet, pinSet, speedLimit, maxSpeedLimit, speedLimitSet}
 //     POST /api/unlock             {pin} -> {session}
 //     POST /api/jobs/<id>/pause|resume|cancel
 //     POST /api/jobs/<id>/connections  glibren.8: {connections: 1..64 | 0/null = as do app} -> {ok, connections, connectionsSet}
 //     POST /api/config             glibren.8: {concurrency: 1..4} -> {ok, limit, limitSet}; o app adota o numero
+//                                  glibren.13: e/ou {speedLimit: MB/s, 0 = sem limite} -> {..., speedLimit, speedLimitSet}
 //     GET  /api/library[?filtros]  glibren: a Biblioteca TorBox (torbox-lista.json) resumida, filtrada e paginada; ver
 //     GET  /api/library/game?id=   "Biblioteca TorBox na pagina do celular" abaixo (glibren.9: com a ficha: fotos, videos)
 //     POST /api/library/add        {id, file?} com a sessao: o jogo entra na fila (pedido que o app poe na fila dele)
@@ -851,6 +852,15 @@ static int g_max_running = 1;
 // sobe a cada escolha no celular: o app adota o numero (uma vez por stamp) em vez de sobrescreve-lo. Em config.json.
 static int g_concurrency_remote;
 static unsigned g_concurrency_stamp;
+// glibren.13: limite total de download em MB/s (1024 * 1024 bytes, como o app mostra; 0 = sem limite), somando todos
+// os jobs e conexoes (balde de fichas, abaixo). Escolhido no app (POST /config "speedLimit") ou no celular (POST
+// /api/config), como os downloads simultaneos: g_speed_remote/g_speed_stamp dizem quem escolheu por ultimo e o app
+// adota o do celular uma vez por stamp. Em config.json.
+#define MAX_SPEED_LIMIT 1000
+static int g_speed_limit;
+static int g_speed_remote;
+static unsigned g_speed_stamp;
+static void rate_set(int megabytes);
 static int g_running_count;
 static int g_dirty;
 // A pagina do celular (porta 34201): ligada por padrao; o PIN chega do app so como sal + SHA-256 (hex), e o texto
@@ -1485,6 +1495,7 @@ typedef struct {
   char* sample;
   size_t sample_len;
   int in_use;
+  int throttled; // glibren.13: pausada pelo limite de velocidade (on_body devolveu CURL_WRITEFUNC_PAUSE)
 } Conn;
 
 struct Engine {
@@ -1515,6 +1526,7 @@ struct Engine {
   int64_t last_tick, last_speed_at;
   uint64_t last_speed_bytes;
   unsigned epoch;
+  unsigned rate_next; // glibren.13: de qual conexao rate_resume comeca (cada vez uma, para todas andarem)
   char fail[600];
   int needs_renew;
 };
@@ -1635,6 +1647,57 @@ static void classify_invalid(Conn* c) {
   else snprintf(c->error, sizeof c->error, "server returned an unexpected range response (HTTP %ld)", c->status);
 }
 
+// ---- glibren.13: limite de velocidade (balde de fichas global) ----
+// Todas as conexoes de todos os jobs tiram do mesmo balde, que enche a g_rate_bps bytes/s (folga de RATE_BURST_MS).
+// Balde vazio: on_body devolve CURL_WRITEFUNC_PAUSE (o curl guarda o pedaco e para de ler aquele socket; o TCP segura o
+// servidor) e o laco do job solta as pausadas quando ha fichas de novo (rate_resume), cada vez a partir de uma. Uma
+// transferencia pausada nao entra na conta do CURLOPT_LOW_SPEED_LIMIT do curl: limite baixo nao derruba conexao por
+// lentidao. Mudar o limite vale na hora para tudo que esta baixando.
+#define RATE_BURST_MS 250
+static pthread_mutex_t g_rate_lock = PTHREAD_MUTEX_INITIALIZER; // depois de g_lock, nunca antes
+static uint64_t g_rate_bps; // 0 = sem limite
+static double g_rate_tokens;
+static int64_t g_rate_at; // em us
+static int64_t mono_us(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+static void rate_refill_locked(void) {
+  const int64_t now = mono_us();
+  if (g_rate_at && now > g_rate_at) g_rate_tokens += (double)g_rate_bps * (double)(now - g_rate_at) / 1e6;
+  g_rate_at = now;
+  double burst = (double)g_rate_bps * RATE_BURST_MS / 1000.0;
+  if (burst < 65536) burst = 65536;
+  if (g_rate_tokens > burst) g_rate_tokens = burst;
+}
+static void rate_set(int megabytes) {
+  pthread_mutex_lock(&g_rate_lock);
+  g_rate_bps = megabytes > 0 ? (uint64_t)megabytes * 1024 * 1024 : 0;
+  g_rate_tokens = 0;
+  g_rate_at = mono_us();
+  pthread_mutex_unlock(&g_rate_lock);
+}
+// Tira `length` fichas; 0 = balde vazio (espere). Com fichas, pode ficar negativo (o pedaco inteiro passa).
+static int rate_take(size_t length) {
+  pthread_mutex_lock(&g_rate_lock);
+  int ok = 1;
+  if (g_rate_bps) {
+    rate_refill_locked();
+    ok = g_rate_tokens > 0;
+    if (ok) g_rate_tokens -= (double)length;
+  }
+  pthread_mutex_unlock(&g_rate_lock);
+  return ok;
+}
+static int rate_open(void) {
+  pthread_mutex_lock(&g_rate_lock);
+  int ok = 1;
+  if (g_rate_bps) { rate_refill_locked(); ok = g_rate_tokens > 0; }
+  pthread_mutex_unlock(&g_rate_lock);
+  return ok;
+}
+
 static size_t on_body(char* data, size_t size, size_t count, void* opaque) {
   Conn* c = opaque;
   Engine* e = c->e;
@@ -1648,6 +1711,8 @@ static size_t on_body(char* data, size_t size, size_t count, void* opaque) {
   }
   if (c->status == 401 || c->status == 403) { c->denied = 1; return 0; }
   if (c->status != 200 && c->status != 206) return 0;
+  // glibren.13: limite de velocidade: sem fichas, o curl guarda este pedaco e o entrega de novo depois de rate_resume.
+  if (!rate_take(length)) { c->throttled = 1; return CURL_WRITEFUNC_PAUSE; }
   if (e->job->reject_html && c->html_len < 64 && c->begin == 0) {
     size_t take = length < 64 - c->html_len ? length : 64 - c->html_len;
     memcpy(c->html_prefix + c->html_len, data, take);
@@ -1720,6 +1785,7 @@ static void conn_reset(Conn* c) {
   c->retry_after = 0; c->header_bytes = 0; c->got = 0; c->html_len = 0;
   c->etag[0] = c->last_modified[0] = c->content_type[0] = c->encoding[0] = c->error[0] = c->detail[0] = 0;
   c->html_prefix[0] = 0;
+  c->throttled = 0;
   if (c->headers) { curl_slist_free_all(c->headers); c->headers = NULL; }
 }
 
@@ -2237,6 +2303,25 @@ static void refresh_cap(Engine* e, int64_t now) {
   else if (e->window > target) e->window = target;
 }
 
+// glibren.13: solta as conexoes deste job pausadas pelo limite de velocidade enquanto o balde tem fichas, a cada vez a
+// partir de uma diferente (todas andam). O curl entrega o pedaco guardado ja aqui (on_body pode pausar de novo).
+// Devolve quantas continuam pausadas.
+static unsigned rate_resume(Engine* e) {
+  unsigned paused = 0;
+  const unsigned start = e->rate_next;
+  for (unsigned k = 0; k < MAX_CONNS; ++k) {
+    const unsigned i = (start + k) % MAX_CONNS;
+    Conn* c = &e->conns[i];
+    if (!c->in_use || !c->throttled) continue;
+    if (!rate_open()) { ++paused; continue; }
+    c->throttled = 0;
+    e->rate_next = (i + 1) % MAX_CONNS;
+    curl_easy_pause(c->curl, CURLPAUSE_CONT);
+    if (c->throttled) ++paused;
+  }
+  return paused;
+}
+
 // Baixa as faixas que faltam com varias conexoes (janela AIMD). 1 = todas completas.
 static int transfer_ranges(Engine* e) {
   Job* j = e->job;
@@ -2323,6 +2408,7 @@ static int transfer_ranges(Engine* e) {
       ++active;
     }
     if (!pending && !active) break;
+    rate_resume(e); // glibren.13: o limite de velocidade
     int running = 0;
     curl_multi_perform(e->multi, &running);
     int left = 0;
@@ -2379,7 +2465,10 @@ static int transfer_ranges(Engine* e) {
     const int64_t every = app_away() ? CHECKPOINT_AWAY_MS : CHECKPOINT_MS;
     if (e->ranged && mono_ms() - e->last_checkpoint >= every && !write_checkpoint(e)) { drop_all(e); return 0; }
     update_progress(e, 0);
-    curl_multi_poll(e->multi, NULL, 0, 100, NULL);
+    // Com conexao pausada pelo limite, volta logo (o balde enche com o tempo, nao com um socket).
+    int throttled = 0;
+    for (unsigned i = 0; i < MAX_CONNS && !throttled; ++i) throttled = e->conns[i].in_use && e->conns[i].throttled;
+    curl_multi_poll(e->multi, NULL, 0, throttled ? 10 : 100, NULL);
   }
   update_progress(e, 1);
   return 1;
@@ -2749,14 +2838,16 @@ static void* downloader_loop(void* arg) {
 // "pauseOnCloseSeconds": 0..30 }, para o payload voltar igual depois de reiniciar. POST /config aceita qualquer parte dele.
 // "powerTick" (padrao false) liga sceSystemServicePowerTick a cada 30 s enquanto baixa: so para testar no console, separado.
 // glibren.5: "pauseOnCloseSeconds" (inteiro de 0 a 30; sem o campo, como antes) e o tempo do modo quieto ao fechar o app.
+// glibren.13: "speedLimit": 0..MAX_SPEED_LIMIT (MB/s; 0 = sem limite), o limite de velocidade do app.
 typedef struct {
-  uint64_t concurrency, pause_seconds;
-  int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text, has_power, power, has_pause;
+  uint64_t concurrency, pause_seconds, speed;
+  int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text, has_power, power, has_pause, has_speed;
   char pin_salt[65], pin_hash[65], monitor_text[300];
   // glibren.8: so de config.json (from_disk): quem escolheu os downloads simultaneos e o stamp do celular.
-  int from_disk, has_by;
-  char by[8];
-  uint64_t stamp;
+  // glibren.13: e o mesmo para o limite de velocidade.
+  int from_disk, has_by, has_speed_by;
+  char by[8], speed_by[8];
+  uint64_t stamp, speed_stamp;
 } ConfigBody;
 static int config_field(JP* jp, const char* key, void* ctx) {
   ConfigBody* c = ctx;
@@ -2768,6 +2859,9 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "powerTick")) { c->found = c->has_power = 1; return jp_bool(jp, &c->power) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "concurrencyBy")) { c->has_by = 1; return jp_text(jp, c->by, sizeof c->by) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "concurrencyStamp")) return jp_uint(jp, &c->stamp) ? 1 : -1;
+  if (!strcmp(key, "speedLimit")) { c->found = c->has_speed = 1; return jp_uint(jp, &c->speed) ? 1 : -1; }
+  if (c->from_disk && !strcmp(key, "speedLimitBy")) { c->has_speed_by = 1; return jp_text(jp, c->speed_by, sizeof c->speed_by) ? 1 : -1; }
+  if (c->from_disk && !strcmp(key, "speedLimitStamp")) return jp_uint(jp, &c->speed_stamp) ? 1 : -1;
   if (!strcmp(key, "pauseOnCloseSeconds")) {
     // So um inteiro (nem null, nem fracao, nem negativo); o limite e conferido em config_valid.
     double d;
@@ -2783,6 +2877,7 @@ static int config_valid(const ConfigBody* c) {
   if (!c->found) return 0;
   if (c->has_concurrency && (c->concurrency < 1 || c->concurrency > MAX_WORKERS)) return 0;
   if (c->has_pause && c->pause_seconds > MAX_PAUSE_SECONDS) return 0;
+  if (c->has_speed && c->speed > MAX_SPEED_LIMIT) return 0;
   if (c->has_pin_salt != c->has_pin_hash) return 0;
   if (c->has_pin_hash && !((is_hex64(c->pin_salt) && is_hex64(c->pin_hash)) || (!c->pin_salt[0] && !c->pin_hash[0]))) return 0;
   return 1;
@@ -2799,6 +2894,18 @@ static int config_apply_locked(const ConfigBody* c) {
   if (c->from_disk) {
     g_concurrency_remote = c->has_by && !strcmp(c->by, "remote");
     g_concurrency_stamp = (unsigned)c->stamp;
+  }
+  // glibren.13: o limite de velocidade, como os downloads simultaneos (o do celular ja adotado nao muda nada aqui).
+  if (c->has_speed && g_speed_limit != (int)c->speed) {
+    logf_("limite de velocidade: %d -> %d MB/s (0 = sem limite)", g_speed_limit, (int)c->speed);
+    g_speed_limit = (int)c->speed;
+    g_speed_remote = 0;
+    rate_set(g_speed_limit);
+    changed = 1;
+  }
+  if (c->from_disk) {
+    g_speed_remote = c->has_speed_by && !strcmp(c->speed_by, "remote");
+    g_speed_stamp = (unsigned)c->speed_stamp;
   }
   if (c->has_monitor && g_monitor_on != (c->monitor ? 1 : 0)) {
     g_monitor_on = c->monitor ? 1 : 0;
@@ -2865,6 +2972,7 @@ static void save_config_locked(void) {
   buf_json(&b, g_monitor_text);
   buf_fmt(&b, ",\"powerTick\":%s", g_power_tick ? "true" : "false");
   buf_fmt(&b, ",\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u", g_concurrency_remote ? "remote" : "app", g_concurrency_stamp);
+  buf_fmt(&b, ",\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u", g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp);
   // glibren.5: so quando o app mandou o tempo (sem ele, vale o padrao de quem roda: 30 s, ou BGDL_QUIET_MS nos testes).
   if (g_pause_seconds >= 0) buf_fmt(&b, ",\"pauseOnCloseSeconds\":%d", g_pause_seconds);
   buf_str(&b, "}\n");
@@ -3391,15 +3499,16 @@ static void route(int fd, Request* r) {
   if (strcmp(r->path, "/bye") && mono_ms() - g_bye_ms >= BYE_GRACE_MS) g_last_app_ms = mono_ms();
   if (conv_route(fd, r)) return; // glibren.12: /convert
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
-    char body[512], ip[64];
+    char body[700], ip[64];
     current_ip(ip, sizeof ip);
     pthread_mutex_lock(&g_lock);
     const Job* active = first_running_locked();
     snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
-             "\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,"
+             "\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u,"
              "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s}",
              BG_VERSION, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
-             g_running_count, g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp, ip, g_monitor_on ? "true" : "false",
+             g_running_count, g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
+             g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp, ip, g_monitor_on ? "true" : "false",
              g_monitor_port_now(), g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false");
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
@@ -3411,8 +3520,10 @@ static void route(int fd, Request* r) {
     buf_str(&b, "{\"jobs\":[");
     for (int i = 0; i < g_job_count; ++i) { if (i) buf_str(&b, ","); job_json(&b, g_jobs[i]); }
     const Job* active = first_running_locked();
-    buf_fmt(&b, "],\"active\":%s%s%s,\"concurrency\":%d,\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u}", active ? "\"" : "",
-            active ? active->id : "null", active ? "\"" : "", g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp);
+    buf_fmt(&b, "],\"active\":%s%s%s,\"concurrency\":%d,\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,"
+            "\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u}", active ? "\"" : "",
+            active ? active->id : "null", active ? "\"" : "", g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
+            g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, b.failed || !b.data ? "{\"jobs\":[]}" : b.data);
     free(b.data);
@@ -3426,15 +3537,16 @@ static void route(int fd, Request* r) {
     memset(&c, 0, sizeof c);
     JP jp = {r->body, r->body + r->content_length, 0};
     if (!jp_object(&jp, config_field, &c) || !config_valid(&c)) {
-      respond_error(fd, 400, "expected {concurrency: 1..4, monitor, pinSalt + pinHash, monitorText, pauseOnCloseSeconds: 0..30}");
+      respond_error(fd, 400, "expected {concurrency: 1..4, monitor, pinSalt + pinHash, monitorText, pauseOnCloseSeconds: 0..30, speedLimit: 0..1000}");
       return;
     }
-    char body[256];
+    char body[400];
     pthread_mutex_lock(&g_lock);
     if (config_apply_locked(&c)) save_config_locked();
     snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d,\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"monitor\":%s,\"pinSet\":%s,"
-             "\"pauseOnCloseSeconds\":%lld}", g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
-             g_monitor_on ? "true" : "false", g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000));
+             "\"pauseOnCloseSeconds\":%lld,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u}", g_max_running,
+             g_concurrency_remote ? "remote" : "app", g_concurrency_stamp, g_monitor_on ? "true" : "false", g_pin_hash[0] ? "true" : "false",
+             (long long)(g_quiet_ms / 1000), g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp);
     pthread_cond_broadcast(&g_wake_downloader);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
@@ -3920,8 +4032,10 @@ static void monitor_status(Buf* b) {
   conv_status_json(b); // glibren.12: as conversoes para .exfat
   buf_str(b, ",\"cancelledRecent\":");
   cancelled_json(b);
-  buf_fmt(b, ",\"limit\":%d,\"maxLimit\":%d,\"maxConnections\":%d,\"limitSet\":%s,\"pinSet\":%s}", g_max_running, MAX_WORKERS, MAX_CONNS,
+  buf_fmt(b, ",\"limit\":%d,\"maxLimit\":%d,\"maxConnections\":%d,\"limitSet\":%s,\"pinSet\":%s", g_max_running, MAX_WORKERS, MAX_CONNS,
           g_concurrency_remote ? "true" : "false", g_pin_hash[0] ? "true" : "false");
+  // glibren.13: o limite de velocidade (MB/s; 0 = sem limite) e se foi escolhido no celular.
+  buf_fmt(b, ",\"speedLimit\":%d,\"maxSpeedLimit\":%d,\"speedLimitSet\":%s}", g_speed_limit, MAX_SPEED_LIMIT, g_speed_remote ? "true" : "false");
   pthread_mutex_unlock(&g_lock);
 }
 
@@ -4042,34 +4156,54 @@ static void monitor_action(int fd, Request* r) {
 // no celular. Vale na hora: mais = comeca o que esta na fila; menos = nenhum para no meio (os que baixam terminam, e
 // outro so comeca quando houver menos que o numero), como no app. Fica em config.json, marcado como do celular: o
 // app adota o numero ao falar com o payload (concurrencyBy/concurrencyStamp no /health e no /jobs).
-typedef struct { uint64_t concurrency; int found; } RemoteConfig;
+// glibren.13: e/ou {"speedLimit": 0..MAX_SPEED_LIMIT} (MB/s; 0 ou null = sem limite): o limite de velocidade de todos os
+// downloads, que vale na hora (balde de fichas) e o app adota do mesmo jeito (speedLimitBy/speedLimitStamp).
+typedef struct { uint64_t concurrency, speed; int found, has_concurrency, has_speed; } RemoteConfig;
 static int remote_config_field(JP* jp, const char* key, void* ctx) {
   RemoteConfig* c = ctx;
-  if (strcmp(key, "concurrency")) return jp_skip(jp) ? 1 : -1;
+  const int speed = !strcmp(key, "speedLimit");
+  if (strcmp(key, "concurrency") && !speed) return jp_skip(jp) ? 1 : -1;
   double d;
   int integer;
   c->found = 1;
   jp_ws(jp);
+  if (speed) {
+    c->has_speed = 1;
+    if (jp_literal(jp, "null")) { c->speed = 0; return 1; }
+    return jp_number(jp, &d, &c->speed, &integer) && integer ? 1 : -1;
+  }
+  c->has_concurrency = 1;
   return jp_number(jp, &d, &c->concurrency, &integer) && integer ? 1 : -1;
 }
 static void monitor_config(int fd, Request* r) {
   if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
-  RemoteConfig c = {0, 0};
+  RemoteConfig c = {0, 0, 0, 0, 0};
   JP jp = {r->body, r->body + r->content_length, 0};
-  if (!jp_object(&jp, remote_config_field, &c) || !c.found || c.concurrency < 1 || c.concurrency > MAX_WORKERS) {
+  if (!jp_object(&jp, remote_config_field, &c) || !c.found ||
+      (c.has_concurrency && (c.concurrency < 1 || c.concurrency > MAX_WORKERS)) || (!c.has_concurrency && !c.has_speed)) {
     monitor_json(fd, 400, "{\"error\":\"concurrency\"}");
     return;
   }
-  char body[96];
+  if (c.has_speed && c.speed > MAX_SPEED_LIMIT) { monitor_json(fd, 400, "{\"error\":\"speedLimit\"}"); return; }
+  char body[160];
   pthread_mutex_lock(&g_lock);
-  if (g_max_running != (int)c.concurrency || !g_concurrency_remote) {
+  if (c.has_concurrency && (g_max_running != (int)c.concurrency || !g_concurrency_remote)) {
     logf_("celular: downloads simultaneos %d -> %d", g_max_running, (int)c.concurrency);
     g_max_running = (int)c.concurrency;
     g_concurrency_remote = 1;
     ++g_concurrency_stamp;
     save_config_locked();
   }
-  snprintf(body, sizeof body, "{\"ok\":true,\"limit\":%d,\"limitSet\":true}", g_max_running);
+  if (c.has_speed && (g_speed_limit != (int)c.speed || !g_speed_remote)) {
+    logf_("celular: limite de velocidade %d -> %d MB/s (0 = sem limite)", g_speed_limit, (int)c.speed);
+    g_speed_limit = (int)c.speed;
+    g_speed_remote = 1;
+    ++g_speed_stamp;
+    rate_set(g_speed_limit);
+    save_config_locked();
+  }
+  snprintf(body, sizeof body, "{\"ok\":true,\"limit\":%d,\"limitSet\":%s,\"speedLimit\":%d,\"speedLimitSet\":%s}", g_max_running,
+           g_concurrency_remote ? "true" : "false", g_speed_limit, g_speed_remote ? "true" : "false");
   pthread_cond_broadcast(&g_wake_downloader);
   pthread_mutex_unlock(&g_lock);
   monitor_json(fd, 200, body);

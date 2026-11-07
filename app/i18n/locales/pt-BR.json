@@ -906,7 +906,7 @@
   "settings.screenSaverNowDetail": "Sem esperar 10 minutos",
   "settings.sounds": "Um clique a cada movimento. Um sinal quando um download termina.",
   "settings.speedLimit": "Limite de velocidade de download",
-  "settings.speedLimitDetail": "Deixa banda para outros dispositivos e jogos online. As atualizações do app nunca são limitadas.",
+  "settings.speedLimitDetail": "Deixa banda para outros dispositivos e jogos online. Vale também para os downloads em segundo plano e pode ser mudado pela página do celular. As atualizações do app nunca são limitadas.",
   "settings.simultaneous": "Downloads simultâneos",
   "settings.simultaneousDetail": "Quantos jogos baixam ao mesmo tempo. Com mais de um, a velocidade é dividida entre eles e cada um abre menos conexões no mesmo site.",
   "settings.speedUnlimited": "Sem limite",

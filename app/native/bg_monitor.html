@@ -106,22 +106,28 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 .fname{font-size:12.5px;color:var(--subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .job.extracting .bar>i{background:repeating-linear-gradient(135deg,var(--ice) 0 10px,rgba(76,201,240,.45) 10px 20px);width:100%!important}
 .tag.extracting{color:var(--ice);border-color:rgba(76,201,240,.5)}
-/* glibren.12: secoes da aba Downloads. Em pe: uma linha de chips (rolagem so dela); deitado: um botao no fim do resumo */
-.secbar{display:flex;gap:6px;margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain;min-width:0}
-.secbar::-webkit-scrollbar{display:none}
+/* glibren.12: secoes da aba Downloads. glibren.13: em pe, a linha tem 2 botoes lado a lado (velocidade maxima e secao),
+   cada um abre a sua lista; deitado, os dois ficam no fim do resumo */
+.secbar{display:flex;gap:8px;margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));min-width:0}
 .list:empty,.convlist:empty{display:none}
-.sc{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:4px 12px;border:1px solid var(--line-hi);border-radius:999px;background:var(--panel);color:var(--muted);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap}
-.sc b{min-width:18px;padding:0 5px;border-radius:9px;background:var(--raise);color:var(--fg);font-size:12px;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}
-.sc.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.sc.on b{background:rgba(255,255,255,.22);color:#fff}
-.sc.zero{opacity:.6}
+.pick{flex:1 1 0;min-width:0;display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:4px 10px;border:1px solid var(--line-hi);border-radius:8px;background:var(--raise);color:var(--fg);font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap;text-align:start}
+.pick .t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.pick b{flex:none;min-width:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:12px;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}
+.pick i{flex:none;font-style:normal;color:var(--subtle);font-size:12px}
+.pick.sec{border-color:var(--accent);background:rgba(58,134,255,.16)}
+.pick.spd .t small{color:var(--subtle);font-weight:500;font-size:12.5px}
+.pick.spd.capped{border-color:rgba(251,191,36,.6);background:rgba(251,191,36,.1)}
+.pick.spd.capped .t{color:#fde68a}
 .summary .secsel{display:none}
 .secbtn{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:2px 10px;border:1px solid var(--accent);border-radius:8px;background:rgba(58,134,255,.16);color:var(--fg);font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap}
 .secbtn b{font-weight:700}
-.secmenu{position:fixed;z-index:22;min-width:210px;max-height:80vh;overflow-y:auto;padding:4px;background:var(--panel2);border:1px solid var(--line-hi);border-radius:10px;box-shadow:0 10px 26px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:2px}
+.secbtn.spd{border-color:var(--line-hi);background:var(--raise)}
+.secbtn.spd.capped{border-color:rgba(251,191,36,.6);background:rgba(251,191,36,.1);color:#fde68a}
+.secmenu{position:fixed;z-index:22;min-width:210px;max-width:calc(100vw - 16px);max-height:80vh;overflow-y:auto;padding:4px;background:var(--panel2);border:1px solid var(--line-hi);border-radius:10px;box-shadow:0 10px 26px rgba(0,0,0,.6);display:flex;flex-direction:column;gap:2px}
 .secmenu button{display:flex;justify-content:space-between;gap:12px;min-height:34px;padding:4px 10px;border:0;border-radius:7px;background:transparent;color:var(--fg);font-size:14px;cursor:pointer;text-align:start}
 .secmenu button.on{background:var(--accent);color:#fff}
 .secmenu button b{font-variant-numeric:tabular-nums;color:inherit;opacity:.85}
+.secmenu .mh{padding:6px 10px 4px;color:var(--subtle);font-size:12px;line-height:1.3}
 .cancelled{display:flex;flex-direction:column;gap:8px}
 .cancelled .head{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--subtle);font-size:13px}
 .cancelled .head .btn{flex:none;min-height:34px}
@@ -132,7 +138,7 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 /* Celular deitado / telas largas: duas colunas e topo mais baixo */
 @media (orientation:landscape) and (max-height:520px){
   .summary{grid-template-columns:repeat(3,minmax(0,1fr)) auto}
-  .summary .secsel{display:flex;align-items:center;justify-content:center;padding:3px 8px}
+  .summary .secsel{display:flex;align-items:center;justify-content:center;gap:6px;padding:3px 8px}
   .secbar{display:none}
   .pinned .summary{margin-bottom:6px}
   header{padding-top:calc(6px + env(safe-area-inset-top));padding-bottom:6px}
@@ -164,11 +170,11 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
     <div><span id="lblActive">Baixando</span><b id="sumActive">–</b></div>
     <div><span id="lblSpeed">Velocidade</span><b id="sumSpeed">–</b></div>
     <div><span id="lblLeft">Falta</span><b id="sumLeft">–</b></div>
-    <div class="secsel"><button class="secbtn" type="button" id="secBtn" aria-haspopup="menu"></button></div>
+    <div class="secsel"><button class="secbtn spd" type="button" id="speedBtn2" aria-haspopup="menu" hidden></button><button class="secbtn" type="button" id="secBtn" aria-haspopup="menu"></button></div>
   </div>
   <div class="ctlbar" id="ctlbar" hidden><span id="lblLimit">Downloads simultâneos</span><span class="mode set" id="limitMode" hidden></span>
     <div class="step"><button type="button" id="limitDown" aria-label="Menos">−</button><output id="limitVal">–</output><button type="button" id="limitUp" aria-label="Mais">+</button></div></div>
-  <nav class="secbar" id="secbar" aria-label="Seções"></nav>
+  <nav class="secbar" id="secbar" aria-label="Seções"><button class="pick spd" type="button" id="speedBtn" aria-haspopup="menu" hidden></button><button class="pick sec" type="button" id="secPick" aria-haspopup="menu"></button></nav>
 </div>
 <main>
   <div class="list" id="list"></div>
@@ -205,7 +211,9 @@ const T = {
     sysTitle: "Sistema e código do jogo", fileTitle: "Arquivo",
     sections: { all: "Tudo", downloading: "Baixando", queue: "Na fila", extracting: "Descompactando", converting: "Convertendo", done: "Finalizados", cancelled: "Cancelados", backup: "Backup" },
     show: "Mostrar", emptySection: "Nada nesta seção agora.", extractingWait: "Descompactando na Jobee'sLair: o PS5 faz isso no app.",
-    cancelledHead: "Cancelados recentemente (os últimos 20)", clear: "Limpar", cancelledAt: "cancelado em {t}" },
+    cancelledHead: "Cancelados recentemente (os últimos 20)", clear: "Limpar", cancelledAt: "cancelado em {t}",
+    speedMax: "Máx.", noLimit: "Sem limite", speedMenu: "Velocidade máxima: a soma de todos os downloads do PS5. É a mesma opção das Configurações da Jobee'sLair.",
+    speedTitle: "Velocidade máxima dos downloads", speedPhone: "escolhida no celular", sectionTitle: "Seção mostrada" },
   en: { sub: "Background downloads", online: "PS5 connected", offline: "PS5 not answering", connecting: "Connecting…",
     locked: "Controls", unlocked: "Unlocked", active: "Downloading", speed: "Speed", left: "Left",
     states: { extracting: "Extracting", downloading: "Downloading", connecting: "Connecting", verifying: "Verifying", queued: "Queued", paused: "Paused", completed: "Done", failed: "Failed", "needs-app": "Open the app", "waiting-app": "Waiting for app" },
@@ -224,7 +232,9 @@ const T = {
     sysTitle: "System and game code", fileTitle: "File",
     sections: { all: "All", downloading: "Downloading", queue: "Queued", extracting: "Extracting", converting: "Converting", done: "Finished", cancelled: "Cancelled", backup: "Backup" },
     show: "Show", emptySection: "Nothing in this section right now.", extractingWait: "Extracting in Jobee'sLair: the PS5 does it in the app.",
-    cancelledHead: "Recently cancelled (the last 20)", clear: "Clear", cancelledAt: "cancelled on {t}" }
+    cancelledHead: "Recently cancelled (the last 20)", clear: "Clear", cancelledAt: "cancelled on {t}",
+    speedMax: "Max", noLimit: "No limit", speedMenu: "Maximum speed: all of the PS5's downloads together. The same option as in Jobee'sLair's Settings.",
+    speedTitle: "Maximum download speed", speedPhone: "set on the phone", sectionTitle: "Section shown" }
 };
 const L = T[(navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en"];
 document.documentElement.lang = L === T.pt ? "pt-BR" : "en";
@@ -244,10 +254,15 @@ $("lblLimit").textContent = L.limit; $("limitDown").setAttribute("aria-label", L
 const GB = 1024 ** 3, MB = 1024 ** 2;
 const nf = (v, d) => v.toLocaleString(document.documentElement.lang, { minimumFractionDigits: d, maximumFractionDigits: d });
 const size = (b) => b >= GB ? `${nf(b / GB, 1)} GB` : `${nf(b / MB, 0)} MB`;
-const speed = (b) => b >= 1e6 ? `${nf(b * 8 / 1e6, 0)} Mbps` : b > 0 ? `${nf(b * 8 / 1e3, 0)} kbps` : "–";
+// glibren.13: em MB/s (MB = 1024 * 1024 bytes, como o app), KB/s abaixo de 1 MB/s.
+const speed = (b) => b >= MB ? `${nf(b / MB, b >= 10 * MB ? 0 : 1)} MB/s` : b > 0 ? `${nf(Math.max(1, b / 1024), 0)} KB/s` : "–";
 const eta = (s) => { if (!isFinite(s) || s <= 0) return "–"; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : m ? `${m} min` : `${s} s`; };
 
 let session = "", confirming = null, jobs = [], pinSet = true, limit = 0, maxLimit = 4, limitSet = false, maxConns = 64;
+// glibren.13: limite de velocidade (MB/s; 0 = sem limite; null = payload antigo, sem o botao). A mesma lista do app
+// (app/state/speed-limit.js LIMITS).
+const SPEEDS = [0, 50, 25, 15, 10, 5, 3, 2, 1];
+let speedLimit = null, speedLimitSet = false;
 const DEMO = location.protocol === "file:" || new URLSearchParams(location.search).has("demo");
 const demo = { t: Date.now(), jobs: [
   { id: "b1", name: "Ghost of Tsushima Director's Cut", state: "downloading", via: "TorBox", format: "exfat", platform: "ps5", code: "PPSA01784", file: "Ghost.of.Tsushima.DC.PPSA01784.exfat", written: 31.6 * GB, total: 48.2 * GB, bytesPerSecond: 38.5 * MB, connectionsActive: 16, connections: 16, connectionsSet: false },
@@ -261,7 +276,7 @@ const demo = { t: Date.now(), jobs: [
   { id: "b8", name: "Horizon Forbidden West", state: "failed", via: "TorBox", format: "exfat", platform: "ps5", code: "PPSA01521", file: "Horizon.FW.PPSA01521.exfat", written: 7.9 * GB, total: 89.6 * GB, bytesPerSecond: 0, connectionsActive: 0, error: "Link do TorBox venceu e não foi renovado. Abra a Jobee'sLair para continuar.", connections: 8, connectionsSet: false },
   { id: "b9", name: "Stellar Blade", state: "completed", host: "archive.org", format: "ffpfsc", platform: "ps5", code: "PPSA13198", file: "Stellar.Blade.PPSA13198.ffpfsc", written: 33.4 * GB, total: 33.4 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 8, connectionsSet: false }
   ,{ id: "b11", name: "Final Fantasy XVI", state: "extracting", host: "1fichier.com", format: "rar", parts: 4, platform: "ps5", code: "PPSA10664", file: "FF16.PPSA10664.part1.rar", written: 0, total: 96.1 * GB, bytesPerSecond: 0, connectionsActive: 0, connections: 0, connectionsSet: false }
-], limit: 2, limitSet: false, cancelled: [
+], limit: 2, limitSet: false, speedLimit: 15, speedLimitSet: false, cancelled: [
   { name: "Ratchet & Clank: Rift Apart", at: Math.floor(Date.now() / 1000) - 1800, platform: "ps5", code: "PPSA01476", format: "rar", host: "gofile.io" },
   { name: "Bloodborne", at: Math.floor(Date.now() / 1000) - 86400, platform: "ps4", code: "CUSA00900", format: "pkg", via: "TorBox" }
 ] };
@@ -274,17 +289,24 @@ async function api(method, path, body) {
       j.connectionsActive = j.connectionsActive < j.connections ? Math.min(j.connections, j.connectionsActive + 2) : j.connections;
       j.bytesPerSecond = j.connectionsActive * 0.6 * MB;
     }
+    // glibren.13: o limite de velocidade segura a soma, como o payload.
+    const sum = demo.jobs.reduce((s, j) => s + (j.state === "downloading" ? j.bytesPerSecond : 0), 0);
+    if (demo.speedLimit && sum > demo.speedLimit * MB) for (const j of demo.jobs) if (j.state === "downloading") j.bytesPerSecond *= demo.speedLimit * MB * (0.97 + Math.random() * 0.03) / sum;
     if (method === "POST") { const [, , , id, act] = path.split("/"); const j = demo.jobs.find((x) => x.id === id && x.state !== "extracting");
       if (path === "/api/unlock") return body.pin === "1234" ? { status: 200, data: { session: "demo" } } : { status: 403, data: { retryIn: 0 } };
       if (!session) return { status: 401, data: { error: "pin" } };
-      if (path === "/api/config") { Object.assign(demo, { limit: body.concurrency, limitSet: true }); return { status: 200, data: { ok: true, limit: demo.limit, limitSet: true } }; }
+      if (path === "/api/config") {
+        if ("concurrency" in body) Object.assign(demo, { limit: body.concurrency, limitSet: true });
+        if ("speedLimit" in body) Object.assign(demo, { speedLimit: body.speedLimit || 0, speedLimitSet: true });
+        return { status: 200, data: { ok: true, limit: demo.limit, limitSet: demo.limitSet, speedLimit: demo.speedLimit, speedLimitSet: demo.speedLimitSet } };
+      }
       if (j && act === "pause") Object.assign(j, { state: "paused", bytesPerSecond: 0, connectionsActive: 0 });
       if (j && act === "resume") Object.assign(j, { state: "downloading", bytesPerSecond: 3 * MB, connectionsActive: 2 });
       if (j && act === "cancel") { demo.jobs = demo.jobs.filter((x) => x !== j); demo.cancelled.unshift({ name: j.name, at: Math.floor(Date.now() / 1000), platform: j.platform, code: j.code, format: j.format, host: j.host, via: j.via }); }
       if (path === "/api/cancelled/clear") demo.cancelled = [];
       if (j && act === "connections") Object.assign(j, body.connections ? { connections: body.connections, connectionsSet: true } : { connections: j.state === "waiting-app" ? 0 : 8, connectionsSet: false });
       return { status: 200, data: { ok: true } }; }
-    return { status: 200, data: { jobs: demo.jobs.map((j) => ({ ...j })), cancelledRecent: demo.cancelled.slice(0, 20), limit: demo.limit, maxLimit: 4, maxConnections: 64, limitSet: demo.limitSet, pinSet: true } };
+    return { status: 200, data: { jobs: demo.jobs.map((j) => ({ ...j })), cancelledRecent: demo.cancelled.slice(0, 20), limit: demo.limit, maxLimit: 4, maxConnections: 64, limitSet: demo.limitSet, pinSet: true, speedLimit: demo.speedLimit, maxSpeedLimit: 1000, speedLimitSet: demo.speedLimitSet } };
   }
   const r = await fetch(path, { method, headers: { "Content-Type": "application/json", ...(session ? { "X-Session": session } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
   // Resposta cortada no caminho (Wi-Fi ruim): data fica null e quem chamou trata como falha, sem apagar a lista.
@@ -415,25 +437,42 @@ function setSection(next) {
   render();
   if (window.convHook) window.convHook(lastStatus, true);
 }
+// glibren.13: em pe, a linha de secoes vira 2 botoes (velocidade maxima | secao), cada um abre a sua lista; deitado, os
+// mesmos dois ficam no fim do resumo. Texto sempre por textContent.
 function renderSections() {
   const n = sectionCounts();
-  const bar = $("secbar"); bar.textContent = "";
-  for (const k of SECTIONS) {
-    const b = document.createElement("button"); b.type = "button"; b.className = `sc${k === section ? " on" : ""}${n[k] ? "" : " zero"}`;
-    b.setAttribute("aria-pressed", String(k === section));
-    b.textContent = L.sections[k];
-    const c = document.createElement("b"); c.textContent = String(n[k]); b.append(c);
-    b.onclick = () => setSection(k);
-    bar.append(b);
-  }
-  const on = bar.querySelector(".on");
-  // A secao escolhida fica a vista na linha de chips (so a linha rola, nunca a pagina).
-  if (on && bar.dataset.seen !== section) { bar.dataset.seen = section; bar.scrollLeft = Math.max(0, on.offsetLeft - (bar.clientWidth - on.offsetWidth) / 2); }
-  const btn = $("secBtn"); btn.textContent = `${L.show}: `;
+  const pick = $("secPick"); pick.textContent = ""; pick.title = L.sectionTitle;
+  const pt = document.createElement("span"); pt.className = "t"; pt.textContent = L.sections[section];
+  const pc = document.createElement("b"); pc.textContent = String(n[section]);
+  const pa = document.createElement("i"); pa.textContent = "▾";
+  pick.append(pt, pc, pa);
+  pick.setAttribute("aria-label", `${L.show}: ${L.sections[section]} ${n[section]}`);
+  // glibren.13: sem o "Mostrar:" visivel (o botao de velocidade divide o espaco no resumo); fica no aria-label.
+  const btn = $("secBtn"); btn.textContent = ""; btn.title = L.sectionTitle; btn.setAttribute("aria-label", `${L.show}: ${L.sections[section]} ${n[section]}`);
   const cur = document.createElement("b"); cur.textContent = `${L.sections[section]} ${n[section]}`; btn.append(cur, document.createTextNode(" ▾"));
-  if (secMenu) fillSecMenu(n);
+  renderSpeed();
+  if (secMenu) fillMenu(n);
 }
-let secMenu = null;
+const speedText = (v) => v ? `${v} MB/s` : L.noLimit;
+function renderSpeed() {
+  const known = speedLimit !== null;
+  const capped = Boolean(speedLimit);
+  for (const id of ["speedBtn", "speedBtn2"]) {
+    const b = $(id); b.hidden = !known; if (!known) continue;
+    b.classList.toggle("capped", capped);
+    b.title = `${L.speedTitle}${speedLimitSet ? ` (${L.speedPhone})` : ""}`;
+    b.setAttribute("aria-label", `${L.speedTitle}: ${speedText(speedLimit)}`);
+    b.textContent = "";
+    // Deitado (no resumo) sem o "Max.", para caber ao lado da velocidade; o title diz o que e.
+    if (id === "speedBtn") {
+      const t = document.createElement("span"); t.className = "t"; t.textContent = capped ? `⚡ ${L.speedMax} ${speedText(speedLimit)}` : `⚡ ${L.noLimit}`;
+      const a = document.createElement("i"); a.textContent = "▾"; b.append(t, a);
+    } else b.textContent = `⚡ ${speedText(speedLimit)} ▾`;
+  }
+}
+// O menu aberto (secoes ou velocidade), preso ao botao que o abriu.
+let secMenu = null, menuKind = "", menuFor = null;
+function fillMenu(n) { if (menuKind === "speed") fillSpeedMenu(); else fillSecMenu(n || sectionCounts()); }
 function fillSecMenu(n) {
   secMenu.textContent = "";
   for (const k of SECTIONS) {
@@ -444,19 +483,43 @@ function fillSecMenu(n) {
     secMenu.append(b);
   }
 }
-function closeSecMenu() { if (secMenu) { secMenu.remove(); secMenu = null; } }
-$("secBtn").onclick = (e) => {
-  e.stopPropagation();
-  if (secMenu) { closeSecMenu(); return; }
+function fillSpeedMenu() {
+  secMenu.textContent = "";
+  const h = document.createElement("div"); h.className = "mh"; h.textContent = L.speedMenu; secMenu.append(h);
+  for (const v of SPEEDS) {
+    const on = v === speedLimit;
+    const b = document.createElement("button"); b.type = "button"; b.className = on ? "on" : ""; b.setAttribute("role", "menuitemradio"); b.setAttribute("aria-checked", String(on));
+    const t = document.createElement("span"); t.textContent = speedText(v);
+    const c = document.createElement("b"); c.textContent = on ? "✓" : "";
+    b.append(t, c);
+    b.onclick = () => { closeSecMenu(); if (!on) guarded(() => setSpeed(v)); };
+    secMenu.append(b);
+  }
+}
+function closeSecMenu() { if (secMenu) { secMenu.remove(); secMenu = null; menuFor = null; menuKind = ""; } }
+function openMenu(anchor, kind) {
+  if (secMenu && menuFor === anchor) { closeSecMenu(); return; }
+  closeSecMenu();
   secMenu = document.createElement("div"); secMenu.className = "secmenu"; secMenu.setAttribute("role", "menu");
-  fillSecMenu(sectionCounts());
+  menuFor = anchor; menuKind = kind;
+  fillMenu();
   document.body.append(secMenu);
-  const r = $("secBtn").getBoundingClientRect();
+  // Abaixo do botao, alinhado pela borda dele que fica do lado da tela onde ele esta; nunca passa da tela.
+  const r = anchor.getBoundingClientRect(), w = document.documentElement.clientWidth;
   secMenu.style.top = `${Math.round(r.bottom + 4)}px`;
-  secMenu.style.right = `${Math.max(8, Math.round(document.documentElement.clientWidth - r.right))}px`;
-};
+  secMenu.style.maxHeight = `${Math.max(160, Math.round(innerHeight - r.bottom - 12))}px`;
+  if (kind === "speed") secMenu.style.maxWidth = `${Math.min(300, w - 16)}px`;
+  if (r.left + r.width / 2 < w / 2) secMenu.style.left = `${Math.max(8, Math.round(r.left))}px`;
+  else secMenu.style.right = `${Math.max(8, Math.round(w - r.right))}px`;
+}
+for (const [id, kind] of [["secBtn", "sections"], ["secPick", "sections"], ["speedBtn", "speed"], ["speedBtn2", "speed"]]) $(id).onclick = (e) => { e.stopPropagation(); openMenu($(id), kind); };
 addEventListener("click", (e) => { if (secMenu && !secMenu.contains(e.target)) closeSecMenu(); });
 addEventListener("keydown", (e) => { if (e.key === "Escape") closeSecMenu(); });
+async function setSpeed(v) {
+  const r = await api("POST", "/api/config", { speedLimit: v });
+  if (r.status === 401) { session = ""; lockButton(); pending = () => setSpeed(v); openPin(); return; }
+  await refresh();
+}
 // glibren.12: "Cancelados": os ultimos 20 que o payload guardou (nome, quando, sistema, formato, origem); Limpar pede o PIN.
 function renderCancelled() {
   const box = $("cancelledBox"); box.textContent = "";
@@ -557,6 +620,7 @@ async function refresh() {
     if (r.status !== 200 || !Array.isArray(r.data.jobs)) throw new Error();
     jobs = r.data.jobs || []; misses = 0; pinSet = r.data.pinSet !== false; lastStatus = r.data;
     limit = Number(r.data.limit) || 0; maxLimit = Number(r.data.maxLimit) || 4; limitSet = r.data.limitSet === true; maxConns = Number(r.data.maxConnections) || 64;
+    speedLimit = Number.isInteger(r.data.speedLimit) && r.data.speedLimit >= 0 ? r.data.speedLimit : null; speedLimitSet = r.data.speedLimitSet === true;
     $("status").className = "status on"; $("statusText").textContent = L.online;
   } catch { if (++misses >= 3) { $("status").className = "status"; $("statusText").textContent = L.offline; } }
   render();

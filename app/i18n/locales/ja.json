@@ -906,7 +906,7 @@
   "settings.screenSaverNowDetail": "10分待たずに確認できます",
   "settings.sounds": "操作のたびにクリック音。ダウンロード完了時にチャイム。",
   "settings.speedLimit": "ダウンロード速度の上限",
-  "settings.speedLimitDetail": "ほかの機器やオンラインプレイのために帯域を空けます。アプリの更新は制限されません。",
+  "settings.speedLimitDetail": "ほかの機器やオンラインプレイのために帯域を空けます。バックグラウンドのダウンロードにも適用され、スマホのページから変更できます。アプリの更新は制限されません。",
   "settings.simultaneous": "同時ダウンロード数",
   "settings.simultaneousDetail": "同時にダウンロードするゲームの数。2つ以上では速度が分け合われ、同じサイトへの接続数もそれぞれ少なくなります。",
   "settings.speedUnlimited": "制限なし",

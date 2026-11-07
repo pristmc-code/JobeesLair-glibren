@@ -68,3 +68,22 @@ test('glibren.12: a pagina tem as secoes, o sistema/arquivo nos cards, os cancel
   for (const piece of ['"all", "downloading", "queue", "extracting", "converting", "done", "cancelled", "backup"', 'localStorage.getItem("jobe.section")', 'Descompactando', 'Cancelados', 'Finalizados', '/api/cancelled/clear', 'cancelledRecent', 'function fileLine', 's-${j.platform}', 'Convertido: {f}', '$("foot").before(row)', '.secbar{', '.secmenu{']) assert.ok(page.includes(piece), piece);
   assert.ok(!page.includes('list.before(row)'), 'o botao do BACKUP fica no fim, nao no topo');
 });
+
+test('glibren.13: velocidades em MB/s (nunca Mbps) e o seletor de velocidade maxima com a mesma lista do app', async () => {
+  const page = readFileSync(embed.PAGE, 'utf8');
+  assert.ok(!/Mbps|kbps|\* 8 \//.test(page), 'nada em megabits');
+  assert.match(page, /MB\/s/);
+  assert.match(page, /KB\/s/);
+  const { LIMITS } = await load('app/state/speed-limit.js');
+  const list = /const SPEEDS = \[([^\]]*)\]/.exec(page);
+  assert.ok(list, 'a lista da pagina');
+  assert.deepEqual(list[1].split(',').map(Number), LIMITS, 'a mesma lista das Configuracoes do app');
+  for (const piece of ['id="speedBtn"', 'id="speedBtn2"', 'id="secPick"', '{ speedLimit: v }', 'r.data.speedLimit', 'guarded(() => setSpeed(v))', 'Sem limite', 'No limit', 'Velocidade máxima', 'Maximum speed']) assert.ok(page.includes(piece), piece);
+  // A mesma conta da pagina (MB = 1024 * 1024), num pedaco isolado.
+  const fn = /const speed = \(b\) => [^\n]+/.exec(page)[0];
+  const speed = new Function('MB', 'nf', `${fn}; return speed;`)(1024 ** 2, (v, d) => v.toFixed(d));
+  assert.equal(speed(15 * 1024 ** 2), '15 MB/s');
+  assert.equal(speed(2.5 * 1024 ** 2), '2.5 MB/s');
+  assert.equal(speed(512 * 1024), '512 KB/s');
+  assert.equal(speed(0), '–');
+});

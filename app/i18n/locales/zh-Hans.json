@@ -906,7 +906,7 @@
   "settings.screenSaverNowDetail": "无需等待 10 分钟",
   "settings.sounds": "每次移动都有点击声。下载完成时有提示音。",
   "settings.speedLimit": "下载速度限制",
-  "settings.speedLimitDetail": "为其他设备和在线游戏留出带宽。应用更新从不受限。",
+  "settings.speedLimitDetail": "为其他设备和在线游戏留出带宽。也适用于后台下载，并可在手机页面上更改。应用更新从不受限。",
   "settings.simultaneous": "同时下载数",
   "settings.simultaneousDetail": "同时下载的游戏数量。超过一个时，速度由它们分享，每个下载对同一网站打开的连接也更少。",
   "settings.speedUnlimited": "不限速",

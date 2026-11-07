@@ -313,21 +313,29 @@ import { FileSystem, FocusScope, Image, Keyboard, Linking, ScrollView, Text, Vie
       /* @__PURE__ */ (0, jsx)(Text, { style: text(21, chosen ? colors.accentFg : focused ? colors.fg : colors.muted, { fontWeight: 600 }), children: label })
     ] });
   }
+  // MODIFIED (glibren.13): nine choices (the phone page's list) in two rows: "no limit" and the four fastest, then the
+  // four slowest under them (an empty slot under "no limit" keeps the columns lined up).
   function SpeedLimitRow() {
     const t2 = useT();
     const limit = useSpeedLimit();
+    const pill = (value) => /* @__PURE__ */ (0, jsx)(View, {
+      focusKey: `settings:speed:${value}`,
+      focusable: true,
+      onPress: () => setSpeedLimit(value),
+      style: { position: "relative", flex: value ? 1 : 2, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: value === limit ? colors.accent : colors.surface2 },
+      children: /* @__PURE__ */ (0, jsx)(SpeedFace, { label: value ? t2("units.speed", { n: String(value) }) : t2("settings.speedUnlimited"), chosen: value === limit })
+    }, value);
+    const half = Math.ceil(SPEED_LIMITS.length / 2);
     return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 10 }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 3 }, children: [
         /* @__PURE__ */ (0, jsx)(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.speedLimit") }),
         /* @__PURE__ */ (0, jsx)(Text, { style: text(20, colors.muted), children: t2("settings.speedLimitDetail") })
       ] }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 12 }, children: SPEED_LIMITS.map((value) => /* @__PURE__ */ (0, jsx)(View, {
-        focusKey: `settings:speed:${value}`,
-        focusable: true,
-        onPress: () => setSpeedLimit(value),
-        style: { position: "relative", flex: value ? 1 : 2, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: value === limit ? colors.accent : colors.surface2 },
-        children: /* @__PURE__ */ (0, jsx)(SpeedFace, { label: value ? t2("units.speed", { n: String(value) }) : t2("settings.speedUnlimited"), chosen: value === limit })
-      }, value)) })
+      /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: 12 }, children: SPEED_LIMITS.slice(0, half).map(pill) }),
+      /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12 }, children: [
+        /* @__PURE__ */ (0, jsx)(View, { style: { flex: 2 } }, "slot"),
+        ...SPEED_LIMITS.slice(half).map(pill)
+      ] })
     ] });
   }
   // glibren: how many downloads run at once (state/simultaneous-downloads.js), as the speed limit's row.

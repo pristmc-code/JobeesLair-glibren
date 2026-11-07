@@ -906,7 +906,7 @@
   "settings.screenSaverNowDetail": "Lihat tanpa menunggu 10 menit",
   "settings.sounds": "Bunyi klik pada setiap gerakan. Dering saat unduhan selesai.",
   "settings.speedLimit": "Batas kecepatan unduh",
-  "settings.speedLimitDetail": "Menyisakan bandwidth untuk perangkat lain dan permainan online. Pembaruan aplikasi tidak pernah dibatasi.",
+  "settings.speedLimitDetail": "Menyisakan bandwidth untuk perangkat lain dan permainan online. Berlaku juga untuk unduhan di latar belakang dan bisa diubah dari halaman ponsel. Pembaruan aplikasi tidak pernah dibatasi.",
   "settings.simultaneous": "Unduhan bersamaan",
   "settings.simultaneousDetail": "Berapa banyak game yang diunduh sekaligus. Jika lebih dari satu, kecepatan dibagi di antara mereka dan masing-masing membuka lebih sedikit koneksi ke situs yang sama.",
   "settings.speedUnlimited": "Tanpa batas",

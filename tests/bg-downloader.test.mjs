@@ -690,7 +690,7 @@ test('glibren.8: downloads simultaneos pelo celular: valem na hora, gravados, o 
   assert.equal((await page('/api/config', { method: 'POST', body: { concurrency: 5 }, session })).status, 400);
   assert.equal((await page('/api/config', { method: 'POST', body: { concurrency: 0 }, session })).status, 400);
   const set = await page('/api/config', { method: 'POST', body: { concurrency: 3 }, session });
-  assert.deepEqual(set.data, { ok: true, limit: 3, limitSet: true });
+  assert.deepEqual(set.data, { ok: true, limit: 3, limitSet: true, speedLimit: 0, speedLimitSet: false });
   await statusUntil((s) => running(s) === 3, 10000);
   let health = (await call(base, 'GET', '/health')).data;
   assert.deepEqual([health.concurrency, health.concurrencyBy], [3, 'remote']);
@@ -719,6 +719,84 @@ test('glibren.8: downloads simultaneos pelo celular: valem na hora, gravados, o 
   // O jogador muda no app: passa a ser do app.
   assert.equal((await call(base, 'POST', '/config', { concurrency: 2 })).data.concurrencyBy, 'app');
   await stop(child);
+});
+
+// ---- glibren.13: limite de velocidade (MB/s) de todos os downloads, pelo celular ou pelo app, valendo ao vivo ----
+
+test('glibren.13: limite de velocidade segura a soma de 2 jobs x 8 conexoes, muda ao vivo (celular e app), gravado', { skip }, async (t) => {
+  monitorPort = await freePort();
+  const base = workspace();
+  ['s1.bin', 's2.bin'].forEach((name) => small(name, 16 * MiB));
+  srv.rate = 0; // o servidor local entrega o mais rapido que der: quem segura e o payload
+  let child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  // Falhou no meio (maquina carregada): o payload nao fica no ar segurando a porta da API dos testes seguintes.
+  try {
+  await up(base);
+  await pageUp();
+  assert.equal((await call(base, 'POST', '/config', { concurrency: 2 })).status, 200);
+  const session = await unlocked(base);
+  let status = (await page('/api/status')).data;
+  assert.deepEqual([status.speedLimit, status.maxSpeedLimit, status.speedLimitSet], [0, 1000, false]);
+  // Sem sessao, nada muda; fora de 0..1000, fracao, texto ou corpo vazio: 400.
+  assert.equal((await page('/api/config', { method: 'POST', body: { speedLimit: 2 } })).status, 401);
+  for (const bad of [{ speedLimit: 1001 }, { speedLimit: 1.5 }, { speedLimit: 'dois' }, {}]) {
+    assert.equal((await page('/api/config', { method: 'POST', body: bad, session })).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await call(base, 'POST', '/config', { speedLimit: 1001 })).status, 400);
+  const set = await page('/api/config', { method: 'POST', body: { speedLimit: 1 }, session });
+  assert.deepEqual(set.data, { ok: true, limit: 2, limitSet: false, speedLimit: 1, speedLimitSet: true });
+  let health = (await call(base, 'GET', '/health')).data;
+  assert.deepEqual([health.speedLimit, health.speedLimitBy, health.concurrency], [1, 'remote', 2], 'so o limite mudou');
+  const stamp = health.speedLimitStamp;
+  assert.ok(stamp >= 1);
+  assert.equal((await call(base, 'GET', '/jobs')).data.speedLimitBy, 'remote');
+  const ids = [];
+  for (const name of ['s1.bin', 's2.bin']) {
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/${name}`, destination: path.join(base, 'disk/downloads', name), storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 8, sha256: sha(files[name]) });
+    ids.push(data.id);
+  }
+  const written = async () => (await call(base, 'GET', '/jobs')).data.jobs.reduce((sum, job) => sum + (job.written || 0), 0);
+  // A taxa somada (MiB/s) numa janela de `ms`.
+  const rate = async (ms) => { const a = await written(), t = Date.now(); await wait(ms); return (await written() - a) / MiB / ((Date.now() - t) / 1000); };
+  await statusUntil((s) => s.jobs.filter((job) => job.state === 'downloading').length === 2 && s.jobs.every((job) => job.connectionsActive >= 4), 15000);
+  const slow = await rate(4000);
+  // O teto e o que importa (com folga para a janela de medida); o piso e largo para maquina carregada.
+  assert.ok(slow > 0.3 && slow < 1.5,`1 MB/s para os dois jobs juntos: ${slow.toFixed(2)} MiB/s`);
+  assert.equal((await page('/api/status')).data.speedLimit, 1);
+  // O app manda o mesmo numero (adotou): continua "do celular".
+  assert.equal((await call(base, 'POST', '/config', { speedLimit: 1 })).data.speedLimitBy, 'remote');
+  // O app muda (Configuracoes) com tudo baixando: vale na hora e passa a ser do app.
+  const fromApp = (await call(base, 'POST', '/config', { speedLimit: 4 })).data;
+  assert.deepEqual([fromApp.speedLimit, fromApp.speedLimitBy], [4, 'app']);
+  await wait(500);
+  const faster = await rate(3000);
+  assert.ok(faster > 1.6 && faster < 5.2,`4 MB/s ao vivo: ${faster.toFixed(2)} MiB/s`);
+  t.diagnostic(`limite 1 MB/s: ${slow.toFixed(2)} MiB/s; 4 MB/s: ${faster.toFixed(2)} MiB/s`);
+  status = (await page('/api/status')).data;
+  assert.deepEqual([status.speedLimit, status.speedLimitSet], [4, false]);
+  assert.ok(status.jobs.every((job) => job.state === 'downloading'), 'ninguem caiu por lentidao');
+  // Sem limite pelo celular (null = 0): termina rapido e inteiro.
+  assert.equal((await page('/api/config', { method: 'POST', body: { speedLimit: null }, session })).data.speedLimit, 0);
+  for (const [i, id] of ids.entries()) {
+    const job = await until(base, id, ['completed', 'failed'], () => true, 20000);
+    assert.equal(job.state, 'completed', job.error);
+    assert.equal(sha(readFileSync(path.join(base, 'disk/downloads', `s${i + 1}.bin`))), sha(files[`s${i + 1}.bin`]), 'nada se perdeu com as pausas');
+  }
+  const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+  assert.ok(log.includes('celular: limite de velocidade 0 -> 1 MB/s'), log);
+  assert.ok(log.includes('limite de velocidade: 1 -> 4 MB/s'), log);
+  // Gravado: volta igual depois de reiniciar (o do celular, com o stamp).
+  assert.equal((await page('/api/config', { method: 'POST', body: { speedLimit: 3 }, session })).status, 200);
+  await stop(child);
+  assert.match(readFileSync(path.join(base, 'state/config.json'), 'utf8'), /"speedLimit":3,"speedLimitBy":"remote","speedLimitStamp":\d+/);
+  child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  await up(base);
+  health = (await call(base, 'GET', '/health')).data;
+  assert.deepEqual([health.speedLimit, health.speedLimitBy, health.speedLimitStamp], [3, 'remote', stamp + 2]);
+  } finally {
+    await stop(child);
+    delete files['s1.bin']; delete files['s2.bin'];
+  }
 });
 
 // ---- glibren: desligar o PS5 / modo de repouso pela pagina do celular (POST /api/power) ----

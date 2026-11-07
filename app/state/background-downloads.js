@@ -40,6 +40,9 @@
 //     e no /jobs; o app adota o numero do celular (adoptConcurrency -> Configuracoes) uma vez por stamp, antes de mandar
 //     o seu, e nao o sobrescreve. As conexoes por download escolhidas no celular ficam no payload (connectionsSet), que
 //     as aplica ao job do mesmo item da fila (a "key", que agora vai tambem no POST /jobs).
+//   - glibren.13: o limite de velocidade (state/speed-limit.js, MB/s) vai junto no POST /config ("speedLimit"; o payload
+//     segura a soma de todos os jobs e conexoes, ao vivo) e o escolhido na pagina do celular volta do mesmo jeito que os
+//     downloads simultaneos ("speedLimitBy": "remote" + "speedLimitStamp" -> adoptSpeedLimit -> Configuracoes).
 //   - glibren.12: a conversao para .exfat (download-queue.js queueConversion) roda no payload: convert(request) manda
 //     POST /convert e acompanha GET /convert (progresso, fim, erro com codigo); cancel() manda /convert/<id>/cancel. A
 //     mesma chave (o id do item da fila) de novo acompanha a que ja existe (o app reabriu com ela em andamento).
@@ -193,6 +196,10 @@ import { originOf } from './link-formats.js';
     pauseOnCloseSeconds = () => null,
     // glibren.8: grava nas Configuracoes os downloads simultaneos escolhidos no celular (setSimultaneousDownloads), ou null.
     adoptConcurrency = null,
+    // glibren.13: o limite de velocidade das Configuracoes em MB/s (0 = sem limite), que vai no POST /config; null nao
+    // manda o campo. adoptSpeedLimit grava nas Configuracoes o escolhido no celular (setSpeedLimit), ou null.
+    speedLimit = () => null,
+    adoptSpeedLimit = null,
     // glibren: poe na fila um pedido da Biblioteca TorBox feito no celular ({ id, hash, file, whole, code, platform,
     // title, size }; lanca o motivo quando nao da), ou null; e de quanto em quanto os pedidos sao vistos (0 = so quando
     // adoptRequests() e chamado).
@@ -227,7 +234,9 @@ import { originOf } from './link-formats.js';
     // glibren.8: o payload diz que os downloads simultaneos foram escolhidos no celular: o app passa a usar esse numero
     // (uma vez por stamp; se o jogador mudar no app depois, o payload volta a "app" e nada e adotado).
     let adoptedStamp = null;
+    let adoptedSpeedStamp = null;
     function adoptRemote(data) {
+      adoptRemoteSpeed(data);
       if (typeof adoptConcurrency !== "function" || data?.concurrencyBy !== "remote") return;
       const count = data.concurrency;
       if (!Number.isInteger(count) || count < 1 || count > 4 || adoptedStamp === data.concurrencyStamp) return;
@@ -238,6 +247,20 @@ import { originOf } from './link-formats.js';
         adoptConcurrency(count);
       } catch (problem) {
         log(`simultaneous downloads from the phone not kept: ${problem?.message ?? problem}`);
+      }
+    }
+    // glibren.13: o limite de velocidade escolhido no celular, do mesmo jeito (uma vez por stamp).
+    function adoptRemoteSpeed(data) {
+      if (typeof adoptSpeedLimit !== "function" || data?.speedLimitBy !== "remote") return;
+      const limit = data.speedLimit;
+      if (!Number.isInteger(limit) || limit < 0 || adoptedSpeedStamp === data.speedLimitStamp) return;
+      adoptedSpeedStamp = data.speedLimitStamp;
+      if (limit === speedLimit()) return;
+      log(`download speed limit set on the phone: ${limit} MB/s (was ${speedLimit()})`);
+      try {
+        adoptSpeedLimit(limit);
+      } catch (problem) {
+        log(`download speed limit from the phone not kept: ${problem?.message ?? problem}`);
       }
     }
     async function health(token) {
@@ -290,7 +313,8 @@ import { originOf } from './link-formats.js';
       const state = await health(token);
       const count = concurrency();
       const pause = pauseOnCloseSeconds();
-      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...monitor() ?? {} };
+      const cap = speedLimit(); // glibren.13
+      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...Number.isInteger(cap) && cap >= 0 ? { speedLimit: cap } : {}, ...monitor() ?? {} };
       const key = `${state?.pid}:${JSON.stringify(body)}`;
       if (!state || configFor === key) return;
       const answer = await call(token, "POST", "/config", body);

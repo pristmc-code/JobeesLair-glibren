@@ -906,7 +906,7 @@
     "settings.screenSaverNowDetail": "See it without waiting 10 minutes",
     "settings.sounds": "Click on every move. Chime when a download finishes.",
     "settings.speedLimit": "Download speed limit",
-    "settings.speedLimitDetail": "Leaves bandwidth for other devices and online play. App updates are never limited.",
+    "settings.speedLimitDetail": "Leaves bandwidth for other devices and online play. Also applies to background downloads and can be changed from the phone page. App updates are never limited.",
     "settings.simultaneous": "Simultaneous downloads",
     "settings.simultaneousDetail": "How many games download at once. With more than one, the speed is shared among them and each opens fewer connections to the same site.",
     "settings.speedUnlimited": "No limit",

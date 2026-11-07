@@ -612,6 +612,58 @@ test('glibren.8: sem escolha no celular (concurrencyBy "app"), nada e adotado; u
   await wait(30);
 });
 
+// ---- glibren.13: limite de velocidade, o mesmo no app e no payload ----
+
+test('glibren.13: o limite de velocidade vai no POST /config, muda ao vivo, e o escolhido no celular e adotado (uma vez por stamp)', async () => {
+  const payload = fakePayload();
+  const remote = { speedLimit: 0, speedLimitBy: 'app', speedLimitStamp: 0 };
+  payload.http.request = ((request) => async (url, options = {}) => {
+    const answer = await request(url, options);
+    if (answer.status !== 200) return answer;
+    const data = await answer.json();
+    if (url.endsWith('/health') || url.endsWith('/jobs')) return { ...answer, json: async () => ({ ...data, ...remote }) };
+    return { ...answer, json: async () => data };
+  })(payload.http.request);
+  let limit = 10;
+  const adopted = [];
+  const wrapper = make(payload, fakeEngine(), {
+    concurrency: () => 1,
+    speedLimit: () => limit,
+    // Como adoptSpeedLimit (speed-limit.js): grava e avisa (onSpeedLimit -> refreshConfig).
+    adoptSpeedLimit: (value) => { adopted.push(value); limit = value; wrapper.refreshConfig(); }
+  });
+  wrapper.enqueue(queueOptions());
+  await wait(40);
+  assert.deepEqual(adopted, [], 'do app: nada a adotar');
+  assert.equal(payload.configs.at(-1).speedLimit, 10, 'o limite das Configuracoes vai ao payload');
+  // O jogador muda nas Configuracoes com o download rodando: vai na hora.
+  limit = 3;
+  await wrapper.refreshConfig();
+  assert.equal(payload.configs.at(-1).speedLimit, 3);
+  // Sem limite tambem vai (0), para o payload soltar.
+  limit = 0;
+  await wrapper.refreshConfig();
+  assert.equal(payload.configs.at(-1).speedLimit, 0);
+  // O celular escolhe 5 MB/s: o acompanhamento (GET /jobs) traz o stamp novo e o app adota, sem mandar o 0 antigo.
+  const before = payload.configs.length;
+  Object.assign(remote, { speedLimit: 5, speedLimitBy: 'remote', speedLimitStamp: 1 });
+  await wait(60);
+  assert.deepEqual(adopted, [5]);
+  assert.ok(payload.configs.slice(before).every((config) => config.speedLimit === 5), JSON.stringify(payload.configs.slice(before)));
+  // O mesmo stamp de novo nao e adotado outra vez: o jogador muda no app e o app nao volta ao 5.
+  limit = 25;
+  await wrapper.refreshConfig();
+  await wait(40);
+  assert.deepEqual(adopted, [5], 'nao desfaz a escolha feita no app');
+  assert.equal(payload.configs.at(-1).speedLimit, 25);
+  // Um valor estranho do payload nao e adotado.
+  Object.assign(remote, { speedLimit: -1, speedLimitStamp: 2 });
+  await wait(40);
+  assert.deepEqual(adopted, [5]);
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
+});
+
 // ---- glibren.12: origem e formato vao na fila (item e job), validados ----
 
 test('fila inteira (glibren.12: origem): host/format/parts/via no item, e no job o site e o formato da fonte', async () => {
