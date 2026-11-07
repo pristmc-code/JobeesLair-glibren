@@ -57,6 +57,8 @@
 > **glibren.18**: the background payload works on its own with Jobe closed (phone requests start, downloads in BACKUP
 > are converted or extracted, "Convert now" in the phone's BACKUP list); games whose only TorBox copy is broken leave the
 > TorBox store; the app update no longer waits for the payload's downloads.
+> **glibren.19**: the phone page asks for the PIN once (the session is kept on the phone and by the payload for 30 days,
+> renewed on use, and survives a payload restart).
 
 <p align="center">
   <b>English</b> ·
