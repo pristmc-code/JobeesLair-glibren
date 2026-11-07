@@ -1593,5 +1593,14 @@
     "settings.backupParts": "{count, plural, one {# part} other {# parts}}",
     "settings.backupConverted": "Converted: {file}",
     "settings.backupNotConverted": "not converted",
-    "settings.backupMore": "and {count} more"
+    "settings.backupMore": "and {count} more",
+    "hints.convertExfat": "Convert to .exfat",
+    "files.type.gameFolder": "PS5 game folder",
+    "files.convert.started": "Converting {name} to .exfat. Follow it in Downloads; the folder goes to BACKUP once the .exfat checks out.",
+    "files.convert.failed": "It could not be converted.",
+    "files.convert.notGame": "Not a PS5 game folder (it needs eboot.bin and sce_sys/param.json with a PPSA code).",
+    "files.convert.already": "This folder is already being converted.",
+    "files.convert.busy": "Its download is still running. Wait for it to finish.",
+    "files.deleteConverting": "It's being converted to .exfat. Cancel it in Downloads first.",
+    "downloads.convert.folderKept": "The game folder stayed at {path}."
 }

@@ -1593,5 +1593,14 @@
   "settings.backupParts": "{count, plural, one {#টি অংশ} other {#টি অংশ}}",
   "settings.backupConverted": "রূপান্তরিত: {file}",
   "settings.backupNotConverted": "রূপান্তর হয়নি",
-  "settings.backupMore": "আরও {count}টি"
+  "settings.backupMore": "আরও {count}টি",
+  "hints.convertExfat": ".exfat-এ রূপান্তর করুন",
+  "files.type.gameFolder": "PS5 গেম ফোল্ডার",
+  "files.convert.started": "{name} .exfat-এ রূপান্তর হচ্ছে। ডাউনলোডে দেখুন; .exfat যাচাই হলে ফোল্ডারটি BACKUP-এ যাবে।",
+  "files.convert.failed": "রূপান্তর করা যায়নি।",
+  "files.convert.notGame": "এটি PS5 গেম ফোল্ডার নয় (eboot.bin এবং PPSA কোডসহ sce_sys/param.json দরকার)।",
+  "files.convert.already": "এই ফোল্ডারটি ইতিমধ্যে রূপান্তর হচ্ছে।",
+  "files.convert.busy": "এর ডাউনলোড এখনও চলছে। শেষ হওয়া পর্যন্ত অপেক্ষা করুন।",
+  "files.deleteConverting": "এটি .exfat-এ রূপান্তর হচ্ছে। আগে ডাউনলোডে বাতিল করুন।",
+  "downloads.convert.folderKept": "গেম ফোল্ডারটি {path}-এ রয়ে গেছে।"
 }

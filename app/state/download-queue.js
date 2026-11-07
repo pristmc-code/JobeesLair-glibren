@@ -34,7 +34,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
 import { hostOf } from './download-tuning.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 import { mirrorsFor } from './download-mirrors.js';
-import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platformOf, PS4_FOLDER, writeBackupMarker } from './exfat-convert.js';
+import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platformOf, PS4_FOLDER, writeBackupMarker } from './exfat-convert.js';
 
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
   var BUSY = ["queued", ...ACTIVE];
@@ -48,6 +48,8 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
   // Disk images ShadowMount mounts. An archive can hold several (a base game and its update, say).
   var IMAGE = /\.(ffpfsc|ffpfs|ffpkg|exfat)$/i;
   var baseName = (path) => path.slice(path.lastIndexOf("/") + 1);
+  // glibren.17: job -> the format its first bytes said before it downloaded (checkEnd), for convertRoute.
+  var probed = /* @__PURE__ */ new WeakMap();
   // A host's web page is kilobytes; a file this big with no known headers is the game itself.
   var WEB_PAGE_BYTES = 4 * 1024 ** 2;
   // 0.5.4: how far back an extraction's speed looks (extract), and the largest range of a 7z's end asked of
@@ -1211,6 +1213,14 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
           job2.endChecked = tokenless(job2.options.url);
           if (refusal) throw new Error(refusal);
         }
+        // glibren.17: a file of no known format (a ".binary") whose first bytes, read just above, say archive or package
+        // downloads straight into BACKUP (or PS4/) when nothing of it is on the drive yet; the end of the download checks
+        // again for the rest (convertRoute after route).
+        if (job2.artifact.nextAction === "downloaded" && probed.has(job2) && !job2.written && ![job2.downloadDestination, `${job2.downloadDestination}.part`].some((path) => fs.exists(path))) {
+          const kind = probed.get(job2);
+          probed.delete(job2);
+          convertRoute(job2, kind, { before: true });
+        }
         fs.mkdir(job2.artifact.directory, { recursive: true });
         fs.mkdir(job2.downloadDestination.slice(0, job2.downloadDestination.lastIndexOf("/")), { recursive: true });
         lane.transferring = true;
@@ -1280,6 +1290,9 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
           }
         }
         if (job2.artifact.nextAction === "downloaded") route(job2);
+        // glibren.17: an archive or a package its name did not say (a ".binary", a misleading extension) goes to BACKUP
+        // (or PS4/) now, as one its name said would have, and from there becomes an .exfat (below).
+        if (["extraction-required", "installer-required"].includes(job2.artifact.nextAction) && !job2.backupDir) convertRoute(job2, job2.artifact.nextAction === "installer-required" ? "pkg" : String(job2.artifact.format || "").toLowerCase());
         // ShadowMount lays backports over a game only from a folder; a backport that came as a disk image
         // stays out of homebrew/, where it would register as a second copy of the game.
         if (job2.artifact.nextAction === "shadowmount" && job2.role === "backport") {
@@ -1434,6 +1447,8 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       try {
         for (let round = 0; round < 6; round++) {
           const { kind, size, refusal, need } = archives.inspectRanges(ranges);
+          // glibren.17: what the first bytes say, for convertRoute before the download starts.
+          if (ranges.length === 1 && kind) probed.set(job2, kind);
           if (ranges.length && kind !== "7z") return "";
           // A 7z ends where its list does: a file of another length is not that one archive alone.
           if (size !== null && total && size !== total) {
@@ -1508,6 +1523,69 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       job2.routing = artifact2;
       change();
       finishRouting(job2);
+    }
+    // glibren.17: a download whose name said nothing of its format (TorBox's "PPSA01546-game-4.51-r....binary", a name
+    // without an extension, or a misleading one) that its bytes show to be an archive or a package goes where
+    // destinationFor (state/exfat-convert.js) would have sent it had the name said so: with the conversion on, into
+    // <drive>/BACKUP/<game>/ with the right extension (then the archive or the PS5 package becomes an .exfat, as in
+    // glibren.12), or a PS4 package into <drive>/PS4/ (installed as before). A rename on the game's own drive. `before`:
+    // the download has not started, so only where it is written changes. Returns whether it moved. With the conversion
+    // off, for a backport or a DLC, or one already planned: nothing changes (as before). Seen on a PS5 on 2026-11-07: a
+    // TorBox ".binary" that was a zip went to downloads/files, was extracted the old way and its archive deleted.
+    function convertRoute(job2, kind, { before = false } = {}) {
+      if (!convertExfat() || job2.role !== "game" || job2.backupDir || job2.convertPlanned || job2.noConvert || job2.release.parts || job2.manual) return false;
+      const packaged = kind === "pkg" || kind === "fpkg";
+      if (!packaged && !ARCHIVE_KINDS.includes(kind)) return false;
+      if (String(job2.artifact?.directory || "") === `${job2.root}/${PS4_FOLDER}`) return false;
+      const from = job2.downloadDestination;
+      if (!before && (!from || !fs.exists(from))) return false;
+      let detected;
+      try {
+        detected = formats.detected(job2.release, job2.root, packaged ? "pkg" : kind);
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: no place for a ${kind} (${error2.message}); it goes on as before`);
+        return false;
+      }
+      // The game's code, else the one the package's header carries (a PS4 package of a game listed without one).
+      const code = /^(PPSA|CUSA)\d{5}/i.test(String(job2.titleId || "")) ? job2.titleId : packaged && !before && archives?.inspect ? archives.inspect([from])?.title || job2.titleId : job2.titleId;
+      const plan = destinationFor({ on: true, role: "game", artifact: detected, release: { ...job2.release, format: detected.format }, root: job2.root, title: job2.title, titleId: code, game: null, taken: (path) => fs.exists(path) || jobs.some((other) => other !== job2 && other.backupDir === path) });
+      const toPs4 = plan.artifact.directory === `${job2.root}/${PS4_FOLDER}`;
+      if (!plan.backupDir && !toPs4) return false;
+      let to = plan.artifact.destination;
+      const name = baseName(to);
+      for (let n = 2; (fs.exists(to) || jobs.some((other) => other !== job2 && [other.artifact?.destination, other.downloadDestination].includes(to))) && n < 100; n++) to = `${plan.artifact.directory}/${name.replace(/(\.[^.]*)?$/, ` (${n})$1`)}`;
+      const made = !fs.exists(plan.artifact.directory);
+      try {
+        if (!before && !from.startsWith(`${job2.root}/`)) throw new Error(`${from} is not on ${job2.root}`);
+        fs.mkdir(plan.artifact.directory, { recursive: true });
+        if (!before) {
+          fs.rename(from, to);
+          if (fs.exists(`${from}.complete`)) fs.rename(`${from}.complete`, `${to}.complete`);
+        }
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: kept where it is (${error2.message}); it goes on as before`);
+        // The folder made for it, left empty, goes.
+        try {
+          if (made && fs.exists(plan.artifact.directory) && !fs.readDir(plan.artifact.directory).length) fs.remove(plan.artifact.directory);
+        } catch {
+        }
+        return false;
+      }
+      job2.artifact = { ...plan.artifact, destination: to };
+      job2.downloadDestination = to;
+      if (plan.backupDir) {
+        job2.backupDir = plan.backupDir;
+        try {
+          const system = systemOf(job2), origin = originOf(job2.release);
+          writeBackupMarker(fs, plan.backupDir, { titleId: system.code || code, platform: system.platform || plan.platform, format: packaged ? "pkg" : kind, source: origin.via || origin.host });
+        } catch (error2) {
+          console.log(`[download-queue] ${job2.id}: BACKUP marker not written: ${error2.message}`);
+        }
+      }
+      if (plan.convert) job2.convertPlanned = true;
+      console.log(`[download-queue] ${job2.id}: its bytes say ${kind}; ${before ? "it downloads to" : "moved to"} ${to}${plan.convert ? ", to become an .exfat" : toPs4 ? ", to install" : ""}`);
+      change();
+      return true;
     }
     // A game image or package whose first bytes the header check does not know (a .ffpfsc that does not
     // open on "PFSC") would stay a ".binary" ShadowMount+ never sees. Its name still tells: the one the host
@@ -1778,8 +1856,10 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       if (inner) {
         const destination = `${job2.output}-inner`;
         console.log(`[download-queue] ${job2.id}: the archive held another (${inner}); unpacking it to ${destination}`);
-        // glibren.12: an original kept in BACKUP stays there.
-        if (!job2.backupDir) await Promise.all(files.flatMap((path) => [path, `${path}.complete`]).filter((path) => fs.exists(path)).map((path) => fs.removeAsync(path)));
+        // glibren.12: an original kept in BACKUP stays there. glibren.17: one of a PS5 game that is to become an .exfat
+        // goes there now, rather than being deleted.
+        if (!job2.backupDir && convertsAfter(job2)) await keepOriginals(job2, files);
+        if (!job2.backupDir && !job2.originalsKept) await Promise.all(files.flatMap((path) => [path, `${path}.complete`]).filter((path) => fs.exists(path)).map((path) => fs.removeAsync(path)));
         job2.state = "extracting";
         job2.written = 0;
         job2.total = null;
@@ -1807,7 +1887,10 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         }
         job2.output = destination;
       }
-      console.log(`[download-queue] ${job2.id}: extracted in ${Math.round((Date.now() - began) / 1e3)} s, ${(result.artifacts || []).length} files`);
+      // glibren.17: the files it unpacked, counted on the drive (the engine's artifacts name only its images and
+      // packages: a game folder read "0 files").
+      const count = countFiles(job2.output);
+      console.log(`[download-queue] ${job2.id}: extracted in ${Math.round((Date.now() - began) / 1e3)} s, ${count.files}${count.more ? "+" : ""} file${count.files === 1 ? "" : "s"}${(result.artifacts || []).length ? ` (${(result.artifacts || []).length} images or packages)` : ""}`);
       const images = orderImages(job2.output, (result.artifacts || []).filter((path) => IMAGE.test(path)));
       // A backport is checked for nothing a game needs, and none of it goes where games are scanned: even
       // one carrying an eboot.bin and a param.json would otherwise register as a second copy of the game.
@@ -1843,7 +1926,9 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         const folder = packaged.length ? null : gameFolder(job2.output);
         // glibren.12: a PS5 game's package or folder becomes an .exfat (the extracted files are the work folder, deleted
         // once it checks out); a PS4 game's packages go to <drive>/PS4/ and install as before.
-        const converting = job2.convertPlanned && !job2.noConvert && job2.role === "game";
+        // glibren.17: also a PS5 game not planned for it (its format found only at the end, an older job) whenever the
+        // conversion is on: a game folder is never left as a folder then.
+        const converting = convertsAfter(job2);
         const ps5Package = converting ? packaged.find((path) => platformOf({ name: path.slice(path.lastIndexOf("/") + 1), titleId: job2.titleId }) === "ps5" && !/back[\s_.-]*port|patch|update|dlc/i.test(path)) : null;
         if (ps5Package) {
           queueConversion(job2, { kind: "pkg", source: `${job2.output}/${ps5Package}`, work: job2.output });
@@ -1860,8 +1945,12 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       }
       change();
       try {
-        // glibren.12: the original downloaded into BACKUP is kept there (until the player deletes it).
-        if (!job2.backupDir) {
+        // glibren.12: the original downloaded into BACKUP is kept there (until the player deletes it). glibren.17: a PS5
+        // game's archive extracted from elsewhere goes to BACKUP when its folder or package is being converted.
+        if (!job2.backupDir && job2.state === "converting") await keepOriginals(job2, files);
+        if (job2.originalsKept) {
+          delete job2.originalsKept;
+        } else if (!job2.backupDir) {
           await Promise.all(files.flatMap((path) => [path, `${path}.complete`]).filter((path) => !inner || fs.exists(path)).map((path) => fs.removeAsync(path)));
           if (job2.release.parts) await fs.removeAsync(setDirectory(job2));
         } else {
@@ -2169,6 +2258,69 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         return to;
       });
     }
+    // glibren.17: whether what this job unpacks becomes an .exfat: one planned for it, or, with the conversion on, any PS5
+    // game's (its format found only at the end, a job from before the option) unless the player chose "Use without converting".
+    const convertsAfter = (job2) => !job2.noConvert && job2.role === "game" && !job2.manual && (Boolean(job2.convertPlanned) || convertExfat() && platformOf({ titleId: job2.titleId, release: job2.release }) === "ps5");
+    // glibren.17: the archive a PS5 game was extracted from, downloaded outside BACKUP, moves into <drive>/BACKUP/<game>/
+    // (a rename on the same drive; a ".binary" takes its real extension) instead of being deleted, as glibren.12 keeps
+    // the ones it downloads there. Nothing moved (a rename refused): it stays where it is, not deleted (originalsKept).
+    async function keepOriginals(job2, files) {
+      const present = files.filter((path) => fs.exists(path));
+      if (!present.length) return;
+      const setDir = job2.release.parts ? setDirectory(job2) : null;
+      const dir = backupFolder(job2.root, job2.title || job2.titleId, (path) => fs.exists(path) || jobs.some((other) => other.backupDir === path));
+      const format = String(job2.artifact?.format || "").toLowerCase();
+      let moved = 0;
+      try {
+        fs.mkdir(dir, { recursive: true });
+        for (const path of present) {
+          const name = baseName(path);
+          const fixed = ARCHIVE_KINDS.includes(format) && /\.(?:bin|binary)$/i.test(name) ? name.replace(/\.(?:bin|binary)$/i, `.${format}`) : name;
+          fs.rename(path, `${dir}/${fixed}`);
+          if (path === job2.downloadDestination) job2.downloadDestination = `${dir}/${fixed}`;
+          for (const part of job2.parts ?? []) if (part.destination === path) part.destination = `${dir}/${fixed}`;
+          moved++;
+        }
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: the archive was not moved to BACKUP (${error2.message}); it stays where it is`);
+      }
+      if (!moved) {
+        job2.originalsKept = true;
+        return;
+      }
+      job2.backupDir = dir;
+      if (moved < present.length) job2.originalsKept = true;
+      try {
+        const system = systemOf(job2), origin = originOf(job2.release);
+        writeBackupMarker(fs, dir, { titleId: system.code, platform: system.platform || "ps5", format, source: origin.via || origin.host });
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: BACKUP marker not written: ${error2.message}`);
+      }
+      if (setDir && setDir !== dir && fs.exists(setDir)) await fs.removeAsync(setDir).catch((error2) => console.log(`[download-queue] ${job2.id}: ${setDir} not deleted: ${error2.message}`));
+      console.log(`[download-queue] ${job2.id}: its archive (${moved} file${moved === 1 ? "" : "s"}) kept in ${dir} instead of being deleted`);
+      change();
+    }
+    // glibren.17: the files under `dir` (an extraction's), at most 200000 looked at: { files, more }.
+    function countFiles(dir) {
+      let files = 0, budget = 2e5;
+      const stack = [dir];
+      while (stack.length && budget > 0) {
+        const current = stack.pop();
+        let entries2 = [];
+        try {
+          entries2 = fs.readDir(current);
+        } catch {
+          continue;
+        }
+        for (const entry2 of entries2) {
+          if (--budget <= 0) break;
+          if (entry2.name.startsWith(".ps5-react")) continue;
+          if (entry2.isDirectory) stack.push(`${current}/${entry2.name}`);
+          else files++;
+        }
+      }
+      return { files, more: budget <= 0 };
+    }
     function queueConversion(job2, spec) {
       const owned2 = (path) => jobs.some((other) => other !== job2 && [other.artifact?.destination, other.convert?.output].includes(path));
       const kept = job2.convert?.output;
@@ -2260,6 +2412,7 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       job2.written = job2.total = size;
       job2.bytesPerSecond = 0;
       job2.message = t("downloads.convert.done");
+      if (job2.manual) manualFolderDone(job2);
       console.log(`[download-queue] ${job2.id}: converted to ${output} (${size} bytes); the original stays in ${job2.backupDir ?? "its folder"}`);
       notifications.show(t("downloads.notice.complete"), job2.title);
       // ShadowMount+ is asked to scan now (the payload asks too), so the game shows without waiting for its next scan.
@@ -2292,6 +2445,11 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
     }
     // "Use without converting": what the download would have become before glibren.12 (the original stays in BACKUP).
     async function useWithoutConverting(job2, spec = job2.convert) {
+      // glibren.17: a folder converted by hand stays as it was (and so does its download, if one owns it).
+      if (job2.manual) {
+        restoreManual(job2);
+        return;
+      }
       delete job2.convert;
       job2.noConvert = true;
       job2.error = "";
@@ -2313,6 +2471,79 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       job2.message = t("downloads.convert.asPackage");
       change();
       if (canInstall() && !heldPackage(job2)) await install(job2, {});
+    }
+    // ---- glibren.17: "Convert to .exfat" on a PS5 game folder (the Files tab) ----
+    // The folder is read by the payload as a conversion of kind "dir" with no work folder (so the payload deletes
+    // nothing); once the .exfat checks out, the folder moves into <drive>/BACKUP/<game>/ (manualFolderDone). A folder a
+    // finished download owns converts as that download (its card turns into the .exfat's); any other gets a job of its
+    // own. Cancelled, failed and given up ("Use without converting"): the folder and its download stay as they were.
+    function manualFolderDone(job2) {
+      const folder = job2.manual.folder;
+      delete job2.manual;
+      if (job2.output === folder) delete job2.output;
+      if (!fs.exists(folder) || folder.startsWith(`${job2.root}/${BACKUP_FOLDER}/`)) return;
+      const fresh = !(job2.backupDir && fs.exists(job2.backupDir));
+      const dir = fresh ? backupFolder(job2.root, job2.title || job2.titleId, (path) => fs.exists(path) || jobs.some((other) => other.backupDir === path)) : job2.backupDir;
+      let to = `${dir}/${baseName(folder)}`;
+      for (let n = 2; fs.exists(to) && n < 100; n++) to = `${dir}/${baseName(folder)} (${n})`;
+      try {
+        fs.mkdir(dir, { recursive: true });
+        fs.rename(folder, to);
+        job2.backupDir = dir;
+        if (fresh) writeBackupMarker(fs, dir, { titleId: job2.titleId, platform: "ps5", format: "folder", source: "" });
+        console.log(`[download-queue] ${job2.id}: the game folder ${folder} moved to ${to}`);
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: the game folder ${folder} stays where it is: ${error2.message}`);
+        job2.message = `${job2.message} ${t("downloads.convert.folderKept", { path: folder })}`;
+      }
+    }
+    function restoreManual(job2) {
+      const previous = job2.manual?.previous;
+      delete job2.manual;
+      delete job2.convert;
+      job2.bytesPerSecond = 0;
+      if (previous) {
+        Object.assign(job2, previous);
+        console.log(`[download-queue] ${job2.id}: left as it was (not converted)`);
+        change();
+        return;
+      }
+      jobs = jobs.filter((item) => item !== job2);
+      console.log(`[download-queue] ${job2.id}: the folder stays as it was (not converted)`);
+      save();
+      emit2();
+    }
+    function convertFolder(folder, root2, { title = "", titleId = "" } = {}) {
+      const path = String(folder || "").replace(/\/+$/, "");
+      if (!root2 || !path.startsWith(`${root2}/`) || path.split("/").some((part) => part === ".." || part === ".")) throw new Error(t("files.convert.notGame"));
+      let param = null;
+      try {
+        param = JSON.parse(fs.readFile(`${path}/sce_sys/param.json`));
+      } catch {
+        param = null;
+      }
+      const code = String(param?.titleId || titleId || "").toUpperCase();
+      if (!fs.exists(`${path}/eboot.bin`) || !param || !/^PPSA\d{5}$/.test(code)) throw new Error(t("files.convert.notGame"));
+      if (jobs.some((job2) => job2.manual?.folder === path || job2.state === "converting" && [job2.convert?.source, ...job2.convert?.sources ?? []].includes(path))) throw new Error(t("files.convert.already"));
+      const owner = jobs.find((job2) => [job2.artifact?.destination, job2.publishTo, job2.output].includes(path));
+      if (owner && !COMPLETE.includes(owner.state)) throw new Error(t("files.convert.busy"));
+      let job2 = owner;
+      if (job2) {
+        const { state, artifact, payload, message, error, written, total, output, publishTo, cleared } = job2;
+        job2.manual = { folder: path, previous: { state, artifact, payload, message, error, written, total, output, publishTo, cleared } };
+        delete job2.cleared;
+      } else {
+        const name = title || param?.localizedParameters?.[param?.localizedParameters?.defaultLanguage]?.titleName || param?.localizedParameters?.["en-US"]?.titleName || baseName(path);
+        job2 = { id: `${code}/folder-${Date.now().toString(36)}`, gameId: code, titleId: code, title: String(name).slice(0, 200), role: "game", release: { id: `folder-${baseName(path)}`, provider: "folder", filename: baseName(path) }, requestedId: "", fallbacks: [], root: root2, artifact: { format: "folder", directory: `${root2}/homebrew`, destination: exfatOutput(root2, { titleId: code }, (item) => fs.exists(item) || jobs.some((other) => [other.artifact?.destination, other.convert?.output].includes(item))), nextAction: "shadowmount" }, state: "converting", written: 0, total: null, error: "", manual: { folder: path, previous: null } };
+        job2.rootIdentity = storageIdentity(job2);
+        jobs.push(job2);
+      }
+      console.log(`[download-queue] ${job2.id}: ${path} converts to .exfat by hand`);
+      queueConversion(job2, { kind: "dir", source: path });
+      // A job of its own names its .exfat, not the folder (which no delete of the job may take).
+      if (!owner) job2.artifact = { ...job2.artifact, destination: job2.convert.output };
+      change();
+      return job2.id;
     }
     // ---- The extraction lane ----
     // The files an extraction unpacks: the set's volumes, or the one downloaded file.
@@ -3156,6 +3387,12 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         change();
         pump();
       },
+      /**
+       * glibren.17: "Convert to .exfat" on a PS5 game folder (eboot.bin + sce_sys/param.json with a PPSA code) on drive
+       * `root`: the payload converts it to <root>/homebrew/<PPSA>.exfat and, once that checks out, the folder moves into
+       * <root>/BACKUP/<game>/. Shown on the Downloads screen like any conversion. Returns the job's id.
+       */
+      convertFolder,
       /** glibren.12: whether a conversion still reads something under `path` (a BACKUP folder about to be deleted). */
       readsFrom(path) {
         return jobs.some((job2) => job2.state === "converting" && [job2.convert?.source, ...job2.convert?.sources ?? []].some((item) => item && (item === path || item.startsWith(`${path}/`))));
@@ -3204,6 +3441,11 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       },
       remove(id) {
         const job2 = find(id);
+        // glibren.17: a folder converted by hand that stopped: its download (if one owns it) stays, as it was.
+        if (job2.manual && job2.state !== "converting") {
+          restoreManual(job2);
+          return;
+        }
         if (!["paused", "failed", "awaiting-browser", ...COMPLETE].includes(job2.state) || lanes.has(job2)) return;
         stopNextPart(job2);
         endAhead(job2, null);
@@ -3428,6 +3670,18 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       /** Discards the partial file and forgets the task; an active one is paused first. */
       async cancel(id) {
         const job2 = find(id);
+        // glibren.17: a folder converted by hand: the conversion stops, the folder (and its download) stay as they were.
+        if (job2.manual) {
+          if (job2.state === "converting") {
+            job2.cancelling = true;
+            conversions.get(job2)?.cancel?.();
+            for (let tries = 0; tries < 300 && conversions.has(job2); tries++) await wait(100);
+            delete job2.cancelling;
+          }
+          if (jobs.includes(job2)) restoreManual(job2);
+          pump();
+          return;
+        }
         if (COMPLETE.includes(job2.state) || job2.state === "removing") return;
         // glibren.12: a conversion is stopped in the payload (its .part goes there), then the job goes as a stopped one;
         // the original in BACKUP stays.

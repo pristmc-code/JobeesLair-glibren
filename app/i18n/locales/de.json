@@ -1593,5 +1593,14 @@
   "settings.backupParts": "{count, plural, one {# Teil} other {# Teile}}",
   "settings.backupConverted": "Umgewandelt: {file}",
   "settings.backupNotConverted": "nicht umgewandelt",
-  "settings.backupMore": "und {count} weitere"
+  "settings.backupMore": "und {count} weitere",
+  "hints.convertExfat": "In .exfat umwandeln",
+  "files.type.gameFolder": "PS5-Spielordner",
+  "files.convert.started": "{name} wird in .exfat umgewandelt. Verfolge es unter Downloads; der Ordner kommt nach BACKUP, sobald die .exfat geprüft ist.",
+  "files.convert.failed": "Die Umwandlung ist fehlgeschlagen.",
+  "files.convert.notGame": "Kein PS5-Spielordner (nötig sind eboot.bin und sce_sys/param.json mit einem PPSA-Code).",
+  "files.convert.already": "Dieser Ordner wird bereits umgewandelt.",
+  "files.convert.busy": "Der Download läuft noch. Warte, bis er fertig ist.",
+  "files.deleteConverting": "Wird gerade in .exfat umgewandelt. Brich es zuerst unter Downloads ab.",
+  "downloads.convert.folderKept": "Der Spielordner ist in {path} geblieben."
 }

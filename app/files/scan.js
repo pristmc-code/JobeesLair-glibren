@@ -32,6 +32,28 @@
     }
     return total;
   }
+  // glibren.17: a PS5 game folder (eboot.bin + sce_sys/param.json with a PPSA code), the folder itself or the one folder
+  // inside it (an extraction's): { folder, titleId } for "Convert to .exfat", or null.
+  function ps5GameFolder(fs, path) {
+    const look = (folder) => {
+      try {
+        if (!fs.exists(`${folder}/eboot.bin`) || !fs.exists(`${folder}/sce_sys/param.json`)) return null;
+        const titleId = String(JSON.parse(fs.readFile(`${folder}/sce_sys/param.json`))?.titleId || "").toUpperCase();
+        return /^PPSA\d{5}$/.test(titleId) ? { folder, titleId } : null;
+      } catch {
+        return null;
+      }
+    };
+    const found = look(path);
+    if (found) return found;
+    let children = [];
+    try {
+      children = fs.readDir(path).filter((entry2) => !entry2.name.startsWith(".ps5-react"));
+    } catch {
+      return null;
+    }
+    return children.length === 1 && children[0].isDirectory ? look(`${path}/${children[0].name}`) : null;
+  }
   // `kinds`: the folders to read (all of them by default; the library reads homebrew alone).
   function scanDrive(fs, root2, kinds = KINDS) {
     const files = [];
@@ -75,8 +97,10 @@
         for (const entry2 of entries2) {
           if (SIDECAR.test(entry2.name)) continue;
           const path = `${root2}/${folder}/${entry2.name}`;
-          const titleId = TITLE_ID.exec(entry2.name)?.[0] ?? null;
+          const game = entry2.isDirectory && ["homebrew", "downloads/extracted"].includes(folder) ? ps5GameFolder(fs, path) : null;
+          const titleId = TITLE_ID.exec(entry2.name)?.[0] ?? game?.titleId ?? null;
           files.push({
+            ...game ? { ps5Folder: game.folder } : {},
             kind: kind.key,
             path,
             name: entry2.name,
@@ -101,4 +125,4 @@
   }
   var deletionTargets = (file) => file.isDirectory ? [file.path] : [file.path, ...[".complete", ".resume", ".part"].map((suffix) => file.path + suffix)];
 
-export { KINDS, deletionTargets, isPackage, scanDrive, totals };
+export { KINDS, deletionTargets, isPackage, ps5GameFolder, scanDrive, totals };

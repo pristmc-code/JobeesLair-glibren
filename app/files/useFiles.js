@@ -18,7 +18,8 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
       return /* @__PURE__ */ new Set();
     }
   }
-  var owned = (job2) => [job2.artifact?.destination, ...job2.artifact?.images ?? [], job2.downloadDestination, job2.output, job2.publishTo, job2.backportPath, job2.extras, ...job2.packages ?? []];
+  // glibren.17: also what a conversion reads (a folder converted by hand, an extraction being converted).
+  var owned = (job2) => [job2.artifact?.destination, ...job2.artifact?.images ?? [], job2.downloadDestination, job2.output, job2.publishTo, job2.backportPath, job2.extras, ...job2.packages ?? [], job2.manual?.folder, job2.convert?.source, ...job2.convert?.sources ?? []];
   // The queue's jobs that put `path` on the drive (any state: a paused download owns its partial file).
   function ownersOf(path) {
     try {
@@ -89,6 +90,8 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
     const { queue, jobs } = ownersOf(file.path);
     console.log(`[files] delete ${file.path}: requested (${jobs.length ? jobs.map((job2) => `${job2.id} ${job2.state}`).join(", ") : "no download owns it"})`);
     if (jobs.some((job2) => BUSY.includes(job2.state))) throw new Error(t("files.deleteDownloading"));
+    // glibren.17: never under a conversion that still reads it.
+    if (jobs.some((job2) => job2.state === "converting")) throw new Error(t("files.deleteConverting"));
     const notes = jobs.find((job2) => job2.extras === file.path);
     if (notes) {
       await queue.deleteExtras(notes.id);
@@ -203,6 +206,17 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
         (error2) => setInstalling((state) => ({ ...state, error: error2.message }))
       );
     };
+    // glibren.17: "Convert to .exfat" on a PS5 game folder: the conversion runs in the payload and shows on the
+    // Downloads screen; the folder moves to <drive>/BACKUP/<game>/ once the .exfat checks out (download-queue.js
+    // convertFolder). Resolves with the job's id; throws with the reason.
+    const convert = (file) => {
+      if (!file.ps5Folder) throw new Error(t("files.convert.notGame"));
+      try {
+        return downloadQueue().convertFolder(file.ps5Folder, root2, { title: file.game?.title ?? "", titleId: file.titleId ?? "" });
+      } finally {
+        rescan();
+      }
+    };
     const remove = async (file) => {
       try {
         return await deleteFile(file, root2);
@@ -210,7 +224,7 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
         rescan();
       }
     };
-    return { files, installing, install, remove, rescan, shadowMount };
+    return { files, installing, install, convert, remove, rescan, shadowMount };
   }
 
 export { deleteFile, installedTitles, moveFile, useFiles };

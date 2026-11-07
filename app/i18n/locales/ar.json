@@ -1593,5 +1593,14 @@
   "settings.backupParts": "{count, plural, zero {لا أجزاء} one {# جزء} two {# جزءان} few {# أجزاء} many {# جزء} other {# جزء}}",
   "settings.backupConverted": "حُوِّل: {file}",
   "settings.backupNotConverted": "لم يُحوَّل",
-  "settings.backupMore": "و{count} أخرى"
+  "settings.backupMore": "و{count} أخرى",
+  "hints.convertExfat": "تحويل إلى .exfat",
+  "files.type.gameFolder": "مجلد لعبة PS5",
+  "files.convert.started": "جارٍ تحويل {name} إلى .exfat. تابِعه في التنزيلات؛ ينتقل المجلد إلى BACKUP بعد التحقق من ملف .exfat.",
+  "files.convert.failed": "تعذّر التحويل.",
+  "files.convert.notGame": "ليس مجلد لعبة PS5 (يلزم eboot.bin وsce_sys/param.json برمز PPSA).",
+  "files.convert.already": "هذا المجلد قيد التحويل بالفعل.",
+  "files.convert.busy": "تنزيله لا يزال جاريًا. انتظر حتى ينتهي.",
+  "files.deleteConverting": "جارٍ تحويله إلى .exfat. ألغِه أولًا من التنزيلات.",
+  "downloads.convert.folderKept": "بقي مجلد اللعبة في {path}."
 }

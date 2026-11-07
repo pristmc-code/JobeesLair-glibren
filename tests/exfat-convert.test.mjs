@@ -94,12 +94,12 @@ function engine(fs) {
   };
 }
 // O extrator falso: `produce(options)` grava o que o arquivo "tinha" e devolve os artifacts (imagens e pacotes).
-function extractor(fs, produce) {
+function extractor(fs, produce, inspect = null) {
   const started = [];
   return {
     started,
     streams: false,
-    inspect: ([p]) => ({ kind: /\.zip$/.test(p) ? 'zip' : /\.rar$/.test(p) ? 'rar' : /\.7z$/.test(p) ? '7z' : null }),
+    inspect: inspect ?? (([p]) => ({ kind: /\.zip$/.test(p) ? 'zip' : /\.rar$/.test(p) ? 'rar' : /\.7z$/.test(p) ? '7z' : null })),
     extract(options) {
       started.push(options);
       const done = tick().then(() => {
@@ -141,12 +141,12 @@ function converter(fs, plan = () => null) {
     },
   };
 }
-function queueWith({ fs, downloads = engine(fs), archives = null, conv = null, on = true, notices = [], packages = null, platform = 'desktop' }) {
+function queueWith({ fs, downloads = engine(fs), archives = null, conv = null, on = true, notices = [], packages = null, platform = 'desktop', http = null }) {
   return createDownloadQueue({
-    fs, downloads, http: { request: async () => ({ ok: false, status: 404, json: async () => ({}) }) }, formats: DownloadFormats,
+    fs, downloads, http: http ?? { request: async () => ({ ok: false, status: 404, json: async () => ({}) }) }, formats: DownloadFormats,
     dataDir: '/data/app', platform, notifications: { show: (title) => notices.push(title) }, power: { keepAwake() {} }, linking: null,
     sources: { resolve: async (release) => ({ url: release.url }) }, archives, packages, wait: async () => {},
-    convertExfat: () => on, converter: conv,
+    convertExfat: typeof on === 'function' ? on : () => on, converter: conv,
   });
 }
 async function until(queue, id, done, rounds = 600) {
@@ -436,4 +436,223 @@ test('conversoes do payload fora da fila: velocidade entre leituras; as da fila,
   assert.deepEqual(asked, [['cancel', 'c2'], ['forget', 'c7']]);
   assert.ok(!conversions.payloadConversions().some((item) => item.id === 'c7'), 'tirada da lista na hora');
   conversions.setConversionSource(null);
+});
+
+// glibren.17: o formato descoberto so no fim (PS5 real, 07/11/2026: um ".binary" do TorBox que era compactado foi
+// extraido do jeito antigo, o compactado apagado e nada convertido). Os bytes dizem o que o arquivo e (o `inspect`
+// falso abaixo, por uma tabela do nome base de cada arquivo).
+const BIN = 'PPSA01234-game-4.51-rb39c1901a10f.binary';
+const sniff = (table) => ([p]) => {
+  const base = p.slice(p.lastIndexOf('/') + 1).replace(/\.[^.]*$/, '');
+  return table[base] ?? { kind: /\.zip$/.test(p) ? 'zip' : /\.rar$/.test(p) ? 'rar' : /\.7z$/.test(p) ? '7z' : null };
+};
+const logs = async (work) => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => { lines.push(args.join(' ')); };
+  try {
+    await work();
+  } finally {
+    console.log = original;
+  }
+  return lines;
+};
+
+test('.binary que e zip de PS5: vai para o BACKUP com a extensao certa e vira .exfat direto (nada extraido) (glibren.17)', async () => {
+  const fs = memoryFs();
+  const conv = converter(fs);
+  const archives = extractor(fs, () => [], sniff({ 'PPSA01234-game-4.51-rb39c1901a10f': { kind: 'zip' } }));
+  const queue = queueWith({ fs, archives, conv });
+  const id = queue.enqueue(ps5, release(BIN), '/data');
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(job.artifact.destination, '/data/homebrew/PPSA01234.exfat');
+  assert.equal(conv.requests.length, 1);
+  assert.deepEqual([conv.requests[0].kind, conv.requests[0].sources], ['archive', ['/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.zip']]);
+  assert.equal(archives.started.length, 0, 'nada extraido');
+  assert.ok(fs.exists('/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.zip'), 'o original fica no BACKUP');
+  assert.ok(!fs.exists(`/data/downloads/files/${BIN}`), 'nao ficou em downloads/files');
+  assert.deepEqual(JSON.parse(fs.readFile('/data/BACKUP/Test Game/.jobe-backup.json')), { titleId: 'PPSA01234', platform: 'ps5', format: 'zip', source: 'example.com' });
+  assert.equal(job.backupDir, '/data/BACKUP/Test Game');
+});
+
+test('.binary que e rar de PS5 e nao vai direto (not-direct): extrai do BACKUP e converte a pasta (glibren.17)', async () => {
+  const fs = memoryFs();
+  const conv = converter(fs, (request) => request.kind === 'archive' ? { error: 'not-direct: no size in the headers' } : null);
+  const archives = extractor(fs, (options) => gameIn(fs, `${options.destination}/PPSA01234-app`), sniff({ 'PPSA01234-game-4.51-rb39c1901a10f': { kind: 'rar' } }));
+  const queue = queueWith({ fs, archives, conv });
+  const id = queue.enqueue(ps5, release(BIN), '/data');
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.deepEqual(conv.requests.map((request) => request.kind), ['archive', 'dir']);
+  assert.equal(archives.started[0].sources[0], '/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.rar');
+  assert.ok(fs.exists('/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.rar'), 'o compactado fica no BACKUP');
+});
+
+test('.binary que e FPKG de PS5: BACKUP + conversao do pkg (glibren.17)', async () => {
+  const fs = memoryFs();
+  const conv = converter(fs);
+  const archives = extractor(fs, () => [], sniff({ 'PPSA01234-game-4.51-rb39c1901a10f': { kind: 'pkg', title: 'PPSA01234' } }));
+  const queue = queueWith({ fs, archives, conv });
+  const id = queue.enqueue(ps5, release(BIN), '/data');
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.deepEqual([conv.requests[0].kind, conv.requests[0].source], ['pkg', '/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.pkg']);
+  assert.ok(fs.exists('/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.pkg'));
+  assert.ok(!fs.exists('/data/downloads/packages/PPSA01234-game-4.51-rb39c1901a10f.pkg'));
+});
+
+test('.binary que e pkg de PS4: vai para PS4/ e instala; nada convertido (glibren.17)', async () => {
+  const fs = memoryFs();
+  const conv = converter(fs);
+  const name = 'CUSA01234-game-1.00-r0000.binary';
+  const archives = extractor(fs, () => [], sniff({ 'CUSA01234-game-1.00-r0000': { kind: 'pkg', title: 'CUSA01234' } }));
+  const installs = [];
+  const packages = { install: ({ path: p }) => { installs.push(p); return { subscribe: () => () => {}, done: Promise.resolve() }; } };
+  const queue = queueWith({ fs, archives, conv, packages, platform: 'ps5' });
+  const id = queue.enqueue(ps4, release(name), '/data');
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'installed', job.error);
+  assert.deepEqual(installs, ['/data/PS4/CUSA01234-game-1.00-r0000.pkg']);
+  assert.equal(conv.requests.length, 0);
+  assert.equal(job.backupDir, undefined);
+});
+
+test('.binary com a conversao desligada: como antes (extraido, pasta publicada, compactado apagado, nada convertido) (glibren.17)', async () => {
+  const fs = memoryFs();
+  const conv = converter(fs);
+  const archives = extractor(fs, (options) => gameIn(fs, options.destination), sniff({ 'PPSA01234-game-4.51-rb39c1901a10f': { kind: 'zip' } }));
+  const queue = queueWith({ fs, archives, conv, on: false });
+  const id = queue.enqueue(ps5, release(BIN), '/data');
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(conv.requests.length, 0);
+  assert.equal(archives.started[0].sources[0], `/data/downloads/files/${BIN}`);
+  assert.equal(job.artifact.destination, `/data/homebrew/${BIN}-app`);
+  assert.ok(!fs.exists(`/data/downloads/files/${BIN}`), 'o compactado foi apagado, como antes');
+  assert.ok(![...fs.nodes.keys()].some((p) => p.startsWith('/data/BACKUP')), 'nada no BACKUP');
+});
+
+test('decidido antes do download: os primeiros bytes (lidos do servidor) dizem rar, o .binary baixa direto no BACKUP (glibren.17)', async () => {
+  const fs = memoryFs();
+  const conv = converter(fs);
+  const downloads = engine(fs);
+  const archives = {
+    ...extractor(fs, () => [], sniff({ 'PPSA01234-game-4.51-rb39c1901a10f': { kind: 'rar' } })),
+    inspectRanges: (ranges) => ranges.length ? { kind: 'rar', size: null, refusal: '', need: null } : { kind: null, size: null, refusal: '', need: { offset: 0, length: 32 } },
+  };
+  const http = { request: async () => ({ ok: true, status: 206, headers: { 'content-range': 'bytes 0-31/1000' }, bytes: async () => 'R'.repeat(32) }) };
+  const queue = queueWith({ fs, archives, conv, downloads, http });
+  const id = queue.enqueue(ps5, release(BIN), '/data');
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(downloads.requests[0].destination, '/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.rar', 'baixou ja no BACKUP');
+  assert.deepEqual(conv.requests[0].sources, ['/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.rar']);
+});
+
+test('rede de seguranca: jogo de PS5 extraido para pasta sem conversao planejada vira .exfat; o compactado vai para o BACKUP; a contagem de arquivos no log (glibren.17)', async () => {
+  const fs = memoryFs();
+  // O BACKUP recusa a primeira mudanca (o passo do fim nao consegue): o compactado fica e e extraido do jeito antigo.
+  const rename = fs.rename;
+  let refuse = 1;
+  fs.rename = (a, b) => {
+    if (b.startsWith('/data/BACKUP/') && refuse-- > 0) throw new Error('EXDEV');
+    return rename(a, b);
+  };
+  const conv = converter(fs);
+  const archives = extractor(fs, (options) => gameIn(fs, `${options.destination}/PPSA01234-app`), sniff({ 'PPSA01234-game-4.51-rb39c1901a10f': { kind: 'zip' } }));
+  const queue = queueWith({ fs, archives, conv });
+  let job;
+  const lines = await logs(async () => {
+    const id = queue.enqueue(ps5, release(BIN), '/data');
+    job = await until(queue, id, settled);
+  });
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.deepEqual(conv.requests.map((request) => [request.kind, request.source, request.work]), [['dir', `/data/downloads/extracted/${BIN}/PPSA01234-app`, `/data/downloads/extracted/${BIN}`]]);
+  assert.equal(job.artifact.destination, '/data/homebrew/PPSA01234.exfat');
+  assert.ok(!fs.exists(`/data/downloads/extracted/${BIN}`), 'a pasta extraida some depois do .exfat conferido');
+  assert.ok(fs.exists('/data/BACKUP/Test Game/PPSA01234-game-4.51-rb39c1901a10f.zip'), 'o compactado foi para o BACKUP, nao apagado');
+  assert.ok(!fs.exists(`/data/downloads/files/${BIN}`));
+  assert.ok(!fs.exists(`/data/homebrew/${BIN}-app`), 'nenhuma pasta publicada');
+  const extracted = lines.find((line) => /extracted in \d+ s/.test(line));
+  assert.match(extracted, /, 2 files$/, extracted);
+});
+
+test('acao manual "Converter para .exfat": pasta de PS5 em downloads/extracted vira .exfat e vai para o BACKUP; cancelar deixa a pasta (glibren.17)', async () => {
+  const fs = memoryFs();
+  const folder = `/data/downloads/extracted/${BIN.replace('PPSA01234', 'PPSA01546')}`;
+  gameIn(fs, folder, 'PPSA01546');
+  fs.file(`${folder}/sce_module/libc.prx`, 100);
+  const conv = converter(fs);
+  const queue = queueWith({ fs, archives: extractor(fs, () => []), conv });
+  assert.throws(() => queue.convertFolder('/data/downloads/extracted', '/data'), /Not a PS5 game folder/);
+  const id = queue.convertFolder(folder, '/data', { title: 'Call of The Sea' });
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.deepEqual({ ...conv.requests[0], passwords: undefined }, { key: id, name: 'Call of The Sea', kind: 'dir', root: '/data', output: '/data/homebrew/PPSA01546.exfat', label: 'PPSA01546', work: '', source: folder, passwords: undefined });
+  assert.equal(job.artifact.destination, '/data/homebrew/PPSA01546.exfat');
+  const kept = `/data/BACKUP/Call of The Sea/${BIN.replace('PPSA01234', 'PPSA01546')}`;
+  assert.ok(fs.exists(`${kept}/eboot.bin`) && fs.exists(`${kept}/sce_module/libc.prx`), 'a pasta foi para o BACKUP inteira');
+  assert.ok(!fs.exists(folder));
+  assert.equal(JSON.parse(fs.readFile('/data/BACKUP/Call of The Sea/.jobe-backup.json')).titleId, 'PPSA01546');
+  // Cancelar: a conversao para no payload, o item sai e a pasta fica onde estava.
+  const other = '/data/homebrew/PPSA05555-app';
+  gameIn(fs, other, 'PPSA05555');
+  const conv2 = converter(fs, () => ({ gate: new Promise(() => {}) }));
+  const q2 = queueWith({ fs, archives: extractor(fs, () => []), conv: conv2 });
+  const id2 = q2.convertFolder(other, '/data');
+  await until(q2, id2, (item) => item.state === 'converting');
+  assert.throws(() => q2.convertFolder(other, '/data'), /already being converted/);
+  await q2.cancel(id2);
+  assert.deepEqual(conv2.cancelled, [id2]);
+  assert.ok(!q2.snapshot().some((item) => item.id === id2));
+  assert.ok(fs.exists(`${other}/eboot.bin`), 'a pasta ficou');
+});
+
+test('acao manual numa pasta que um download publicou (o caso do PS5 real): o download vira o .exfat e a pasta vai para o BACKUP; "usar sem converter" volta como estava (glibren.17)', async () => {
+  const fs = memoryFs();
+  const archives = extractor(fs, (options) => gameIn(fs, options.destination), sniff({ 'PPSA01234-game-4.51-rb39c1901a10f': { kind: 'zip' } }));
+  let fail = true;
+  const conv = converter(fs, () => fail ? { error: 'write: disk full' } : null);
+  let on = false;
+  const queue = queueWith({ fs, archives, conv, on: () => on });
+  const id = queue.enqueue(ps5, release(BIN), '/data');
+  let job = await until(queue, id, settled);
+  const folder = `/data/homebrew/${BIN}-app`;
+  assert.equal(job.artifact.destination, folder, 'publicada do jeito antigo');
+  on = true;
+  // Uma falha e "Usar sem converter": o download volta a ser a pasta, intacta.
+  assert.equal(queue.convertFolder(folder, '/data'), id, 'o proprio download');
+  job = await until(queue, id, settled);
+  assert.equal(job.state, 'failed');
+  await queue.skipConversion(id);
+  job = queue.snapshot().find((item) => item.id === id);
+  assert.deepEqual([job.state, job.artifact.destination, job.manual, job.convert], ['downloaded', folder, undefined, undefined]);
+  assert.ok(fs.exists(`${folder}/eboot.bin`));
+  // De novo, agora dando certo.
+  fail = false;
+  queue.convertFolder(folder, '/data');
+  job = await until(queue, id, (item) => settled(item) && item.artifact.destination.endsWith('.exfat'));
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(job.artifact.destination, '/data/homebrew/PPSA01234.exfat');
+  assert.ok(fs.exists(`/data/BACKUP/Test Game/${BIN}-app/eboot.bin`), 'a pasta foi para o BACKUP');
+  assert.ok(!fs.exists(folder));
+  assert.equal(job.publishTo, undefined);
+});
+
+test('aba Arquivos: acha a pasta de jogo de PS5 (ela mesma ou a unica pasta dentro) para a acao manual (glibren.17)', async () => {
+  const { ps5GameFolder, scanDrive } = await load('app/files/scan.js');
+  const fs = memoryFs();
+  gameIn(fs, '/data/homebrew/PPSA01546-app', 'PPSA01546');
+  gameIn(fs, '/data/downloads/extracted/x.binary/PPSA01547-app', 'PPSA01547');
+  gameIn(fs, '/data/homebrew/CUSA00001-app', 'CUSA00001');
+  fs.mkdir('/data/downloads/extracted/vazia');
+  assert.deepEqual(ps5GameFolder(fs, '/data/homebrew/PPSA01546-app'), { folder: '/data/homebrew/PPSA01546-app', titleId: 'PPSA01546' });
+  assert.deepEqual(ps5GameFolder(fs, '/data/downloads/extracted/x.binary'), { folder: '/data/downloads/extracted/x.binary/PPSA01547-app', titleId: 'PPSA01547' });
+  assert.equal(ps5GameFolder(fs, '/data/homebrew/CUSA00001-app'), null, 'PS4 nao');
+  const files = scanDrive(fs, '/data');
+  assert.deepEqual(files.filter((file) => file.ps5Folder).map((file) => [file.name, file.ps5Folder, file.titleId]).sort(), [
+    ['PPSA01546-app', '/data/homebrew/PPSA01546-app', 'PPSA01546'],
+    ['x.binary', '/data/downloads/extracted/x.binary/PPSA01547-app', 'PPSA01547'],
+  ]);
 });

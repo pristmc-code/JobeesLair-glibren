@@ -1593,5 +1593,14 @@
   "settings.backupParts": "{count, plural, one {# حصہ} other {# حصے}}",
   "settings.backupConverted": "تبدیل شدہ: {file}",
   "settings.backupNotConverted": "تبدیل نہیں ہوا",
-  "settings.backupMore": "اور {count} مزید"
+  "settings.backupMore": "اور {count} مزید",
+  "hints.convertExfat": ".exfat میں تبدیل کریں",
+  "files.type.gameFolder": "PS5 گیم فولڈر",
+  "files.convert.started": "{name} کو .exfat میں تبدیل کیا جا رہا ہے۔ ڈاؤن لوڈز میں دیکھیں؛ .exfat کی جانچ کے بعد فولڈر BACKUP میں چلا جائے گا۔",
+  "files.convert.failed": "تبدیل نہیں ہو سکا۔",
+  "files.convert.notGame": "یہ PS5 گیم فولڈر نہیں ہے (eboot.bin اور PPSA کوڈ والی sce_sys/param.json درکار ہے)۔",
+  "files.convert.already": "یہ فولڈر پہلے ہی تبدیل ہو رہا ہے۔",
+  "files.convert.busy": "اس کا ڈاؤن لوڈ ابھی جاری ہے۔ ختم ہونے تک انتظار کریں۔",
+  "files.deleteConverting": "یہ .exfat میں تبدیل ہو رہا ہے۔ پہلے ڈاؤن لوڈز میں منسوخ کریں۔",
+  "downloads.convert.folderKept": "گیم فولڈر {path} میں ہی رہا۔"
 }

@@ -1593,5 +1593,14 @@
   "settings.backupParts": "{count, plural, one {# 个部分} other {# 个部分}}",
   "settings.backupConverted": "已转换：{file}",
   "settings.backupNotConverted": "未转换",
-  "settings.backupMore": "以及另外 {count} 个"
+  "settings.backupMore": "以及另外 {count} 个",
+  "hints.convertExfat": "转换为 .exfat",
+  "files.type.gameFolder": "PS5 游戏文件夹",
+  "files.convert.started": "正在将 {name} 转换为 .exfat。可在“下载”中查看；.exfat 校验通过后，文件夹会移到 BACKUP。",
+  "files.convert.failed": "无法转换。",
+  "files.convert.notGame": "这不是 PS5 游戏文件夹（需要 eboot.bin 和带 PPSA 代码的 sce_sys/param.json）。",
+  "files.convert.already": "这个文件夹已在转换中。",
+  "files.convert.busy": "它的下载仍在进行。请等待完成。",
+  "files.deleteConverting": "正在转换为 .exfat。请先在“下载”中取消。",
+  "downloads.convert.folderKept": "游戏文件夹仍在 {path}。"
 }

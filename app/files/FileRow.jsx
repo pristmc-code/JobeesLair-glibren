@@ -24,6 +24,7 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
   function typeOf2(file) {
     if (file.backport) return "files.type.backport";
     if (isPackage(file.name)) return "files.type.package";
+    if (file.ps5Folder) return "files.type.gameFolder";
     if (file.kind === "images") return "files.type.image";
     if (file.kind === "archives") return "files.type.archive";
     return file.isDirectory ? "files.type.folder" : "files.type.file";

@@ -1593,5 +1593,14 @@
   "settings.backupParts": "{count, plural, one {#パート} other {#パート}}",
   "settings.backupConverted": "変換済み：{file}",
   "settings.backupNotConverted": "未変換",
-  "settings.backupMore": "ほか{count}件"
+  "settings.backupMore": "ほか{count}件",
+  "hints.convertExfat": ".exfat に変換",
+  "files.type.gameFolder": "PS5 ゲームフォルダー",
+  "files.convert.started": "{name} を .exfat に変換しています。ダウンロードで確認できます。.exfat の確認後、フォルダーは BACKUP に移ります。",
+  "files.convert.failed": "変換できませんでした。",
+  "files.convert.notGame": "PS5 のゲームフォルダーではありません（eboot.bin と PPSA コードの sce_sys/param.json が必要です）。",
+  "files.convert.already": "このフォルダーはすでに変換中です。",
+  "files.convert.busy": "ダウンロードがまだ続いています。終わるまでお待ちください。",
+  "files.deleteConverting": ".exfat に変換中です。先にダウンロードで取り消してください。",
+  "downloads.convert.folderKept": "ゲームフォルダーは {path} に残りました。"
 }

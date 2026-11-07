@@ -1593,5 +1593,14 @@
   "settings.backupParts": "{count, plural, one {# часть} few {# части} many {# частей} other {# части}}",
   "settings.backupConverted": "Конвертировано: {file}",
   "settings.backupNotConverted": "не конвертировано",
-  "settings.backupMore": "и ещё {count}"
+  "settings.backupMore": "и ещё {count}",
+  "hints.convertExfat": "Преобразовать в .exfat",
+  "files.type.gameFolder": "Папка игры PS5",
+  "files.convert.started": "{name} преобразуется в .exfat. Следите в «Загрузках»; папка переместится в BACKUP после проверки .exfat.",
+  "files.convert.failed": "Не удалось преобразовать.",
+  "files.convert.notGame": "Это не папка игры PS5 (нужны eboot.bin и sce_sys/param.json с кодом PPSA).",
+  "files.convert.already": "Эта папка уже преобразуется.",
+  "files.convert.busy": "Её загрузка ещё идёт. Дождитесь окончания.",
+  "files.deleteConverting": "Идёт преобразование в .exfat. Сначала отмените его в «Загрузках».",
+  "downloads.convert.folderKept": "Папка игры осталась в {path}."
 }

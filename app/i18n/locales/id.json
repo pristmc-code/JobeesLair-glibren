@@ -1593,5 +1593,14 @@
   "settings.backupParts": "{count, plural, one {# bagian} other {# bagian}}",
   "settings.backupConverted": "Dikonversi: {file}",
   "settings.backupNotConverted": "belum dikonversi",
-  "settings.backupMore": "dan {count} lainnya"
+  "settings.backupMore": "dan {count} lainnya",
+  "hints.convertExfat": "Ubah ke .exfat",
+  "files.type.gameFolder": "Folder game PS5",
+  "files.convert.started": "Mengubah {name} ke .exfat. Pantau di Unduhan; folder pindah ke BACKUP setelah .exfat diperiksa.",
+  "files.convert.failed": "Tidak bisa diubah.",
+  "files.convert.notGame": "Bukan folder game PS5 (perlu eboot.bin dan sce_sys/param.json dengan kode PPSA).",
+  "files.convert.already": "Folder ini sudah sedang diubah.",
+  "files.convert.busy": "Unduhannya masih berjalan. Tunggu sampai selesai.",
+  "files.deleteConverting": "Sedang diubah ke .exfat. Batalkan dulu di Unduhan.",
+  "downloads.convert.folderKept": "Folder game tetap di {path}."
 }
