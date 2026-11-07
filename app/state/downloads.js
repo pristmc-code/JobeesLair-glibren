@@ -11,7 +11,7 @@ import { DATA_DIR } from './data-dir.js';
 import { createDownloadQueue } from './download-queue.js';
 import { createSourceResolver } from './download-sources.js';
 import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
-import { createBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from './background-downloads.js';
+import { createBackgroundDownloads, onBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from './background-downloads.js';
 import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
 import { adoptSpeedLimit, onSpeedLimit, speedLimitNow } from './speed-limit.js';
@@ -108,12 +108,29 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   // glibren: a change of simultaneous downloads (Settings) reaches the queue, its engine lanes and the payload at once.
   onSimultaneousDownloads(() => instance?.concurrencyChanged?.());
   // glibren: the phone page's switch or PIN reaches a payload already running; Settings asks it for the address.
-  onPhoneMonitor(() => background?.refreshConfig?.());
+  // MODIFIED (glibren.13): ligar a pagina sobe o payload ja (startBackgroundAtLaunch), sem esperar um download.
+  onPhoneMonitor(() => {
+    background?.refreshConfig?.();
+    void startBackgroundAtLaunch();
+  });
   setPhoneMonitorProbe(() => background?.refreshConfig?.());
+  // glibren.13: ligar a opcao de segundo plano tambem sobe o payload (desligada, startAtLaunch nao faz nada).
+  onBackgroundDownloads(() => void startBackgroundAtLaunch());
   // MODIFIED (glibren.5): mudar o tempo da pausa ao fechar o app chega ao payload no ar na hora.
   onPauseOnClose(() => background?.refreshConfig?.());
   // glibren.13: mudar o limite de velocidade (Configuracoes, ou adotado do celular) chega ao payload no ar na hora.
   onSpeedLimit(() => background?.refreshConfig?.());
+  // glibren.13: the background payload up at launch, for the phone page and its TorBox library/store (only on the PS5,
+  // with background downloads and the phone page on: background-downloads.js startAtLaunch). Never throws or blocks.
+  function startBackgroundAtLaunch() {
+    try {
+      downloadQueue();
+      return background?.startAtLaunch?.() ?? Promise.resolve("");
+    } catch (error2) {
+      console.log(`[downloads] background payload not started: ${error2?.message}`);
+      return Promise.resolve("");
+    }
+  }
   // 0.5.4: the first time with stats on, the launches known from before go to the players' numbers too.
   function reportPastLaunches() {
     try {
@@ -130,4 +147,4 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
     return t(mount[1] === "usb" ? "drives.usb" : "drives.extended", { number: String(Number(mount[2]) + 1) });
   }
 
-export { downloadQueue, driveName, freeBytes, reportPastLaunches, shadowMountUp, storageRoots };
+export { downloadQueue, driveName, freeBytes, reportPastLaunches, shadowMountUp, startBackgroundAtLaunch, storageRoots };

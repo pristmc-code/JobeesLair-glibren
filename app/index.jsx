@@ -34,7 +34,7 @@ import { refreshFeeds } from './state/feeds.js';
 import { startCompanionIfEnabled } from './companion/service.js';
 import { startSandboxSweeper } from './state/sandbox-sweeper.js';
 import { refreshDrives } from './state/drives.js';
-import { downloadQueue, reportPastLaunches } from './state/downloads.js';
+import { downloadQueue, reportPastLaunches, startBackgroundAtLaunch } from './state/downloads.js';
 import { colors, useThemeEpoch } from './ui/colors.js';
 import { watchQueue } from './ui/lightBar.js';
 import { createRestWake } from './state/rest-wake.js';
@@ -133,6 +133,11 @@ import './state/picture-route.js';
     }, []);
     // The light bar watches the queue from launch; a queue that cannot start leaves it breathing idle.
     (0, useEffect)(() => watchQueue((listener) => downloadQueue().subscribe(listener)), []);
+    // glibren.13: the background payload up at launch (phone page and its TorBox library), without waiting for a
+    // download; in the background, never in the way of the first screen.
+    (0, useEffect)(() => {
+      if (!HOMEBREW_ONLY) void startBackgroundAtLaunch();
+    }, []);
     // Back from rest mode: how long the console slept goes to the debug log, and the downloads that were running
     // and fail on the network after it are tried again by themselves (state/rest-wake.js).
     (0, useEffect)(() => {

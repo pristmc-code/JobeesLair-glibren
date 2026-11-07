@@ -73,6 +73,13 @@ import { originOf } from './link-formats.js';
     saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), backgroundDownloads: enabled });
     for (const listener of settingListeners) listener(enabled);
   }
+  /** glibren.13: chama `listener(ligada)` a cada mudanca da opcao; devolve a funcao que para. */
+  function onBackgroundDownloads(listener) {
+    settingListeners.add(listener);
+    return () => {
+      settingListeners.delete(listener);
+    };
+  }
   function useBackgroundDownloads() {
     const [on, setOn] = useState(backgroundDownloadsOn);
     useEffect(() => {
@@ -274,7 +281,16 @@ import { originOf } from './link-formats.js';
       }
     }
     // O payload no ar: o token dele, ou "" (sem payload: o app baixa como antes).
-    async function ensurePayload() {
+    // glibren.13: uma subida por vez: quem chama enquanto outra esta em andamento (a abertura do app e a fila ao mesmo
+    // tempo) espera a mesma, e o ELF nunca vai duas vezes.
+    let ensuring = null;
+    function ensurePayload() {
+      if (!ensuring) ensuring = ensurePayloadNow().finally(() => {
+        ensuring = null;
+      });
+      return ensuring;
+    }
+    async function ensurePayloadNow() {
       let token = readToken();
       if (token && await health(token)) return token;
       if (platform !== "ps5" || !payloads) return "";
@@ -296,7 +312,13 @@ import { originOf } from './link-formats.js';
       log("payload did not answer in time; downloading in the app");
       return "";
     }
-    async function handSecret(token, provider) {
+    // glibren.13: uma entrega por servico de cada vez (a abertura do app e a fila podem pedir juntas).
+    const handing = /* @__PURE__ */ new Map();
+    function handSecret(token, provider) {
+      if (!handing.has(provider)) handing.set(provider, handSecretNow(token, provider).finally(() => handing.delete(provider)));
+      return handing.get(provider);
+    }
+    async function handSecretNow(token, provider) {
       if (provider !== "torbox" && provider !== "alldebrid") return;
       const state = await health(token);
       if (!state || secretsFor === `${state.pid}:${provider}`) return;
@@ -787,6 +809,26 @@ import { originOf } from './link-formats.js';
       return adopting;
     }
     wrapper.adoptRequests = () => adoptRequests(readToken());
+    // glibren.13: o payload no ar ja na abertura do app (sem esperar um download), para a pagina do celular e a
+    // Biblioteca/Loja TorBox dela funcionarem: so no PS5, com a opcao de segundo plano e a pagina do celular ligadas.
+    // Sobe (ensurePayload, a mesma subida da fila), manda a configuracao (pagina, PIN, simultaneos, limite), a chave do
+    // TorBox se houver, e ve os pedidos do celular; o vigia de pedidos (abaixo) segue a cada requestsMs e conta como o app
+    // falando com ele. Nunca trava a abertura: devolve uma promessa que so resolve (o token, ou "") e erros vao ao log.
+    wrapper.startAtLaunch = async () => {
+      try {
+        if (platform !== "ps5" || !on() || monitor()?.monitor !== true) return "";
+        const token = await ensurePayload();
+        if (!token) return "";
+        await syncConcurrency(token).catch(() => {});
+        await handSecret(token, "torbox").catch(() => {});
+        await adoptRequests(token).catch(() => {});
+        log("payload up at launch for the phone page");
+        return token;
+      } catch (problem) {
+        log(`payload not started at launch: ${problem?.message ?? problem}`);
+        return "";
+      }
+    };
     if (typeof onLibraryRequest === "function" && requestsMs > 0 && platform === "ps5") {
       const watch = setInterval(() => {
         const token = readToken();
@@ -860,4 +902,4 @@ import { originOf } from './link-formats.js';
     return wrapper;
   }
 
-export { backgroundDownloadsOn, createBackgroundDownloads, inBackground, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };
+export { backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };

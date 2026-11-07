@@ -612,6 +612,55 @@ test('glibren.8: sem escolha no celular (concurrencyBy "app"), nada e adotado; u
   await wait(30);
 });
 
+// ---- glibren.13: o payload no ar ja na abertura do app (pagina do celular e Loja TorBox) ----
+
+function launchPayload() {
+  const payload = fakePayload({ up: false });
+  payload.tokenOnDisk = false;
+  // O ELF enviado: o payload sobe e grava o token.
+  const payloads = { send: () => { payload.sent = (payload.sent || 0) + 1; payload.up = true; payload.tokenOnDisk = true; return { ok: true }; } };
+  return { payload, payloads };
+}
+
+test('glibren.13: abrir o app sobe o payload uma vez so (mesmo com a fila subindo junto), com a config, a pagina e a chave do TorBox', async () => {
+  const { payload, payloads } = launchPayload();
+  const asked = [];
+  const wrapper = make(payload, fakeEngine(), {
+    payloads,
+    monitor: () => ({ monitor: true, pinSalt: '', pinHash: '' }),
+    onLibraryRequest: async (request) => asked.push(request),
+    requestsMs: 0
+  });
+  // A abertura e uma entrega da fila ao mesmo tempo: uma subida so.
+  const [token] = await Promise.all([wrapper.startAtLaunch(), (wrapper.syncQueue([{ key: 'k1', name: 'Game', total: 1, request: queueOptions() }]), wrapper.flushQueue())]);
+  assert.equal(token, TOKEN);
+  assert.equal(payload.sent, 1, 'o ELF foi uma vez so');
+  assert.ok(payload.configs.some((config) => config.monitor === true), 'a pagina do celular configurada');
+  assert.deepEqual(payload.secrets.map((s) => s.service), ['torbox'], 'a chave do TorBox para a Biblioteca/Loja do celular');
+  assert.ok(payload.calls.some((call) => call.method === 'GET' && call.path === '/jobs'), 'pedidos do celular vistos');
+  // Abrir de novo (ou ligar a pagina) com ele no ar nao manda o ELF outra vez.
+  assert.equal(await wrapper.startAtLaunch(), TOKEN);
+  assert.equal(payload.sent, 1);
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
+});
+
+test('glibren.13: na abertura, sem subir com a opcao de segundo plano desligada, com a pagina do celular desligada ou fora do PS5', async () => {
+  for (const extra of [{ on: () => false, monitor: () => ({ monitor: true }) }, { monitor: () => ({ monitor: false }) }, { monitor: () => null }, { platform: 'linux', monitor: () => ({ monitor: true }) }]) {
+    const { payload, payloads } = launchPayload();
+    const wrapper = make(payload, fakeEngine(), { payloads, ...extra });
+    assert.equal(await wrapper.startAtLaunch(), '');
+    assert.equal(payload.sent, undefined, JSON.stringify(Object.keys(extra)));
+    assert.equal(payload.calls.length, 0, 'nem chamou o payload');
+  }
+  // Uma falha ao mandar o ELF so vai ao log: a abertura segue.
+  const { payload } = launchPayload();
+  const lines = [];
+  const wrapper = make(payload, fakeEngine(), { payloads: { send: () => { throw new Error('elfldr fora'); } }, monitor: () => ({ monitor: true }), log: (line) => lines.push(line) });
+  assert.equal(await wrapper.startAtLaunch(), '');
+  assert.ok(lines.some((line) => line.includes('elfldr fora')), lines.join('\n'));
+});
+
 // ---- glibren.13: limite de velocidade, o mesmo no app e no payload ----
 
 test('glibren.13: o limite de velocidade vai no POST /config, muda ao vivo, e o escolhido no celular e adotado (uma vez por stamp)', async () => {
