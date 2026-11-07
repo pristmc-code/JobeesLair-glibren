@@ -57,7 +57,9 @@ import { FileSystem, Text, View } from '@ps5-react/core';
     // glibren.6: a PS5 fake package this console won't launch says so, in the words of the source list.
     const warning = fakePackageWarning(file, game, fakePackagesLaunch()) ? t2("release.compat.fpkg") : null;
     // glibren.16: um conjunto em partes que o TorBox tem inteiro ("3 partes · 45 GB"): o "Baixar" põe todas na fila.
-    const note = file.backport ? t2("torboxSearch.backport", { count: file.count, size: formatBytes(file.size || 0) }) : file.whole ? t2("torboxSearch.whole", { count: file.count }) : file.parts ? t2("torboxSearch.parts", { count: file.parts, size: formatBytes(file.size || 0) }) : null;
+    // glibren.17: um link do catálogo que o TorBox ainda não tem ("busca primeiro") e quantos links do catálogo são este arquivo.
+    const note = file.fetch ? [file.size ? formatBytes(file.size) : null, t2("torboxSearch.fetch")].filter(Boolean).join(" \xB7 ") : file.backport ? t2("torboxSearch.backport", { count: file.count, size: formatBytes(file.size || 0) }) : file.whole ? t2("torboxSearch.whole", { count: file.count }) : file.parts ? t2("torboxSearch.parts", { count: file.parts, size: formatBytes(file.size || 0) }) : null;
+    const links = file.releases?.length > 1 ? t2("torboxSearch.links", { count: file.releases.length }) : null;
     const status = state?.queued ? t2("torboxSearch.queued") : state?.error ? state.error : file.piece ? t2("torboxSearch.piece") : null;
     const bad = Boolean(state?.error || file.piece || (!status && warning));
     return jsxs(View, { autoFocus, focusable: true, onPress, style: (_state) => [{ position: "relative", flexDirection: "row", alignItems: "center", gap: 18, borderRadius: radius.sm, paddingHorizontal: 18, paddingVertical: 12 }, _state.focused ? { backgroundColor: colors.surface2 } : null], children: [
@@ -65,7 +67,7 @@ import { FileSystem, Text, View } from '@ps5-react/core';
       jsx(TypeBadge, { type: file.whole ? t2("torboxSearch.wholeType") : file.type, best: file.format === "exfat" }),
       jsxs(View, { style: { flex: 1, gap: 2 }, children: [
         jsx(Text, { style: [BODY, { fontSize: 22, fontWeight: 600, color: colors.fg, numberOfLines: 1, ellipsizeMode: "middle" }], children: file.name }),
-        jsx(Text, { style: [BODY, { color: status && !bad ? GREEN : bad ? RED : colors.muted, numberOfLines: 2, ellipsizeMode: "tail" }], children: [note ?? (file.size ? formatBytes(file.size) : t2("torboxSearch.sizeUnknown")), where, warning, status].filter(Boolean).join(" \xB7 ") })
+        jsx(Text, { style: [BODY, { color: status && !bad ? GREEN : bad ? RED : colors.muted, numberOfLines: 2, ellipsizeMode: "tail" }], children: [note ?? (file.size ? formatBytes(file.size) : t2("torboxSearch.sizeUnknown")), where, links, warning, status].filter(Boolean).join(" \xB7 ") })
       ] })
     ] });
   }
@@ -108,7 +110,10 @@ import { FileSystem, Text, View } from '@ps5-react/core';
       }
     };
     const { files, sources, done, error } = result;
-    const exfat = files.filter((file) => file.format === "exfat").length;
+    // glibren.17: "N arquivos encontrados" conta o que o TorBox tem; os links que ele só busca vêm depois, contados à parte.
+    const held = files.filter((file) => !file.fetch);
+    const fetchable = files.length - held.length;
+    const exfat = held.filter((file) => file.format === "exfat").length;
     const note = (name) => {
       const source = sources?.[name];
       if (!source || source.state === "searching") return t2("torboxSearch.source.searching", { source: t2(`torboxSearch.source.${name}`) });
@@ -116,7 +121,7 @@ import { FileSystem, Text, View } from '@ps5-react/core';
       if (source.state === "failed") return t2("torboxSearch.source.failed", { source: t2(`torboxSearch.source.${name}`) });
       return t2("torboxSearch.source.count", { source: t2(`torboxSearch.source.${name}`), count: source.count });
     };
-    const summary = error ? error : !done ? t2("torboxSearch.searching") : files.length ? t2("torboxSearch.found", { count: files.length, exfat }) : t2("torboxSearch.none");
+    const summary = error ? error : !done ? t2("torboxSearch.searching") : [held.length ? t2("torboxSearch.found", { count: held.length, exfat }) : t2("torboxSearch.none"), fetchable ? t2("torboxSearch.canFetch", { count: fetchable }) : null].filter(Boolean).join(" ");
     const free = freeBytes(root2);
     return jsx(SideSheet, { title: t2("torboxSearch.title"), subtitle: `${game.title} \xB7 ${game.id}`, width: WIDTH, onClose, children: jsxs(View, { style: { gap: 18, padding: 9 }, children: [
       jsxs(View, { style: { gap: 10, paddingHorizontal: 18 }, children: [
