@@ -1510,6 +1510,7 @@
   "torboxSearch.origin.list": "Sua lista de hashes",
   "torboxSearch.backport": "{count, plural, one {# arquivo} other {# arquivos}}, {size}. Baixe com Tudo (o pacote inteiro): a Jobe ainda não baixa só a pasta do backport",
   "torboxSearch.whole": "O torrent inteiro, {count, plural, one {# arquivo} other {# arquivos}}, num pacote só",
+  "torboxSearch.parts": "{count, plural, one {# parte} other {# partes}} · {size}",
   "torboxSearch.wholeType": "TUDO",
   "settings.card.torboxLibrary": "Biblioteca TorBox",
   "storeMode.label": "LOJA",

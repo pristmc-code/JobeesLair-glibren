@@ -1135,7 +1135,7 @@ body.fopen{overflow:hidden}
       already: "{t} já está na fila.", fail: "Não deu para incluir. Tente de novo.", full: "A fila do PS5 está cheia.", noHash: "Este jogo não tem o torrent na lista.", noSource: "Não há como baixar esse arquivo pela lista. Abra o jogo na Jobee'sLair.",
       brokenFile: "Arquivo quebrado no TorBox ({s}): {f}. É uma página de erro guardada no lugar do jogo.",
       brokenRefused: "Arquivo quebrado no TorBox ({s}): é uma página de erro, não o jogo. Apague-o no TorBox e adicione de novo.",
-      chooseTitle: "Qual arquivo baixar?", chooseText: "O recomendado já vem marcado.", whole: "Tudo (o torrent inteiro, como .zip)", back: "Voltar", files: "{n} arquivos",
+      chooseTitle: "Qual arquivo baixar?", chooseText: "O recomendado já vem marcado.", whole: "Tudo (o torrent inteiro, como .zip)", back: "Voltar", files: "{n} arquivos", partsN: "{n} partes",
       open: "Abrir a ficha de {t}", close: "Fechar", photos: "Fotos", videos: "Vídeos", about: "Sobre", facts: "Detalhes", filesH: "Arquivos no TorBox",
       recommended: "Recomendado", willGet: "Vai baixar: {f}", ytTrailer: "Trailer no YouTube", ytGameplay: "Gameplay no YouTube", ytOpen: "Abrir no YouTube", ytOpenShort: "Abrir",
       watch: "Assistir: {t}", ytHint: "Os vídeos tocam pelo YouTube (precisa de internet no celular).", readMore: "Ler mais", readLess: "Ler menos",
@@ -1155,7 +1155,7 @@ body.fopen{overflow:hidden}
       already: "{t} is already queued.", fail: "Couldn't add it. Try again.", full: "The PS5 queue is full.", noHash: "This game has no torrent in the list.", noSource: "That file can't be fetched from the list. Open the game in Jobee'sLair.",
       brokenFile: "Broken file in TorBox ({s}): {f}. It is an error page kept in place of the game.",
       brokenRefused: "Broken file in TorBox ({s}): it is an error page, not the game. Delete it in TorBox and add it again.",
-      chooseTitle: "Which file?", chooseText: "The recommended one is already picked.", whole: "Everything (the whole torrent, as a .zip)", back: "Back", files: "{n} files",
+      chooseTitle: "Which file?", chooseText: "The recommended one is already picked.", whole: "Everything (the whole torrent, as a .zip)", back: "Back", files: "{n} files", partsN: "{n} parts",
       open: "Open {t}", close: "Close", photos: "Photos", videos: "Videos", about: "About", facts: "Details", filesH: "Files on TorBox",
       recommended: "Recommended", willGet: "Will get: {f}", ytTrailer: "Trailer on YouTube", ytGameplay: "Gameplay on YouTube", ytOpen: "Open on YouTube", ytOpenShort: "Open",
       watch: "Watch: {t}", ytHint: "Videos play from YouTube (the phone needs internet).", readMore: "Read more", readLess: "Read less",
@@ -1244,9 +1244,10 @@ body.fopen{overflow:hidden}
       const g = demoGames.find((x) => x.id === p.get("id"));
       if (!g) return { status: 404, data: { error: "not-found" } };
       const stem = g.title.replace(/[^\w]+/g, ".");
-      const files = g.formats[0] === "rar" ? [1, 2, 3].map((k) => ({ name: `${stem}/${stem}.part${k}.rar`, size: g.sizeBytes / 3, format: "rar", piece: true }))
+      // glibren.16: um jogo em .rar traz tambem o conjunto em partes do catalogo (uma opcao so, a recomendada).
+      const files = g.formats[0] === "rar" ? [{ name: `${stem} (3 partes)`, size: g.sizeBytes, format: "rar", via: "webdl", parts: 3, piece: false }, ...[1, 2, 3].map((k) => ({ name: `${stem}/${stem}.part${k}.rar`, size: g.sizeBytes / 3, format: "rar", piece: true }))]
         : [{ name: `${stem}/${stem}.${g.formats[0]}`, size: g.sizeBytes, format: g.formats[0], piece: false }, ...g.files > 1 ? [{ name: `${stem}/${stem}-update.pkg`, size: 2 * GiB, format: "pkg", piece: false }] : []];
-      return { status: 200, data: { ok: true, game: { ...g }, files, wholeOk: true, suggested: g.formats[0] === "rar" ? "" : files[0].name, details: demoDetails(g) } };
+      return { status: 200, data: { ok: true, game: { ...g }, files, wholeOk: true, suggested: files[0].name, details: demoDetails(g) } };
     }
     const q = (p.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean), plat = p.get("platform") || "";
     const fmts = (p.get("format") || "").split(",").filter(Boolean), gens = (p.get("genre") || "").split(",").filter(Boolean);
@@ -1448,7 +1449,8 @@ body.fopen{overflow:hidden}
   const brokenOf = (data) => (data.files || []).filter((f) => f.broken);
   function choicesOf(data) {
     const files = (data.files || []).filter((f) => !f.piece && !f.broken && f.ok !== false && (f.format || f.size >= 1e6));
-    return [...files.map((f) => ({ value: f.name, label: base(f.name), note: [f.format ? f.format.toUpperCase() : "", f.size ? size(f.size) : ""].filter(Boolean).join(" · "), best: f.name === data.suggested })),
+    // glibren.16: um conjunto em partes que o TorBox tem inteiro ("parts": quantas) e uma opcao so: "RAR · 3 partes · 45 GB".
+    return [...files.map((f) => ({ value: f.name, label: base(f.name), note: [f.format ? f.format.toUpperCase() : "", f.parts > 1 ? fill(B.partsN, { n: f.parts }) : "", f.size ? size(f.size) : ""].filter(Boolean).join(" · "), best: f.name === data.suggested })),
       ...data.wholeOk === false ? [] : [{ value: WHOLE, label: B.whole, note: "", best: !data.suggested }]];
   }
   function radios(list, choices, chosen, onpick) {

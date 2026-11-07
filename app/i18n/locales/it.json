@@ -1510,6 +1510,7 @@
   "torboxSearch.origin.list": "La tua lista di hash",
   "torboxSearch.backport": "{count, plural, one {# file} other {# file}}, {size}. Scaricalo con Tutto (il pacchetto intero): Jobee'sLair non scarica ancora solo la cartella del backport",
   "torboxSearch.whole": "Il torrent intero, {count, plural, one {# file} other {# file}}, in un solo pacchetto",
+  "torboxSearch.parts": "{count, plural, one {# parte} other {# parti}} · {size}",
   "torboxSearch.wholeType": "TUTTO",
   "settings.card.torboxLibrary": "Libreria TorBox",
   "storeMode.label": "STORE",

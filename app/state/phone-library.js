@@ -52,6 +52,13 @@ import { formatFromName } from './link-formats.js';
     if (via === "webdl") {
       const release = (game?.releases || []).find((item) => item?.id === request.release);
       if (!release) throw new Error("This game's link is not in the catalog on this console. Open the game in Jobee'sLair.");
+      // glibren.16: um conjunto em partes (o id "set-..." do catalogo): a fila baixa todas as partes pelo TorBox
+      // (torbox-search.js releaseFor -> debridSource), como o botao do TorBox da ficha do jogo.
+      if (Array.isArray(release.parts) && release.parts.length) {
+        if (release.unavailableReason) throw new Error(release.unavailableReason);
+        const first = release.parts[0]?.sources?.[0];
+        return { origin: "catalog", link: first?.browserUrl || first?.url || "", release, fileId: "parts", name: name || release.label || title, size, host: release.provider || "", parts: release.parts.length };
+      }
       return { origin: "catalog", link: release.browserUrl || release.url, release, fileId: request.fileId || 0, name: name || release.filename || title, size: size || release.sizeBytes || 0, host: release.provider || "" };
     }
     const hash = String(request.hash || "").toLowerCase();

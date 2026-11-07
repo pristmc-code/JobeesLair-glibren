@@ -1510,6 +1510,7 @@
   "torboxSearch.origin.list": "Daftar hash Anda",
   "torboxSearch.backport": "{count, plural, other {# file}}, {size}. Unduh dengan Semua (paket utuh): Jobee'sLair belum bisa mengunduh folder backport saja",
   "torboxSearch.whole": "Seluruh torrent, {count, plural, other {# file}}, sebagai satu paket",
+  "torboxSearch.parts": "{count, plural, other {# bagian}} · {size}",
   "torboxSearch.wholeType": "SEMUA",
   "settings.card.torboxLibrary": "Perpustakaan TorBox",
   "storeMode.label": "TOKO",

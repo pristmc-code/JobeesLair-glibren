@@ -1510,6 +1510,7 @@
     "torboxSearch.origin.list": "Your hash list",
     "torboxSearch.backport": "{count, plural, one {# file} other {# files}}, {size}. Get it with All (the whole package): Jobee'sLair can't download just the backport folder yet",
     "torboxSearch.whole": "The whole torrent, {count, plural, one {# file} other {# files}}, as one package",
+    "torboxSearch.parts": "{count, plural, one {# part} other {# parts}} · {size}",
     "torboxSearch.wholeType": "ALL",
     "settings.card.torboxLibrary": "TorBox library",
     "storeMode.label": "STORE",

@@ -1510,6 +1510,7 @@
   "torboxSearch.origin.list": "Ваш список хешей",
   "torboxSearch.backport": "{count, plural, one {# файл} few {# файла} other {# файлов}}, {size}. Скачайте через «Всё» (весь пакет): Jobee'sLair пока не скачивает только папку бэкпорта",
   "torboxSearch.whole": "Весь торрент, {count, plural, one {# файл} few {# файла} other {# файлов}}, одним пакетом",
+  "torboxSearch.parts": "{count, plural, one {# часть} few {# части} other {# частей}} · {size}",
   "torboxSearch.wholeType": "ВСЁ",
   "settings.card.torboxLibrary": "Библиотека TorBox",
   "storeMode.label": "МАГАЗИН",

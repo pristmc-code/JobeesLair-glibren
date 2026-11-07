@@ -1510,6 +1510,7 @@
   "torboxSearch.origin.list": "Deine Hash-Liste",
   "torboxSearch.backport": "{count, plural, one {# Datei} other {# Dateien}}, {size}. Mit Alles laden (das ganze Paket): Jobee'sLair lädt den Backport-Ordner noch nicht allein",
   "torboxSearch.whole": "Der ganze Torrent, {count, plural, one {# Datei} other {# Dateien}}, als ein Paket",
+  "torboxSearch.parts": "{count, plural, one {# Teil} other {# Teile}} · {size}",
   "torboxSearch.wholeType": "ALLES",
   "settings.card.torboxLibrary": "TorBox-Bibliothek",
   "storeMode.label": "STORE",
