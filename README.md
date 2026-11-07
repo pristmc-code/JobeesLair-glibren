@@ -37,6 +37,9 @@
 > its in-app update reads this fork, not the official repository. It uses the same title ID (PPSA99471) and replaces
 > the official app. Not yet tested on a console: report problems on this fork, not to JVK3R.
 > All credit for Jobee'sLair goes to JVK3R; license unchanged (GPL-3.0-or-later).
+> **glibren.12**: finished PS5 games are converted to `.exfat` on their own (originals kept in `BACKUP/`), PS4 `.pkg`
+> files go to `PS4/` and install on their own, the phone page gets sections, origin/format/system chips and BACKUP
+> details, and the Files tab no longer uninstalls a same-named game on another drive.
 
 <p align="center">
   <b>English</b> ·
