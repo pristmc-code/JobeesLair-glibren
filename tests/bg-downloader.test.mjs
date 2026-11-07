@@ -261,6 +261,37 @@ test('glibren.13: TorBox com redirecionamento e limite de velocidade baixo: cone
   }
 });
 
+test('glibren.13: copia quebrada no TorBox (pagina de erro 500 de 170 bytes servida como o arquivo): broken-file, sem renovar', { skip }, async () => {
+  const base = workspace();
+  writeFileSync(path.join(base, 'debrid.json'), JSON.stringify({ torbox: { key: KEY } }));
+  // Como no log do usuario: 206 application/octet-stream "bytes 0-169/170" com a pagina do nginx.
+  const page = '<html>\r\n<head><title>500 Internal Server Error</title></head>\r\n<body>\r\n<center><h1>500 Internal Server Error</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n';
+  files['broken.pkg'] = Buffer.from(page.padEnd(170, ' ')).subarray(0, 170);
+  srv.tokens.add('brok');
+  const child = start(base, { BGDL_KEYFILE: path.join(base, 'debrid.json') });
+  try {
+    await up(base);
+    const asked = srv.requestdl;
+    const dest = path.join(base, 'disk/downloads/broken.pkg');
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/t/brok/broken.pkg?token=${KEY}`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 4, rejectHtml: true, source: { provider: 'torbox', kind: 'webdl', id: 7, fileId: '0' } });
+    const job = await until(base, data.id, ['completed', 'failed', 'needs-app'], () => true, 20000);
+    assert.equal(job.state, 'failed');
+    assert.match(job.error, /^broken-file: TorBox has a broken copy of this file: it holds a web page \(an error from the original site, 170 bytes\) instead of the game\. Delete it in TorBox and add it again\.$/);
+    assert.equal(job.renewals, 0, 'nao pediu link novo');
+    assert.equal(srv.requestdl, asked);
+    await wait(1500);
+    assert.equal((await call(base, 'GET', '/jobs')).data.jobs.find((item) => item.id === data.id).state, 'failed', 'continua falho: sem tentar de novo sozinho');
+    const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+    assert.ok(log.includes('copia quebrada: uma pagina (170 bytes; titulo "500 Internal Server Error")'), log);
+    assert.ok(!log.includes(KEY) && !log.includes('brok/'), 'sem chave nem URL no diario');
+    assert.ok(!existsSync(dest), 'a pagina nao vira o arquivo do jogo');
+  } finally {
+    await stop(child);
+    srv.tokens.delete('brok');
+    delete files['broken.pkg'];
+  }
+});
+
 test('glibren.6: o jobs.json guarda o link do TorBox sem a chave (token=); ao reabrir, pede outro link e termina a parcial', { skip }, async () => {
   const base = workspace();
   writeFileSync(path.join(base, 'debrid.json'), JSON.stringify({ torbox: { key: KEY } }));
@@ -331,7 +362,10 @@ let monitorPort = 0; // escolhida em cada teste (um await aqui fora encerraria a
 const PIN = '246810';
 const pinConfig = (pin = PIN) => { const salt = randomBytes(32).toString('hex'); return { pinSalt: salt, pinHash: sha(`${salt}:${pin}`) }; };
 async function page(route, { method = 'GET', body, session } = {}) {
-  const res = await fetch(`http://127.0.0.1:${monitorPort}${route}`, { method, headers: { 'Content-Type': 'application/json', ...(session ? { 'X-Session': session } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const ask = () => fetch(`http://127.0.0.1:${monitorPort}${route}`, { method, headers: { 'Content-Type': 'application/json', ...(session ? { 'X-Session': session } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  // glibren.13: um GET logo depois de uma espera pode cair numa conexao keep-alive que o servidor ja fechou (o fetch do
+  // node a reaproveita e falha com "fetch failed", de vez em quando, desde a .12): so o GET e repetido, uma vez.
+  const res = await ask().catch((problem) => { if (method !== 'GET') throw problem; return wait(50).then(ask); });
   const text = await res.text();
   let data = {};
   try { data = JSON.parse(text); } catch {}
@@ -1201,6 +1235,41 @@ test('biblioteca TorBox: capa na lista, ficha do jogo com fotos e videos (so htt
   rmSync(fichas);
   assert.equal((await page('/api/library/game?id=g0')).status, 200, 'sem o arquivo das fichas tambem');
   await stop(child);
+});
+
+test('glibren.13: biblioteca TorBox: arquivo de jogo de 170 B e copia quebrada (marcado, nunca recomendado, "Baixar" recusado)', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const file = path.join(base, 'torbox-lista.json');
+  const list = library(3);
+  // Como o Carrion do usuario: um web download cujo unico arquivo e a pagina de erro (170 bytes).
+  list.games.push({ id: 'carrion', title: 'Carrion', code: 'CUSA20002', files: [
+    { name: 'Carrion - [EU] [EN] [1.04].pkg', size: 170, format: 'pkg', via: 'webdl', hash: 'ee'.repeat(16), release: 'rel-carrion' }] });
+  // Um quebrado ao lado de um bom: o bom e o recomendado.
+  list.games.push({ id: 'mix', title: 'Misto', code: 'PPSA20003', files: [
+    { name: 'Misto.exfat', size: 170, format: 'exfat', via: 'webdl', hash: 'ef'.repeat(16), release: 'rel-a' },
+    { name: 'Misto.pkg', size: 9 * GiB, format: 'pkg', via: 'webdl', hash: 'fe'.repeat(16), release: 'rel-b' }] });
+  writeFileSync(file, JSON.stringify(list));
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file });
+  try {
+    await up(base);
+    await pageUp();
+    const session = await unlocked(base);
+    const carrion = (await page('/api/library/game?id=carrion')).data;
+    assert.deepEqual(carrion.files.map((f) => [f.size, f.broken]), [[170, true]]);
+    assert.equal(carrion.suggested, '', 'nada recomendado');
+    const mix = (await page('/api/library/game?id=mix')).data;
+    assert.equal(mix.suggested, 'Misto.pkg', 'o bom, mesmo com o exFAT (melhor formato) quebrado');
+    assert.deepEqual(mix.files.map((f) => [f.name, f.broken]).sort(), [['Misto.exfat', true], ['Misto.pkg', false]]);
+    const refused = await page('/api/library/add', { method: 'POST', session, body: { id: 'carrion' } });
+    assert.deepEqual([refused.status, refused.data], [400, { error: 'broken', size: 170 }]);
+    const chosen = await page('/api/library/add', { method: 'POST', session, body: { id: 'mix', file: 'Misto.exfat' } });
+    assert.deepEqual([chosen.status, chosen.data.error], [400, 'broken'], 'escolher o quebrado tambem e recusado');
+    assert.equal((await page('/api/library/add', { method: 'POST', session, body: { id: 'mix' } })).status, 200, 'sem escolha: vai o bom');
+    assert.ok(!(await call(base, 'GET', '/jobs')).data.jobs.some((job) => job.library?.file === 'Carrion - [EU] [EN] [1.04].pkg'), 'nenhum pedido do quebrado');
+  } finally {
+    await stop(child);
+  }
 });
 
 test('biblioteca TorBox: incluir download pelo celular (sessao, duplicado, arquivo escolhido, recusa do app, cancelar, reinicio)', { skip }, async () => {

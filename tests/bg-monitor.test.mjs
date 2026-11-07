@@ -79,7 +79,9 @@ test('glibren.13: velocidades em MB/s (nunca Mbps) e a velocidade maxima livre (
   assert.match(page, new RegExp(`maxSpeed = ${MAX_SPEED_LIMIT}\\b`), 'o mesmo teto do app e do payload');
   for (const piece of ['id="speedBtn"', 'id="speedBtn2"', 'id="secPick"', '{ speedLimit: v }', 'r.data.speedLimit', 'r.data.maxSpeedLimit', 'guarded(() => setSpeed(v))',
     'input.inputMode = "numeric"', 'hold(minus, -1); hold(plus, 1)', 'e.key === "Enter"', 'none.onclick = () => put(0)', 'L.speedBad', 'menuKind !== "speed"',
-    'Sem limite', 'No limit', 'Aplicar', 'Apply', 'Velocidade máxima', 'Maximum speed']) assert.ok(page.includes(piece), piece);
+    'Sem limite', 'No limit', 'Aplicar', 'Apply', 'Velocidade máxima', 'Maximum speed',
+    // glibren.13: arquivo quebrado no TorBox (o payload marca "broken"): fora da escolha, aviso na ficha, recusa explicada.
+    '!f.broken', 'r.data?.error === "broken"', 'Arquivo quebrado no TorBox ({s})', 'Broken file in TorBox ({s})', '.fmsg.broken{']) assert.ok(page.includes(piece), piece);
   // A mesma conta da pagina (MB = 1024 * 1024), num pedaco isolado.
   const fn = /const speed = \(b\) => [^\n]+/.exec(page)[0];
   const speed = new Function('MB', 'nf', `${fn}; return speed;`)(1024 ** 2, (v, d) => v.toFixed(d));

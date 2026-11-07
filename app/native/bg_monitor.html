@@ -1056,6 +1056,7 @@ body.fopen{overflow:hidden}
 .facts dt{color:var(--subtle)}
 .facts dd{margin:0;color:var(--fg);min-width:0;word-break:break-word}
 .fmsg{color:var(--muted);font-size:14px}
+.fmsg.broken{color:#fecaca;padding:6px 10px;border:1px solid rgba(248,113,113,.5);border-radius:8px;background:rgba(127,29,29,.18)}
 .fmsg .btn{margin-top:8px;flex:none}
 .ficha .files{max-height:none}
 /* Fotos em tela cheia (deslizar) */
@@ -1132,6 +1133,8 @@ body.fopen{overflow:hidden}
       badLib: "A lista da Biblioteca TorBox está com problema. Monte de novo em Configurações da Jobee'sLair.",
       offline: "O PS5 não respondeu.", addedOpen: "{t}: na fila. A Jobee'sLair já começa.", addedClosed: "{t}: na fila. Começa quando você abrir a Jobee'sLair.",
       already: "{t} já está na fila.", fail: "Não deu para incluir. Tente de novo.", full: "A fila do PS5 está cheia.", noHash: "Este jogo não tem o torrent na lista.", noSource: "Não há como baixar esse arquivo pela lista. Abra o jogo na Jobee'sLair.",
+      brokenFile: "Arquivo quebrado no TorBox ({s}): {f}. É uma página de erro guardada no lugar do jogo.",
+      brokenRefused: "Arquivo quebrado no TorBox ({s}): é uma página de erro, não o jogo. Apague-o no TorBox e adicione de novo.",
       chooseTitle: "Qual arquivo baixar?", chooseText: "O recomendado já vem marcado.", whole: "Tudo (o torrent inteiro, como .zip)", back: "Voltar", files: "{n} arquivos",
       open: "Abrir a ficha de {t}", close: "Fechar", photos: "Fotos", videos: "Vídeos", about: "Sobre", facts: "Detalhes", filesH: "Arquivos no TorBox",
       recommended: "Recomendado", willGet: "Vai baixar: {f}", ytTrailer: "Trailer no YouTube", ytGameplay: "Gameplay no YouTube", ytOpen: "Abrir no YouTube", ytOpenShort: "Abrir",
@@ -1150,6 +1153,8 @@ body.fopen{overflow:hidden}
       badLib: "The TorBox library list has a problem. Build it again in Jobee'sLair's Settings.",
       offline: "The PS5 did not answer.", addedOpen: "{t}: queued. Jobee'sLair starts it now.", addedClosed: "{t}: queued. It starts when you open Jobee'sLair.",
       already: "{t} is already queued.", fail: "Couldn't add it. Try again.", full: "The PS5 queue is full.", noHash: "This game has no torrent in the list.", noSource: "That file can't be fetched from the list. Open the game in Jobee'sLair.",
+      brokenFile: "Broken file in TorBox ({s}): {f}. It is an error page kept in place of the game.",
+      brokenRefused: "Broken file in TorBox ({s}): it is an error page, not the game. Delete it in TorBox and add it again.",
       chooseTitle: "Which file?", chooseText: "The recommended one is already picked.", whole: "Everything (the whole torrent, as a .zip)", back: "Back", files: "{n} files",
       open: "Open {t}", close: "Close", photos: "Photos", videos: "Videos", about: "About", facts: "Details", filesH: "Files on TorBox",
       recommended: "Recommended", willGet: "Will get: {f}", ytTrailer: "Trailer on YouTube", ytGameplay: "Gameplay on YouTube", ytOpen: "Open on YouTube", ytOpenShort: "Open",
@@ -1437,8 +1442,12 @@ body.fopen{overflow:hidden}
     clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 4200);
   }
   // Os arquivos que se pode escolher de um jogo (resposta de /api/library/game), com o recomendado.
+  // glibren.13: um arquivo quebrado no TorBox (o payload marca "broken": arquivo de jogo com menos de 1 MiB) nao se
+  // escolhe; a ficha o mostra com o aviso.
+  const bytes = (n) => n >= MB ? size(n) : n >= 1024 ? `${nf(n / 1024, 0)} KB` : `${n} B`;
+  const brokenOf = (data) => (data.files || []).filter((f) => f.broken);
   function choicesOf(data) {
-    const files = (data.files || []).filter((f) => !f.piece && f.ok !== false && (f.format || f.size >= 1e6));
+    const files = (data.files || []).filter((f) => !f.piece && !f.broken && f.ok !== false && (f.format || f.size >= 1e6));
     return [...files.map((f) => ({ value: f.name, label: base(f.name), note: [f.format ? f.format.toUpperCase() : "", f.size ? size(f.size) : ""].filter(Boolean).join(" · "), best: f.name === data.suggested })),
       ...data.wholeOk === false ? [] : [{ value: WHOLE, label: B.whole, note: "", best: !data.suggested }]];
   }
@@ -1485,6 +1494,7 @@ body.fopen{overflow:hidden}
       return;
     }
     if (r.data?.error === "no-library") { lib.loaded = false; load(true); }
+    if (r.data?.error === "broken") { toast(fill(B.brokenRefused, { s: bytes(Number(r.data.size) || 0) }), "bad"); return; }
     toast(r.data?.error === "no-hash" ? B.noHash : r.data?.error === "no-source" ? B.noSource : r.data?.error === "full" ? B.full : B.fail, "bad");
   }
 
@@ -1603,8 +1613,12 @@ body.fopen{overflow:hidden}
     fx.chosen = data.suggested || (choices.some((c) => c.value === WHOLE) ? WHOLE : choices[0]?.value || "");
     const say = () => { const c = choices.find((x) => x.value === fx.chosen); note.textContent = c && multi ? fill(B.willGet, { f: c.label }) : ""; };
     say();
+    // glibren.13: os arquivos quebrados no TorBox, com o tamanho, logo abaixo do botao.
+    const broken = brokenOf(data);
+    for (const f of broken) left.append(el("div", "fmsg broken", fill(B.brokenFile, { s: bytes(f.size), f: base(f.name) })));
     b.onclick = () => {
       if (g.queued) return;
+      if (!choices.length && broken.length) { toast(fill(B.brokenRefused, { s: bytes(broken[0].size) }), "bad"); return; }
       if (!choices.length) { toast(B.noSource, "bad"); return; }
       guarded(() => add(g, fx.chosen === WHOLE ? { whole: true } : fx.chosen ? { file: fx.chosen } : {}));
     };

@@ -1326,8 +1326,18 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         // A debrid link refused by the engine (expired: 401/403) or stopped before it expires is asked for again,
         // with no limit but the loop guard (renewLink); never the browser, which has nothing to pass for it.
         const debrid = throughDebrid(job2);
-        const linkRefused = !resolving && /browser verification required|link expired|HTTP 40[13]\b/i.test(cause(error2.message));
-        const renewed = debrid && !stopping && (lane.renewDue || linkRefused) && renewLink(job2, lane.renewDue ? "it was about to expire" : "the engine was refused");
+        // glibren.13: a copy the debrid service holds that is a web page (the original site's error page kept as the
+        // file: the payload's "broken-file:", or the engine's "provider returned a web page" from a debrid link, where
+        // there is no browser check to pass). A new link brings the same page: no renewal, no retry by itself, no other
+        // source; it fails with the reason (errors.js debridBrokenFile).
+        const brokenCopy = debrid && !resolving && /^broken-file:|provider returned a web page/i.test(cause(error2.message));
+        if (brokenCopy && !/^broken-file:/.test(cause(error2.message))) {
+          const service = job2.release?.debrid?.service === "alldebrid" ? "AllDebrid" : "TorBox";
+          error2 = new Error(`broken-file: ${service} has a broken copy of this file: it holds a web page (an error from the original site) instead of the game. Delete it in ${service} and add it again.`);
+        }
+        if (brokenCopy) console.log(`[download-queue] ${job2.id}: the debrid service's copy is a web page; not renewing the link`);
+        const linkRefused = !brokenCopy && !resolving && /browser verification required|link expired|HTTP 40[13]\b/i.test(cause(error2.message));
+        const renewed = debrid && !stopping && !brokenCopy && (lane.renewDue || linkRefused) && renewLink(job2, lane.renewDue ? "it was about to expire" : "the engine was refused");
         // The network or the service's pace while resolving: tried again by itself, before any other source.
         const waiting = !renewed && resolving && !(error2 instanceof BrowserRequired) && waitAndRetry(job2, error2);
         // The engine words every 401/403 as a possible browser check; from Archive.org it is a
@@ -1353,10 +1363,11 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         const browser = !refused && !debrid && (expired || error2 instanceof BrowserRequired || /browser verification required/i.test(cause(error2.message)));
         const retried = renewed || waiting || job2.state !== "pausing" && !job2.cancelling && browser && lane.transferring && reresolve(job2);
         // A debrid link that kept expiring (renewLink gave up) is not the source's fault: no other source for it.
-        const switched = !retried && !expired && !(debrid && linkRefused) && job2.state !== "pausing" && !job2.cancelling && failOver(job2, error2);
+        const switched = !retried && !expired && !brokenCopy && !(debrid && linkRefused) && job2.state !== "pausing" && !job2.cancelling && failOver(job2, error2);
         if (!retried && !switched && job2.state !== "pausing") {
           job2.state = browser ? "awaiting-browser" : "failed";
           job2.error || (job2.error = job2.adopted && STALE_PARTIAL.test(cause(error2.message)) ? ADOPTED : error2.message);
+          if (brokenCopy) job2.error = cause(error2.message); // glibren.13: o motivo de agora, nao um de antes
           if (browser) {
             delete job2.capturedLink;
             if (expired) job2.error = "The captured link expired while it waited in the queue. Open the source and pass its check again.";

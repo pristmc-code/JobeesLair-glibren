@@ -6,6 +6,8 @@
 
 import { defaultDrive, startingDrive } from './last-drive.js';
 import { downloadFile } from './torbox-search.js';
+import { brokenFile } from './torbox-library.js';
+import { formatFromName } from './link-formats.js';
 
   // O hash de um torrent: 40 hex (v1) ou 32 letras base32.
   var HASH = /^(?:[0-9a-f]{40}|[a-z2-7]{32})$/i;
@@ -38,6 +40,8 @@ import { downloadFile } from './torbox-search.js';
     const whole = Boolean(request.whole || !request.file);
     const name = String(request.file || "");
     const via = String(request.via || "torrent");
+    // glibren.13: um arquivo de jogo minusculo no TorBox e uma copia quebrada (uma pagina de erro): nao vai para a fila.
+    if (!whole && brokenFile({ size, format: formatFromName(name) })) throw new Error(`TorBox has a broken copy of this file (${size} B): it is a web page, not the game. Delete it in TorBox and add it again.`);
     if (via === "account") {
       const kind = request.item?.kind === "webdl" ? "webdl" : "torrent";
       const id = String(request.item?.id ?? "");

@@ -1636,9 +1636,12 @@ static int valid_range_response(Conn* c) {
          (!e->last_modified[0] || !strcmp(c->last_modified, e->last_modified));
 }
 
+static int debrid_source(const Job* j);
+static void broken_copy(Engine* e, Conn* c, const char* data, size_t length);
 static void classify_invalid(Conn* c) {
   Engine* e = c->e;
   if (c->encoding[0] && strcmp(c->encoding, "identity")) { snprintf(c->error, sizeof c->error, "server sent the file with Content-Encoding %s", c->encoding); return; }
+  if (debrid_source(e->job) && is_html_type(c->content_type)) { broken_copy(e, c, "", 0); return; } // glibren.13
   if (e->job->reject_html && is_html_type(c->content_type)) { snprintf(c->error, sizeof c->error, "provider returned a web page; browser verification required"); return; }
   int changed = (e->etag[0] && c->etag[0] && strcmp(c->etag, e->etag)) ||
                 (e->last_modified[0] && c->last_modified[0] && strcmp(c->last_modified, e->last_modified)) ||
@@ -1702,6 +1705,38 @@ static int rate_open(void) {
   return ok;
 }
 
+// ---- glibren.13: copia quebrada no servico debrid ----
+// O TorBox pode guardar como "o arquivo" a pagina de erro que o site de origem devolveu (visto em 07/11/2026: um .pkg de
+// 170 bytes com "500 Internal Server Error" do nginx, servido como application/octet-stream 206). Nao e verificacao do
+// navegador nem link vencido: pedir outro link traz a mesma pagina. O erro comeca com "broken-file:" (o app nao renova
+// nem tenta de novo) e o diario guarda so o <title> da pagina, curto e limpo (nunca URL nem consulta).
+static int debrid_source(const Job* j) { return !strcmp(j->provider, "torbox") || !strcmp(j->provider, "alldebrid"); }
+static const char* debrid_name(const Job* j) { return !strcmp(j->provider, "alldebrid") ? "AllDebrid" : "TorBox"; }
+static void page_title(const char* data, size_t length, char* out, size_t cap) {
+  out[0] = 0;
+  const size_t scan = length < 8192 ? length : 8192;
+  for (size_t i = 0; i + 7 <= scan; ++i) {
+    if (strncasecmp(data + i, "<title>", 7)) continue;
+    size_t n = 0;
+    for (size_t p = i + 7; p < scan && data[p] != '<' && n + 1 < cap && n < 80; ++p) {
+      const unsigned char ch = (unsigned char)data[p];
+      out[n++] = isalnum(ch) || strchr(" .,:;()'-", ch) ? (char)ch : ' ';
+    }
+    out[n] = 0;
+    return;
+  }
+}
+static void broken_copy(Engine* e, Conn* c, const char* data, size_t length) {
+  char title[96];
+  page_title(data, length, title, sizeof title);
+  const unsigned long long bytes = (unsigned long long)(e->known ? e->total : length);
+  logf_("job %s: o %s tem uma copia quebrada: uma pagina (%llu bytes; titulo \"%s\") no lugar do arquivo", e->job->id,
+        debrid_name(e->job), bytes, title[0] ? title : "sem titulo");
+  snprintf(c->error, sizeof c->error, "broken-file: %s has a broken copy of this file", debrid_name(e->job));
+  engine_fail(e, "broken-file: %s has a broken copy of this file: it holds a web page (an error from the original site, %llu bytes) "
+              "instead of the game. Delete it in %s and add it again.", debrid_name(e->job), bytes, debrid_name(e->job));
+}
+
 static size_t on_body(char* data, size_t size, size_t count, void* opaque) {
   Conn* c = opaque;
   Engine* e = c->e;
@@ -1717,7 +1752,7 @@ static size_t on_body(char* data, size_t size, size_t count, void* opaque) {
   if (c->status != 200 && c->status != 206) return 0;
   // glibren.13: limite de velocidade: sem fichas, o curl guarda este pedaco e o entrega de novo depois de rate_resume.
   if (!rate_take(length)) { c->throttled = 1; return CURL_WRITEFUNC_PAUSE; }
-  if (e->job->reject_html && c->html_len < 64 && c->begin == 0) {
+  if ((e->job->reject_html || debrid_source(e->job)) && c->html_len < 64 && c->begin == 0) {
     size_t take = length < 64 - c->html_len ? length : 64 - c->html_len;
     memcpy(c->html_prefix + c->html_len, data, take);
     c->html_len += take;
@@ -1729,6 +1764,9 @@ static size_t on_body(char* data, size_t size, size_t count, void* opaque) {
     const char* view = lower;
     while (*view == ' ' || *view == '\t' || *view == '\r' || *view == '\n') ++view;
     if (!strncmp(view, "<!doctype html", 14) || !strncmp(view, "<html", 5)) {
+      // glibren.13: de um debrid nao ha navegador para passar: a copia dele e que e uma pagina (ex.: o erro 500 do site
+      // de origem guardado como o arquivo). Falha de vez, com o motivo, sem pedir link novo.
+      if (debrid_source(e->job)) { broken_copy(e, c, data, length); return 0; }
       snprintf(c->error, sizeof c->error, "provider returned a web page; browser verification required");
       return 0;
     }
@@ -2096,6 +2134,11 @@ static int probe_source(Engine* e) {
       continue;
     }
     if (c->status >= 400) { engine_fail(e, "range probe failed (HTTP %ld, %s)", c->status, curl_easy_strerror(result)); return 0; }
+    if (debrid_source(e->job) && is_html_type(c->content_type)) { // glibren.13: a copia do debrid e uma pagina
+      if (c->content_range) { e->known = 1; e->total = c->cr_total; }
+      broken_copy(e, c, "", 0);
+      return 0;
+    }
     if (e->job->reject_html && is_html_type(c->content_type)) { engine_fail(e, "provider returned a web page; browser verification required"); return 0; }
     if (c->status == 200 && result == CURLE_WRITE_ERROR && !c->error[0]) {
       e->known = c->length_known; e->total = c->content_length; e->ranged = 0;
@@ -4895,18 +4938,34 @@ static int lib_whole_source(const LibParse* p) {
   }
   return p->file_count == 0 && lib_hash_ok(p->game.hash) ? LIB_FILES : -1; // sem arquivos: o hash do jogo
 }
+// glibren.13: um arquivo de jogo (imagem, pacote ou compactado) com menos de 1 MiB nao e o jogo: e uma copia quebrada no
+// TorBox (ex.: um .pkg de 170 bytes que era a pagina "500 Internal Server Error" do site de origem). Nunca e o
+// recomendado, a ficha o marca ("broken") e "Baixar" recusa quando so ha arquivos assim. Igual a brokenFile do app
+// (app/state/torbox-library.js).
+#define LIB_BROKEN_BYTES (1024ull * 1024)
+static int lib_file_broken(const LibFile* f) {
+  char format[16];
+  copy_text(format, sizeof format, f->format);
+  if (!format[0]) format_of_name(f->name, format, sizeof format);
+  return f->size > 0 && f->size < LIB_BROKEN_BYTES && !f->piece && lib_rank(format) < 99;
+}
 // O arquivo que "Baixar" pega sem escolha: o de melhor formato (exFAT primeiro, como o "Procurar no TorBox"), o maior no
-// empate, nunca um pedaco de arquivo dividido. -1: o torrent inteiro (como um zip).
+// empate, nunca um pedaco de arquivo dividido nem uma copia quebrada. -1: o torrent inteiro (como um zip).
 static int lib_suggest(const LibParse* p) {
   int best = -1;
   for (int i = 0; i < p->file_count; ++i) {
     const LibFile* f = &p->files[i];
     const int rank = lib_rank(f->format);
-    if (rank >= 99 || f->piece || !lib_file_ok(f, &p->game)) continue;
+    if (rank >= 99 || f->piece || lib_file_broken(f) || !lib_file_ok(f, &p->game)) continue;
     if (best < 0 || rank < lib_rank(p->files[best].format) || (rank == lib_rank(p->files[best].format) && f->size > p->files[best].size)) best = i;
   }
-  if (best < 0 && p->file_count == 1 && !p->files[0].piece && lib_file_ok(&p->files[0], &p->game)) best = 0;
+  if (best < 0 && p->file_count == 1 && !p->files[0].piece && !lib_file_broken(&p->files[0]) && lib_file_ok(&p->files[0], &p->game)) best = 0;
   return best;
+}
+// O primeiro arquivo quebrado do jogo (-1 sem nenhum).
+static int lib_first_broken(const LibParse* p) {
+  for (int i = 0; i < p->file_count; ++i) if (lib_file_broken(&p->files[i])) return i;
+  return -1;
 }
 // ---- glibren.9: a ficha de um jogo (torbox-fichas.json), so quando o celular abre o jogo ----
 #define LIB_SHOTS 8
@@ -5133,7 +5192,8 @@ static void monitor_library_game(int fd, const char* query) {
     buf_json(&b, p.files[i].format);
     buf_str(&b, ",\"via\":");
     buf_json(&b, p.files[i].via);
-    buf_fmt(&b, ",\"piece\":%s,\"ok\":%s}", p.files[i].piece ? "true" : "false", lib_file_ok(&p.files[i], &p.game) ? "true" : "false");
+    buf_fmt(&b, ",\"piece\":%s,\"ok\":%s,\"broken\":%s}", p.files[i].piece ? "true" : "false", lib_file_ok(&p.files[i], &p.game) ? "true" : "false",
+            lib_file_broken(&p.files[i]) ? "true" : "false");
   }
   buf_fmt(&b, "],\"wholeOk\":%s,\"suggested\":", lib_whole_source(&p) >= 0 ? "true" : "false");
   buf_json(&b, suggested >= 0 ? p.files[suggested].name : "");
@@ -5207,6 +5267,15 @@ static void monitor_library_add(int fd, Request* r) {
   } else if (!whole) {
     chosen = lib_suggest(&p);
     whole = chosen < 0;
+    // glibren.13: so ha copias quebradas (e nenhum torrent inteiro para pedir): explica em vez de mandar a pagina ao app.
+    if (whole && lib_first_broken(&p) >= 0 && lib_whole_source(&p) < 0) { chosen = lib_first_broken(&p); whole = 0; }
+  }
+  if (!whole && chosen >= 0 && lib_file_broken(&p.files[chosen])) {
+    char refused[96];
+    snprintf(refused, sizeof refused, "{\"error\":\"broken\",\"size\":%llu}", (unsigned long long)p.files[chosen].size);
+    lib_find_free(&p);
+    monitor_json(fd, 400, refused);
+    return;
   }
   // O torrent inteiro: de um arquivo de torrent (ou do hash do jogo, sem arquivos).
   const int source = whole ? lib_whole_source(&p) : chosen;

@@ -266,7 +266,12 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
     const index = FORMAT_RANK.indexOf(format);
     return index < 0 ? FORMAT_RANK.length : index;
   };
-  // Os arquivos de um jogo: uma vez cada (nome e tamanho), imagens de disco primeiro, depois o maior.
+  // glibren.13: um arquivo de jogo (imagem, pacote ou compactado) com menos de 1 MiB nao e o jogo: e uma copia quebrada no
+  // TorBox (visto em 07/11/2026: um .pkg de 170 bytes que era a pagina "500 Internal Server Error" do site de origem). Fica
+  // marcado ("broken"), por ultimo, e nunca e o recomendado (a pagina do celular avisa e o payload recusa baixa-lo).
+  var BROKEN_BYTES = 1024 * 1024;
+  var brokenFile = (file) => Number(file?.size) > 0 && Number(file.size) < BROKEN_BYTES && !file.piece && FORMAT_RANK.includes(file.format);
+  // Os arquivos de um jogo: uma vez cada (nome e tamanho), imagens de disco primeiro, depois o maior; os quebrados no fim.
   function tidy(files) {
     const seen = /* @__PURE__ */ new Set();
     return files.filter((file) => {
@@ -274,7 +279,7 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).sort((a, b) => Number(Boolean(a.piece)) - Number(Boolean(b.piece)) || rankOf(a.format) - rankOf(b.format) || b.size - a.size || a.name.localeCompare(b.name)).slice(0, MAX_FILES);
+    }).map((file) => brokenFile(file) ? { ...file, broken: true } : file).sort((a, b) => Number(Boolean(a.broken)) - Number(Boolean(b.broken)) || Number(Boolean(a.piece)) - Number(Boolean(b.piece)) || rankOf(a.format) - rankOf(b.format) || b.size - a.size || a.name.localeCompare(b.name)).slice(0, MAX_FILES);
   }
   // Os arquivos que contam de um item ou entrada do TorBox, cada um com de onde veio.
   function fileRows(item, fields, accept = () => true) {
@@ -342,7 +347,7 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
   /** O resultado do TorBox de um jogo, a partir das linhas achadas. */
   function verdict(rows, runId, now, error, known = []) {
     const files = tidy(rows);
-    const best = files[0];
+    const best = files.find((file) => !file.broken) ?? files[0];
     const others = files.length ? [] : tidy(known);
     return {
       confirmed: files.length > 0,
@@ -559,4 +564,4 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
     return { library, progress: progress() };
   }
 
-export { DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };
+export { BROKEN_BYTES, brokenFile, DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };

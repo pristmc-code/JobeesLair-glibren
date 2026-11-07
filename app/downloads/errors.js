@@ -12,6 +12,9 @@ import { t } from '../i18n/core.js';
   var COPIED_PART = /Volume (\d+) of \d+ is a copy of part (\d+)/;
   var SHORTFALL = /^Not enough space on (\S+): needs (.+?), (.+?) free(?:( after queued downloads)(?:: (.+))?)?$/;
   var CASES = [
+    // glibren.13: the debrid service keeps a web page as the file (download-queue.js brokenCopy); before the rest, whose
+    // words ("web page", "error") it may hold. A retry only meets it again: delete it there and add it again.
+    [/^broken-file:/, "debridBrokenFile", "redoInDebrid"],
     // Before STALE_PARTIAL: a full disk fails "write partial file".
     [/no space left|ENOSPC/i, "noSpace", "freeThenResume"],
     [/partial files were deleted/i, "partialDeleted", "restart"],
@@ -40,7 +43,7 @@ import { t } from '../i18n/core.js';
   var PLAIN = /ShadowMount|from another source holds this name/;
   // 0.5.4: refusals a retry only meets again (the same bytes give the same answer), so the way on is another
   // source: the card and the game page offer that in place of Retry.
-  var FINAL = ["archiveTooLarge", "archivePassword", "missingParts"];
+  var FINAL = ["archiveTooLarge", "archivePassword", "missingParts", "debridBrokenFile"];
   function explainError(error2, set = false) {
     const message = cause(error2);
     if (PLAIN.test(message)) return { title: message, action: "" };

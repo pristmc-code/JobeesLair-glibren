@@ -601,6 +601,38 @@ test('debrid link: renewals that bring no bytes back off (30 s, 2 min, 10 min), 
   assert.equal(job.release.debrid?.service, 'torbox', 'not switched to another source: the link, not the source');
 });
 
+// glibren.13: TorBox kept the original site's error page (170 bytes) as the file (a user's bgdl.log, 07/11/2026).
+test('glibren.13: a broken copy at the debrid service (payload broken-file, or the engine reading a web page) fails once: no renewal, no retry, no other source', async () => {
+  for (const message of [
+    'broken-file: TorBox has a broken copy of this file: it holds a web page (an error from the original site, 170 bytes) instead of the game. Delete it in TorBox and add it again.',
+    'provider returned a web page; browser verification required'
+  ]) {
+    const fs = memoryFs();
+    let links = 0;
+    const sources = { resolve: async () => ({ url: `https://store.torbox.example/dl/${++links}` }) };
+    const downloads = engine(fs, () => ({ error: new Error(`Downloads.enqueue /data/x: ${message}`) }));
+    const notices = [];
+    const queue = queueWith({ fs, downloads, sources, notices });
+    const states = new Set();
+    queue.subscribe((jobs) => jobs.forEach((item) => states.add(item.state)));
+    const job = await settle(queue, queue.enqueue(game, debridPage(), '/data', [image('Game.exfat', 'https://other.example/Game.exfat')]));
+    assert.equal(job.state, 'failed');
+    assert.equal(links, 1, `no new link asked (${message})`);
+    assert.equal(downloads.requests.length, 1, 'one try only');
+    assert.match(job.error, /^broken-file: TorBox has a broken copy of this file: it holds a web page/);
+    assert.ok(!job.retryAt, 'nothing scheduled by itself');
+    assert.equal(job.release.debrid?.service, 'torbox', 'not switched to another source');
+    assert.ok(!states.has('awaiting-browser'), 'never the browser');
+    assert.equal(job.renewal, undefined);
+    assert.equal(queue.snapshot().length, 1, 'no new jobs');
+  }
+  const { explainError, finalError } = await import(pathToFileURL(path.join(repo, 'app/downloads/errors.js')).href);
+  const shown = explainError('broken-file: TorBox has a broken copy of this file: it holds a web page (an error from the original site, 170 bytes) instead of the game.');
+  assert.equal(shown.title, 'The debrid service has a broken copy of this file');
+  assert.match(shown.action, /Delete it in TorBox/);
+  assert.ok(finalError('broken-file: x'), 'a retry would meet it again');
+});
+
 test('debrid link: at most six renewals an hour', async () => {
   const fs = memoryFs();
   let links = 0;

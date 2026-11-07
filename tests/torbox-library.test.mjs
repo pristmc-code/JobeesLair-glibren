@@ -102,6 +102,32 @@ test('a game is also found in the account (by its code or by every word of its n
   assert.deepEqual(seven.files.map((f) => [f.name, f.via]), [['PPSA00007.exfat', 'torrent']]);
 });
 
+// glibren.13: TorBox kept the original site's error page (170 bytes) as a game's .pkg (a user's log, 07/11/2026).
+test('glibren.13: a game file under 1 MiB is a broken copy: marked, listed last and never the recommended one', async () => {
+  const games = [game(3, { id: 'CUSA20002', title: 'Carrion', platform: 'ps4' }), game(5, { id: 'PPSA20003', title: 'Misto' })];
+  const account = {
+    webdl: [
+      { id: 31, hash: 'w31', name: 'Carrion - [EU] [EN] [1.04].pkg', size: 170, files: [{ id: 0, name: 'Carrion - [EU] [EN] [1.04].pkg', size: 170 }] },
+      { id: 32, hash: 'w32', name: 'Misto', size: 9e9, files: [{ id: 0, name: 'Misto.exfat', size: 170 }, { id: 1, name: 'Misto.pkg', size: 9e9 }] }
+    ],
+    torrent: []
+  };
+  const api = fakeApi({ holds: () => false, account });
+  const { library } = await lib.buildLibrary({ entries: entriesOf(games), api, ...quiet, ...clock() });
+  const carrion = library.games.CUSA20002.torbox;
+  assert.deepEqual(carrion.files.map((f) => [f.name, f.size, f.broken]), [['Carrion - [EU] [EN] [1.04].pkg', 170, true]]);
+  const misto = library.games.PPSA20003.torbox;
+  assert.deepEqual(misto.files.map((f) => [f.name, Boolean(f.broken)]), [['Misto.pkg', false], ['Misto.exfat', true]], 'the broken exFAT goes last, the good .pkg first');
+  assert.equal(misto.hash, 'w32');
+  assert.equal(lib.brokenFile({ size: 170, format: 'pkg' }), true);
+  assert.equal(lib.brokenFile({ size: lib.BROKEN_BYTES, format: 'pkg' }), false, '1 MiB and up is not');
+  assert.equal(lib.brokenFile({ size: 170, format: '' }), false, 'a small readme is not a game file');
+  // The phone's "Download" of the broken one never reaches the queue.
+  const { libraryFile } = await load('app/state/phone-library.js');
+  assert.throws(() => libraryFile({ via: 'account', item: { kind: 'webdl', id: 31 }, fileId: '0', file: 'Carrion - [EU] [EN] [1.04].pkg', size: 170, title: 'Carrion' }, null), /TorBox has a broken copy of this file \(170 B\)/);
+  assert.equal(libraryFile({ via: 'account', item: { kind: 'webdl', id: 32 }, fileId: '1', file: 'Misto.pkg', size: 9e9, title: 'Misto' }, null).name, 'Misto.pkg');
+});
+
 test('cancelled halfway, a run continues where it stopped (the games already checked are not asked again)', async () => {
   const games = Array.from({ length: 40 }, (_, i) => game(i + 1));
   const listeners = new Set();
