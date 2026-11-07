@@ -1,6 +1,8 @@
 // glibren.9: a escolha da versão da loja no topo do Discover (browse/StoreModeBar.jsx) e o cartão Biblioteca TorBox
 // em Configurações: desenhados sem exceção, a loja trocada pelo controle (o botão TorBox da barra), o aviso quando
 // a biblioteca nunca foi montada (e o atalho para o botão de montar), e a volta para a loja completa.
+// glibren.14: o atalho R3 (ui/StoreKey.jsx): a dica no rodapé das telas da loja, a troca e a volta, o aviso, e sem
+// biblioteca o motivo.
 // Run: npm run test:render
 import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -108,4 +110,44 @@ speedCard.keys['settings:speed:down'].onPress();
 assert.ok(speedRow().texts.includes('10 MB/s'));
 speedRow().keys['settings:speed:none'].onPress();
 assert.ok(speedRow().texts.includes('No limit'));
-console.log(`OK: TorBox store bar and Settings card (${ids.length} confirmed ids); speed limit − / +`);
+// glibren.14: R3. O rodapé das telas da loja traz a dica, com a loja para a qual ele troca; as outras telas não.
+const { Legend } = await load('app/ui/Legend.jsx');
+const footer = (screen) => draw(`Rodapé (${screen}, loja ${mode.storeMode()})`, { type: Legend, props: { screen } }).texts;
+for (const screen of ['browse', 'game', 'search']) {
+  const shown = footer(screen);
+  assert.ok(shown.includes('R3') && shown.includes('TorBox store'), `${screen}: ${shown.join('|')}`);
+  assert.equal(shown.at(-1), 'TorBox store', `${screen}: the last hint`);
+}
+for (const text of ['Select', 'Preview', 'Menu', 'Sections']) assert.ok(footer('browse').includes(text), `the other hints stay: ${text}`);
+for (const screen of ['homebrew', 'settings']) assert.ok(!footer(screen).includes('R3'), `${screen}: no R3`);
+const { StoreKey, pressStoreKey, storeKeyNotice } = await load('app/ui/StoreKey.jsx');
+const { t } = await load('app/i18n/core.js');
+const { Toast } = await load('app/ui/Toast.jsx');
+const toast = (result) => draw('Aviso do R3', { type: Toast, props: storeKeyNotice(result, t) }).texts;
+// Desenhado sem exceção (aqui sem a pilha de telas: não ouve nada nem mostra aviso).
+draw('StoreKey', { type: StoreKey, props: {} });
+const focusedAt = [];
+const nav = { focusLater: (key) => focusedAt.push(key) };
+// R3 no Discover: a loja TorBox, o foco na barra (a página é montada de novo), e o aviso com quantos jogos.
+const toTorBox = pressStoreKey('browse', nav);
+assert.deepEqual([toTorBox.ok, toTorBox.mode, mode.storeMode()], [true, 'torbox', 'torbox']);
+assert.equal(toTorBox.count, games.length);
+assert.deepEqual(focusedAt, ['storemode:torbox']);
+const shownTorBox = toast(toTorBox);
+for (const text of ['Store switched', 'TorBox store', `${games.length} games`]) assert.ok(shownTorBox.includes(text), `${text}: ${shownTorBox.join('|')}`);
+assert.equal(footer('browse').at(-1), 'Full store', 'now R3 goes back to the full store');
+// R3 na ficha do jogo: de volta à completa, sem mexer no foco.
+const toFull = pressStoreKey('game', nav);
+assert.deepEqual([toFull.ok, toFull.mode, games.length], [true, 'full', full]);
+assert.deepEqual(focusedAt, ['storemode:torbox']);
+assert.ok(toast(toFull).includes('Full store'));
+// Fora das telas da loja não vale.
+assert.equal(pressStoreKey('settings', nav), null);
+assert.equal(mode.storeMode(), 'full');
+// Sem biblioteca: o motivo, e a loja não muda.
+files.delete('/download0/JobeesLair/torbox-lista.json');
+const never = pressStoreKey('search', nav);
+assert.deepEqual([never.ok, never.reason, mode.storeMode(), games.length], [false, 'never', 'full', full]);
+const shownNever = toast(never);
+for (const text of ["Can't switch the store", en['storeMode.never']]) assert.ok(shownNever.includes(text), `${text}: ${shownNever.join('|')}`);
+console.log(`OK: TorBox store bar and Settings card (${ids.length} confirmed ids); speed limit − / +; R3 store key`);

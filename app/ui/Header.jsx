@@ -15,6 +15,7 @@ import { useWishlist } from '../state/store.jsx';
 import { openUpdateDialog, useInstall, useUpdate } from '../state/update.js';
 import { ButtonGlyph } from './ButtonHints.jsx';
 import { DownloadToast } from './DownloadToast.jsx';
+import { StoreKey } from './StoreKey.jsx';
 import { DownloadsBadge } from './DownloadsBadge.jsx';
 import { FocusRing } from './FocusRing.jsx';
 import { Logo } from './Logo.jsx';
@@ -124,6 +125,8 @@ import { hb } from '../homebrew/palette.js';
     return /* @__PURE__ */ (0, jsxs)(FocusScope, { onAction, onBack, children: [
       children,
       /* @__PURE__ */ (0, jsx)(DownloadToast, { actionRef: toastAction }),
+      // glibren.14: R3 troca a versão da loja, ao lado de L1/R1 (seções), em qualquer tela da loja.
+      jsx(StoreKey, {}),
       /* @__PURE__ */ (0, jsx)(QuickPreview, {}),
       // The island: one floating glass bar at the top, centered. Pages start under it, so it never
       // covers what scrolls (and the engine keeps copying scrolled pixels instead of repainting).

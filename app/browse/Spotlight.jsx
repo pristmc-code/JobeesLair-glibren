@@ -4,6 +4,8 @@
 // MODIFIED: a full-width hero banner; its slides are picked from a thumbnail strip over its lower right
 // (HeroThumbs) instead of a list beside it, and Down leads to the Featured lane.
 // MODIFIED (0.5.3): top games, a new few each launch (browse/featured.js), and X on a thumbnail opens its game.
+// glibren.14: Cima do destaque vai para a barra "Loja: Completa | TorBox" acima dele (a versão escolhida), não
+// direto para a ilha: pulando-a, a barra só tinha foco ao abrir o Discover e depois ficava fora de alcance.
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
@@ -16,6 +18,7 @@ import { LATIN_IN_RTL, focusEnd, useLocale, useT } from '../i18n/index.js';
 import { genreLabel, summaryOf } from '../state/catalog.js';
 import { useNavActions, useNavState } from '../state/nav.jsx';
 import { useStoreActions, useWishlist } from '../state/store.jsx';
+import { STORE_BAR_UP } from './StoreModeBar.jsx';
 import { Button2 } from '../ui/Button.jsx';
 import { GameLogo, logoStyle } from '../ui/GameLogo.jsx';
 import { WishHeart } from '../ui/WishHeart.jsx';
@@ -113,7 +116,7 @@ import { colors, radius } from '../ui/colors.js';
         size: "lg",
         label: wished ? t2("browse.favorited") : t2("browse.addToFavorites"),
         focusKey: "spotlight:wish",
-        nextFocusUp: "nav:current",
+        nextFocusUp: STORE_BAR_UP(),
         nextFocusDown: FIRST_FEATURED,
         ...focusEnd(rtl, toList),
         onPress: () => toggleWish(id),
@@ -153,7 +156,7 @@ import { colors, radius } from '../ui/colors.js';
                 size: "lg",
                 label: t2("browse.viewGame"),
                 focusKey: "spotlight:cta",
-                nextFocusUp: "nav:current",
+                nextFocusUp: STORE_BAR_UP(),
                 nextFocusDown: FIRST_FEATURED,
                 onPress: () => openGame(game.id, "spotlight:cta")
               }
