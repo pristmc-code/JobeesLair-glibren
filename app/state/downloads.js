@@ -28,6 +28,7 @@ import { OLD_TITLE_ID } from './title-migration.js';
 import { TITLE_ID } from '../version.js';
 import { autoContinueParts } from './auto-continue.js';
 import { convertToExfatOn } from './exfat-convert.js';
+import { ps5PkgWarningOn } from './ps5-pkg-warning.js';
 import { online } from './online.js';
 import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileSystem, Http, Linking, Notifications, Packages, Payloads, Platform, Power } from '@ps5-react/core';
 
@@ -103,7 +104,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
     // glibren.12: PS5 games become .exfat when their download ends (Settings > Downloads); the payload converts.
     convertExfat: convertToExfatOn,
     // 0.5.4: each launch learned goes to the players' numbers (state/online.js; only with stats on).
-    onLaunch: (title, report) => !OWN_TITLES.includes(title) && online().launched({ title, ...report })
+    onLaunch: (title, report) => !OWN_TITLES.includes(title) && online().launched({ title, ...report }),
+    // glibren.16: above firmware 11.60 a PS5 package waits on Install, which warns first (Settings > Downloads).
+    warnPs5Packages: ps5PkgWarningOn
   }));
   // glibren: a change of simultaneous downloads (Settings) reaches the queue, its engine lanes and the payload at once.
   onSimultaneousDownloads(() => instance?.concurrencyChanged?.());

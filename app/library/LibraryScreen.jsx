@@ -42,6 +42,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { HINT } from '../ui/Legend.jsx';
 import { colors, radius } from '../ui/colors.js';
 import { EASE_OUT } from '../ui/ease.js';
+import { installWithPs5Warning } from '../state/ps5-pkg-warning.js';
 import { AnimatePresence, DeviceInfo, FocusScope, Image, ScrollView, Text, View, motion, useIsFocused } from '@ps5-react/core';
 
   var PER_ROW = 3, GAP = 36;
@@ -227,6 +228,14 @@ import { AnimatePresence, DeviceInfo, FocusScope, Image, ScrollView, Text, View,
       if (action.name === "seeWhy") return setSheet({ kind: "diagnosis", entry });
       if (action.name === "fixIt") return fixIt(entry);
       try {
+        // glibren.16: Install on a PS5 package asks first when the warning is on (state/ps5-pkg-warning.js).
+        if (action.name === "install") return void installWithPs5Warning(job2, () => {
+          try {
+            downloadQueue().install(job2.id);
+          } catch (error2) {
+            fail(error2);
+          }
+        });
         void Promise.resolve(downloadQueue()[action.name](job2.id)).catch(fail);
       } catch (error2) {
         fail(error2);

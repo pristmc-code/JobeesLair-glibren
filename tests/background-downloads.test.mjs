@@ -790,3 +790,27 @@ test('fila inteira (glibren.12: sistema): platform/code/file/extracting no item;
   assert.deepEqual(sent[1], { key: 'j2', name: 'Descompactando', total: 20, platform: 'ps4', code: 'CUSA00552', file: 'B.part1.rar', extracting: true });
   assert.deepEqual(sent[2], { key: 'j3', name: 'Ruim', total: 30 }, 'invalido: nada');
 });
+
+// glibren.16: a tela de Downloads le as conversoes do payload (GET /convert), inclusive as que a fila nao pediu, e pode
+// cancelar e tirar da lista; sem token (payload nunca subiu) nao pergunta nada.
+test('conversoes do payload para a tela de Downloads: lista, cancelar e esquecer; sem token, nada (glibren.16)', async () => {
+  const payload = fakePayload();
+  const conversions = [{ id: 'c1', key: 'outro', name: 'Jogo', state: 'converting', written: 5, total: 10 }];
+  const inner = payload.http.request;
+  payload.http.request = async (url, options = {}) => {
+    const path = url.replace(/^http:\/\/127\.0\.0\.1:\d+/, '');
+    if (path === '/convert' || path.startsWith('/convert/')) {
+      payload.calls.push({ method: options.method ?? 'GET', path });
+      return { status: 200, ok: true, json: async () => path === '/convert' ? { conversions } : { ok: true } };
+    }
+    return inner(url, options);
+  };
+  const wrapper = make(payload, fakeEngine());
+  assert.deepEqual(await wrapper.conversions(), conversions);
+  await wrapper.cancelConversion('c1');
+  await wrapper.forgetConversion('c1');
+  assert.deepEqual(payload.calls.filter((call) => call.path.startsWith('/convert')).map((call) => `${call.method} ${call.path}`), ['GET /convert', 'POST /convert/c1/cancel', 'POST /convert/c1/forget']);
+  payload.tokenOnDisk = false;
+  assert.equal(await wrapper.conversions(), null, 'sem token, sem pergunta');
+  assert.equal(payload.calls.filter((call) => call.path === '/convert').length, 1);
+});

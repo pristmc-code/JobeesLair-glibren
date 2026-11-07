@@ -57,6 +57,7 @@ import { laterReady } from './ui/later.js';
 import { Disclaimer } from './ui/Disclaimer.jsx';
 import { UpdateDialog } from './ui/UpdateDialog.jsx';
 import { AutoReportAsk } from './ui/AutoReportAsk.jsx';
+import { Ps5PkgWarning } from './ui/Ps5PkgWarning.jsx';
 import { startAutoReports } from './state/bug-report.js';
 import { ScreenSaver } from './ui/ScreenSaver.jsx';
 import { WhatsNew } from './ui/WhatsNew.jsx';
@@ -184,7 +185,9 @@ import './state/picture-route.js';
           immersive ? null : /* @__PURE__ */ (0, jsx)(Legend, { screen: top.name }),
           immersive ? null : jsx(AnnouncementBar, {}),
           /* @__PURE__ */ (0, jsx)(UpdateDialog, {}),
-          HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(AutoReportAsk, {})
+          HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(AutoReportAsk, {}),
+          // glibren.16: "This PS5 .pkg won't open", asked by Install on a PS5 package (state/ps5-pkg-warning.js).
+          HOMEBREW_ONLY ? null : jsx(Ps5PkgWarning, {})
         ] }),
         // 0.5.0 Pre Release 4: the one-time What's new, and the screen saver over everything.
         HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(WhatsNew, {}),

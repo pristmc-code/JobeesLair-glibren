@@ -363,3 +363,77 @@ test('BACKUP (glibren.12: detalhes): sistema, codigo, formato, partes, nomes e o
   const muitos = listed.games.find((game) => game.name === 'Muitos');
   assert.deepEqual([muitos.fileNames.length, muitos.moreFiles, muitos.parts, muitos.platform], [10, 2, 12, '']);
 });
+
+// glibren.16: a conversao na tela de Downloads do PS5: velocidade (para o tempo restante) e "Cancelar conversao", que
+// para so a conversao (o download fica, com Tentar de novo / Usar sem converter, e o original no BACKUP).
+test('Cancelar conversao: para no payload, o item fica parado com o motivo e o original; Tentar de novo recomeca; a velocidade aparece (glibren.16)', async () => {
+  const fs = memoryFs();
+  let emit = null;
+  const cancelled = [];
+  const requests = [];
+  const conv = {
+    convert(request) {
+      requests.push(request);
+      let reject;
+      const done = new Promise((_resolve, fail) => { reject = fail; });
+      return {
+        subscribe(listener) { emit = listener; return () => { emit = null; }; },
+        done,
+        cancel() { cancelled.push(request.key); reject(Object.assign(new Error('Conversion cancelled.'), { name: 'AbortError' })); },
+      };
+    },
+  };
+  const queue = queueWith({ fs, archives: extractor(fs, () => []), conv });
+  const id = queue.enqueue(ps5, release('Test.Game.rar'), '/data');
+  await until(queue, id, (job) => job.state === 'converting' && emit);
+  emit({ state: 'converting', written: 100 * 1024 * 1024, total: 1000 * 1024 * 1024 });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  emit({ state: 'converting', written: 200 * 1024 * 1024, total: 1000 * 1024 * 1024 });
+  let job = queue.snapshot().find((item) => item.id === id);
+  assert.equal(job.message, 'Converting to EXFAT');
+  assert.ok(job.bytesPerSecond > 100 * 1024 * 1024, `velocidade calculada: ${job.bytesPerSecond}`);
+  assert.equal(job.written, 200 * 1024 * 1024);
+  await queue.cancelConversion(id);
+  assert.deepEqual(cancelled, [id], 'o payload foi mandado parar');
+  job = queue.snapshot().find((item) => item.id === id);
+  assert.equal(job.state, 'failed');
+  assert.equal(job.error, en['downloads.convert.cancelled']);
+  assert.equal(job.bytesPerSecond, 0);
+  assert.ok(job.convert && job.convert.output === '/data/homebrew/PPSA01234.exfat', 'a conversao fica guardada para tentar de novo');
+  assert.ok(fs.exists('/data/BACKUP/Test Game/Test.Game.rar'), 'o original fica no BACKUP');
+  queue.retryConversion(id);
+  await until(queue, id, (item) => item.state === 'converting' && requests.length === 2);
+  assert.equal(requests[1].key, id, 'recomeca pela mesma chave');
+});
+
+// glibren.16: as conversoes que o payload faz fora da fila (state/payload-conversions.js), para a tela de Downloads.
+test('conversoes do payload fora da fila: velocidade entre leituras; as da fila, canceladas e antigas ficam de fora (glibren.16)', async () => {
+  const conversions = await load('app/state/payload-conversions.js');
+  const now = 1_800_000_000_000;
+  const at = (seconds) => now / 1e3 - seconds;
+  const base = [
+    { id: 'c1', key: 'PPSA01234/r', name: 'Na fila do app', state: 'converting', written: 10, total: 100, output: '/data/homebrew/PPSA01234.exfat', updated: at(1) },
+    { id: 'c2', key: 'gone', name: 'Fora da fila', state: 'converting', written: 1000 * 1024 * 1024, total: 4000 * 1024 * 1024, output: '/data/homebrew/PPSA05555.exfat', updated: at(1) },
+    { id: 'c3', key: 'gone2', name: 'Na fila do payload', state: 'queued', written: 0, total: 0, output: '/data/homebrew/PPSA06666.exfat', updated: at(5) },
+    { id: 'c4', key: 'gone3', name: 'Cancelada', state: 'cancelled', written: 0, total: 0, output: '/data/homebrew/PPSA07777.exfat', updated: at(5) },
+    { id: 'c5', key: 'gone4', name: 'Pronta', state: 'done', written: 50, total: 50, output: '/data/homebrew/PPSA08888.exfat', updated: at(60) },
+    { id: 'c6', key: 'gone5', name: 'Pronta e apagada', state: 'done', written: 50, total: 50, output: '/data/homebrew/PPSA09999.exfat', updated: at(60) },
+    { id: 'c7', key: 'gone6', name: 'Falhou', state: 'failed', error: 'space: needs 40 GB', written: 0, total: 0, output: '/data/homebrew/PPSA01111.exfat', updated: at(120) },
+    { id: 'c8', key: 'gone7', name: 'Antiga', state: 'failed', error: 'write: x', written: 0, total: 0, output: '/data/homebrew/PPSA02222.exfat', updated: at(3 * 86400) },
+  ];
+  conversions.noteConversions(base, now);
+  const later = conversions.noteConversions(base.map((item) => item.id === 'c2' ? { ...item, written: 1200 * 1024 * 1024 } : item), now + 2000);
+  assert.equal(Math.round(later.find((item) => item.id === 'c2').bytesPerSecond / (1024 * 1024)), 100, '200 MB em 2 s = 100 MB/s');
+  const jobs = [{ id: 'PPSA01234/r', state: 'converting', convert: { output: '/data/homebrew/PPSA01234.exfat' } }];
+  const shown = conversions.outsideQueue(later, jobs, { exists: (p) => p !== '/data/homebrew/PPSA09999.exfat', now: now + 2000 });
+  assert.deepEqual(shown.map((item) => item.id), ['c2', 'c3', 'c5', 'c7']);
+  assert.deepEqual(shown.filter(conversions.conversionActive).map((item) => item.id), ['c2', 'c3']);
+  // Cancelar e tirar da lista vao ao payload (a fonte que o background-downloads.js registra).
+  const asked = [];
+  conversions.setConversionSource({ list: async () => base.filter((item) => item.id !== 'c5'), cancel: async (id) => asked.push(['cancel', id]), forget: async (id) => asked.push(['forget', id]) });
+  await conversions.cancelPayloadConversion('c2');
+  await conversions.forgetPayloadConversion('c7');
+  assert.deepEqual(asked, [['cancel', 'c2'], ['forget', 'c7']]);
+  assert.ok(!conversions.payloadConversions().some((item) => item.id === 'c7'), 'tirada da lista na hora');
+  conversions.setConversionSource(null);
+});

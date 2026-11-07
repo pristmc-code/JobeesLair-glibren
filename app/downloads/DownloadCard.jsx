@@ -33,6 +33,8 @@ import { colors, radius } from '../ui/colors.js';
 import { logical, px } from '../ui/scale.js';
 import { Text, View, motion } from '@ps5-react/core';
 import { serviceName } from '../state/debrid.js';
+import { errorCode, errorDetail } from '../state/exfat-convert.js';
+import { t as t2Static } from '../i18n/core.js';
 
   var CARD_WIDTH = 900;
   var INNER = CARD_WIDTH - 2 * 28 - 2; // the padding and the border
@@ -62,6 +64,9 @@ import { serviceName } from '../state/debrid.js';
     if (state === "pausing") return { icon: "pause", label: "downloads.action.pausing", onPress: () => {
     } };
     if (BUSY.includes(state)) return { icon: "pause", label: "downloads.action.pause", onPress: () => run("pause") };
+    // glibren.16: a conversion to .exfat under way stops here (the download stays, with "Convert again" and "Use without
+    // converting"; the original stays in BACKUP). The X beside it still cancels the whole download.
+    if (state === "converting") return { icon: "x", label: "downloads.action.cancelConvert", onPress: () => run("cancelConversion") };
     if (["paused", "failed"].includes(state) && STALE_PARTIAL.test(cause(error2))) return { icon: "download", label: "downloads.action.restart", onPress: () => run("restart") };
     if (state === "paused") return { icon: "play", label: "downloads.action.resume", onPress: () => run("resume") };
     // 0.5.4: a refusal Retry would only meet again (an archive the console can't unpack): the game page,
@@ -83,7 +88,7 @@ import { serviceName } from '../state/debrid.js';
   }
   // Cancel arms on the first press (it turns into a delete for three seconds), deletes on the second: an
   // unfinished job's partial files, or a finished game from disk (ShadowMount uninstalls it first).
-  function CancelButton({ id, action, run, onFocus, onBlur }) {
+  function CancelButton({ id, action, run, onFocus, onBlur, autoFocus = false }) {
     const [armed, setArmed] = (0, useState)(false);
     (0, useEffect)(() => {
       if (!armed) return void 0;
@@ -95,6 +100,7 @@ import { serviceName } from '../state/debrid.js';
       size: "icon",
       icon: armed ? "delete" : "x",
       focusKey: `downloads-cancel:${id}`,
+      ...autoFocus ? { autoFocus } : {},
       onFocus,
       onBlur: () => {
         setArmed(false);
@@ -111,14 +117,18 @@ import { serviceName } from '../state/debrid.js';
     });
   }
   // The moving part: percentage, meter, sizes and time left, from the job's own progress.
-  function CardMeter({ id, tone, moving, complete, waiting: waiting2, label, detail: detail2 }) {
+  // glibren.16: `rate` adds the speed after the sizes (a conversion to .exfat, which has no speed trace of its own);
+  // `progress` gives the numbers directly (a conversion the payload runs outside the queue: ConversionCard).
+  function CardMeter({ id, tone, moving, complete, waiting: waiting2, label, detail: detail2, rate = false, progress: given = null }) {
     const t2 = useT();
-    const progress = useProgress(id);
+    const followed = useProgress(id);
+    const progress = given ?? followed;
     const { written = 0, total = null, bytesPerSecond = 0 } = progress ?? {};
     const fraction = complete ? 1 : fractionOf(progress);
     const percent = complete || total ? `${Math.floor(fraction * 100)}%` : "—";
     const left = moving && total && bytesPerSecond ? formatTimeLeft((total - written) / bytesPerSecond) : "";
-    const size = detail2 ?? (complete ? formatBytes(total || written) : total ? t2("download.status.progress", { done: formatBytes(written), total: formatBytes(total) }) : written ? t2("download.soFar", { size: formatBytes(written) }) : "");
+    const speed = rate && moving && bytesPerSecond ? `  \xB7  ${formatSpeed(bytesPerSecond)}` : "";
+    const size = detail2 ?? (complete ? formatBytes(total || written) : total ? t2("download.status.progress", { done: formatBytes(written), total: formatBytes(total) }) + speed : written ? t2("download.soFar", { size: formatBytes(written) }) + speed : "");
     return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 12 }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { style: { width: INNER, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" }, children: [
         waiting2 ? /* @__PURE__ */ (0, jsx)(View, { style: { width: 600 }, children: /* @__PURE__ */ (0, jsx)(ShimmerText, { textStyle: font(21, colors.fg), background: colors.surface, children: label }) }) : /* @__PURE__ */ (0, jsxs)(Text, { style: font(21, colors.fg, { width: 600, numberOfLines: 1, ellipsizeMode: "tail" }), children: [
@@ -199,7 +209,8 @@ import { serviceName } from '../state/debrid.js';
     const via = release.debrid ? t2("debrid.via").replace("TorBox", serviceName(release.debrid.service)) : null;
     const meta = [formatOf(job2, release), partOf(job2), `${release.provider} ${release.version || ""}`.trim(), via, job2.root].filter(Boolean).join(" \xB7 ");
     // 0.5.5: a busy server's download tries again by itself (download-queue.js retryLater), and says so.
-    const explained = job2.error && explainError(job2.error, Boolean(release.parts));
+    // glibren.16: a conversion's error already says what to do (downloads.convert.error.*, .cancelled): said as it is.
+    const explained = job2.error && (state === "failed" && job2.convert ? { title: job2.error, action: "" } : explainError(job2.error, Boolean(release.parts)));
     const problem = explained && job2.retryAt ? { ...explained, action: t2("downloads.retryingSoon") } : explained;
     // The file's own title id is another game's (a PKG's header, download-queue.js noteTitle): said after any problem.
     const mismatch = job2.titleMismatch ? t2("downloads.titleMismatch", { found: job2.titleMismatch, expected: job2.titleId }) : "";
@@ -230,7 +241,8 @@ import { serviceName } from '../state/debrid.js';
           complete,
           waiting: WAITING.includes(shown),
           label: shown === "finishing" ? stateLabel(shown) : readinessText(ready),
-          detail: shown === "finishing" ? t2("downloads.writingToDisk") : null
+          detail: shown === "finishing" ? t2("downloads.writingToDisk") : null,
+          rate: state === "converting"
         }),
         /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
           /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12 }, children: [
@@ -252,4 +264,60 @@ import { serviceName } from '../state/debrid.js';
     (a, b) => shapeOf(a.job) === shapeOf(b.job) && a.autoFocus === b.autoFocus
   );
 
-export { CARD_WIDTH, DownloadCard, primaryKey };
+  // ---- glibren.16: a conversion to .exfat the background payload runs outside the queue ----
+  // (state/payload-conversions.js: started with the app closed, or for a download no longer in the queue.) The same tile
+  // as a download's: chip, title, the state under it (or the error), the meter with its percentage, sizes, speed and
+  // time left; "Cancel conversion" while it runs (the payload stops it and deletes its .part; the original stays), the X
+  // to clear it from the list once it ended.
+  var CONVERSION_TEXT = { queued: "downloads.convert.queued", converting: "downloads.convert.running", verifying: "downloads.convert.verifying", done: "downloads.convert.done", failed: "downloadState.failed" };
+  var conversionKey = (item) => `conv-${item.id}`;
+  function conversionError(item) {
+    return t2Static(`downloads.convert.error.${errorCode(item.error)}`, { detail: errorDetail(item.error) });
+  }
+  function ConversionCard({ item, game, autoFocus, onCancel, onForget }) {
+    const t2 = useT();
+    const [within, setWithin] = (0, useState)(null);
+    const active = ["queued", "converting", "verifying"].includes(item.state);
+    const tone = item.state === "failed" ? RED : item.state === "done" ? GREEN : colors.accentHi;
+    const text = t2(CONVERSION_TEXT[item.state] ?? "downloads.convert.queued");
+    const note = item.state === "failed" ? conversionError(item) : t2("downloads.payloadConv.hint");
+    const focusOf = (name) => ({
+      onFocus: () => setWithin(name),
+      onBlur: () => setWithin((current) => current === name ? null : current)
+    });
+    const meta = ["EXFAT", item.label || ""].filter(Boolean).join(" \xB7 ");
+    return jsx(View, { style: { width: CARD_WIDTH, flexDirection: "row", borderRadius: radius.lg, roundedClip: true, borderWidth: 1, borderColor: within ? colors.glow : colors.line, backgroundColor: within ? colors.surface2 : colors.surface }, children: jsxs(View, { style: { flex: 1, gap: 18, padding: 28 }, children: [
+      jsxs(View, { style: { flexDirection: "row", gap: 24 }, children: [
+        jsx(Cover, { game, label: false, style: THUMB }),
+        jsxs(View, { style: { flex: 1, gap: 6 }, children: [
+          jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 14 }, children: [
+            jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: radius.sm, backgroundColor: colors.canvas2, paddingHorizontal: 12, paddingVertical: 2 }, children: [
+              jsx(View, { style: { width: 10, height: 10, borderRadius: radius.pill, backgroundColor: tone } }),
+              jsx(Text, { style: mono(16, tone, { letterSpacing: 1.5 }), children: fitBytes(t2(item.state === "done" ? "downloads.convert.done" : item.state === "failed" ? "downloadState.failed" : "downloadState.converting").toUpperCase(), 96) })
+            ] }),
+            jsx(View, { style: { borderRadius: radius.sm, backgroundColor: colors.canvas2, paddingHorizontal: 12, paddingVertical: 2 }, children: jsx(Text, { style: mono(16, colors.accentHi, { letterSpacing: 1.5 }), children: fitBytes(t2("downloads.background.chip").toUpperCase(), 96) }) }),
+            jsx(Text, { style: mono(17, colors.subtle, { flex: 1, numberOfLines: 1, ellipsizeMode: "tail" }), children: meta })
+          ] }),
+          jsx(Text, { style: font(27, colors.fg, { fontWeight: 600, numberOfLines: 1, ellipsizeMode: "tail", letterSpacing: 0.4 }), children: item.name || game?.title || "" }),
+          jsx(Text, { style: font(20, item.state === "failed" ? RED : colors.muted, { numberOfLines: 1, ellipsizeMode: "tail" }), children: note || " " })
+        ] })
+      ] }),
+      jsx(CardMeter, {
+        id: conversionKey(item),
+        tone,
+        moving: item.state === "converting",
+        complete: item.state === "done",
+        waiting: item.state === "queued" || item.state === "verifying",
+        label: text,
+        rate: true,
+        progress: { written: item.written || 0, total: item.total || null, bytesPerSecond: item.bytesPerSecond || 0 }
+      }),
+      jsx(View, { style: { flexDirection: "row", gap: 12 }, children: active ? [
+        jsx(Button2, { variant: "primary", icon: "x", label: t2("downloads.action.cancelConvert"), style: { minWidth: 230 }, autoFocus, focusKey: primaryKey(conversionKey(item)), ...focusOf("main"), onPress: () => onCancel(item) }, "cancel")
+      ] : [
+        jsx(CancelButton, { id: conversionKey(item), action: "clear", autoFocus, run: () => onForget(item), ...focusOf("clear") }, "clear")
+      ] })
+    ] }) });
+  }
+
+export { CARD_WIDTH, CancelButton, ConversionCard, DownloadCard, conversionKey, primaryKey };

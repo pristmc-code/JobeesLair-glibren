@@ -183,4 +183,42 @@ assert.ok(!settingsFeeds.some((text) => /Up to \d+ feeds/.test(text)), 'no limit
 const { FeedFilePicker } = await load('app/ui/FeedFilePicker.jsx');
 const picker = await screen('Feed file picker (glibren.14)', { type: FeedFilePicker, props: { roots: ['/data', '/mnt/usb0'], onPick() {}, onClose() {} } });
 assert.ok(picker.includes('Choose a feed file') && picker.includes('/data') && picker.includes('/mnt/usb0') && picker.includes("Jobee'sLair folder"), picker.join('|'));
+// glibren.16: the Downloads screen shows the conversions to .exfat: a download being converted (it was in no section,
+// so it never showed), with Cancel conversion, its speed and the summary's "1 converting"; and one the payload converts
+// outside the queue (state/payload-conversions.js), as its own card. Then the PS5 .pkg warning: its Settings row and
+// the dialog Install opens on firmware 12.00.
+const { noteConversions } = await load('app/state/payload-conversions.js');
+const { DownloadsScreen } = await load('app/downloads/DownloadsScreen.jsx');
+file('/data/homebrew/PPSA08888.exfat', 30 * GB);
+const nowS = Math.floor(Date.now() / 1e3);
+noteConversions([
+  { id: 'c2', key: 'gone', name: 'Payload Game', state: 'converting', written: 12 * GB, total: 40 * GB, output: '/data/homebrew/PPSA05555.exfat', label: 'PPSA05555', updated: nowS },
+  { id: 'c5', key: 'gone2', name: 'Payload Done', state: 'done', written: 30 * GB, total: 30 * GB, output: '/data/homebrew/PPSA08888.exfat', label: 'PPSA08888', updated: nowS - 60 },
+  { id: 'c7', key: 'gone3', name: 'Payload Failed', state: 'failed', error: 'space: needs 40 GB, 12 GB free', output: '/data/homebrew/PPSA01111.exfat', updated: nowS - 60 }
+]);
+const libraryJobs = globalThis.__fake.jobs;
+globalThis.__fake.jobs = [job(a, 'converting', { written: 8 * GB, total: 20 * GB, bytesPerSecond: 150e6, message: en['downloads.convert.running'], convert: { kind: 'archive', output: `/data/homebrew/${a.id}.exfat` } })];
+const downloadsScreen = await screen('Downloads (glibren.16: conversions)', { type: DownloadsScreen, props: { onBack() {}, onOpenGame() {} } });
+globalThis.__fake.jobs = libraryJobs;
+const { downloadsSummary } = await load('app/downloads/DownloadsScreen.jsx');
+const { outsideQueue } = await load('app/state/payload-conversions.js');
+const { payloadConversions } = await load('app/state/payload-conversions.js');
+const converting = [job(a, 'converting'), job(b, 'downloading'), job(c, 'installed')];
+assert.equal(downloadsSummary(converting, outsideQueue(payloadConversions(), converting, { exists: fs.exists })), '1 in progress · 2 converting · 1 completed', 'the summary counts the conversions');
+assert.ok(downloadsScreen.includes('Cancel conversion'), 'Cancel conversion on the card being converted and on the payload one');
+assert.ok(downloadsScreen.includes(a.title) && downloadsScreen.includes('Payload Game') && downloadsScreen.includes('Payload Done') && downloadsScreen.includes('Payload Failed'), downloadsScreen.join('|'));
+assert.ok(downloadsScreen.some((text) => /^12 GB of 40 GB/.test(text)), 'the payload conversion says how far it is');
+assert.ok(downloadsScreen.includes(en['downloads.payloadConv.hint']), 'one outside the queue says so');
+assert.ok(downloadsScreen.some((text) => text.startsWith('Not enough space for the .exfat: needs 40 GB, 12 GB free')), 'a failed one says why');
+assert.ok(downloadsScreen.includes('Ready (EXFAT)'), 'a finished one');
+const settingsWarn = await screen('Settings (Downloads, glibren.16)', { type: SettingsScreen, props: { onBack() {}, start: 'downloads' } });
+assert.ok(settingsWarn.includes("Warn that PS5 .pkg files won't open on this firmware"), settingsWarn.join('|'));
+const { Ps5PkgWarning } = await load('app/ui/Ps5PkgWarning.jsx');
+const warning = await load('app/state/ps5-pkg-warning.js');
+assert.equal(await screen('PS5 .pkg warning (closed)', { type: Ps5PkgWarning, props: {} }).then((out) => out.length), 0, 'nothing until Install asks');
+warning.installWithPs5Warning({ id: 'PPSA01234/r', titleId: 'PPSA01234', title: 'Test Game', packages: ['/data/BACKUP/Test Game/PPSA01234.pkg'] }, () => {}, '12.00');
+const warned = await screen('PS5 .pkg warning (glibren.16)', { type: Ps5PkgWarning, props: {} });
+assert.ok(warned.includes("This PS5 .pkg won't open") && warned.includes('Install anyway') && warned.includes('Cancel') && warned.includes("Don't warn me again"), warned.join('|'));
+assert.ok(warned.some((text) => /don't open on firmware 12\.00 \(only up to 11\.60\)/.test(text)), warned.join('|'));
+warning.answerPs5PkgWarning('cancel');
 console.log(`\nOK: ${rendered} components rendered without an exception`);

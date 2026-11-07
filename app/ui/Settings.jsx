@@ -31,6 +31,7 @@ import { HOMEBREW_ONLY } from '../edition.js';
 import { MAX_SPEED_LIMIT, setSpeedLimit, stepSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
+import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
 import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
@@ -478,6 +479,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     const autoParts = useAutoContinueParts();
     const background = useBackgroundDownloads();
     const convertExfat = useConvertToExfat();
+    const warnPs5Pkg = usePs5PkgWarning();
     const phone = usePhoneMonitor();
     const phoneHint = !phone.on ? t2("settings.phoneMonitorDetail") : phone.address ? t2("settings.phoneMonitorAddress", { url: phone.address }) : t2("settings.phoneMonitorNoAddress");
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
@@ -491,6 +493,8 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       // glibren.12: PS5 games to .exfat (state/exfat-convert.js), and the BACKUP folder with the originals.
       jsx(Row, { focusKey: "settings:convertExfat", name: t2("settings.convertExfat"), hint: t2("settings.convertExfatDetail"), end: jsx(Switch, { on: convertExfat }), onPress: () => setConvertToExfat(!convertExfat) }),
       jsx(BackupRow, { roots: drives.roots }),
+      // glibren.16: Install on a PS5 .pkg asks first above firmware 11.60 (state/ps5-pkg-warning.js, ui/Ps5PkgWarning.jsx).
+      jsx(Row, { focusKey: "settings:warnPs5Pkg", name: t2("settings.warnPs5Pkg"), hint: t2("settings.warnPs5PkgDetail"), end: jsx(Switch, { on: warnPs5Pkg }), onPress: () => setPs5PkgWarning(!warnPs5Pkg) }),
       // glibren: a pagina do celular (state/phone-monitor.js): ver os downloads do segundo plano e, com o PIN, controla-los.
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitor", name: t2("settings.phoneMonitor"), hint: phoneHint, end: /* @__PURE__ */ (0, jsx)(Switch, { on: phone.on }), onPress: () => setPhoneMonitor(!phone.on) }),
       phone.on ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitorPin", name: t2(phone.hasPin ? "settings.phoneMonitorPinChange" : "settings.phoneMonitorPin"), hint: t2(phone.hasPin ? "settings.phoneMonitorPinDetail" : "settings.phoneMonitorNoPin"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", color: colors.muted }), onPress: () => onPhonePin(phone.hasPin ? "change" : "create") }) : null,

@@ -53,6 +53,7 @@
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
 import { originOf } from './link-formats.js';
+import { setConversionSource } from './payload-conversions.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
@@ -927,6 +928,23 @@ import { originOf } from './link-formats.js';
         }
       };
     };
+    // glibren.16: as conversoes do payload para a tela de Downloads (state/payload-conversions.js), inclusive as que a fila
+    // nao pediu. So pergunta a um payload que ja esta no ar (com token): nunca o sobe para isso. null = sem resposta.
+    wrapper.conversions = async () => {
+      const token = readToken();
+      if (!token) return null;
+      const answer = await call(token, "GET", "/convert");
+      return answer.status === 200 && Array.isArray(answer.data?.conversions) ? answer.data.conversions : null;
+    };
+    wrapper.cancelConversion = async (id) => {
+      const token = readToken();
+      if (token && id) await call(token, "POST", `/convert/${encodeURIComponent(id)}/cancel`);
+    };
+    wrapper.forgetConversion = async (id) => {
+      const token = readToken();
+      if (token && id) await call(token, "POST", `/convert/${encodeURIComponent(id)}/forget`);
+    };
+    setConversionSource({ list: wrapper.conversions, cancel: wrapper.cancelConversion, forget: wrapper.forgetConversion });
     current = wrapper;
     return wrapper;
   }

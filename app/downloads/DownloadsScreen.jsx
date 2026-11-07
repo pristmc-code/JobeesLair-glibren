@@ -4,11 +4,19 @@
 // square-edged cards, two to a row, grouped In progress / On hold / Finished. Square pauses or resumes the
 // focused card, Triangle opens its game; cancelling a card moves focus to its neighbor.
 // The queue's actions, their order and their error handling are the same as before; only the look changed.
+// MODIFIED (glibren.16): the conversions to .exfat show here too. A download being converted ("converting": it was in no
+// section, so its card never showed) is in progress, with "Cancel conversion", its speed and time left; one the payload
+// converts outside the queue (state/payload-conversions.js: started with the app closed, say) gets its own card
+// (DownloadCard.jsx ConversionCard), in progress, on hold (failed) or finished (the last 24 h). The title's summary
+// counts them ("1 converting"). Install on a PS5 package asks first when the warning is on (state/ps5-pkg-warning.js).
 
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CARD_WIDTH, DownloadCard, primaryKey } from './DownloadCard.jsx';
+import { CARD_WIDTH, ConversionCard, DownloadCard, conversionKey, primaryKey } from './DownloadCard.jsx';
+import { cancelPayloadConversion, conversionActive, forgetPayloadConversion, outsideQueue, usePayloadConversions } from '../state/payload-conversions.js';
+import { installWithPs5Warning } from '../state/ps5-pkg-warning.js';
+import { FileSystem } from '@ps5-react/core';
 import { Telemetry } from './Telemetry.jsx';
 import { DiagnosisSheet } from '../game/DiagnosisSheet.jsx';
 import { finalError } from './errors.js';
@@ -57,15 +65,23 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
       } }) : null
     ] });
   }
-  function summary(jobs) {
+  // glibren.16: `outside`: the payload's conversions the queue does not know (their running ones count as converting).
+  function summary(jobs, outside = []) {
     const count = (states) => jobs.filter((job2) => states.includes(job2.state)).length;
     return [
       [count(BUSY), "inProgress"],
+      [count(["converting"]) + outside.filter(conversionActive).length, "converting"],
       [count(["paused", "awaiting-browser"]), "paused"],
       [count(["failed"]), "failed"],
       [count(COMPLETE), "completed"]
     ].filter(([n]) => n > 0).map(([n, key]) => t(`downloads.summary.${key}`, { count: n })).join(" \xB7 ");
   }
+  // glibren.16: a payload conversion as a row of the screen (its own card, its own key).
+  var conversionItem = (conversion) => ({ id: conversionKey(conversion), external: true, conversion });
+  var gameOfConversion = (conversion) => {
+    const titleId = /PPSA\d{5}/i.exec(`${conversion.label} ${conversion.output} ${conversion.name}`)?.[0]?.toUpperCase();
+    return (titleId && getGame(titleId)) ?? { title: conversion.name, art: {} };
+  };
   // `anchor`: the list scrolls to the section's title when focus comes to its first row, so moving up a
   // section shows its heading; the first section is anchored with the page's top instead (see below).
   function Section({ title, tone, jobs, first, handlers, anchor = true }) {
@@ -74,7 +90,7 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
     const rows = [];
     for (let at = 0; at < jobs.length; at += PER_ROW) rows.push(jobs.slice(at, at + PER_ROW));
     const rowView = (row) => /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", gap: GAP }, children: row.map(
-      (job2) => /* @__PURE__ */ (0, jsx)(
+      (job2) => job2.external ? jsx(ConversionCard, { item: job2.conversion, game: gameOfConversion(job2.conversion), autoFocus: job2 === first, onCancel: handlers.cancelConversion, onForget: handlers.forgetConversion }, job2.id) : /* @__PURE__ */ (0, jsx)(
         DownloadCard,
         {
           job: job2,
@@ -118,6 +134,9 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
     const t2 = useT();
     const { jobs: everyJob, error: error2 } = useJobs();
     const jobs = useMemo(() => everyJob.filter((job2) => !job2.cleared), [everyJob]);
+    // glibren.16: the payload's conversions the queue does not know (every job counts, cleared ones too).
+    const conversions = usePayloadConversions();
+    const outside = useMemo(() => outsideQueue(conversions, everyJob, { exists: (path) => FileSystem.exists(path) }), [conversions, everyJob]);
     (0, useEffect)(() => {
       try {
         void downloadQueue().syncInstalls();
@@ -147,6 +166,17 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
         const target = ["remove", "cancel", "clear", "deleteFromDisk"].includes(name) ? neighbor(job2) : null;
         setNote("");
         try {
+          // glibren.16: Install on a PS5 package asks first when the warning is on and the firmware is above 11.60.
+          if (name === "install") {
+            installWithPs5Warning(job2, () => {
+              try {
+                downloadQueue().install(job2.id);
+              } catch (caught) {
+                setFailure(caught.message);
+              }
+            });
+            return;
+          }
           const done2 = Promise.resolve(downloadQueue()[name](job2.id));
           // A delete says what is left to happen (ShadowMount uninstalls once the app closes, say).
           void done2.then((result) => {
@@ -174,6 +204,16 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
       },
       focusRow: (job2) => {
         focused.current = job2;
+      },
+      // glibren.16: a payload conversion outside the queue: stopped there (its .part goes; the original stays), or,
+      // once it ended, cleared from the list. Focus goes to the first card left, else the empty page's button.
+      cancelConversion: (item) => {
+        setFailure("");
+        cancelPayloadConversion(item.id).catch((caught) => setFailure(caught.message)).finally(() => focusLater(latest2.current[0] ? primaryKey(latest2.current[0].id) : EMPTY_KEY));
+      },
+      forgetConversion: (item) => {
+        setFailure("");
+        forgetPayloadConversion(item.id).catch((caught) => setFailure(caught.message)).finally(() => focusLater(latest2.current[0] ? primaryKey(latest2.current[0].id) : EMPTY_KEY));
       }
     }));
     const back2 = () => {
@@ -192,19 +232,24 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
       return true;
     };
     const placed = (job2) => job2.removingFrom ?? job2.state;
-    const active2 = jobs.filter((job2) => BUSY.includes(placed(job2)));
+    // glibren.16: a download being converted is in progress (it was in no section before, so it never showed).
+    const active2 = jobs.filter((job2) => BUSY.includes(placed(job2)) || placed(job2) === "converting");
     const stopped = jobs.filter((job2) => ["paused", "failed", "awaiting-browser"].includes(placed(job2)));
     const done = jobs.filter((job2) => COMPLETE.includes(placed(job2)));
-    const first = active2[0] ?? stopped[0] ?? done[0];
+    const outsideActive = outside.filter(conversionActive).map(conversionItem);
+    const outsideFailed = outside.filter((item) => item.state === "failed").map(conversionItem);
+    const outsideDone = outside.filter((item) => item.state === "done").map(conversionItem);
+    const shown = jobs.length + outside.length;
+    const first = active2[0] ?? outsideActive[0] ?? stopped[0] ?? outsideFailed[0] ?? done[0] ?? outsideDone[0];
     const sections = [
-      { title: "downloads.section.active", tone: colors.accentHi, jobs: active2 },
-      { title: "downloads.section.stopped", tone: "#fbbf24", jobs: stopped },
-      { title: "downloads.section.completed", tone: "#4ade80", jobs: done }
+      { title: "downloads.section.active", tone: colors.accentHi, jobs: [...active2, ...outsideActive] },
+      { title: "downloads.section.stopped", tone: "#fbbf24", jobs: [...stopped, ...outsideFailed] },
+      { title: "downloads.section.completed", tone: "#4ade80", jobs: [...done, ...outsideDone] }
     ].filter((section) => section.jobs.length);
     return /* @__PURE__ */ (0, jsx)(FocusScope, { autoFocus: true, onBack: back2, onAction, children: /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1, paddingHorizontal: 48 }, children: [
       /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", alignItems: "flex-end", paddingTop: 12, paddingBottom: 20 }, children: /* @__PURE__ */ (0, jsxs)(Text, { style: { width: 1200, fontFamily: "Exo2", fontSize: 36, fontWeight: 600, color: colors.fg, numberOfLines: 1, ellipsizeMode: "tail", lineHeight: 48, letterSpacing: 1 }, children: [
         fitBytes(t2("downloads.title"), SPAN_MAX),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontSize: 22, fontWeight: 400, color: colors.subtle }, children: jobs.length ? fitBytes(`   ${summary(jobs)}`, SPAN_MAX) : "" })
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontSize: 22, fontWeight: 400, color: colors.subtle }, children: shown ? fitBytes(`   ${summary(jobs, outside)}`, SPAN_MAX) : "" })
       ] }) }),
       failure || note ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 1800, marginBottom: 16, fontFamily: "Exo2", fontSize: 21, color: failure ? "#f87171" : colors.muted, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, children: failure || note }) : null,
       // One scroll for the whole page below the title: the library band and the telemetry scroll away
@@ -212,7 +257,7 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
       // brought the top back). The band, the telemetry and the first section are one scroll anchor: focus on
       // the first row shows as much of the top as it can, the queue's buttons beside the band all of it; each
       // later section anchors on its own title.
-      jobs.length > 0 ? /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1 }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 48, paddingBottom: 48 }, children: sections.map(
+      shown > 0 ? /* @__PURE__ */ (0, jsx)(ScrollView, { style: { flex: 1 }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 48, paddingBottom: 48 }, children: sections.map(
         (section, index) => index === 0 ? /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, children: [
           // 0.5.3: Clear finished and Cancel all beside the band, in the scroll (above it, where they were, they
           // left nothing in it to reach its top): up from the first card they bring the band and the telemetry
@@ -229,7 +274,7 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
         /* @__PURE__ */ (0, jsx)(Telemetry, { error: error2 }, "telemetry"),
         /* @__PURE__ */ (0, jsx)(Empty, { error: error2, onBack }, "empty")
       ],
-      /* @__PURE__ */ (0, jsx)(ButtonHints, { hints: jobs.length > 0 ? LIST_HINTS : EMPTY_HINTS }),
+      /* @__PURE__ */ (0, jsx)(ButtonHints, { hints: shown > 0 ? LIST_HINTS : EMPTY_HINTS }),
       /* @__PURE__ */ (0, jsx)(AnimatePresence, { children: diagnosing ? /* @__PURE__ */ (0, jsx)(DiagnosisSheet, { title: diagnosing.title, jobId: diagnosing.id, onClose: () => {
         setDiagnosing(null);
         focusLater(primaryKey(diagnosing.id));
@@ -237,4 +282,4 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
     ] }) });
   }
 
-export { DownloadsScreen };
+export { DownloadsScreen, summary as downloadsSummary };

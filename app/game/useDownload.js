@@ -7,6 +7,7 @@ import { BUSY } from '../state/download-queue.js';
 import { downloadQueue } from '../state/downloads.js';
 import { rememberDrive } from '../state/last-drive.js';
 import { sameRelease } from '../state/release-sets.js';
+import { installWithPs5Warning } from '../state/ps5-pkg-warning.js';
 
   function useDownload(game, release, root2, alternatives) {
     const [job2, setJob] = (0, useState)(null);
@@ -41,7 +42,14 @@ import { sameRelease } from '../state/release-sets.js';
             rememberDrive(root2);
           }
         } else if (BUSY.includes(job2.state) && job2.state !== "pausing" && job2.state !== "installing") queue.pause(job2.id);
-        else if (job2.state === "installer-required") queue.install(job2.id);
+        // glibren.16: a PS5 package asks first when the warning is on (state/ps5-pkg-warning.js).
+        else if (job2.state === "installer-required") installWithPs5Warning(job2, () => {
+          try {
+            queue.install(job2.id);
+          } catch (failure) {
+            setError(failure.message);
+          }
+        });
         else if (job2.state === "paused" || job2.state === "failed") {
           started.current = true;
           queue.resume(job2.id);

@@ -11,7 +11,8 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
 
   var IDLE = { count: 0, percent: null };
   function summary3(jobs) {
-    const busy = jobs.filter((job2) => BUSY.includes(job2.state));
+    // glibren.16: a download being converted to .exfat still counts (it was left out, so the badge went quiet).
+    const busy = jobs.filter((job2) => BUSY.includes(job2.state) || job2.state === "converting");
     if (!busy.length) return IDLE;
     const sized = busy.filter((job2) => job2.total > 0);
     const total = sized.reduce((sum, job2) => sum + job2.total, 0);

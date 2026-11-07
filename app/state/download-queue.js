@@ -18,7 +18,7 @@ import { archivePassword } from './archive-password.js';
 import { diagnoseLaunch, launchOutcomes } from './launch-diagnosis.js';
 import { fakelibState } from './fakelib.js';
 import { consoleFirmware, newerFirmware, ps5FakePackagesLaunch, titleRequirement } from './firmware.js';
-import { releaseType } from './release-sets.js';
+import { isPs5Package } from './ps5-pkg-warning.js';
 import { reportLink, reportOutcome } from './link-health.js';
 import { originOf, reportFormat } from './link-formats.js';
 import { BrowserRequired, RESOLVED_KINDS, archiveRefusal, cancellation, createSourceResolver, sourceKind, webURL } from './download-sources.js';
@@ -221,6 +221,9 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
     // payload through downloads.convert (background-downloads.js) unless `converter` is given (tests).
     convertExfat = () => false,
     converter = null,
+    // glibren.16: whether a PS5 package waits on Install (and its warning) above firmware 11.60 (state/ps5-pkg-warning.js,
+    // Settings; the app passes the option, on by default). Off here, as in the tests that do not ask for it.
+    warnPs5Packages = () => false,
     // 0.5.4: told each launch learned from ShadowMount's log, (title, {outcome, verdict, format, fixed, backport}),
     // for the players' numbers (state/online.js launched).
     onLaunch = () => {},
@@ -1071,16 +1074,15 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
       }
       return ["debrid", "torrent", "manifest", "unavailable"].includes(kind) ? null : source2.browserUrl || source2.url || null;
     }
-    // 0.5.5 (GitHub issue #2): a PS5 package from a source that never said it was one (so the game page gave no
-    // warning) installs whole on firmware above 11.60 and then won't start. Its install waits for the player, with
-    // the reason; Install still starts it.
+    // 0.5.5 (GitHub issue #2): a PS5 package installs whole on firmware above 11.60 and then won't start.
+    // MODIFIED (glibren.16): by the option "Warn that PS5 .pkg files won't open on this firmware" (state/ps5-pkg-warning.js,
+    // Settings, on by default): on, any PS5 package (labelled FPKG or not) waits on the usual Install button, which asks
+    // first (ui/Ps5PkgWarning.jsx); off, it installs by itself like a PS4 one. Before, only one from a source that never
+    // said it was a fake package waited, with a long reason on its card ("downloads.fpkgHeld").
     function heldPackage(job2) {
-      if (ps5FakePackagesLaunch(firmware()) !== false || releaseType(job2.release, "ps5").dumpType === "fpkg") return false;
-      const names = (job2.packages ?? [job2.downloadDestination || job2.artifact.destination]).map((path) => path.slice(path.lastIndexOf("/") + 1));
-      const ps5 = names.some((name) => /PPSA\d{5}/i.test(name) || !/CUSA\d{5}/i.test(name) && /^PPSA/i.test(job2.titleId || ""));
-      if (!ps5) return false;
-      console.log(`[download-queue] ${job2.id}: a PS5 package on firmware ${firmware()}; its install waits for the player`);
-      job2.message = t("downloads.fpkgHeld");
+      if (!warnPs5Packages() || ps5FakePackagesLaunch(firmware()) !== false || !isPs5Package(job2)) return false;
+      console.log(`[download-queue] ${job2.id}: a PS5 package on firmware ${firmware()}; its install waits for Install (and the warning)`);
+      job2.message = t("downloads.ps5PkgWaiting");
       return true;
     }
     // The engine's connections and range size for one file, from the host its bytes come from (state/download-tuning.js,
@@ -2206,9 +2208,22 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         return;
       }
       conversions.set(job2, task);
+      // glibren.16: the conversion's speed (bytes of .exfat a second, smoothed) between two readings whose bytes moved,
+      // for the card's speed and time left on the Downloads screen.
+      let sample = null;
       const off = task.subscribe?.((progress) => {
         if (job2.state !== "converting") return;
-        job2.written = progress.written || 0;
+        const written = progress.written || 0, now = Date.now();
+        if (progress.state !== "converting") {
+          job2.bytesPerSecond = 0;
+          sample = null;
+        } else if (!sample || written < sample.written) sample = { written, at: now };
+        else if (written > sample.written && now > sample.at) {
+          const rate = (written - sample.written) / ((now - sample.at) / 1e3);
+          job2.bytesPerSecond = job2.bytesPerSecond ? job2.bytesPerSecond * 0.6 + rate * 0.4 : rate;
+          sample = { written, at: now };
+        }
+        job2.written = written;
         job2.total = progress.total || null;
         job2.message = t(progress.state === "verifying" ? "downloads.convert.verifying" : progress.state === "converting" ? "downloads.convert.running" : "downloads.convert.queued");
         emit2();
@@ -3118,6 +3133,28 @@ import { destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platfo
         const job2 = find(id);
         if (job2.state !== "failed" || !job2.convert) return;
         await useWithoutConverting(job2, job2.convert);
+      },
+      /**
+       * glibren.16: "Cancel conversion" on the Downloads screen: the payload stops it (and deletes its .part); the download
+       * stays, stopped, with "Convert again" and "Use without converting", and the original stays in BACKUP.
+       */
+      async cancelConversion(id) {
+        const job2 = find(id);
+        if (job2.state !== "converting" || !job2.convert) return;
+        const spec = job2.convert;
+        job2.cancelling = true;
+        conversions.get(job2)?.cancel?.();
+        for (let tries = 0; tries < 300 && conversions.has(job2); tries++) await wait(100);
+        delete job2.cancelling;
+        if (!jobs.includes(job2)) return;
+        console.log(`[download-queue] ${job2.id}: conversion to .exfat cancelled by the player`);
+        job2.state = "failed";
+        job2.convert = { ...spec, error: "cancelled: by the player" };
+        job2.error = t("downloads.convert.cancelled");
+        job2.message = "";
+        job2.bytesPerSecond = 0;
+        change();
+        pump();
       },
       /** glibren.12: whether a conversion still reads something under `path` (a BACKUP folder about to be deleted). */
       readsFrom(path) {

@@ -160,12 +160,12 @@ function shadowMount(state) {
   };
 }
 
-function queueWith({ fs, downloads, archives, http, firmware, packages = null, onLaunch }) {
+function queueWith({ fs, downloads, archives, http, firmware, packages = null, onLaunch, warnPs5Packages }) {
   return createDownloadQueue({
     fs, downloads, http: http ?? shadowMount({ images: [], games: {} }), formats: DownloadFormats, dataDir: '/data/app', platform: 'ps5',
     notifications: { show() {} }, power: { keepAwake() {} }, linking: null,
     sources: { resolve: async (release) => ({ url: release.url }) }, archives, packages, wait: async () => {},
-    firmware: firmware ?? (() => '13.60'), onLaunch,
+    firmware: firmware ?? (() => '13.60'), onLaunch, ...warnPs5Packages ? { warnPs5Packages } : {},
   });
 }
 
@@ -3500,23 +3500,70 @@ test("an archive of packages installs the game's first and its backport's last; 
   assert.ok(!fs.exists('/data/downloads/archives/Game.zip'), 'the archive goes once it is unpacked');
 });
 
-test('a PS5 package from a source that never said so waits on Install above 11.60, with the reason; at 11.00 it installs (0.5.5, issue #2)', async () => {
+// MODIFIED (glibren.16): by the option "Warn that PS5 .pkg files won't open on this firmware" (state/ps5-pkg-warning.js).
+test('with the PS5 .pkg warning on, a PS5 package waits on the usual Install above 11.60; at 11.00, with it off, or a PS4 one, it installs by itself (glibren.16)', async () => {
   const fs = memoryFs();
   const packages = installer();
-  const queue = queueWith({ fs, downloads: engine(fs), archives: extractor(fs, { 'Game.pkg': 900 }), packages });
+  const queue = queueWith({ fs, downloads: engine(fs), archives: extractor(fs, { 'Game.pkg': 900 }), packages, warnPs5Packages: () => true });
   const id = queue.enqueue(game, image('Game.zip', 500), '/data');
   let job = await settle(queue, id);
   assert.equal(job.state, 'installer-required');
-  assert.equal(job.message, en['downloads.fpkgHeld']);
+  assert.equal(job.message, en['downloads.ps5PkgWaiting']);
   assert.deepEqual(packages.installed, [], 'not installed by itself');
   queue.install(id);
   job = await settle(queue, id);
   assert.equal(job.state, 'installed', job.error);
-  const old = memoryFs();
-  const older = installer();
-  const low = queueWith({ fs: old, downloads: engine(old), archives: extractor(old, { 'Game.pkg': 900 }), packages: older, firmware: () => '11.00' });
-  job = await settle(low, low.enqueue(game, image('Game.zip', 500), '/data'));
-  assert.equal(job.state, 'installed', 'it starts there');
+  const run = async (options, title = game) => {
+    const memory = memoryFs();
+    const done = installer();
+    const other = queueWith({ fs: memory, downloads: engine(memory), archives: extractor(memory, { 'Game.pkg': 900 }), packages: done, ...options });
+    return [await settle(other, other.enqueue(title, image('Game.zip', 500), '/data')), done];
+  };
+  const [low] = await run({ firmware: () => '11.00', warnPs5Packages: () => true });
+  assert.equal(low.state, 'installed', 'it starts there');
+  const [off] = await run({ warnPs5Packages: () => false });
+  assert.equal(off.state, 'installed', 'with the warning off it installs straight away');
+  const [unknown] = await run({ firmware: () => null, warnPs5Packages: () => true });
+  assert.equal(unknown.state, 'installed', 'an unknown firmware is not warned about');
+  const [ps4, ps4Installs] = await run({ warnPs5Packages: () => true }, { ...game, id: 'CUSA01234', titleId: 'CUSA01234' });
+  assert.equal(ps4.state, 'installed', 'a PS4 package is never held');
+  assert.equal(ps4Installs.installed.length, 1);
+});
+
+test('the PS5 .pkg warning: asked for a PPSA package above 11.60 with the option on; not for PS4, not off, not at 11.60; Install anyway / Cancel / Don\'t warn me again (glibren.16)', async () => {
+  const warn = await import(pathToFileURL(path.join(repo, 'app/state/ps5-pkg-warning.js')).href);
+  const ps5Job = { id: 'PPSA01234/r', titleId: 'PPSA01234', title: 'Test Game', packages: ['/data/BACKUP/Test Game/PPSA01234-app.pkg'] };
+  const ps4Job = { id: 'CUSA01234/r', titleId: 'CUSA01234', title: 'Old Game', packages: ['/data/PS4/CUSA01234-app.pkg'] };
+  const nameless = { id: 'x', titleId: 'PPSA04321', title: 'Nameless', downloadDestination: '/data/downloads/packages/Game.pkg' };
+  assert.equal(warn.ps5PkgWarningFor(ps5Job, '12.00', true), '12.00');
+  assert.equal(warn.ps5PkgWarningFor(nameless, '12.00', true), '12.00', 'a package named without a code, of a PPSA game');
+  assert.equal(warn.ps5PkgWarningFor(ps4Job, '12.00', true), null, 'never a PS4 package');
+  assert.equal(warn.ps5PkgWarningFor(ps5Job, '12.00', false), null, 'not with the option off');
+  assert.equal(warn.ps5PkgWarningFor(ps5Job, '11.60', true), null, 'it opens at 11.60');
+  assert.equal(warn.ps5PkgWarningFor(ps5Job, null, true), null, 'not when the firmware is unknown');
+  assert.match(en['ps5Pkg.detail'].replace('{firmware}', '12.00'), /don't open on firmware 12\.00 \(only up to 11\.60\)/);
+  // Install anyway installs; Cancel leaves it; a PS4 package installs with no question.
+  let installs = 0;
+  warn.setPs5PkgWarning(true);
+  assert.equal(warn.installWithPs5Warning(ps5Job, () => installs++, '12.00'), true, 'the warning opens');
+  assert.equal(warn.pendingPs5PkgWarning().firmware, '12.00');
+  assert.equal(installs, 0, 'nothing installs before the answer');
+  warn.answerPs5PkgWarning('install');
+  assert.equal(installs, 1, 'Install anyway installs');
+  assert.equal(warn.pendingPs5PkgWarning(), null);
+  warn.installWithPs5Warning(ps5Job, () => installs++, '12.00');
+  warn.answerPs5PkgWarning('cancel');
+  assert.equal(installs, 1, 'Cancel does not install');
+  assert.equal(warn.installWithPs5Warning(ps4Job, () => installs++, '12.00'), false);
+  assert.equal(installs, 2, 'a PS4 package installs straight away');
+  // Don't warn me again: turns the option off and installs; from then on, no question.
+  warn.installWithPs5Warning(ps5Job, () => installs++, '12.00');
+  warn.answerPs5PkgWarning('never');
+  assert.equal(installs, 3);
+  assert.equal(warn.ps5PkgWarningOn(), false, 'the option is off');
+  assert.equal(warn.installWithPs5Warning(ps5Job, () => installs++, '12.00'), false, 'no question with it off');
+  assert.equal(installs, 4);
+  warn.setPs5PkgWarning(true);
 });
 
 test('an install cut off by closing the app waits on Install at the next launch, and Install finishes it', async () => {
