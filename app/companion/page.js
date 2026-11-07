@@ -1073,7 +1073,8 @@ a.btn{text-decoration:none}
         if (remove.dataset.sure !== "1") { remove.dataset.sure = "1"; remove.textContent = s("phone.action.sure"); return; }
         api("DELETE", "/api/feeds?url=" + encodeURIComponent(f.url)).then(function (d) { renderFeeds(d); toast(s("phone.feeds.removed")); }).catch(function (e) { toast(e.message, true); });
       };
-      row.appendChild(edit); row.appendChild(mirror); row.appendChild(remove); p.appendChild(row);
+      // glibren.14: a file on the console (f.local) has no mirrors.
+      row.appendChild(edit); if (!f.local) row.appendChild(mirror); row.appendChild(remove); p.appendChild(row);
       list.appendChild(p);
     });
     if (data.feeds.some(function (f) { return f.state === "refreshing"; })) setTimeout(function () { if (view === "feeds") loadFeeds(); }, 1500);

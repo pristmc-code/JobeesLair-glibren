@@ -79,9 +79,11 @@ test('every game has a picture: the bundled ones, and the ones only the live cat
 test('the app reads the live catalog without the player adding it, and keeps a place for it', () => {
   const source = readFileSync(new URL('../app/state/feeds.js', import.meta.url), 'utf8');
   assert.match(source, /LIVE_FEED = "https:\/\/raw\.githubusercontent\.com\/JVK3R\/JobeesLair\/main\/catalog\/live\.json"/);
-  assert.match(source, /for \(const url of allFeeds\(\)\) \{\n\s+const cache = readCache/);
+  // glibren.14: a file on the console is read from its disk instead of the cache (tests/feeds-local.test.mjs).
+  assert.match(source, /for \(const url of allFeeds\(\)\) \{\n\s+const cache = isLocalFeed\(url\) \? null : readCache/);
   assert.match(source, /for \(const url of allFeeds\(\)\) await refreshFeed\(url\)/);
-  assert.match(source, /MAX_FEEDS = 3/);
+  // glibren.14: no limit of three of the player's own; only a safety ceiling.
+  assert.match(source, /MAX_FEEDS = 50/);
 });
 
 // ---- 0.5.1 Pre Release 1: AkiraBox sets by their file names, Rootz without the browser, store ratings ----

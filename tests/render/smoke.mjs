@@ -176,4 +176,11 @@ collect({ type: HeroThumbs, props: { games: picks.slice(0, 5), slides, open: (in
 assert.deepEqual(focusable.map((props) => props.focusKey), ['spotlight:0', 'spotlight:1', 'spotlight:2', 'spotlight:3', 'spotlight:4']);
 focusable[2].onPress();
 assert.deepEqual({ selected, opened }, { selected: [2], opened: [2] }, 'X shows the slide and opens its game');
+// glibren.14: no "Up to 3 feeds" any more, and "Add a file from the PS5" opens a picker over the drives.
+const settingsFeeds = await screen('Settings (Catalog feeds, glibren.14)', { type: SettingsScreen, props: { onBack() {}, start: 'feeds' } });
+assert.ok(settingsFeeds.includes('Add a feed') && settingsFeeds.includes('Add a file from the PS5'), settingsFeeds.join('|'));
+assert.ok(!settingsFeeds.some((text) => /Up to \d+ feeds/.test(text)), 'no limit of three feeds');
+const { FeedFilePicker } = await load('app/ui/FeedFilePicker.jsx');
+const picker = await screen('Feed file picker (glibren.14)', { type: FeedFilePicker, props: { roots: ['/data', '/mnt/usb0'], onPick() {}, onClose() {} } });
+assert.ok(picker.includes('Choose a feed file') && picker.includes('/data') && picker.includes('/mnt/usb0') && picker.includes("Jobee'sLair folder"), picker.join('|'));
 console.log(`\nOK: ${rendered} components rendered without an exception`);
