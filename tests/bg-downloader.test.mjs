@@ -468,7 +468,7 @@ test('pagina do celular: a tela embutida inteira (leitura lenta), status sem seg
   assert.ok(!(await page('/api/status')).data.jobs.some((item) => item.id === data.id), 'um cancelado sai da pagina');
   assert.equal((await page('/api/jobs/b999/pause', { method: 'POST', session: ok.data.session })).status, 404);
   assert.equal((await page(`/api/jobs/${data.id}/forget`, { method: 'POST', session: ok.data.session })).status, 404, 'o celular so pausa, retoma e cancela');
-  // A sessao vence (2 s neste teste; 12 h de verdade).
+  // A sessao vence sem uso (2 s neste teste; 30 dias de verdade, renovados a cada uso).
   await wait(2200);
   assert.equal((await page(`/api/jobs/${data.id}/resume`, { method: 'POST', session: ok.data.session })).status, 401);
   // PIN errado: 4 tentativas livres, a 5a bloqueia por 30 s, e nem o certo passa enquanto isso.
@@ -511,6 +511,54 @@ test('pagina do celular desligada: a porta fecha; ligada de novo, volta; um PIN 
   assert.equal(saved.monitor, true);
   assert.match(saved.pinHash, /^[0-9a-f]{64}$/);
   assert.equal(statSync(path.join(base, 'state/config.json')).mode & 0o777, 0o600);
+  await stop(child);
+});
+
+test('glibren.19: sessao do PIN em disco (so o hash): sobrevive a reiniciar, renova no uso, vence sem uso, PIN trocado derruba, limite', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const env = { BGDL_MONITOR_PORT: String(monitorPort), BGDL_SESSION_SECONDS: '4' };
+  const restart = async (old) => { await stop(old); const next = start(base, env); await up(base); await pageUp(); return next; };
+  let child = start(base, env);
+  await up(base);
+  await pageUp();
+  assert.equal((await page('/api/session')).status, 401, 'sem sessao: 401');
+  const session = await unlocked(base);
+  assert.deepEqual((await page('/api/session', { session })).data, { ok: true });
+  const file = path.join(base, 'state/sessions.json');
+  const text = readFileSync(file, 'utf8');
+  assert.ok(!text.includes(session), 'o token nunca fica em claro no disco');
+  const saved = JSON.parse(text);
+  assert.deepEqual(saved.sessions.map((s) => s.hash), [sha(session)], 'so o SHA-256 do token');
+  assert.match(saved.pin, /^[0-9a-f]{64}$/);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  // Reiniciar o payload nao derruba a sessao.
+  child = await restart(child);
+  assert.equal((await page('/api/session', { session })).status, 200, 'sobrevive a reiniciar');
+  // Renova a cada uso: usada a cada 2 s por 6 s (mais que os 4 s de validade), continua valendo; e a renovacao e gravada.
+  for (let i = 0; i < 3; i++) { await wait(2000); assert.equal((await page('/api/session', { session })).status, 200, `uso ${i + 1}`); }
+  child = await restart(child);
+  assert.equal((await page('/api/session', { session })).status, 200, 'a renovacao foi gravada');
+  // Sem uso, vence.
+  await wait(4300);
+  assert.equal((await page('/api/session', { session })).status, 401, 'vence sem uso');
+  // Limite: guarda as 16 mais recentes; a mais antiga sai.
+  const many = [];
+  for (let i = 0; i < 17; i++) many.push((await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data.session);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).sessions.length, 16);
+  assert.equal((await page('/api/session', { session: many[0] })).status, 401, 'a mais antiga saiu');
+  assert.equal((await page('/api/session', { session: many[16] })).status, 200);
+  // PIN trocado derruba todas (e limpa o arquivo); um arquivo de antes da troca nao volta a valer ao reiniciar.
+  const before = readFileSync(file, 'utf8');
+  assert.equal((await call(base, 'POST', '/config', pinConfig('135792'))).status, 200);
+  assert.equal((await page('/api/session', { session: many[16] })).status, 401, 'PIN trocado: 401');
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).sessions.length, 0, 'o arquivo fica sem sessoes');
+  await stop(child);
+  writeFileSync(file, before);
+  child = start(base, env);
+  await up(base);
+  await pageUp();
+  assert.equal((await page('/api/session', { session: many[16] })).status, 401, 'sessoes de outro PIN nao voltam');
   await stop(child);
 });
 

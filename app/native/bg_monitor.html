@@ -281,6 +281,10 @@ const speed = (b) => b >= MB ? `${nf(b / MB, b >= 10 * MB ? 0 : 1)} MB/s` : b > 
 const eta = (s) => { if (!isFinite(s) || s <= 0) return "–"; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h} h ${String(m).padStart(2, "0")} min` : m ? `${m} min` : `${s} s`; };
 
 let session = "", confirming = null, jobs = [], pinSet = true, limit = 0, maxLimit = 4, limitSet = false, maxConns = 64;
+// glibren.19: a sessao do PIN fica guardada no aparelho (o Android recarrega a WebView do Jobe Controle); o payload a
+// mantem 30 dias renovados a cada uso. lockButton() grava/apaga a guardada sempre que a sessao muda.
+const SESSION_KEY = "jobe.session";
+try { const saved = localStorage.getItem(SESSION_KEY); if (/^[0-9a-f]{32}$/.test(saved || "")) session = saved; } catch {}
 // glibren.13: limite de velocidade (MB/s inteiro de 0 a maxSpeed; 0 = sem limite; null = payload antigo, sem o botao).
 let speedLimit = null, speedLimitSet = false, maxSpeed = 1000;
 const DEMO = location.protocol === "file:" || new URLSearchParams(location.search).has("demo");
@@ -336,6 +340,7 @@ async function api(method, path, body) {
 function lockButton() {
   const b = $("lock"); b.className = session ? "lock open" : "lock";
   b.innerHTML = (session ? ICON.open : ICON.lock) + `<span>${session ? L.unlocked : L.locked}</span>`;
+  if (!DEMO) try { if (session) localStorage.setItem(SESSION_KEY, session); else localStorage.removeItem(SESSION_KEY); } catch {}
 }
 function render() {
   const list = $("list"); list.textContent = "";
@@ -694,7 +699,22 @@ lockButton(); $("statusText").textContent = L.connecting;
 if (window.JobeApp) { $("gear").hidden = false; $("gear").onclick = () => window.JobeApp.configurar(); }
 const pinned = document.querySelector(".pinned");
 addEventListener("scroll", () => pinned.classList.toggle("scrolled", scrollY > 4), { passive: true });
-refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
+const firstRefresh = refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
+// glibren.19: ao abrir, o PIN e pedido uma vez so se nao houver sessao valida (a guardada e conferida em
+// GET /api/session, que tambem a renova). Fechar a janela e permitido: ai pede na primeira acao, como antes.
+// Depois disso, so um 401 numa acao (sessao vencida ou PIN trocado) ou o cadeado pedem o PIN de novo.
+async function pinOnOpen() {
+  if (DEMO) return;
+  if (session) {
+    let r = null;
+    try { r = await api("GET", "/api/session"); } catch { return; } // sem rede: fica com a guardada
+    if (r.status !== 401) return; // 200, ou um payload antigo sem a rota: segue com a guardada
+    session = ""; lockButton();
+  }
+  await firstRefresh;
+  if (!session && lastStatus && pinSet && $("sheet").hidden) openPin();
+}
+pinOnOpen();
 </script>
 <!-- glibren: desligar o PS5 / modo de repouso (TV com defeito). Bloco separado para nao mexer no resto da pagina. -->
 <style>

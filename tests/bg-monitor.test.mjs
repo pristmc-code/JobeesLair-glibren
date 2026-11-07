@@ -32,6 +32,23 @@ test('a pagina embutida: fala so com a mesma origem, tem o aviso de PIN e o modo
   assert.match(page, /has\("demo"\)/);
 });
 
+test('glibren.19: a pagina guarda a sessao do PIN, confere ao abrir e so pede o PIN de novo num 401 ou no cadeado', () => {
+  const page = readFileSync(embed.PAGE, 'utf8');
+  assert.match(page, /const SESSION_KEY = "jobe\.session"/);
+  assert.match(page, /try \{ const saved = localStorage\.getItem\(SESSION_KEY\); if \(\/\^\[0-9a-f\]\{32\}\$\/\.test\(saved \|\| ""\)\) session = saved; \} catch \{\}/, 'le a guardada ao carregar');
+  const lock = page.slice(page.indexOf('function lockButton()'), page.indexOf('function render()'));
+  assert.match(lock, /localStorage\.setItem\(SESSION_KEY, session\)/, 'grava quando a sessao muda');
+  assert.match(lock, /localStorage\.removeItem\(SESSION_KEY\)/, 'apaga quando a sessao some (401 ou cadeado)');
+  const open = page.slice(page.indexOf('async function pinOnOpen()'), page.indexOf('pinOnOpen();'));
+  assert.ok(open.includes('api("GET", "/api/session")'), 'confere a guardada no payload');
+  assert.match(open, /if \(r\.status !== 401\) return;/, 'so um 401 descarta a guardada');
+  assert.match(open, /if \(!session && lastStatus && pinSet && \$\("sheet"\)\.hidden\) openPin\(\);/, 'pede uma vez ao abrir, sem sessao');
+  assert.ok(page.includes('pinOnOpen();\n</script>'));
+  // O cadeado e os 401 continuam zerando a sessao e passando por lockButton (que apaga a guardada).
+  assert.ok(page.includes('$("lock").onclick = () => { if (session) { session = ""; lockButton(); } else openPin(); };'));
+  for (const hit of page.matchAll(/session = "";/g)) assert.ok(page.slice(hit.index, hit.index + 40).includes('lockButton()'), 'toda limpeza passa por lockButton');
+});
+
 test('glibren.12: a pagina mostra a conversao para .exfat e a pasta BACKUP (apagar com o PIN, confirmacao na pagina)', () => {
   const page = readFileSync(embed.PAGE, 'utf8');
   for (const piece of ['/api/backup', '/api/backup/delete', 'window.convHook', 'Convertendo para EXFAT', 'Pronto (EXFAT)', 'Converting to EXFAT', 'Ready (EXFAT)', 'Pasta BACKUP', 'guarded(() => { confirmingBk', '"not-direct"', 'errors: { space:']) assert.ok(page.includes(piece), piece);

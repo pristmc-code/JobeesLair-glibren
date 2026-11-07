@@ -20,6 +20,9 @@
 //     GET  /api/status             {jobs:[{..., connectionsActive, connections (alvo), connectionsSet}], limit, maxLimit,
 //                                  maxConnections, limitSet, pinSet, speedLimit, maxSpeedLimit, speedLimitSet}
 //     POST /api/unlock             {pin} -> {session}
+//     GET  /api/session            glibren.19: 200 {ok} se a sessao (X-Session) vale, 401 se nao. A sessao vale 30 dias
+//                                  (BGDL_SESSION_SECONDS) renovados a cada uso, e fica em <dir>/sessions.json so como
+//                                  SHA-256 (sobrevive a reiniciar o payload); trocar ou remover o PIN derruba todas.
 //     POST /api/jobs/<id>/pause|resume|cancel
 //     POST /api/jobs/<id>/connections  glibren.8: {connections: 1..64 | 0/null = as do app} -> {ok, connections, connectionsSet}
 //     POST /api/config             glibren.8: {concurrency: 1..4} -> {ok, limit, limitSet}; o app adota o numero
@@ -884,7 +887,7 @@ static int g_dirty;
 static volatile int g_monitor_on = 1;
 static char g_pin_salt[65], g_pin_hash[65], g_monitor_text[300];
 static int g_monitor_announced;
-static void monitor_clear_sessions(void);
+static void monitor_clear_sessions(const char* pin_hash, int persist);
 static int g_monitor_port_now(void);
 
 // O app falou com o payload ha pouco (qualquer chamada com o token): enquanto fala, quem comeca os downloads e ele.
@@ -3013,7 +3016,7 @@ static int config_apply_locked(const ConfigBody* c) {
   if (c->has_pin_hash && strcmp(g_pin_hash, c->pin_hash)) {
     snprintf(g_pin_salt, sizeof g_pin_salt, "%s", c->pin_salt);
     snprintf(g_pin_hash, sizeof g_pin_hash, "%s", c->pin_hash);
-    monitor_clear_sessions();
+    monitor_clear_sessions(g_pin_hash, !c->from_disk);
     logf_("pagina do celular: PIN %s", g_pin_hash[0] ? "definido" : "removido");
     changed = 1;
   }
@@ -3908,21 +3911,105 @@ static void load_token(void) {
 #define MONITOR_MAX_BLOCK 900
 
 static int g_monitor_port = MONITOR_PORT;
-static int64_t g_session_seconds = 12 * 3600;
+static int64_t g_session_seconds = 30LL * 24 * 3600; // glibren.19: 30 dias, renovados a cada uso
 static volatile int g_reopen_monitor;
 static pthread_mutex_t g_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_monitor_clients;
-typedef struct { char token[33]; int64_t expires; } Session;
+// glibren.19: a sessao guarda so o SHA-256 do token (o token em claro so o celular tem). `saved` e o expires que esta
+// em sessions.json; `expires` anda a cada uso (validade deslizante de g_session_seconds, 30 dias por padrao).
+typedef struct { char hash[65]; int64_t expires, saved; } Session;
 static Session g_sessions[MONITOR_SESSIONS];
+static char g_sessions_pin[65]; // o pinHash das sessoes em g_sessions (copia, com g_monitor_lock)
 typedef struct { uint32_t ip; int failures; int64_t blocked_until, last; } Peer;
 static Peer g_peers[MONITOR_PEERS];
 
 static int g_monitor_port_now(void) { return g_monitor_port; }
 
-static void monitor_clear_sessions(void) {
+// sessions.json: {"pin": pinHash, "sessions": [{"hash": sha256(token), "expires": s}]}: as sessoes abertas pelo PIN
+// sobrevivem a reiniciar o payload. Gravado de forma atomica; o pin amarra as sessoes ao PIN que as abriu.
+static void save_sessions_locked(void) { // com g_monitor_lock
+  char path[600];
+  snprintf(path, sizeof path, "%s/sessions.json", g_dir);
+  const int64_t now = now_s();
+  Buf b = {0};
+  buf_str(&b, "{\"pin\":");
+  buf_json(&b, g_sessions_pin);
+  buf_str(&b, ",\"sessions\":[");
+  int n = 0;
+  for (int i = 0; i < MONITOR_SESSIONS; ++i) {
+    if (g_sessions[i].expires <= now || !g_sessions[i].hash[0]) continue;
+    buf_fmt(&b, "%s{\"hash\":\"%s\",\"expires\":%lld}", n++ ? "," : "", g_sessions[i].hash, (long long)g_sessions[i].expires);
+    g_sessions[i].saved = g_sessions[i].expires;
+  }
+  buf_str(&b, "]}\n");
+  if (b.failed || !b.data || !save_atomic(path, b.data, b.size, 0600)) logf_("sessions.json nao gravado: %s", strerror(errno));
+  free(b.data);
+}
+
+// O PIN mudou (ou foi removido): nenhuma sessao aberta antes vale mais.
+static void monitor_clear_sessions(const char* pin_hash, int persist) {
   pthread_mutex_lock(&g_monitor_lock);
   memset(g_sessions, 0, sizeof g_sessions);
+  snprintf(g_sessions_pin, sizeof g_sessions_pin, "%s", pin_hash);
+  if (persist) save_sessions_locked();
   pthread_mutex_unlock(&g_monitor_lock);
+}
+
+typedef struct { char pin[65]; int count; } SessionsFile;
+static int session_item_field(JP* jp, const char* key, void* ctx) {
+  Session* s = ctx;
+  if (!strcmp(key, "hash")) return jp_text(jp, s->hash, sizeof s->hash) ? 1 : -1;
+  if (!strcmp(key, "expires")) {
+    uint64_t v = 0;
+    if (!jp_uint(jp, &v)) return -1;
+    s->expires = (int64_t)v;
+    return 1;
+  }
+  return 0;
+}
+static int session_item(JP* jp, void* ctx) {
+  SessionsFile* f = ctx;
+  Session s;
+  memset(&s, 0, sizeof s);
+  if (!jp_object(jp, session_item_field, &s)) return 0;
+  if (f->count < MONITOR_SESSIONS && is_hex64(s.hash) && s.expires > now_s()) {
+    s.saved = s.expires;
+    g_sessions[f->count++] = s;
+  }
+  return 1;
+}
+static int sessions_field(JP* jp, const char* key, void* ctx) {
+  SessionsFile* f = ctx;
+  if (!strcmp(key, "pin")) return jp_text(jp, f->pin, sizeof f->pin) ? 1 : -1;
+  if (!strcmp(key, "sessions")) return jp_array(jp, session_item, f) ? 1 : -1;
+  return 0;
+}
+// Depois do load_config (com g_lock): so valem as sessoes abertas com o PIN de agora.
+static void load_sessions_locked(void) {
+  char path[600];
+  snprintf(path, sizeof path, "%s/sessions.json", g_dir);
+  size_t size = 0;
+  char* text = read_text(path, 64 * 1024, &size);
+  pthread_mutex_lock(&g_monitor_lock);
+  memset(g_sessions, 0, sizeof g_sessions);
+  snprintf(g_sessions_pin, sizeof g_sessions_pin, "%s", g_pin_hash);
+  if (text) {
+    SessionsFile f;
+    memset(&f, 0, sizeof f);
+    JP jp = {text, text + size, 0};
+    const int ok = jp_object(&jp, sessions_field, &f);
+    if (!ok || !g_pin_hash[0] || strcmp(f.pin, g_pin_hash)) memset(g_sessions, 0, sizeof g_sessions);
+    else if (f.count) logf_("pagina do celular: %d sessao(oes) do PIN guardada(s)", f.count);
+  }
+  pthread_mutex_unlock(&g_monitor_lock);
+  free(text);
+}
+
+static void session_hash(const char* token, char out[65]) {
+  Hash h;
+  hash_init(&h);
+  hash_add(&h, token, strlen(token));
+  if (!hash_finish(&h, out)) out[0] = 0;
 }
 
 static int same_text(const char* a, const char* b, size_t size) { // tempo constante
@@ -3954,25 +4041,40 @@ static void new_session(char out[33]) {
   static const char digits[] = "0123456789abcdef";
   for (int i = 0; i < 16; ++i) { out[2 * i] = digits[bytes[i] >> 4]; out[2 * i + 1] = digits[bytes[i] & 15]; }
   out[32] = 0;
+  char hash[65];
+  session_hash(out, hash);
   const int64_t now = now_s();
   pthread_mutex_lock(&g_monitor_lock);
+  // Limite de MONITOR_SESSIONS: uma vencida, ou sai a que vence antes (a usada ha mais tempo).
   int slot = 0;
   for (int i = 0; i < MONITOR_SESSIONS; ++i) {
     if (g_sessions[i].expires <= now) { slot = i; break; }
     if (g_sessions[i].expires < g_sessions[slot].expires) slot = i;
   }
-  snprintf(g_sessions[slot].token, sizeof g_sessions[slot].token, "%s", out);
+  snprintf(g_sessions[slot].hash, sizeof g_sessions[slot].hash, "%s", hash);
   g_sessions[slot].expires = now + g_session_seconds;
+  save_sessions_locked();
   pthread_mutex_unlock(&g_monitor_lock);
 }
 
+// Valida e renova: cada uso empurra a validade. O disco so e regravado quando a validade andou um trigesimo dela
+// (1 dia nos 30), para nao gravar a cada chamada.
 static int session_ok(const char* given) {
   if (strlen(given) != 32) return 0;
+  char hash[65];
+  session_hash(given, hash);
+  if (!hash[0]) return 0;
   const int64_t now = now_s();
   int ok = 0;
   pthread_mutex_lock(&g_monitor_lock);
   for (int i = 0; i < MONITOR_SESSIONS; ++i)
-    if (g_sessions[i].expires > now && same_text(g_sessions[i].token, given, 32)) ok = 1;
+    if (g_sessions[i].expires > now && same_text(g_sessions[i].hash, hash, 64)) {
+      ok = 1;
+      g_sessions[i].expires = now + g_session_seconds;
+      int64_t step = g_session_seconds / 30;
+      if (step < 1) step = 1;
+      if (g_sessions[i].expires - g_sessions[i].saved >= step) save_sessions_locked();
+    }
   pthread_mutex_unlock(&g_monitor_lock);
   return ok;
 }
@@ -6026,6 +6128,12 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
     return;
   }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/unlock")) { monitor_unlock(fd, r, ip); return; }
+  // glibren.19: a pagina confere ao abrir se a sessao guardada ainda vale (e a renova): 200 {ok} ou 401 {error:"pin"}.
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/session")) {
+    if (!session_ok(r->session)) monitor_json(fd, 401, "{\"error\":\"pin\"}");
+    else monitor_json(fd, 200, "{\"ok\":true}");
+    return;
+  }
   if (!strcmp(r->method, "POST") && !strncmp(r->path, "/api/jobs/", 10)) { monitor_action(fd, r); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/config")) { monitor_config(fd, r); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/power")) { monitor_power(fd, r); return; }
@@ -6174,8 +6282,8 @@ int main(void) {
   if (g_app_silence_ms <= 0) g_app_silence_ms = 15000;
   g_fake_free = strtoull(env_or("BGDL_FAKE_FREE_BYTES", "0"), NULL, 10);
   g_last_app_ms = mono_ms();
-  g_session_seconds = atoi(env_or("BGDL_SESSION_SECONDS", "43200"));
-  if (g_session_seconds <= 0) g_session_seconds = 12 * 3600;
+  g_session_seconds = atoll(env_or("BGDL_SESSION_SECONDS", "2592000"));
+  if (g_session_seconds <= 0) g_session_seconds = 30LL * 24 * 3600;
 #ifdef __PROSPERO__
   g_quiet_close_ms = 30000;
 #else
@@ -6221,6 +6329,7 @@ int main(void) {
   pthread_mutex_lock(&g_lock);
   load_jobs();
   load_config();
+  load_sessions_locked(); // glibren.19: as sessoes do PIN guardadas (depois do config: precisam do pinHash)
   pthread_mutex_unlock(&g_lock);
   conv_start(); // glibren.12: conversions.json (uma parada no meio recomeca limpa)
   logk_("downloads simultaneos: %d; ate %d conexoes somadas; modo quieto ao fechar o app: %lld s; powerTick: %s; %d job(s) no jobs.json",
