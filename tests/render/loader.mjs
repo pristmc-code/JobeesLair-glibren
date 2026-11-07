@@ -42,6 +42,8 @@ export const motion = { View: 'motion.View', Text: 'motion.Text' };
 export const useIsFocused = () => globalThis.__fake?.focused ?? true;
 export const useFocusActions = () => ({ focus() {}, blur() {} });
 export const Controller = { setLightBar() {}, resetLightBar() {} };
+// glibren.14: os eventos do controle (o R3 de ui/StoreKey.jsx): o último ouvinte fica em globalThis.__fake.controller.
+export const useControllerEvents = (handler) => { if (globalThis.__fake) globalThis.__fake.controller = handler; };
 export const AppRegistry = {}, Archives = {}, LayoutAnimation = {}, Linking = {}, LocalServer = {}, Notifications = { show() {} }, Packages = {}, Payloads = { send: () => ({ ok: false, error: 'desktop' }) }, Power = {}, Sound = {}, Users = {}, transitions = {};
 export const VirtualList = 'VirtualList', ReleaseImages = 'ReleaseImages';
 // 0.5.4: no console keyboard here, so search and the link dialog use the store's own keys.

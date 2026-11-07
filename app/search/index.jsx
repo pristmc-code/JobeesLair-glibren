@@ -35,6 +35,7 @@ import { askPhone } from '../state/phone-typing.js';
 import { homebrew } from '../state/homebrew-store.js';
 import { useNavActions, useNavState } from '../state/nav.jsx';
 import { useStore, useStoreActions } from '../state/store.jsx';
+import { useStoreMode } from '../state/store-mode.js';
 import { ButtonGlyph } from '../ui/ButtonHints.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
 import { useFavoriteAction } from '../ui/GameCard.jsx';
@@ -151,14 +152,16 @@ import { FocusScope, ScrollView, Text, View, motion } from '@ps5-react/core';
   var GameResults = memo(function GameResults2({ query, filters, wishlist, sort }) {
     const t2 = useT();
     const trimmed = query.trim();
+    // glibren.14: com a busca aberta, o R3 troca a versão da loja (ui/StoreKey.jsx): os resultados são refeitos.
+    const { epoch } = useStoreMode();
     const list = useMemo(() => {
       const passing = filterGames({ filters, query: "", wishlist });
       if (!trimmed) return sortGames(passing, sort);
       const passed = new Set(passing);
       return sortGames(searchGames(trimmed).filter((game) => passed.has(game)), sort);
-    }, [trimmed, filters, wishlist, sort]);
+    }, [trimmed, filters, wishlist, sort, epoch]);
     const title = trimmed ? t2("search.resultsFor", { query: trimmed }) : filters.wishlist ? t2("catalog.favorites") : t2("catalog.library");
-    const signature = JSON.stringify([trimmed, filters, sort]);
+    const signature = JSON.stringify([trimmed, filters, sort, epoch]);
     return jsxs(View, { scrollAnchor: true, style: { gap: 4 }, children: [
       jsx(Heading, { title, count: t2("catalog.gameCount", { count: list.length }), note: filters.format.includes("ready") ? t2("search.readyNote") : "" }),
       list.length ? jsx(GameGrid, { games: list, signature, enter: false }, signature) : jsx(Empty, { text: trimmed ? t2("search.noMatch", { query: trimmed }) : t2("search.noneFiltered") })

@@ -69,6 +69,15 @@ import { FileSystem, Platform } from '@ps5-react/core';
     return { ok: true, reason: "" };
   }
   /**
+   * glibren.14: o atalho R3 (ui/StoreKey.jsx): a outra versão da loja. -> { ok, reason, mode, count } (mode: a versão
+   * em que a loja ficou; count: quantos jogos ela mostra agora).
+   */
+  function toggleStoreMode() {
+    const next = mode === "full" ? "torbox" : "full";
+    const { ok, reason } = applyStoreMode(next);
+    return { ok, reason, mode, count: games.length };
+  }
+  /**
    * Um módulo que guarda o que tirou da lista da loja (as linhas do Discover, o índice da busca) refaz com
    * `rebuild` quando a versão muda; se a loja já está na versão TorBox, ele já leu a lista certa.
    */
@@ -110,4 +119,4 @@ import { FileSystem, Platform } from '@ps5-react/core';
     console.log(`[store-mode] saved choice not read: ${error?.message || error}`);
   }
 
-export { MODES, applyStoreMode, libraryChanged, onStoreMode, storeEpoch, storeMode, torBoxGames, torBoxStoreCount, useStoreMode };
+export { MODES, applyStoreMode, libraryChanged, onStoreMode, storeEpoch, storeMode, toggleStoreMode, torBoxGames, torBoxStoreCount, useStoreMode };

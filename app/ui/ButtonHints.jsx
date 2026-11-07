@@ -15,7 +15,8 @@ import { px } from './scale.js';
     square: ["M6.5 6.5h11v11h-11Z"],
     options: ["M7 8.5h10", "M7 12h10", "M7 15.5h10"]
   };
-  var CAPS = { l1: ["L1"], r1: ["R1"], l2: ["L2"], r2: ["R2"], l1r1: ["L1", "R1"], l2r2: ["L2", "R2"] };
+  // glibren.14: R3 (apertar o analógico direito), o atalho que troca a versão da loja (ui/StoreKey.jsx).
+  var CAPS = { l1: ["L1"], r1: ["R1"], l2: ["L2"], r2: ["R2"], l1r1: ["L1", "R1"], l2r2: ["L2", "R2"], r3: ["R3"] };
   function Face({ name, size }) {
     return /* @__PURE__ */ (0, jsxs)(Svg, { width: px(size), height: px(size), viewBox: "0 0 24 24", children: [
       /* @__PURE__ */ (0, jsx)(Path, { d: "M23 12a11 11 0 1 1-22 0a11 11 0 1 1 22 0", fill: colors.surface2 }),

@@ -9,6 +9,7 @@ import { SLIDE_MS } from './useSlides.js';
 import { focusEnd, focusStart, useLocale } from '../i18n/index.js';
 import { Cover } from '../ui/Cover.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
+import { STORE_BAR_UP } from './StoreModeBar.jsx';
 import { colors, radius } from '../ui/colors.js';
 import { lightGame, unlight } from '../ui/lightBar.js';
 import { Image, View, motion, useIsFocused } from '@ps5-react/core';
@@ -41,7 +42,8 @@ import { Image, View, motion, useIsFocused } from '@ps5-react/core';
     return /* @__PURE__ */ (0, jsxs)(View, {
       focusKey: `spotlight:${index}`,
       selected: active,
-      nextFocusUp: "nav:current",
+      // glibren.14: a barra da versão da loja, acima do destaque (Spotlight.jsx).
+      nextFocusUp: STORE_BAR_UP(),
       nextFocusDown,
       ...index === 0 ? focusStart(rtl, "spotlight:wish") : {},
       ...index === count - 1 ? focusEnd(rtl, `spotlight:${index}`) : {},

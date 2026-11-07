@@ -2,6 +2,8 @@
 // reconstructed from the esbuild bundle in eboot.bin
 // MODIFIED (0.5.0 Pre Release 2): the bar's left end says which side of the store this is, the game store or
 // Homebrew, each in its own color; and the hints for sorting the Homebrew section's grids.
+// glibren.14: nas telas da loja (Discover, ficha do jogo, busca) a dica R3 vai por último, com a versão da loja para
+// a qual ele troca (ui/StoreKey.jsx); só com as dicas da página (as que têm L1/R1 Seções), não as de um painel.
 
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -14,6 +16,8 @@ import { useOnline } from '../state/online.js';
 import { hb, isHomebrewSection } from '../homebrew/palette.js';
 import { colors, radius } from './colors.js';
 import { Icon } from './Icon.jsx';
+import { HOMEBREW_ONLY } from '../edition.js';
+import { useStoreMode } from '../state/store-mode.js';
 
   var HINT = {
     select: { button: "cross", label: "hints.select" },
@@ -51,6 +55,22 @@ import { Icon } from './Icon.jsx';
       };
     }, [hints]);
   }
+  // glibren.14: onde o R3 troca a loja, e a dica dele: para qual versão vai (a partir da atual).
+  var STORE_KEY_SCREENS = /* @__PURE__ */ new Set(["browse", "game", "search"]);
+  var STORE_KEY = { full: { button: "r3", label: "hints.storeTorbox" }, torbox: { button: "r3", label: "hints.storeFull" } };
+  var pageLevel = (hints) => !hints || hints.includes(HINT.sections);
+  /** Se o R3 vale agora em `screen`: tela da loja e as dicas da página à vista (nenhum painel ou teclado por cima). */
+  function storeKeyLive(screen2) {
+    return !HOMEBREW_ONLY && STORE_KEY_SCREENS.has(screen2) && pageLevel(registered2.at(-1)?.hints ?? null);
+  }
+  // A mesma lista com a dica R3 no fim, guardada por lista e versão (as Hints são memo: a lista não muda à toa).
+  var withKey = /* @__PURE__ */ new WeakMap();
+  function withStoreKey(hints, screen2, mode) {
+    if (HOMEBREW_ONLY || !STORE_KEY_SCREENS.has(screen2) || !pageLevel(hints)) return hints;
+    let both = withKey.get(hints);
+    if (!both) withKey.set(hints, both = {});
+    return both[mode] ??= [...hints, STORE_KEY[mode] ?? STORE_KEY.full];
+  }
   var Hints = (0, memo)(ButtonHints);
   // Search covers both sides (its bar shows which one), so it is marked as itself, like Settings.
   var SIDES = { browse: "store", game: "store", search: "search", homebrew: "homebrew", "homebrew-app": "homebrew", settings: "settings" };
@@ -86,11 +106,12 @@ import { Icon } from './Icon.jsx';
       setHints(registered2.at(-1)?.hints ?? null);
       return () => listeners3.delete(setHints);
     }, []);
+    const { mode } = useStoreMode();
     if (!HINTS[screen2]) return null;
     return /* @__PURE__ */ (0, jsxs)(View, { style: { position: "absolute", left: 0, right: 0, bottom: 0 }, children: [
       /* @__PURE__ */ (0, jsx)(Where, { screen: screen2 }),
-      /* @__PURE__ */ (0, jsx)(Hints, { hints: hints ?? HINTS[screen2] })
+      /* @__PURE__ */ (0, jsx)(Hints, { hints: withStoreKey(hints ?? HINTS[screen2], screen2, mode) })
     ] });
   }
 
-export { HINT, Legend, useHints };
+export { HINT, HINTS, Legend, STORE_KEY_SCREENS, storeKeyLive, useHints, withStoreKey };
