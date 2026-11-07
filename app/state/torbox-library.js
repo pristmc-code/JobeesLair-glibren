@@ -37,6 +37,7 @@
 import { isoStamp } from './clock.js';
 import { youtubeId } from './youtube.js';
 import { formatFromName } from './link-formats.js';
+import { BROKEN_BYTES, brokenFile } from './broken-copy.js';
 import { isMagnet, linkHashes, magnetHash, md5 } from '../services/torbox.js';
 import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePattern, filesOf, isBackportFile, isPiece, magnetOf, matchesGame, plain, titleWords, worthShowing } from './torbox-search.js';
 
@@ -150,9 +151,15 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
       }
     }
   }
+  // glibren.13: confirmado e com pelo menos um arquivo que nao e copia quebrada. Reaplica a regra a jogos gravados por
+  // rodadas antigas (antes dela), sem precisar montar de novo para tira-los da loja e do celular.
+  var stillConfirmed = (record) => Boolean(record?.torbox?.confirmed) && (!Array.isArray(record.torbox.files) || !record.torbox.files.length || record.torbox.files.some((file) => !brokenFile(file)));
+  var brokenOnly = (record) => Boolean(record?.torbox?.broken) || Boolean(record?.torbox?.confirmed) && !stillConfirmed(record);
+  // A marca, na lista de ids, de que ela ja segue a regra das copias quebradas (uma antiga e refeita uma vez do banco).
+  var IDS_RULES = ["broken"];
   /** A lista do payload a partir do banco: só os confirmados, em ordem de título. */
   function exportList(library, now = Date.now()) {
-    const games = Object.values(library.games).filter((record) => record.torbox?.confirmed).sort((a, b) => a.title.localeCompare(b.title)).map((record) => ({
+    const games = Object.values(library.games).filter(stillConfirmed).sort((a, b) => a.title.localeCompare(b.title)).map((record) => ({
       id: record.id,
       title: record.title,
       code: record.code,
@@ -231,7 +238,7 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     const list = exportList(library, now);
     writeAtomic(fs, paths.list, JSON.stringify(list));
     // { version: 1, builtAt, ids: ["PPSA01234", ...] }
-    writeAtomic(fs, paths.ids, JSON.stringify({ version: LIST_FORMAT, builtAt: list.builtAt, ids: list.games.map((game) => game.id) }));
+    writeAtomic(fs, paths.ids, JSON.stringify({ version: LIST_FORMAT, builtAt: list.builtAt, rules: IDS_RULES, ids: list.games.map((game) => game.id) }));
     if (gameOf && paths.details) {
       try {
         writeAtomic(fs, paths.details, JSON.stringify(exportDetails(list, gameOf)));
@@ -241,14 +248,26 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     }
   }
   /** Os ids confirmados da lista gravada (a loja TorBox, state/store-mode.js): null quando não há lista. */
+  // glibren.13: uma lista de ids gravada antes da regra das copias quebradas e refeita do banco (uma vez: a nova leva a
+  // marca), com a lista do payload; as fichas ficam (o payload as procura pelo id, uma a mais nao atrapalha).
   function readConfirmedIds(fs, paths) {
     const kept = readJson(fs, paths.ids);
-    if (kept && kept.version === LIST_FORMAT && Array.isArray(kept.ids)) return new Set(kept.ids);
+    const current = kept && kept.version === LIST_FORMAT && Array.isArray(kept.ids);
+    if (current && IDS_RULES.every((rule) => kept.rules?.includes(rule))) return new Set(kept.ids);
+    const library = readLibrary(fs, paths);
+    if (library.builtAt) {
+      try {
+        writeList(fs, paths, library);
+      } catch (error) {
+        console.log(`[torbox-library] list not rewritten: ${error?.message || error}`);
+      }
+      return new Set(Object.values(library.games).filter(stillConfirmed).map((record) => record.id));
+    }
+    if (current) return new Set(kept.ids);
     const list = readJson(fs, paths.list);
     if (list && list.version === LIST_FORMAT && Array.isArray(list.games)) return new Set(list.games.map((game) => game.id));
-    const library = readLibrary(fs, paths);
-    const ids = Object.values(library.games).filter((record) => record.torbox?.confirmed).map((record) => record.id);
-    return library.builtAt || ids.length ? new Set(ids) : null;
+    const ids = Object.values(library.games).filter(stillConfirmed).map((record) => record.id);
+    return ids.length ? new Set(ids) : null;
   }
 
   // ---- O que se sabe de um jogo ----
@@ -277,8 +296,6 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
   // glibren.13: um arquivo de jogo (imagem, pacote ou compactado) com menos de 1 MiB nao e o jogo: e uma copia quebrada no
   // TorBox (visto em 07/11/2026: um .pkg de 170 bytes que era a pagina "500 Internal Server Error" do site de origem). Fica
   // marcado ("broken"), por ultimo, e nunca e o recomendado (a pagina do celular avisa e o payload recusa baixa-lo).
-  var BROKEN_BYTES = 1024 * 1024;
-  var brokenFile = (file) => Number(file?.size) > 0 && Number(file.size) < BROKEN_BYTES && !file.piece && FORMAT_RANK.includes(file.format);
   // Os arquivos de um jogo: uma vez cada (nome e tamanho), imagens de disco primeiro, depois o maior; os quebrados no fim.
   function tidy(files) {
     const seen = /* @__PURE__ */ new Set();
@@ -374,8 +391,11 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     const files = tidy(rows);
     const best = files.find((file) => !file.broken) ?? files[0];
     const others = files.length ? [] : tidy(known);
+    // glibren.13: so copias quebradas (paginas de erro guardadas como o arquivo): nao confirma; `broken` diz quantas.
+    const good = files.some((file) => !file.broken);
     return {
-      confirmed: files.length > 0,
+      confirmed: good,
+      ...files.length && !good ? { broken: files.length } : {},
       checkedAt: isoStamp(now),
       run: runId,
       hash: best?.hash ?? null,
@@ -422,13 +442,14 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     const mine = picked.map((entry) => library.games[entry.game.id]?.torbox).filter((torbox) => torbox?.run === run.id);
     run.found = mine.filter((torbox) => torbox.confirmed).length;
     run.known = mine.filter((torbox) => torbox.known).length;
+    run.broken = mine.filter((torbox) => torbox.broken).length; // glibren.13
     const startedAt = now();
     const doneAtStart = run.done;
     let waitingUntil = null, phase = "account", lastCall = 0;
     const progress = () => {
       const segment = run.done - doneAtStart;
       const elapsed = now() - startedAt;
-      return { phase, runId: run.id, resumed: open, total: run.total, done: run.done, found: run.found, known: run.known, errors: run.errors, calls: run.calls, startedAt: run.startedAt, waitingUntil, etaMs: segment > 0 ? Math.round(elapsed / segment * (run.total - run.done)) : null };
+      return { phase, runId: run.id, resumed: open, total: run.total, done: run.done, found: run.found, known: run.known, broken: run.broken, errors: run.errors, calls: run.calls, startedAt: run.startedAt, waitingUntil, etaMs: segment > 0 ? Math.round(elapsed / segment * (run.total - run.done)) : null };
     };
     const tell = () => onProgress(progress());
     // Uma chamada ao TorBox, no ritmo e com as esperas de um 429.
@@ -571,6 +592,7 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
           run.done++;
           if (torbox.confirmed) run.found++;
           if (torbox.known) run.known++;
+          if (torbox.broken) run.broken++;
           if (torbox.error) run.errors++;
         }
         tell();
@@ -593,4 +615,4 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     return { library, progress: progress() };
   }
 
-export { BROKEN_BYTES, brokenFile, DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };
+export { BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };

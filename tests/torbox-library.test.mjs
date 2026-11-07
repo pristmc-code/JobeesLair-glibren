@@ -113,15 +113,39 @@ test('glibren.13: a game file under 1 MiB is a broken copy: marked, listed last 
     torrent: []
   };
   const api = fakeApi({ holds: () => false, account });
-  const { library } = await lib.buildLibrary({ entries: entriesOf(games), api, ...quiet, ...clock() });
+  const { library, progress } = await lib.buildLibrary({ entries: entriesOf(games), api, ...quiet, ...clock() });
   const carrion = library.games.CUSA20002.torbox;
   assert.deepEqual(carrion.files.map((f) => [f.name, f.size, f.broken]), [['Carrion - [EU] [EN] [1.04].pkg', 170, true]]);
+  // glibren.13 (Crysis 2 on a real PS5): only broken copies is not "confirmed": out of the store and the phone, counted.
+  assert.deepEqual([carrion.confirmed, carrion.broken], [false, 1]);
+  assert.deepEqual([progress.found, progress.broken, library.run.broken], [1, 1, 1]);
+  assert.deepEqual(lib.exportList(library).games.map((g) => g.id), ['PPSA20003']);
+  // A record from a run before the rule (confirmed, no "broken"): left out when read, without building again.
+  const old = { ...library, games: { ...library.games, CUSA20002: { ...library.games.CUSA20002, torbox: { ...carrion, confirmed: true, broken: void 0 } } } };
+  assert.deepEqual(lib.exportList(old).games.map((g) => g.id), ['PPSA20003']);
+  assert.equal(lib.brokenOnly(old.games.CUSA20002), true);
+  assert.equal(lib.stillConfirmed(old.games.PPSA20003), true);
+  const files = new Map();
+  const fs = { exists: (p) => files.has(p), readFile: (p) => files.get(p), writeFile: (p, text) => files.set(p, String(text)), mkdir() {}, rename: (a, b) => { files.set(b, files.get(a)); files.delete(a); } };
+  const paths = lib.libraryPaths('/home/x/JobeesLair', false);
+  lib.writeLibrary(fs, paths, old);
+  // The store's ids and the payload's list as an older version wrote them (no "rules"): rewritten once from the library.
+  files.set(paths.ids, JSON.stringify({ version: 1, builtAt: old.builtAt, ids: ['CUSA20002', 'PPSA20003'] }));
+  files.set(paths.list, JSON.stringify({ version: 1, builtAt: old.builtAt, games: [{ id: 'CUSA20002' }, { id: 'PPSA20003' }] }));
+  assert.deepEqual([...lib.readConfirmedIds(fs, paths)], ['PPSA20003']);
+  assert.deepEqual(JSON.parse(files.get(paths.ids)).ids, ['PPSA20003']);
+  assert.deepEqual(JSON.parse(files.get(paths.list)).games.map((g) => g.id), ['PPSA20003'], 'the phone list too');
+  files.set(paths.library, '{}');
+  assert.deepEqual([...lib.readConfirmedIds(fs, paths)], ['PPSA20003'], 'after that, the ids as written (the library not read again)');
   const misto = library.games.PPSA20003.torbox;
   assert.deepEqual(misto.files.map((f) => [f.name, Boolean(f.broken)]), [['Misto.pkg', false], ['Misto.exfat', true]], 'the broken exFAT goes last, the good .pkg first');
   assert.equal(misto.hash, 'w32');
   assert.equal(lib.brokenFile({ size: 170, format: 'pkg' }), true);
   assert.equal(lib.brokenFile({ size: lib.BROKEN_BYTES, format: 'pkg' }), false, '1 MiB and up is not');
   assert.equal(lib.brokenFile({ size: 170, format: '' }), false, 'a small readme is not a game file');
+  assert.equal(lib.brokenFile({ size: 300000, format: 'pkg' }), false, 'a small DLC unlock package is real (64 KiB and up)');
+  assert.equal(lib.brokenFile({ size: 300000, format: 'exfat' }), true, 'an image that small is not');
+  assert.equal(lib.brokenFile({ name: 'Crysis 2 - [EU] [EN] [1.01].pkg', size: 170 }), true, 'the format from the name');
   // The phone's "Download" of the broken one never reaches the queue.
   const { libraryFile } = await load('app/state/phone-library.js');
   assert.throws(() => libraryFile({ via: 'account', item: { kind: 'webdl', id: 31 }, fileId: '0', file: 'Carrion - [EU] [EN] [1.04].pkg', size: 170, title: 'Carrion' }, null), /TorBox has a broken copy of this file \(170 B\)/);
@@ -240,7 +264,7 @@ test('the library and the payload list are written and read back; the list has o
   assert.deepEqual(list.games[0].files[0], { name: 'game-2.exfat', size: 2e9, format: 'exfat', via: 'webdl', hash: md5('https://host.example/file/2/game-2.exfat'), release: 'r2' });
   assert.ok(!files.get(ps5.list).includes('https://host.example'), 'no links in the list');
   assert.deepEqual([...lib.readConfirmedIds(fs, ps5)], ['PPSA00002', 'PPSA00004']);
-  assert.deepEqual(JSON.parse(files.get(ps5.ids)), { version: 1, builtAt: library.builtAt, ids: ['PPSA00002', 'PPSA00004'] }, 'the store reads only the ids');
+  assert.deepEqual(JSON.parse(files.get(ps5.ids)), { version: 1, builtAt: library.builtAt, rules: ['broken'], ids: ['PPSA00002', 'PPSA00004'] }, 'the store reads only the ids');
   files.delete(ps5.ids);
   assert.deepEqual([...lib.readConfirmedIds(fs, ps5)], ['PPSA00002', 'PPSA00004'], 'else the list');
   files.set(ps5.library, '{not json');

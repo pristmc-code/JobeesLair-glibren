@@ -4374,6 +4374,7 @@ typedef struct {
   uint32_t formats;
   uint8_t platform; // 0 nao sabido, 1 ps5, 2 ps4
   uint16_t files;
+  uint8_t broken_only; // glibren.13: so copias quebradas (lista gravada antes da regra): fora da lista; a ficha avisa
 } LibGame;
 // Um arquivo da lista: via "torrent" (hash = infohash), "webdl" (hash = MD5 do link; release = a fonte no app) ou
 // "account" (item {kind, id} na conta TorBox, file = o id do arquivo); piece = parte de um arquivo dividido.
@@ -4387,7 +4388,7 @@ typedef struct {
 } LibFile;
 typedef struct {
   LibGame* games;
-  int count, cap, partial, skipped;
+  int count, cap, partial, skipped, broken;
   char built[40];
   char genres[LIB_GENRES][48];
   int genre_count;
@@ -4402,6 +4403,7 @@ typedef struct {
   const char* want; // so o jogo com este id, com os arquivos (files)
   LibFile* files;
   int file_count, found;
+  int broken_files, good_files; // glibren.13: do jogo sendo lido
 } LibParse;
 
 static pthread_mutex_t g_lib_lock = PTHREAD_MUTEX_INITIALIZER; // antes de g_lock, nunca depois
@@ -4545,6 +4547,8 @@ static int lib_file_field(JP* jp, const char* key, void* ctx) {
   }
   return 0;
 }
+#define LIB_BROKEN_BYTES (1024ull * 1024)
+static int lib_file_broken(const LibFile* f);
 static int lib_file_item(JP* j, void* ctx) {
   LibParse* p = ctx;
   jp_ws(j);
@@ -4557,6 +4561,9 @@ static int lib_file_item(JP* j, void* ctx) {
   if (lib_piece(f.name)) f.piece = 1;
   // Sem "via": um infohash (40 hex) e de torrent; um item da conta, da conta.
   if (!f.via[0]) snprintf(f.via, sizeof f.via, "%s", f.item_id[0] ? "account" : strlen(f.hash) == 40 ? "torrent" : "");
+  // glibren.13: as copias quebradas e os arquivos que valem (de jogo, um pedaco ou grande) deste jogo.
+  if (lib_file_broken(&f)) ++p->broken_files;
+  else if (lib_rank(f.format) < 99 || f.piece || f.size >= LIB_BROKEN_BYTES) ++p->good_files;
   p->files_size += f.size;
   if (p->game.files < 65535) ++p->game.files;
   // So os formatos conhecidos (um .nfo ou .txt do lado do jogo nao vira filtro).
@@ -4603,10 +4610,15 @@ static int lib_game_item(JP* j, void* ctx) {
   p->files_size = 0;
   p->listed_formats = p->file_formats = 0;
   p->file_count = 0;
+  p->broken_files = p->good_files = 0;
   if (!jp_object(j, lib_game_field, p)) return 0;
   LibGame* g = &p->game;
   if (!g->id[0]) snprintf(g->id, sizeof g->id, "%s", g->hash);
   if (!g->id[0]) { ++p->index->skipped; return 1; }
+  // glibren.13: so copias quebradas (uma lista de antes da regra do app): fora da lista do celular; a ficha (por link
+  // direto) ainda o acha, para avisar.
+  g->broken_only = p->broken_files > 0 && !p->good_files;
+  if (g->broken_only && !p->want) { ++p->index->broken; return 1; }
   if (!g->title[0]) snprintf(g->title, sizeof g->title, "%s", g->code[0] ? g->code : g->id);
   if (!g->platform) g->platform = !strncmp(g->code, "PPSA", 4) ? 1 : !strncmp(g->code, "CUSA", 4) ? 2 : 0;
   if (!g->size) g->size = p->files_size;
@@ -4693,6 +4705,7 @@ static int lib_refresh_locked(void) {
   logf_("biblioteca TorBox: %d jogo(s) lido(s) em %lld ms (%llu KiB)%s%s", g_lib->count, (long long)(mono_ms() - started),
         (unsigned long long)(g_lib_bytes / 1024), g_lib->partial ? "; lista cortada ou com erro, lido ate onde deu" : "",
         g_lib->skipped ? "; alguns itens sem id pulados" : "");
+  if (g_lib->broken) logf_("biblioteca TorBox: %d jogo(s) so com copia quebrada no TorBox, fora da lista", g_lib->broken);
   return g_lib_state = 1;
 }
 
@@ -4831,6 +4844,7 @@ static void lib_game_json(Buf* b, const LibIndex* x, const LibGame* g, int queue
   buf_str(b, ",\"genres\":");
   lib_names_json(b, &x->genres[0][0], sizeof x->genres[0], x->genre_count, g->genres);
   if (g->cover[0]) { buf_str(b, ",\"cover\":"); buf_json(b, g->cover); }
+  if (g->broken_only) buf_str(b, ",\"brokenOnly\":true"); // glibren.13
   buf_str(b, "}");
 }
 // Contagens de um filtro (formatos ou generos), da maior para a menor.
@@ -4961,13 +4975,14 @@ static int lib_whole_source(const LibParse* p) {
 // glibren.13: um arquivo de jogo (imagem, pacote ou compactado) com menos de 1 MiB nao e o jogo: e uma copia quebrada no
 // TorBox (ex.: um .pkg de 170 bytes que era a pagina "500 Internal Server Error" do site de origem). Nunca e o
 // recomendado, a ficha o marca ("broken") e "Baixar" recusa quando so ha arquivos assim. Igual a brokenFile do app
-// (app/state/torbox-library.js).
-#define LIB_BROKEN_BYTES (1024ull * 1024)
+// (app/state/torbox-library.js). LIB_BROKEN_BYTES fica junto de lib_file_item.
 static int lib_file_broken(const LibFile* f) {
   char format[16];
   copy_text(format, sizeof format, f->format);
   if (!format[0]) format_of_name(f->name, format, sizeof format);
-  return f->size > 0 && f->size < LIB_BROKEN_BYTES && !f->piece && lib_rank(format) < 99;
+  // Um pacote pode ser pequeno de verdade (DLC so de desbloqueio): para .pkg/.fpkg o limite e 64 KiB (broken-copy.js).
+  const uint64_t limit = !strcmp(format, "pkg") || !strcmp(format, "fpkg") ? 64u * 1024 : LIB_BROKEN_BYTES;
+  return f->size > 0 && f->size < limit && !f->piece && lib_rank(format) < 99;
 }
 // O arquivo que "Baixar" pega sem escolha: o de melhor formato (exFAT primeiro, como o "Procurar no TorBox"), o maior no
 // empate, nunca um pedaco de arquivo dividido nem uma copia quebrada. -1: o torrent inteiro (como um zip).

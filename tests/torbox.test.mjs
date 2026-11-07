@@ -210,6 +210,22 @@ test('debrid state: the key, which sources TorBox takes, their TorBox form, and 
   assert.equal(returned, 1);
   assert.equal(debrid.heldByTorBox(browser), true);
   assert.equal(debrid.heldByTorBox(set), false, 'part 2 is not held');
+  assert.equal(debrid.brokenAtTorBox(browser), false);
+  // glibren.13 (Crysis 2 on a real PS5): with the files, a link TorBox holds only as a broken copy (170 B of an error
+  // page as the .pkg) is not Instant: it is marked broken (the source list says so in red).
+  const crysis = { name: 'Crysis 2 - [EU] [EN] [1.01].pkg', size: 170, files: [{ id: 0, name: 'Crysis 2 - [EU] [EN] [1.01].pkg', size: 170 }] };
+  debrid.setTorBoxClient({ hosters: async () => [], cachedEntries: async (links) => new Map(links.map((link) => [link, crysis])) });
+  assert.equal(await debrid.askTorBoxInstant([FICHIER], () => () => {}), true);
+  assert.equal(debrid.heldByTorBox(browser), false, 'not Instant');
+  assert.equal(debrid.brokenAtTorBox(browser), true, 'a broken copy');
+  debrid.setTorBoxClient({ hosters: async () => [], cachedEntries: async (links) => new Map(links.map((link) => [link, { ...crysis, size: 13.7e9, files: [{ id: 0, name: 'Crysis 2.pkg', size: 13.7e9 }] }])) });
+  await debrid.askTorBoxInstant([FICHIER], () => () => {});
+  assert.deepEqual([debrid.heldByTorBox(browser), debrid.brokenAtTorBox(browser)], [true, false], 'the real file is Instant');
+  const { brokenEntry } = await load('app/state/broken-copy.js');
+  assert.equal(brokenEntry({ name: 'x', size: 9e9, files: [{ name: 'Game.pkg', size: 170 }, { name: 'Game.exfat', size: 9e9 }] }), false, 'a good file beside it');
+  assert.equal(brokenEntry({ name: 'Game.pkg', size: 170, files: [] }), true, 'the entry itself when it lists no files');
+  const { downloadFile } = await load('app/state/torbox-search.js');
+  assert.throws(() => downloadFile({ enqueue: () => assert.fail('queued') }, { id: 'CUSA18672' }, { origin: 'account', name: 'Crysis 2 - [EU] [EN] [1.01].pkg', size: 170, format: 'pkg', broken: true }, '/data'), /broken copy/);
   debrid.setTorBoxKey('');
   assert.equal(debrid.debridSupports(browser), false, 'the key removed: back to the plain sources');
   await assert.rejects(debrid.debridResolver.resolve(variant), /TorBox isn't set up any more/);

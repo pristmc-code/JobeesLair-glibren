@@ -16,6 +16,7 @@
 import { debridSource, debridSupports, rememberTorBoxItem, torBoxApi } from './debrid.js';
 import { rememberDrive } from './last-drive.js';
 import { formatFromName } from './link-formats.js';
+import { brokenFile } from './broken-copy.js';
 import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
 
   // The order the list is shown in: disk images first (exFAT before the rest), then packages, then archives.
@@ -23,7 +24,7 @@ import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
   var ORIGIN_RANK = ["account", "catalog", "list", "search"];
   // Where a row goes among the rest: files first, then a torrent's "All", then (glibren.17) the catalog's links TorBox
   // can fetch but does not hold yet, then a piece of a split archive, then what only says what it is.
-  var ROW_RANK = (file) => file.backport ? 4 : file.piece ? 3 : file.fetch ? 2 : file.whole ? 1 : 0;
+  var ROW_RANK = (file) => file.broken ? 5 : file.backport ? 4 : file.piece ? 3 : file.fetch ? 2 : file.whole ? 1 : 0;
   // A file smaller than this with no known type is a text file or a picture beside the game, not shown.
   var SMALL = 1e6;
   // Words a release name leaves out or adds, not to be matched on.
@@ -66,7 +67,9 @@ import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
   // One row of the list.
   function entry(fields) {
     const name = baseName(fields.name);
-    return { ...fields, name, format: formatFromName(name), type: typeLabel(name), piece: isPiece(name), key: `${fields.origin}:${fields.kind ?? ""}:${fields.id ?? fields.link ?? ""}:${fields.fileId ?? name}` };
+    const format = formatFromName(name), piece = isPiece(name);
+    // glibren.13: broken = TorBox's broken copy (state/broken-copy.js): listed last, and "Download" says why it won't.
+    return { ...fields, name, format, type: typeLabel(name), piece, ...!fields.fetch && brokenFile({ size: fields.size, format, piece }) ? { broken: true } : {}, key: `${fields.origin}:${fields.kind ?? ""}:${fields.id ?? fields.link ?? ""}:${fields.fileId ?? name}` };
   }
   var worthShowing = (file) => formatFromName(baseName(file.name)) || (Number(file.size) || 0) >= SMALL;
   // The files of a TorBox item or cached entry (the entry itself when it lists none); `path` keeps the folders.
@@ -419,6 +422,8 @@ import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
   function downloadFile(queue, game, file, root2) {
     if (file.piece) throw new Error("This file is one piece of a split archive. Pick the whole set from the game's links.");
     if (file.backport) throw new Error("A backport is a folder of loose files. Get it with All (the whole package).");
+    // glibren.13: a game file under 1 MiB is TorBox's broken copy (an error page kept as the file), never the game.
+    if (file.broken || !file.whole && brokenFile(file)) throw new Error("TorBox has a broken copy of this file: it is a web page, not the game. Delete it in TorBox and use another source.");
     const id = queue.enqueue(game, releaseFor(file), root2, []);
     rememberDrive(root2);
     return id;

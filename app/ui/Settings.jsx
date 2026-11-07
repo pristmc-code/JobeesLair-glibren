@@ -614,9 +614,12 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     };
     const resumable = !running && summary.open;
     const fraction = run.total ? run.done / run.total : 0;
+    // glibren.13: the games TorBox holds only as a broken copy (an error page kept as the file), left out of the store.
+    const broken = run.state === "idle" ? summary.broken : run.broken || 0;
     return jsxs(View, { scrollAnchor: true, style: CARD, children: [
       jsx(CardHead, { icon: "grid", title: t2("settings.card.torboxLibrary") }),
       jsx(Callout, { children: libraryDetail(t2, run, summary) }),
+      broken ? jsx(Callout, { tone: "warn", children: t2("tblib.broken", { count: broken }) }) : null,
       running ? jsx(ProgressBar, { fraction, width: 760, active: true }) : null,
       !debrid.configured ? jsx(Callout, { tone: "warn", children: t2("tblib.needKey") }) : null,
       notice ? jsx(Callout, { tone: "warn", children: notice }) : null,

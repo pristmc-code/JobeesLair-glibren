@@ -13,7 +13,7 @@ import { VersionFace } from './VersionSheet.jsx';
 import { captureStanding, describeSource, isCdnProvider, preferredRelease, sourceSections } from './sources.js';
 import { useT } from '../i18n/index.js';
 import { getGame, readyLabel } from '../state/catalog.js';
-import { activeService, debridSupports, heldByTorBox, serviceName, useTorBoxInstant } from '../state/debrid.js';
+import { activeService, brokenAtTorBox, debridSupports, heldByTorBox, serviceName, useTorBoxInstant } from '../state/debrid.js';
 import { downloadQueue } from '../state/downloads.js';
 import { deviceFacts } from '../state/device.js';
 import { backportAdvice, ps5FakePackagesLaunch } from '../state/firmware.js';
@@ -64,7 +64,8 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
   var RED = "#f87171";
   var GOLD = "#facc15";
   // "TorBox Instant": TorBox holds this source's file already, so it starts at once (state/debrid.js).
-  var instantBadge = (t2, release) => heldByTorBox(release) === true ? { text: t2("debrid.instant"), ink: GOLD, line: GOLD } : null;
+  // glibren.13: a link TorBox holds only as a broken copy (an error page kept as the file) says so, in red, not Instant.
+  var instantBadge = (t2, release) => heldByTorBox(release) === true ? { text: t2("debrid.instant"), ink: GOLD, line: GOLD } : brokenAtTorBox(release) ? { text: t2("debrid.brokenCopy"), ink: RED, line: RED } : null;
   // A browser source's host on this console (state/capture-hosts.js): green when its captures finish, amber
   // when they fail; nothing while it is untried.
   function captureBadge(t2, release) {

@@ -1135,6 +1135,7 @@ body.fopen{overflow:hidden}
       already: "{t} já está na fila.", fail: "Não deu para incluir. Tente de novo.", full: "A fila do PS5 está cheia.", noHash: "Este jogo não tem o torrent na lista.", noSource: "Não há como baixar esse arquivo pela lista. Abra o jogo na Jobee'sLair.",
       brokenFile: "Arquivo quebrado no TorBox ({s}): {f}. É uma página de erro guardada no lugar do jogo.",
       brokenRefused: "Arquivo quebrado no TorBox ({s}): é uma página de erro, não o jogo. Apague-o no TorBox e adicione de novo.",
+      brokenAll: "O TorBox só tem cópia quebrada deste jogo. Apague no TorBox e use outra fonte.",
       chooseTitle: "Qual arquivo baixar?", chooseText: "O recomendado já vem marcado.", whole: "Tudo (o torrent inteiro, como .zip)", back: "Voltar", files: "{n} arquivos", partsN: "{n} partes",
       open: "Abrir a ficha de {t}", close: "Fechar", photos: "Fotos", videos: "Vídeos", about: "Sobre", facts: "Detalhes", filesH: "Arquivos no TorBox",
       recommended: "Recomendado", willGet: "Vai baixar: {f}", ytTrailer: "Trailer no YouTube", ytGameplay: "Gameplay no YouTube", ytOpen: "Abrir no YouTube", ytOpenShort: "Abrir",
@@ -1155,6 +1156,7 @@ body.fopen{overflow:hidden}
       already: "{t} is already queued.", fail: "Couldn't add it. Try again.", full: "The PS5 queue is full.", noHash: "This game has no torrent in the list.", noSource: "That file can't be fetched from the list. Open the game in Jobee'sLair.",
       brokenFile: "Broken file in TorBox ({s}): {f}. It is an error page kept in place of the game.",
       brokenRefused: "Broken file in TorBox ({s}): it is an error page, not the game. Delete it in TorBox and add it again.",
+      brokenAll: "TorBox only has a broken copy of this game. Delete it in TorBox and use another source.",
       chooseTitle: "Which file?", chooseText: "The recommended one is already picked.", whole: "Everything (the whole torrent, as a .zip)", back: "Back", files: "{n} files", partsN: "{n} parts",
       open: "Open {t}", close: "Close", photos: "Photos", videos: "Videos", about: "About", facts: "Details", filesH: "Files on TorBox",
       recommended: "Recommended", willGet: "Will get: {f}", ytTrailer: "Trailer on YouTube", ytGameplay: "Gameplay on YouTube", ytOpen: "Open on YouTube", ytOpenShort: "Open",
@@ -1618,6 +1620,8 @@ body.fopen{overflow:hidden}
     // glibren.13: os arquivos quebrados no TorBox, com o tamanho, logo abaixo do botao.
     const broken = brokenOf(data);
     for (const f of broken) left.append(el("div", "fmsg broken", fill(B.brokenFile, { s: bytes(f.size), f: base(f.name) })));
+    // glibren.13: so copias quebradas (uma lista de antes da regra do app): sem "Baixar"; o que fazer, no lugar dele.
+    if (broken.length && (data.game?.brokenOnly || !choices.length)) { get.hidden = true; left.append(el("div", "fmsg broken", B.brokenAll)); }
     b.onclick = () => {
       if (g.queued) return;
       if (!choices.length && broken.length) { toast(fill(B.brokenRefused, { s: bytes(broken[0].size) }), "bad"); return; }

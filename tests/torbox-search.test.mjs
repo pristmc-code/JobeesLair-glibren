@@ -83,6 +83,19 @@ test('the account, the catalog and the search, as one list: .exfat first, pieces
   assert.ok(api.asked.includes('search PPSA05132') && api.asked.includes('search sifu'));
 });
 
+// glibren.13 (Crysis 2 on a real PS5): TorBox kept the original site's 500 page (170 B) as the .pkg.
+test('glibren.13: a game file under 1 MiB is TorBox\'s broken copy: marked, listed last, not counted, never queued', async () => {
+  const api = fakeClient();
+  const list = api.myList;
+  api.myList = async (kind) => kind === 'webdl' ? [...await list(kind), { id: 120, name: 'Sifu - [EU] [EN] [1.01].pkg', size: 170, download_finished: true, files: [{ id: 0, name: 'Sifu - [EU] [EN] [1.01].pkg', size: 170 }] }] : list(kind);
+  const { files } = await search.searchTorBox(GAME, { api });
+  const broken = files.filter((file) => file.broken);
+  assert.deepEqual(broken.map((file) => [file.name, file.size]), [['Sifu - [EU] [EN] [1.01].pkg', 170]]);
+  assert.equal(files.at(-1).broken, true, 'listed last');
+  assert.ok(files.filter((file) => file.name === 'sifu.pkg').every((file) => !file.broken), 'the real .pkg is not');
+  assert.throws(() => search.downloadFile({ enqueue: () => assert.fail('queued') }, GAME, broken[0], '/data'), /TorBox has a broken copy of this file/);
+});
+
 test('the search API not answering only says so: the account and the catalog still come back', async () => {
   const { files, sources } = await search.searchTorBox(GAME, { textSearch: true, api: fakeClient({ searchFails: true }) });
   assert.equal(sources.search.state, 'unavailable');
@@ -142,7 +155,7 @@ const mafiaFiles = [
   { id: 0, name: `${TORRENT_DIR}/[PPSA14299]Mafia Domovina[01.011].exfat`, size: 63.31 * 2 ** 30 },
   { id: 1, name: `${TORRENT_DIR}/[PPSA14299]Mafia Domovina[01.011].pkg`, size: 40.11 * 2 ** 30 },
   { id: 2, name: `${TORRENT_DIR}/UPDATE 4xx-9xx.pkg`, size: 0.39 * 2 ** 30 },
-  { id: 3, name: `${TORRENT_DIR}/DLC Mafia1.pkg`, size: 3000 },
+  { id: 3, name: `${TORRENT_DIR}/DLC Mafia1.pkg`, size: 300000 },
   { id: 4, name: `${TORRENT_DIR}/backports/PPSA14299/eboot.bin`, size: 0.15 * 2 ** 30 },
   { id: 5, name: `${TORRENT_DIR}/backports/PPSA14299/sce_module/libSceNpCppWebApi.prx`, size: 10e6 },
   { id: 6, name: `${TORRENT_DIR}/backports/PPSA14299/fakelib/libScePsml.sprx`, size: 4000 }

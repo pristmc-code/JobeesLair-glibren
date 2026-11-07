@@ -11,11 +11,11 @@ import { torBoxApi } from './debrid.js';
 import { storageRoots } from './drives.js';
 import { LIVE_FEED, feedName } from './feeds.js';
 import { libraryChanged } from './store-mode.js';
-import { buildLibrary, libraryPaths, readLibrary, writeLibrary, writeList } from './torbox-library.js';
+import { brokenOnly, buildLibrary, libraryPaths, readLibrary, stillConfirmed, writeLibrary, writeList } from './torbox-library.js';
 import { hashListPaths, readHashList } from './torbox-search.js';
 import { FileSystem, Platform } from '@ps5-react/core';
 
-  var IDLE = { state: "idle", phase: null, total: 0, done: 0, found: 0, errors: 0, calls: 0, etaMs: null, waitingUntil: null, error: "", resumed: false };
+  var IDLE = { state: "idle", phase: null, total: 0, done: 0, found: 0, broken: 0, errors: 0, calls: 0, etaMs: null, waitingUntil: null, error: "", resumed: false };
   var current = null;
   var progress = IDLE;
   var listeners = /* @__PURE__ */ new Set();
@@ -34,11 +34,13 @@ import { FileSystem, Platform } from '@ps5-react/core';
       return {
         builtAt: library.builtAt,
         games: records.length,
-        confirmed: records.filter((record) => record.torbox?.confirmed).length,
+        confirmed: records.filter(stillConfirmed).length,
+        // glibren.13: os jogos que o TorBox so tem como copia quebrada (uma pagina de erro), fora da loja.
+        broken: records.filter(brokenOnly).length,
         open: run && !run.finishedAt ? { done: run.done, total: run.total, sources: run.sources } : null
       };
     } catch {
-      return { builtAt: null, games: 0, confirmed: 0, open: null };
+      return { builtAt: null, games: 0, confirmed: 0, broken: 0, open: null };
     }
   }
   /** As fontes que o jogador pode escolher: o catálogo embutido, o ao vivo e cada feed incluído, com seus jogos. */

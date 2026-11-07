@@ -1066,7 +1066,7 @@ function library(count = 260) {
   }
   // Tortos: sem id (usa o hash), sem id nem hash (fica de fora), titulo numero, generos como texto, sem formatos (vem dos
   // arquivos), tamanho como texto, um valor que nao e objeto, e um titulo enorme.
-  games.push({ hash: 'ab'.repeat(20), title: 'Sem Id', platform: 'PS5', genres: 'RPG', sizeBytes: '1234', files: [{ name: 'Sem.exfat', size: 1234 }] });
+  games.push({ hash: 'ab'.repeat(20), title: 'Sem Id', platform: 'PS5', genres: 'RPG', sizeBytes: '1234', files: [{ name: 'Sem.exfat', size: 1234 + 2 * MiB }] }); // glibren.13: 1234 B seria copia quebrada
   games.push({ title: 'Sem nada' });
   games.push({ id: 'num', title: 12345, code: 'cusa99999', files: [{ name: 'x.ffpkg', size: 7 * GiB }], hash: 'cd'.repeat(20) });
   games.push('isto nao e um jogo');
@@ -1249,6 +1249,7 @@ test('glibren.13: biblioteca TorBox: arquivo de jogo de 170 B e copia quebrada (
   list.games.push({ id: 'mix', title: 'Misto', code: 'PPSA20003', files: [
     { name: 'Misto.exfat', size: 170, format: 'exfat', via: 'webdl', hash: 'ef'.repeat(16), release: 'rel-a' },
     { name: 'Misto.pkg', size: 9 * GiB, format: 'pkg', via: 'webdl', hash: 'fe'.repeat(16), release: 'rel-b' }] });
+  list.games.push({ id: 'dlc', title: 'Dlc', code: 'PPSA20004', files: [{ name: 'Dlc.pkg', size: 300000, format: 'pkg', via: 'webdl', hash: 'fd'.repeat(16), release: 'rel-d' }] });
   writeFileSync(file, JSON.stringify(list));
   const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file });
   try {
@@ -1257,6 +1258,14 @@ test('glibren.13: biblioteca TorBox: arquivo de jogo de 170 B e copia quebrada (
     const session = await unlocked(base);
     const carrion = (await page('/api/library/game?id=carrion')).data;
     assert.deepEqual(carrion.files.map((f) => [f.size, f.broken]), [[170, true]]);
+    // glibren.13 (Crysis 2 no PS5 real): numa lista de antes da regra do app, o jogo so com copia quebrada sai da lista do
+    // celular; a ficha (link direto) ainda abre, marcada, para a pagina esconder o "Baixar" e explicar.
+    assert.equal(carrion.game.brokenOnly, true);
+    const listed = (await page('/api/library?limit=200')).data.games.map((g) => g.id);
+    assert.ok(!listed.includes('carrion') && listed.includes('mix') && listed.includes('dlc'), listed.join(','));
+    assert.equal((await page('/api/library/game?id=dlc')).data.files[0].broken, false, 'um pacote de DLC de 300 KB e de verdade (limite de 64 KiB)');
+    assert.equal((await page('/api/library/game?id=mix')).data.game.brokenOnly, undefined, 'com um arquivo bom, fica');
+    assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /1 jogo\(s\) so com copia quebrada no TorBox, fora da lista/);
     assert.equal(carrion.suggested, '', 'nada recomendado');
     const mix = (await page('/api/library/game?id=mix')).data;
     assert.equal(mix.suggested, 'Misto.pkg', 'o bom, mesmo com o exFAT (melhor formato) quebrado');

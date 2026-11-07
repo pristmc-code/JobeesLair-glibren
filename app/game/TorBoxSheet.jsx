@@ -60,8 +60,9 @@ import { FileSystem, Text, View } from '@ps5-react/core';
     // glibren.17: um link do catálogo que o TorBox ainda não tem ("busca primeiro") e quantos links do catálogo são este arquivo.
     const note = file.fetch ? [file.size ? formatBytes(file.size) : null, t2("torboxSearch.fetch")].filter(Boolean).join(" \xB7 ") : file.backport ? t2("torboxSearch.backport", { count: file.count, size: formatBytes(file.size || 0) }) : file.whole ? t2("torboxSearch.whole", { count: file.count }) : file.parts ? t2("torboxSearch.parts", { count: file.parts, size: formatBytes(file.size || 0) }) : null;
     const links = file.releases?.length > 1 ? t2("torboxSearch.links", { count: file.releases.length }) : null;
-    const status = state?.queued ? t2("torboxSearch.queued") : state?.error ? state.error : file.piece ? t2("torboxSearch.piece") : null;
-    const bad = Boolean(state?.error || file.piece || (!status && warning));
+    // glibren.13: TorBox's broken copy (an error page kept as the file, state/broken-copy.js) says so, in red.
+    const status = state?.queued ? t2("torboxSearch.queued") : state?.error ? state.error : file.broken ? t2("torboxSearch.broken") : file.piece ? t2("torboxSearch.piece") : null;
+    const bad = Boolean(state?.error || file.broken || file.piece || (!status && warning));
     return jsxs(View, { autoFocus, focusable: true, onPress, style: (_state) => [{ position: "relative", flexDirection: "row", alignItems: "center", gap: 18, borderRadius: radius.sm, paddingHorizontal: 18, paddingVertical: 12 }, _state.focused ? { backgroundColor: colors.surface2 } : null], children: [
       jsx(FocusRing, {}),
       jsx(TypeBadge, { type: file.whole ? t2("torboxSearch.wholeType") : file.type, best: file.format === "exfat" }),
@@ -102,6 +103,7 @@ import { FileSystem, Text, View } from '@ps5-react/core';
     }, [game.id]);
     const queue = (file) => {
       if (states[file.key]?.queued) return;
+      if (file.broken) return setStates((before) => ({ ...before, [file.key]: { error: t2("torboxSearch.brokenRefused") } }));
       try {
         downloadFile(downloadQueue(), game, file, root2);
         setStates((before) => ({ ...before, [file.key]: { queued: true } }));
@@ -111,7 +113,7 @@ import { FileSystem, Text, View } from '@ps5-react/core';
     };
     const { files, sources, done, error } = result;
     // glibren.17: "N arquivos encontrados" conta o que o TorBox tem; os links que ele só busca vêm depois, contados à parte.
-    const held = files.filter((file) => !file.fetch);
+    const held = files.filter((file) => !file.fetch && !file.broken);
     const fetchable = files.length - held.length;
     const exfat = held.filter((file) => file.format === "exfat").length;
     const note = (name) => {

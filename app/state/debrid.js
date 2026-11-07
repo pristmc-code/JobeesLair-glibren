@@ -34,6 +34,7 @@ import { savedList } from './saved.js';
 import { formatDate2 } from '../i18n/core.js';
 import { log, logger } from '../services/logger.js';
 import { DATA_DIR } from './data-dir.js';
+import { brokenEntry } from './broken-copy.js';
 import { newSecret, open as openBox, seal } from './secret-box.js';
 import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
 
@@ -373,9 +374,16 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
           console.log(`[debrid] TorBox hosts not read: ${error.message}`);
         }
       }
-      const held = await torbox().checkCachedLinks(links, { signal: run.signal });
+      // glibren.13: with the files (cachedEntries, the same checkcached with list_files), a copy that is only TorBox's
+      // broken one (an error page kept as the file, state/broken-copy.js) is not instant: it is marked broken.
+      const api = torbox();
+      const entries = typeof api.cachedEntries === "function" ? await api.cachedEntries(links, { signal: run.signal }) : null;
+      const held = entries ? new Set(entries.keys()) : await api.checkCachedLinks(links, { signal: run.signal });
       const at = Date.now();
-      for (const link of links) instant.set(link, { held: held.has(link), at });
+      for (const link of links) {
+        const broken = Boolean(entries?.has(link) && brokenEntry(entries.get(link)));
+        instant.set(link, { held: held.has(link) && !broken, broken, at });
+      }
       notify();
       return true;
     } catch (error) {
@@ -392,6 +400,14 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
     const states = sourcesOf(release).map((source) => instant.get(linkOf(source)));
     if (states.some((state) => !state || Date.now() - state.at > INSTANT_MS)) return null;
     return states.every((state) => state.held);
+  }
+  /** glibren.13: whether TorBox holds one of `release`'s links only as a broken copy (an error page, not the game). */
+  function brokenAtTorBox(release) {
+    if (activeService() !== "torbox") return false;
+    return sourcesOf(release).some((source) => {
+      const state = instant.get(linkOf(source));
+      return Boolean(state?.broken) && Date.now() - state.at <= INSTANT_MS;
+    });
   }
   /** Asks TorBox which of `releases`' links it holds (while `lend` lets it); re-renders as it learns. */
   function useTorBoxInstant(releases, lend) {
@@ -448,4 +464,4 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
     return typeof api.cachedFiles === "function" ? api.cachedFiles(links) : null;
   }
 
-export { activeService, askInstant as askTorBoxInstant, rememberTorBoxItem, torBoxApi, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };
+export { activeService, askInstant as askTorBoxInstant, brokenAtTorBox, rememberTorBoxItem, torBoxApi, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };
