@@ -1125,6 +1125,7 @@
   "update.install.ready": "Обновление готово – перезапустите приложение, чтобы применить",
   "update.install.readyDetail": "Jobee'sLair закроется, новая версия займёт место этой и откроется снова. Ваши настройки и загрузки сохранятся.",
   "update.install.readyNotice": "Jobee'sLair {version} готов. Перезапустите приложение, чтобы установить его.",
+  "update.install.reopenNotice": "Jobee'sLair не удалось открыть заново автоматически. Откройте приложение с главного экрана, чтобы завершить обновление.",
   "update.install.restart": "Перезапустить и применить",
   "update.install.retry": "Повторить",
   "update.install.rolledBack": "Версия {version} не запустилась, поэтому возвращена предыдущая: {reason}",

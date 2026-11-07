@@ -1125,6 +1125,7 @@
   "update.install.ready": "আপডেট প্রস্তুত – প্রয়োগ করতে অ্যাপ রিস্টার্ট করুন",
   "update.install.readyDetail": "Jobee'sLair বন্ধ হয়, নতুন সংস্করণ এটির জায়গা নেয়, এবং আবার খোলে। আপনার সেটিংস ও ডাউনলোড থেকে যায়।",
   "update.install.readyNotice": "Jobee'sLair {version} প্রস্তুত। ইনস্টল করতে অ্যাপ রিস্টার্ট করুন।",
+  "update.install.reopenNotice": "Jobee'sLair নিজে থেকে আবার খুলতে পারেনি। আপডেট শেষ করতে হোম স্ক্রিন থেকে এটি খুলুন।",
   "update.install.restart": "প্রয়োগ করতে রিস্টার্ট করুন",
   "update.install.retry": "আবার চেষ্টা করুন",
   "update.install.rolledBack": "সংস্করণ {version} চালু হয়নি, তাই আগের সংস্করণ ফিরিয়ে আনা হয়েছে: {reason}",

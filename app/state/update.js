@@ -59,7 +59,9 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
         Notifications.notify(t("update.install.readyNotice", { version }));
       } catch {
       }
-    }
+    },
+    // glibren.15: o aviso que o updater.elf mostra quando nao consegue reabrir o app depois da troca.
+    notice: () => t("update.install.reopenNotice")
   }) : null;
   // { update: the newer release or null, checking, checkedAt, failed } and who is watching it.
   var state = { update: checker.known(), checking: false, checkedAt: store.get().checkedAt ?? null, failed: false };

@@ -1125,6 +1125,7 @@
   "update.install.ready": "Update bereit – App neu starten zum Anwenden",
   "update.install.readyDetail": "Jobee'sLair schließt, die neue Version tritt an die Stelle dieser, und es öffnet sich erneut. Deine Einstellungen und Downloads bleiben erhalten.",
   "update.install.readyNotice": "Jobee'sLair {version} ist bereit. Starte die App neu, um es zu installieren.",
+  "update.install.reopenNotice": "Jobee'sLair konnte sich nicht selbst neu öffnen. Öffne die App über den Startbildschirm, um das Update abzuschließen.",
   "update.install.restart": "Neu starten und anwenden",
   "update.install.retry": "Erneut versuchen",
   "update.install.rolledBack": "Version {version} ist nicht gestartet, daher wurde die vorherige Version wiederhergestellt: {reason}",

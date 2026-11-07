@@ -1125,6 +1125,7 @@
   "update.install.ready": "アップデートの準備完了 – アプリを再起動して適用",
   "update.install.readyDetail": "Jobee'sLairが閉じ、新しいバージョンがこのバージョンと入れ替わって、再び開きます。設定とダウンロードは保持されます。",
   "update.install.readyNotice": "Jobee'sLair {version}の準備ができました。アプリを再起動してインストールしてください。",
+  "update.install.reopenNotice": "Jobee'sLairを自動で再起動できませんでした。ホーム画面から開いてアップデートを完了してください。",
   "update.install.restart": "再起動して適用",
   "update.install.retry": "再試行",
   "update.install.rolledBack": "バージョン{version}が起動しなかったため、前のバージョンに戻しました：{reason}",

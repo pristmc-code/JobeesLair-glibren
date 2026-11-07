@@ -1125,6 +1125,7 @@
     "update.install.ready": "Update ready \u2013 Restart app to apply",
     "update.install.readyDetail": "Jobee'sLair closes, the new version takes this one's place, and it opens again. Your settings and downloads stay.",
     "update.install.readyNotice": "Jobee'sLair {version} is ready. Restart the app to install it.",
+    "update.install.reopenNotice": "Jobee'sLair could not reopen by itself. Open it from the home screen to finish the update.",
     "update.install.restart": "Restart to apply",
     "update.install.retry": "Try again",
     "update.install.rolledBack": "Version {version} did not start, so the previous version was put back: {reason}",

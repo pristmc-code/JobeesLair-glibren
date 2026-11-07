@@ -1125,6 +1125,7 @@
   "update.install.ready": "التحديث جاهز – أعد تشغيل التطبيق لتطبيقه",
   "update.install.readyDetail": "يُغلق Jobee'sLair، ويحلّ الإصدار الجديد محل هذا، ثم يُفتح مجددًا. تبقى إعداداتك وتنزيلاتك.",
   "update.install.readyNotice": "Jobee'sLair {version} جاهز. أعد تشغيل التطبيق لتثبيته.",
+  "update.install.reopenNotice": "تعذّر على Jobee'sLair إعادة الفتح تلقائيًا. افتحه من الشاشة الرئيسية لإكمال التحديث.",
   "update.install.restart": "أعد التشغيل للتطبيق",
   "update.install.retry": "أعد المحاولة",
   "update.install.rolledBack": "لم يبدأ الإصدار {version}، لذا أُعيد الإصدار السابق: {reason}",

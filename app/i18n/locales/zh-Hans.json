@@ -1125,6 +1125,7 @@
   "update.install.ready": "更新已就绪 – 重启应用以应用",
   "update.install.readyDetail": "Jobee'sLair 会关闭，新版本取代当前版本，然后重新打开。你的设置和下载都会保留。",
   "update.install.readyNotice": "Jobee'sLair {version} 已就绪。请重启应用以安装。",
+  "update.install.reopenNotice": "Jobee'sLair 无法自动重新打开。请从主屏幕打开它以完成更新。",
   "update.install.restart": "重启以应用",
   "update.install.retry": "重试",
   "update.install.rolledBack": "版本 {version} 未能启动，因此已恢复到之前的版本：{reason}",

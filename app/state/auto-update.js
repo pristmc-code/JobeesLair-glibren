@@ -36,6 +36,8 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
   var UNPACKED = 3;
   var RETRY_MS = 15e3;
   var TRIES = 4;
+  // glibren.15: o tamanho maximo do aviso "notice=" em apply.txt (updater.c NOTICE_MAX - 1, com folga).
+  var NOTICE_BYTES = 590;
   function stopped() {
     return Object.assign(new Error("The update was cancelled."), { name: "AbortError" });
   }
@@ -64,6 +66,9 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     verifyZip = true,
     notify = () => {
     },
+    // glibren.15: () => o aviso, no idioma do app, que o updater.elf mostra quando nao consegue reabrir o app
+    // depois da troca ("notice=" em apply.txt). Sem ele, o updater usa ingles + portugues.
+    notice = () => "",
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     log = (line) => console.log(`[auto-update] ${line}`)
   }) {
@@ -357,6 +362,25 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
       store.set({});
       publish({ phase: "idle", version: null, written: 0, total: 0, file: "", error: "" });
     }
+    // glibren.15: a linha "notice=" de apply.txt: uma linha so, sem caracteres de controle, ate NOTICE_BYTES
+    // bytes em UTF-8 (o updater guarda ate 599; um texto maior ele troca pelo padrao); vazia sem aviso.
+    function noticeLine() {
+      let text = "";
+      try {
+        text = String(notice() ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+      } catch {
+      }
+      const kept = [];
+      let bytes = 0;
+      for (const char of text) {
+        const point = char.codePointAt(0);
+        bytes += point < 128 ? 1 : point < 2048 ? 2 : point < 65536 ? 3 : 4;
+        if (bytes > NOTICE_BYTES) break;
+        kept.push(char);
+      }
+      text = kept.join("").trim();
+      return text ? `notice=${text}\n` : "";
+    }
     // Writes apply.txt and arms the updater: { ok } or { ok: false, reason }.
     function apply({ relaunch }) {
       const state = saved();
@@ -369,7 +393,7 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
       if (!PLAIN_PATH.test(state.target) || !PLAIN_PATH.test(staged) || !fs.exists(state.target))
         return { ok: false, reason: `The installed image is not at ${state.target} any more.` };
       try {
-        writeControl("apply.txt", `UPD1\nversion=${state.version}\ntarget=${state.target}\nstaged=${staged}\nsize=${state.image.size}\nrelaunch=${relaunch ? 1 : 0}\n`);
+        writeControl("apply.txt", `UPD1\nversion=${state.version}\ntarget=${state.target}\nstaged=${staged}\nsize=${state.image.size}\nrelaunch=${relaunch ? 1 : 0}\n${noticeLine()}`);
         removeControl("result.txt");
       } catch (error) {
         return { ok: false, reason: error.message };

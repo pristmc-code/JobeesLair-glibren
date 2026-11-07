@@ -1125,6 +1125,7 @@
   "update.install.ready": "Pembaruan siap – Mulai ulang aplikasi untuk menerapkan",
   "update.install.readyDetail": "Jobee'sLair menutup, versi baru menggantikan yang ini, lalu terbuka lagi. Pengaturan dan unduhan Anda tetap ada.",
   "update.install.readyNotice": "Jobee'sLair {version} siap. Mulai ulang aplikasi untuk memasangnya.",
+  "update.install.reopenNotice": "Jobee'sLair tidak dapat terbuka kembali sendiri. Buka dari layar beranda untuk menyelesaikan pembaruan.",
   "update.install.restart": "Mulai ulang untuk menerapkan",
   "update.install.retry": "Coba lagi",
   "update.install.rolledBack": "Versi {version} tidak mau mulai, jadi versi sebelumnya dikembalikan: {reason}",

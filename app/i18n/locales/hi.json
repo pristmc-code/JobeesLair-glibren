@@ -1125,6 +1125,7 @@
   "update.install.ready": "अपडेट तैयार – लागू करने के लिए ऐप रीस्टार्ट करें",
   "update.install.readyDetail": "Jobee'sLair बंद होता है, नया संस्करण इसकी जगह ले लेता है, और यह फिर खुलता है। आपकी सेटिंग्स और डाउनलोड बने रहते हैं।",
   "update.install.readyNotice": "Jobee'sLair {version} तैयार है। इंस्टॉल करने के लिए ऐप रीस्टार्ट करें।",
+  "update.install.reopenNotice": "Jobee'sLair अपने आप दोबारा नहीं खुल सका। अपडेट पूरा करने के लिए इसे होम स्क्रीन से खोलें।",
   "update.install.restart": "लागू करने के लिए रीस्टार्ट करें",
   "update.install.retry": "फिर से कोशिश करें",
   "update.install.rolledBack": "संस्करण {version} शुरू नहीं हुआ, इसलिए पिछला संस्करण वापस रखा गया: {reason}",

@@ -1970,7 +1970,7 @@ test('a request to ShadowMount that cannot wait asks the borrower to stop first'
 
 // The install's world: a USB drive with the installed image, a fake download engine that publishes each file
 // at its expected size (or fails as told), an extractor that unpacks update.zip's title folder.
-function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => true, failures = {}, free = 1e12, located = '/mnt/usb0/homebrew/JobeesLair.exfat', armed = () => true, automatic = false, version = '0.5.0', verifyZip = true } = {}) {
+function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => true, failures = {}, free = 1e12, located = '/mnt/usb0/homebrew/JobeesLair.exfat', armed = () => true, automatic = false, version = '0.5.0', verifyZip = true, notice = null } = {}) {
   // The running version: a released one older than the fake 0.5.1 release these tests install, whatever the app's own VERSION is.
   const fs = memoryFs();
   fs.mkdir('/mnt/usb0/homebrew');
@@ -2028,6 +2028,7 @@ function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => 
     controlDir: '/data/JobeesLair/update', version, titleId: TITLE_ID, verifyZip,
     // A wait that lets the rest of the test run (an already-resolved promise would spin the loop forever).
     automatic: () => automatic, notify: (v) => world.notified.push(v), wait: () => new Promise((resolve) => setImmediate(resolve)), log: (line) => world.logs.push(line),
+    ...(notice ? { notice } : {}),
   });
   world.saved = saved;
   world.release = { ...describeRelease(releaseJson(), 'JVK3R/JobeesLair') };
@@ -2180,6 +2181,29 @@ test('install: Restart to apply writes apply.txt for the updater and arms it; a 
   assert.ok(!failing.fs.exists('/data/JobeesLair/update/apply.txt'));
   assert.equal(failing.updater.state().phase, 'ready');
   assert.equal(failing.updater.state().error, 'payload loader: connection refused');
+});
+
+test('install (glibren.15): apply.txt carries the app-language notice the updater shows when it cannot reopen the app', async () => {
+  const world = installWorld({ notice: () => 'O Jobee\'sLair não reabriu sozinho.\nAbra-o pela tela inicial.' });
+  world.updater.download(world.release);
+  await world.until((s) => s.phase === 'ready');
+  assert.deepEqual(world.updater.applyNow(), { ok: true });
+  assert.equal(world.fs.readFile('/data/JobeesLair/update/apply.txt'),
+    `UPD1\nversion=0.5.1\ntarget=/mnt/usb0/homebrew/JobeesLair.exfat\nstaged=${STAGED}/${IMAGE_NAME}\nsize=5000\nrelaunch=1\nnotice=O Jobee'sLair não reabriu sozinho. Abra-o pela tela inicial.\n`);
+  // Too long for the updater's line (590 bytes in UTF-8): cut, never past a character; a failing or empty text leaves no line.
+  const long = installWorld({ notice: () => 'ã'.repeat(400) });
+  long.updater.download(long.release);
+  await long.until((s) => s.phase === 'ready');
+  long.updater.applyNow();
+  const line = long.fs.readFile('/data/JobeesLair/update/apply.txt').split('\n').find((text) => text.startsWith('notice='));
+  assert.equal(line, `notice=${'ã'.repeat(295)}`);
+  for (const notice of [() => '', () => { throw new Error('no i18n'); }]) {
+    const quiet = installWorld({ notice });
+    quiet.updater.download(quiet.release);
+    await quiet.until((s) => s.phase === 'ready');
+    quiet.updater.applyNow();
+    assert.match(quiet.fs.readFile('/data/JobeesLair/update/apply.txt'), /relaunch=1\n$/);
+  }
 });
 
 test('install: with automatic installs on, a found release downloads by itself and the updater is armed for the next close', async () => {

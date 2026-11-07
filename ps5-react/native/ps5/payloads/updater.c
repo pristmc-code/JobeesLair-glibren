@@ -23,6 +23,21 @@
 // What it did goes to <control>/result.txt ("outcome=applied|rolledback|refused", "version=", "reason="),
 // and every step to <control>/updater.log. A missing apply.txt when the title closes means the update was
 // withdrawn: nothing is done.
+//
+// glibren.15: reabrir o app depois da troca ("Restart to apply"). Antes era uma tentativa so, 1 s depois do
+// pedido de scan, e no console dava "nao foi possivel iniciar o jogo ou app": o ShadowMount+ ainda estava
+// largando a execucao anterior (ele recusa o lancamento com EBUSY enquanto finaliza a saida do titulo, ate
+// ~10 s, ou enquanto o scan mexe na imagem trocada). Agora (relaunch_if):
+//   a. espera o titulo ficar pronto: games/info do ShadowMount+ com o registro do titulo apontando para a
+//      imagem, installed e source_available, e a camada /system_ex/app ja solta (mounted: false), duas
+//      leituras seguidas, a cada POLL_MS, por ate READY_WAIT_MS. Sem resposta (ShadowMount+ antigo, rota
+//      desconhecida) ou com a camada sempre montada (links persistentes), tenta abrir mesmo assim no fim do
+//      prazo; com o registro sempre errado (nunca montou), nao tenta: avisa o jogador;
+//   b. ate LAUNCH_TRIES tentativas, com intervalo crescente (RETRY_MS); uma tentativa so conta como certa
+//      quando o titulo aparece rodando em LAUNCH_CONFIRM_MS; cada uma vai para o updater.log com o codigo;
+//   c. se nao abrir, uma notificacao pede para abrir o Jobee'sLair pela tela inicial (o texto vem do app em
+//      apply.txt "notice=", no idioma dele; sem ele, ingles + portugues), e a volta para a versao anterior
+//      por "nao abriu" so acontece depois de MANUAL_OPEN_WAIT_MS sem o jogador abrir.
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -50,6 +65,19 @@
 #define POLL_MS 500
 #define SETTLE_MS 1000
 #define REPLY_MAX (1024 * 1024)
+// glibren.15: a reabertura (relaunch_if). Depois do scan, quanto esperar antes de confiar no games/info; ate
+// quando esperar o titulo pronto; quantas tentativas, quanto cada uma espera o app aparecer e as pausas entre
+// elas; e, sem reabrir, quanto esperar o jogador abrir antes de voltar a versao anterior.
+#define SCAN_SETTLE_MS 2000
+#define READY_WAIT_MS 45000
+#define READY_STABLE 2
+#define LAUNCH_TRIES 4
+#define LAUNCH_CONFIRM_MS 10000
+static const int RETRY_MS[LAUNCH_TRIES - 1] = {3000, 6000, 12000};
+#define MANUAL_OPEN_WAIT_MS 600000
+#define NOTICE_MAX 600
+#define DEFAULT_NOTICE "Jobee'sLair: open it from the home screen to finish the update. / " \
+                       "Abra o Jobee'sLair pela tela inicial para concluir a atualização."
 
 #ifdef UPDATER_HOST_TEST
 // tools/test_updater.py runs this on the desktop: the title "runs" while <control>/test-running exists,
@@ -78,12 +106,31 @@ static int launch_title(const char* title) {
   if (!test_path(path, sizeof path, "test-launches")) return -1;
   FILE* file = fopen(path, "a");
   if (file) { fputs("launch\n", file); fclose(file); }
+  // glibren.15: <control>/test-fail-launches com N: as N primeiras tentativas falham como o console recusa
+  // ("nao foi possivel iniciar"), com um codigo de erro.
+  int launches = 0, failing = 0;
+  if (test_path(path, sizeof path, "test-launches") && (file = fopen(path, "r"))) {
+    for (int c; (c = fgetc(file)) != EOF;) launches += c == '\n';
+    fclose(file);
+  }
+  if (test_path(path, sizeof path, "test-fail-launches") && (file = fopen(path, "r"))) {
+    if (fscanf(file, "%d", &failing) != 1) failing = 0;
+    fclose(file);
+  }
+  if (launches <= failing) return (int)0x80940005u;
   // <control>/test-no-start: the launched build never opens.
   if (test_path(path, sizeof path, "test-no-start") && access(path, F_OK) == 0) return 0;
   if (!test_path(path, sizeof path, "test-running")) return -1;
   file = fopen(path, "w");
   if (file) fclose(file);
   return 0;
+}
+// glibren.15: a notificacao vai para <control>/test-notices, uma por linha.
+static void notify_gamer(const char* text) {
+  char path[1024];
+  if (!test_path(path, sizeof path, "test-notices")) return;
+  FILE* file = fopen(path, "a");
+  if (file) { fprintf(file, "%s\n", text); fclose(file); }
 }
 #else
 typedef struct {
@@ -101,11 +148,25 @@ static int scaled(int ms) { return ms; }
 static int lock_port(void) { return LOCK_PORT; }
 static int shadowmount_port(void) { return SHADOWMOUNT_PORT; }
 static int title_running(const char* title) { return sceLncUtilGetAppId(title) >= 0; }
+// 0 when the console took the launch; otherwise its (negative) error code, for the log.
 static int launch_title(const char* title) {
   sceUserServiceInitialize(NULL);
   LncAppParam param = {sizeof param, 0, 0, 0, 0};
   sceUserServiceGetForegroundUser((int*)&param.user_id);
-  return sceLncUtilLaunchApp(title, NULL, &param) < 0 ? -1 : 0;
+  int code = sceLncUtilLaunchApp(title, NULL, &param);
+  return code < 0 ? code : 0;
+}
+// glibren.15: a notificacao do sistema (a mesma do bg-downloader).
+typedef struct {
+  char reserved[45];
+  char message[3075];
+} NotifyRequest;
+int sceKernelSendNotificationRequest(int, NotifyRequest*, size_t, int);
+static void notify_gamer(const char* text) {
+  NotifyRequest request;
+  memset(&request, 0, sizeof request);
+  snprintf(request.message, sizeof request.message, "%s", text);
+  sceKernelSendNotificationRequest(0, &request, sizeof request, 0);
 }
 #endif
 
@@ -339,12 +400,107 @@ static const char* wait_released(const char* image) {
                      : "ShadowMount+ keeps the image mounted (persistent image mounts?)";
 }
 
+// glibren.15: o valor de `key` no objeto de fora de `json` (os objetos de dentro, como o "content" do
+// games/info, tem chaves de mesmo nome); NULL quando nao tem.
+static const char* top_value(const char* json, const char* key) {
+  int depth = 0, in_string = 0, expect_key = 0;
+  for (const char* at = json; *at; ++at) {
+    if (in_string) {
+      if (*at == '\\' && at[1]) ++at;
+      else if (*at == '"') in_string = 0;
+      continue;
+    }
+    if (*at == '"') {
+      if (depth == 1 && expect_key) {
+        const char* value = value_after(at, key);
+        if (value) return value;
+        expect_key = 0;
+      }
+      in_string = 1;
+    } else if (*at == '{' || *at == '[') {
+      ++depth;
+      expect_key = depth == 1 && *at == '{';
+    } else if (*at == '}' || *at == ']') {
+      --depth;
+      expect_key = 0;
+    } else if (*at == ',' && depth == 1) {
+      expect_key = 1;
+    }
+  }
+  return NULL;
+}
+
+static int top_true(const char* json, const char* key) {
+  const char* value = top_value(json, key);
+  return value && !strncmp(value, "true", 4);
+}
+
+static int top_false(const char* json, const char* key) {
+  const char* value = top_value(json, key);
+  return value && !strncmp(value, "false", 5);
+}
+
+// O que o ShadowMount+ diz do titulo agora (games/info).
+typedef enum {
+  TITLE_UNKNOWN,   // sem resposta, ou resposta que nao e o registro (rota que ele nao tem, titulo sumido no scan)
+  TITLE_MISSING,   // o registro existe mas nao serve: outra imagem, nao instalado, arquivos inacessiveis
+  TITLE_HELD,      // registrado, mas a camada /system_ex/app da execucao anterior ainda esta montada
+  TITLE_READY,
+} TitleState;
+
+static const char* title_state_name(TitleState state) {
+  switch (state) {
+    case TITLE_MISSING: return "not registered from the image yet";
+    case TITLE_HELD: return "still held from the last run";
+    case TITLE_READY: return "ready";
+    default: return "no answer";
+  }
+}
+
+static TitleState title_state(const char* image) {
+  char body[64];
+  snprintf(body, sizeof body, "{\"title_id\":\"%s\"}", g_title);
+  int status = 0;
+  char* reply = shadow_post("games/info", body, &status);
+  if (!reply) return TITLE_UNKNOWN;
+  if (status != 200 || !strchr(reply, '{')) { free(reply); return TITLE_UNKNOWN; }
+  unescape_slashes(reply);
+  const char* path = top_value(reply, "path");
+  size_t length = strlen(image);
+  int same = path && *path == '"' && !strncmp(path + 1, image, length) && path[length + 1] == '"';
+  TitleState state = TITLE_MISSING;
+  if (same && top_true(reply, "installed") && !top_false(reply, "source_available") && !top_false(reply, "managed"))
+    state = top_true(reply, "mounted") ? TITLE_HELD : TITLE_READY;
+  free(reply);
+  return state;
+}
+
+// Espera o titulo pronto para abrir: READY_STABLE leituras "pronto" seguidas, ate READY_WAIT_MS. Devolve o
+// ultimo estado lido (TITLE_READY quando ficou pronto). Registra cada mudanca no updater.log.
+static TitleState wait_ready(const char* image) {
+  TitleState state = TITLE_UNKNOWN;
+  int streak = 0, logged = -1;
+  for (int waited = 0;; waited += POLL_MS) {
+    state = title_state(image);
+    if ((int)state != logged) {
+      note("ShadowMount+ on the app: %s (after %d ms)", title_state_name(state), waited);
+      logged = (int)state;
+    }
+    streak = state == TITLE_READY ? streak + 1 : 0;
+    if (streak >= READY_STABLE) return TITLE_READY;
+    if (waited >= READY_WAIT_MS) return state;
+    sleep_ms(POLL_MS);
+  }
+}
+
 // ---- the request ----
 
 typedef struct {
   char version[64], target[1024], staged[1024], previous[1100];
   long long size;
   int relaunch;
+  // glibren.15: o aviso para abrir o app a mao, no idioma do app ("notice=", opcional).
+  char notice[NOTICE_MAX];
 } Apply;
 
 static int value_of(const char* line, const char* key, char* out, size_t size) {
@@ -369,7 +525,11 @@ static int read_apply(Apply* apply) {
     value_of(line, "staged", apply->staged, sizeof apply->staged);
     value_of(line, "size", number, sizeof number);
     value_of(line, "relaunch", relaunch, sizeof relaunch);
+    if (!value_of(line, "notice", apply->notice, sizeof apply->notice) && !strncmp(line, "notice=", 7)) *apply->notice = 0;
   }
+  // Sem caracteres de controle no texto da notificacao.
+  for (char* at = apply->notice; *at; ++at)
+    if ((unsigned char)*at < 0x20 || *at == 0x7f) *at = ' ';
   close(fd);
   if (!ok) return -1;
   apply->size = *number ? atoll(number) : -1;
@@ -411,10 +571,59 @@ static int booted_as(const char* version) {
   return !strcmp(text, version);
 }
 
-static void relaunch_if(const Apply* apply) {
-  if (!apply->relaunch) return;
+// glibren.15: nao deu para reabrir: o jogador abre pela tela inicial.
+static void tell_gamer(const Apply* apply) {
+  const char* text = *apply->notice ? apply->notice : DEFAULT_NOTICE;
+  note("asked the gamer to open the app: %s", text);
+  notify_gamer(text);
+}
+
+// Opens the app again when apply.txt asked for it. 1 once it runs; 0 when it was not asked to, or gave up
+// (glibren.15: then the gamer is told to open it). Waits for ShadowMount+ to have the title ready, then
+// tries up to LAUNCH_TRIES times.
+static int relaunch_if(const Apply* apply) {
+  if (!apply->relaunch) return 0;
   sleep_ms(SETTLE_MS);
-  note("%s", launch_title(g_title) == 0 ? "opened the app again" : "could not open the app again");
+  if (title_running(g_title)) {
+    note("the app is already open");
+    return 1;
+  }
+  sleep_ms(SCAN_SETTLE_MS);
+  TitleState state = wait_ready(apply->target);
+  if (state == TITLE_MISSING) {
+    note("ShadowMount+ did not have the app ready in %d s: not opening it", READY_WAIT_MS / 1000);
+    tell_gamer(apply);
+    return 0;
+  }
+  if (state != TITLE_READY) note("opening it anyway (ShadowMount+: %s)", title_state_name(state));
+  for (int attempt = 1; attempt <= LAUNCH_TRIES; ++attempt) {
+    if (title_running(g_title)) {
+      note("the app is open");
+      return 1;
+    }
+    int code = launch_title(g_title);
+    if (code == 0) {
+      for (int waited = 0;; waited += POLL_MS) {
+        if (title_running(g_title)) {
+          note("opened the app again (attempt %d of %d)", attempt, LAUNCH_TRIES);
+          return 1;
+        }
+        if (waited >= LAUNCH_CONFIRM_MS) break;
+        sleep_ms(POLL_MS);
+      }
+      note("attempt %d of %d: the console took the launch but the app did not open in %d s", attempt, LAUNCH_TRIES,
+           LAUNCH_CONFIRM_MS / 1000);
+    } else {
+      note("attempt %d of %d: could not open the app (error 0x%08x)", attempt, LAUNCH_TRIES, (unsigned)code);
+    }
+    if (attempt < LAUNCH_TRIES) {
+      note("trying again in %d ms", RETRY_MS[attempt - 1]);
+      sleep_ms(RETRY_MS[attempt - 1]);
+    }
+  }
+  note("could not open the app again after %d attempts", LAUNCH_TRIES);
+  tell_gamer(apply);
+  return 0;
 }
 
 // Puts the old image back: the new one goes back to staging, so a later try needs no download.
@@ -494,10 +703,12 @@ static int update(void) {
   if (control_path(booted, sizeof booted, "booted.txt")) unlink(booted);
   result("swapped", apply.version, "");
   // 3. The new build reports that it started.
-  relaunch_if(&apply);
+  // glibren.15: reaberto, o app ja roda; sem conseguir reabrir, o jogador foi avisado e tem
+  // MANUAL_OPEN_WAIT_MS para abrir antes de a troca contar como "nao abriu" e voltar.
+  int opened = relaunch_if(&apply);
   int waited = 0;
   while (!title_running(g_title)) {
-    if (apply.relaunch && waited >= OPEN_WAIT_MS) {
+    if (apply.relaunch && waited >= (opened ? OPEN_WAIT_MS : MANUAL_OPEN_WAIT_MS)) {
       roll_back(&apply, "the new version did not open");
       return 1;
     }
