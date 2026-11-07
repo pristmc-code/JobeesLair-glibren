@@ -1968,9 +1968,165 @@ test('a request to ShadowMount that cannot wait asks the borrower to stop first'
   assert.deepEqual(order, ['free']);
 });
 
+// ---- glibren.18: the app's own update runs beside the background payload's downloads ----
+// An engine whose downloads end only when the test says (finish), as the background payload's (owner "payload",
+// queueAhead on) or the app's own engine's; emit() reports progress, as a hybrid task that fell back to the app would.
+function heldEngine(fs, { payload }) {
+  const engine = {
+    requests: [], tasks: [], lanes: [],
+    queueAhead: () => payload,
+    setConcurrency(count) { engine.lanes.push(count); return count; },
+    enqueue(options) {
+      engine.requests.push(options);
+      const listeners = new Set();
+      let resolve, reject;
+      const done = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+      done.catch(() => {});
+      const held = {
+        done,
+        snapshot: { state: 'downloading', written: 0, total: 1000, ...(payload ? { owner: 'payload' } : {}) },
+        cancel: () => reject(Object.assign(new Error('cancelled'), { name: 'AbortError' })),
+        subscribe(listener) { listeners.add(listener); listener(held.snapshot); return () => listeners.delete(listener); },
+        emit(snapshot) { held.snapshot = snapshot; for (const listener of [...listeners]) listener(snapshot); },
+        finish() {
+          fs.file(options.destination, options.expectedBytes ?? 1000);
+          fs.file(`${options.destination}.complete`, 0, 'receipt');
+          resolve({ written: options.expectedBytes ?? 1000, total: options.expectedBytes ?? 1000 });
+        },
+      };
+      engine.tasks.push(held);
+      return held;
+    },
+  };
+  return engine;
+}
+const tick = async (times = 5) => { for (let i = 0; i < times; i++) await new Promise((resolve) => setImmediate(resolve)); };
+const secondGame = { id: 'PPSA05678', titleId: 'PPSA05678', title: 'Other Game' };
+
+test('glibren.18: a download in the background payload does not hold the app update; the engine gets spare lanes while it is lent', async () => {
+  const fs = memoryFs();
+  const downloads = heldEngine(fs, { payload: true });
+  const queue = queueWith({ fs, downloads });
+  const id = queue.enqueue(game, image('Game.exfat'), '/data');
+  await tick();
+  assert.equal(downloads.tasks.length, 1, 'the game downloads in the payload');
+  assert.equal(queue.appWork({ queued: true }), null, 'nothing of the app holds the update');
+  let yielded = 0;
+  const giveBack = queue.lendNetwork(() => { yielded++; });
+  assert.equal(typeof giveBack, 'function', 'lent while the payload downloads');
+  assert.equal(downloads.lanes.at(-1), 3, 'the engine runs spare lanes, so the app\'s requests to the payload never wait behind the update');
+  // Another game queued for the payload starts beside the update once the first one ends; the update is not asked to stop.
+  const id2 = queue.enqueue(secondGame, image('Other.exfat'), '/data');
+  await tick();
+  assert.equal(yielded, 0, 'a queued download that goes to the payload does not stop the update');
+  downloads.tasks[0].finish();
+  assert.equal((await settle(queue, id)).state, 'downloaded');
+  await tick();
+  assert.equal(downloads.tasks.length, 2, 'the next one started while the network was lent');
+  assert.equal(yielded, 0);
+  giveBack();
+  assert.equal(downloads.lanes.at(-1), 1, 'given back: the lanes the settings chose');
+  downloads.tasks[1].finish();
+  assert.equal((await settle(queue, id2)).state, 'downloaded');
+});
+
+test('glibren.18: the app\'s own engine downloading holds the update, and says which game', async () => {
+  const fs = memoryFs();
+  const downloads = heldEngine(fs, { payload: false });
+  const queue = queueWith({ fs, downloads });
+  const id = queue.enqueue(game, image('Game.exfat'), '/data');
+  await tick();
+  assert.equal(queue.lendNetwork(() => {}), null, 'not lent while the app downloads');
+  assert.deepEqual(queue.appWork(), { kind: 'download', title: 'Test Game' });
+  downloads.tasks[0].finish();
+  await settle(queue, id);
+  const giveBack = queue.lendNetwork(() => {});
+  assert.equal(typeof giveBack, 'function', 'lent once it ended');
+  // A game queued for the app's engine makes the update stop (as before), and is named while it waits.
+  let yielded = 0;
+  giveBack();
+  const again = queue.lendNetwork(() => { yielded++; });
+  queue.enqueue(secondGame, image('Other.exfat'), '/data');
+  await tick();
+  assert.equal(yielded > 0, true, 'the update is asked to stop for the app\'s own download');
+  again();
+  await tick();
+  assert.deepEqual(queue.appWork({ queued: true }), { kind: 'download', title: 'Other Game' });
+});
+
+test('glibren.18: a payload download that falls back to the app\'s engine asks the lent update to stop', async () => {
+  const fs = memoryFs();
+  const downloads = heldEngine(fs, { payload: true });
+  const queue = queueWith({ fs, downloads });
+  queue.enqueue(game, image('Game.exfat'), '/data');
+  await tick();
+  let yielded = 0;
+  const giveBack = queue.lendNetwork(() => { yielded++; });
+  assert.equal(typeof giveBack, 'function');
+  downloads.tasks[0].emit({ state: 'downloading', written: 10, total: 1000 });
+  assert.equal(yielded > 0, true, 'downloading in the app now: the update steps aside');
+  giveBack();
+  assert.deepEqual(queue.appWork(), { kind: 'download', title: 'Test Game' });
+});
+
+test('glibren.18: while the update waits it says what the app is doing; it downloads once that ends', async () => {
+  let work = { kind: 'extract', title: 'Some Game' };
+  const world = installWorld({ lendable: () => !work, busy: () => work });
+  world.updater.download(world.release);
+  const waiting = await world.until((s) => s.phase === 'waiting' && s.holding);
+  assert.deepEqual(waiting.holding, { kind: 'extract', title: 'Some Game' });
+  work = { kind: 'install', title: 'Some Game' };
+  await world.until((s) => s.holding?.kind === 'install');
+  work = null;
+  const state = await world.until((s) => ['ready', 'failed'].includes(s.phase));
+  assert.equal(state.phase, 'ready', state.error);
+  assert.equal(state.holding, null);
+});
+
+test('glibren.18: Restart to apply waits for the app\'s own work (not the payload\'s), then arms the updater and closes the app', async () => {
+  let work = null;
+  const world = installWorld({ busy: () => work });
+  world.updater.download(world.release);
+  await world.until((s) => s.phase === 'ready');
+  // Nothing of the app running (the payload may be downloading): armed and closed at once.
+  let exits = 0;
+  assert.deepEqual(world.updater.applyWhenIdle(() => exits++), { ok: true });
+  assert.equal(exits, 1);
+  assert.deepEqual(world.arms, ['/data/JobeesLair/update']);
+  // The app extracting: it waits, says so, and goes on its own once that ends.
+  const busyWorld = installWorld({ busy: () => work });
+  busyWorld.updater.download(busyWorld.release);
+  await busyWorld.until((s) => s.phase === 'ready');
+  work = { kind: 'download', title: 'Big Game' };
+  let closed = 0;
+  assert.deepEqual(busyWorld.updater.applyWhenIdle(() => closed++), { ok: true, waiting: work });
+  assert.equal(busyWorld.updater.state().restarting, true);
+  assert.deepEqual(busyWorld.updater.state().holding, { kind: 'download', title: 'Big Game' });
+  await tick(20);
+  assert.equal(closed, 0, 'the app stays open while its own download runs');
+  assert.deepEqual(busyWorld.arms, []);
+  work = null;
+  await busyWorld.until((s) => s.phase === 'armed');
+  assert.equal(closed, 1);
+  assert.equal(busyWorld.updater.state().restarting, false);
+  // "Don't restart" gives the wait up: nothing is armed and the app is not closed.
+  const stopWorld = installWorld({ busy: () => work });
+  stopWorld.updater.download(stopWorld.release);
+  await stopWorld.until((s) => s.phase === 'ready');
+  work = { kind: 'extract', title: 'Big Game' };
+  let stopped = 0;
+  stopWorld.updater.applyWhenIdle(() => stopped++);
+  stopWorld.updater.stopRestart();
+  work = null;
+  await tick(20);
+  assert.equal(stopped, 0);
+  assert.deepEqual(stopWorld.arms, []);
+  assert.equal(stopWorld.updater.state().phase, 'ready');
+});
+
 // The install's world: a USB drive with the installed image, a fake download engine that publishes each file
 // at its expected size (or fails as told), an extractor that unpacks update.zip's title folder.
-function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => true, failures = {}, free = 1e12, located = '/mnt/usb0/homebrew/JobeesLair.exfat', armed = () => true, automatic = false, version = '0.5.0', verifyZip = true, notice = null } = {}) {
+function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => true, failures = {}, free = 1e12, located = '/mnt/usb0/homebrew/JobeesLair.exfat', armed = () => true, automatic = false, version = '0.5.0', verifyZip = true, notice = null, busy = null } = {}) {
   // The running version: a released one older than the fake 0.5.1 release these tests install, whatever the app's own VERSION is.
   const fs = memoryFs();
   fs.mkdir('/mnt/usb0/homebrew');
@@ -2028,7 +2184,7 @@ function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => 
     controlDir: '/data/JobeesLair/update', version, titleId: TITLE_ID, verifyZip,
     // A wait that lets the rest of the test run (an already-resolved promise would spin the loop forever).
     automatic: () => automatic, notify: (v) => world.notified.push(v), wait: () => new Promise((resolve) => setImmediate(resolve)), log: (line) => world.logs.push(line),
-    ...(notice ? { notice } : {}),
+    ...(notice ? { notice } : {}), ...(busy ? { busy } : {}),
   });
   world.saved = saved;
   world.release = { ...describeRelease(releaseJson(), 'JVK3R/JobeesLair') };

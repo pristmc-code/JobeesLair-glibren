@@ -247,10 +247,18 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       const count = concurrency();
       return Number.isInteger(count) && count >= 1 && count <= 4 ? count : 1;
     };
+    // glibren.18: enquanto a atualizacao do app usa a rede emprestada (lendNetwork), o motor nativo fica com pelo menos
+    // LENT_LANES faixas. Com uma so, toda requisicao HTTP do app (o acompanhamento e o batimento do payload em
+    // 127.0.0.1:34200, os links resolvidos, o catalogo) esperaria a imagem da atualizacao (0,5 GB) terminar (ps5-react
+    // docs/NETWORKING.md: uma tarefa por faixa); o payload, sem noticias do app por 15 s, o daria por fechado e pararia
+    // tudo (modo quieto). Com mais faixas, a requisicao vai para uma livre (a com menos tarefas). O payload continua
+    // com o numero escolhido nas Configuracoes (background-downloads.js setConcurrency so troca as faixas do motor).
+    var LENT_LANES = 3;
+    let lentLanes = false;
     // The engine's lanes and the background payload hear the number (background-downloads.js setConcurrency).
     function applyConcurrency() {
       try {
-        if (typeof downloads.setConcurrency === "function") downloads.setConcurrency(limit());
+        if (typeof downloads.setConcurrency === "function") downloads.setConcurrency(lentLanes ? Math.max(limit(), LENT_LANES) : limit());
       } catch (error2) {
         console.log(`[download-queue] simultaneous downloads not applied: ${error2.message}`);
       }
@@ -623,6 +631,38 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
     const transferringLanes = () => [...lanes.values()].filter((lane) => lane.task && lane.transferring && ["resolving", "connecting", "downloading"].includes(lane.job.state));
     const jobTransferring = () => transferringLanes().length > 0;
     const transferring = () => jobTransferring() || Boolean(borrower);
+    // glibren.18: se o arquivo do job e (ou sera) baixado pelo payload de segundo plano (background-downloads.js): a tarefa
+    // dele diz owner "payload"; antes de ter tarefa, vai para o payload o arquivo unico com a opcao ligada (queueAhead),
+    // nao um conjunto de volumes, um manifesto ou um pacote a instalar. Uma tarefa ainda comecando (sem dono) conta como
+    // do app: a atualizacao so espera um instante a mais.
+    function inPayload(job2) {
+      const task = lanes.get(job2)?.task;
+      if (task) return task.snapshot?.owner === "payload";
+      return Boolean(downloads.queueAhead?.()) && !job2.install && !job2.release?.parts && !job2.release?.manifestUrl;
+    }
+    var APP_TRANSFER = ["resolving", "connecting", "downloading", "verifying", "pausing"];
+    /**
+     * glibren.18: o que o proprio app esta fazendo agora e a atualizacao do app espera: { kind, title } ou null. kind:
+     * "shadowmount" (um pedido ao ShadowMount+ que nao espera, quietNetwork), "install" (um pacote sendo instalado),
+     * "extract" (o app extraindo um arquivo), "download" (o motor do app baixando, ou, com `queued`, prestes a baixar),
+     * "move" (um jogo sendo movido para outro disco). Os downloads e as conversoes do payload nao contam: ele e outro
+     * processo, segue baixando enquanto a atualizacao baixa, quando o app fecha para troca-la e depois que ele reabre.
+     */
+    function appWork({ queued = false } = {}) {
+      if (holds) return { kind: "shadowmount", title: "" };
+      for (const job2 of jobs) {
+        if (job2.state === "installing") return { kind: "install", title: job2.title ?? "" };
+        if (job2.state === "extracting" && (extractor2?.job === job2 || lanes.has(job2))) return { kind: "extract", title: job2.title ?? "" };
+      }
+      for (const job2 of lanes.keys()) if (APP_TRANSFER.includes(job2.state) && !inPayload(job2)) return { kind: "download", title: job2.title ?? "" };
+      for (const job2 of moves.keys()) return { kind: "move", title: job2.title ?? "" };
+      if (queued) {
+        // A download waiting for an extraction's room does not need the network until that ends (pump asks it back).
+        const next = jobs.find((job2) => job2.state === "queued" && !job2.roomWait && !lanes.has(job2) && !inPayload(job2));
+        if (next) return { kind: "download", title: next.title ?? "" };
+      }
+      return null;
+    }
     let ticks = 0;
     let awake2 = false;
     const modified = (path) => {
@@ -1234,6 +1274,9 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         let sized = Boolean(job2.total);
         unsubscribe = task.subscribe((progress) => {
           if (job2.state === "pausing") return;
+          // glibren.18: comecou a baixar no motor do app (o payload nao subiu, ou o devolveu): a atualizacao do app, que
+          // so podia correr junto com os downloads do payload, para e espera este.
+          if (borrower && progress.owner !== "payload" && ["connecting", "downloading"].includes(progress.state)) borrower.yield();
           if (ACTIVE.includes(progress.state)) job2.state = progress.state;
           job2.written = progress.written || 0;
           job2.total = progress.total ?? job2.total;
@@ -2654,7 +2697,9 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         const job2 = ready(first) ? first : jobs.find(ready);
         if (!job2) return;
         // The gamer's download goes first: the borrower stops, and this runs again once it gave the network back.
-        if (borrower) {
+        // glibren.18: so o que o motor do app vai baixar; o que vai para o payload (outro processo, com a rede dele) comeca
+        // junto com a atualizacao.
+        if (borrower && !inPayload(job2)) {
           borrower.yield();
           return;
         }
@@ -3540,15 +3585,19 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       isMoving: (id) => [...moves.keys()].some((job2) => job2.id === id),
       /** Whether a download holds the runtime's one network task now (state/shadowmount.js createShadowClient). */
       transferring,
+      /** glibren.18: o que o app faz agora e a atualizacao do app espera ({ kind, title } ou null; ver appWork). */
+      appWork,
       /**
        * Lends the runtime's one network task while the queue has nothing to do: no job running or queued, and
        * nothing asking ShadowMount. Returns the function that gives it back, or null when the queue needs it.
        * `onYield` is called when a job is queued (or ShadowMount must be asked): stop the transfer, then give
        * the network back; the queue starts nothing until then.
+       * MODIFIED (glibren.18): os downloads do payload de segundo plano (rodando, ou na fila indo para ele) nao seguram
+       * mais a rede: so o que o app faz (appWork: o motor do app baixando, extracao, instalacao, ShadowMount, mover).
+       * Emprestada, o motor fica com LENT_LANES faixas (applyConcurrency) ate ela voltar.
        */
       lendNetwork(onYield) {
-        // A download waiting for an extraction's room does not need the network until that ends (pump asks it back).
-        if (borrower || lanes.size || holds || jobs.some((job2) => job2.state === "queued" && !job2.roomWait)) return null;
+        if (borrower || appWork({ queued: true })) return null;
         const lease = { yield: () => {
           try {
             onYield();
@@ -3557,9 +3606,13 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
           }
         } };
         borrower = lease;
+        lentLanes = true;
+        applyConcurrency();
         return () => {
           if (borrower !== lease) return;
           borrower = null;
+          lentLanes = false;
+          applyConcurrency();
           pump();
         };
       },

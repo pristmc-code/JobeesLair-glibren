@@ -44,6 +44,9 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
     downloads: Downloads,
     archives: Archives,
     lend: (onYield) => downloadQueue().lendNetwork?.(onYield) ?? null,
+    // glibren.18: what the app itself is doing that the update waits for (download-queue.js appWork); the background
+    // payload's downloads are not in it.
+    busy: (options) => downloadQueue().appWork?.(options) ?? null,
     locate,
     arm: (dir) => SelfUpdate.arm(dir),
     freeBytes: async (root) => (await FileSystem.diskUsageAsync(root)).free,
@@ -175,7 +178,7 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
   var IDLE = { phase: "idle", version: null, written: 0, total: 0, file: "", error: "", outcome: null };
   // What the screens show of the install: they draw again when it changes, not on every progress report of
   // the download (four a second), which would redraw Settings' About card and the dock that often.
-  var shownKey = (install) => `${install.phase}|${install.version}|${install.file}|${install.error}|${install.outcome?.outcome ?? ""}|${install.total ? Math.floor(Math.min(1, install.written / install.total) * 100) : 0}`;
+  var shownKey = (install) => `${install.phase}|${install.version}|${install.file}|${install.error}|${install.outcome?.outcome ?? ""}|${install.holding?.kind ?? ""}:${install.holding?.title ?? ""}|${install.restarting ? 1 : 0}|${install.total ? Math.floor(Math.min(1, install.written / install.total) * 100) : 0}`;
   /** The install's progress: { phase, version, written, total, file, error, outcome } (state/auto-update.js). */
   function useInstall() {
     const [value, setValue] = (0, useState)(() => installer?.state() ?? IDLE);
@@ -215,14 +218,17 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
   /**
    * "Restart to apply": arms the updater to swap the image in and open the app again, then closes the app.
    * Returns the reason when it cannot (the app then stays open).
+   * MODIFIED (glibren.18): first waits for what the app itself is doing that closing would cut (its own engine
+   * downloading, an extraction, a package install, a move), and the dialog says which; the background payload's
+   * downloads are not waited for (they go on while the app closes and reopens). "" also while it waits.
    */
   function restartToApply() {
     if (!installer) return t("update.install.consoleOnly");
-    const { ok, reason } = installer.applyNow();
-    if (!ok) return reason;
-    setTimeout(() => BackHandler.exitApp(), 400);
-    return "";
+    const { ok, reason } = installer.applyWhenIdle(() => setTimeout(() => BackHandler.exitApp(), 400));
+    return ok ? "" : reason;
   }
+  /** glibren.18: "Don't restart": the wait of Restart to apply is given up; the update stays ready. */
+  var stopRestart = () => installer?.stopRestart();
   function setAutoInstall(on) {
     if (!canInstall) return;
     automatic = on;
@@ -244,4 +250,4 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
     return on;
   }
 
-export { canInstall, cancelUpdate, checkForUpdate, closeUpdateDialog, downloadUpdate, openUpdateDialog, restartToApply, setAutoInstall, startInstaller, startUpdateChecks, updateDetail, updateSnapshot, useAutoInstall, useInstall, useUpdate, useUpdateDialog };
+export { canInstall, cancelUpdate, stopRestart, checkForUpdate, closeUpdateDialog, downloadUpdate, openUpdateDialog, restartToApply, setAutoInstall, startInstaller, startUpdateChecks, updateDetail, updateSnapshot, useAutoInstall, useInstall, useUpdate, useUpdateDialog };

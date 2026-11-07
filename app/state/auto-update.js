@@ -11,10 +11,14 @@
 //      against the size and SHA-256 GitHub gives for it before it is published under its name; the
 //      runtime's one network task is borrowed only while the download queue has nothing to do, and given
 //      back the moment a game download is queued (download-queue.js lendNetwork). A cut download resumes.
+//      MODIFIED (glibren.18): the background payload's downloads (another process) no longer hold it: only what the
+//      app itself does (its own engine downloading, an extraction, a package install, ShadowMount, a move); the
+//      wait says which (view.holding).
 //   3. Check: update.zip is extracted and its sce_sys/param.json must name this title and the release's
 //      package version, beside a non-empty eboot.bin. The extracted copy and the zip are then deleted.
 //   4. Ready: "Restart to apply" writes <control>/apply.txt and arms the updater, which swaps the image in
-//      after the app closes and opens it again; with automatic installs on, the updater is armed as soon as
+//      after the app closes and opens it again (glibren.18: once the app's own work that closing would cut is done,
+//      applyWhenIdle; the payload's downloads go on through the swap, and the new build follows them again); with automatic installs on, the updater is armed as soon as
 //      the image is ready and swaps it in whenever the app is next closed. The new build confirms that it
 //      started (booted.txt); one that does not is replaced by the old image again.
 //
@@ -36,6 +40,9 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
   var UNPACKED = 3;
   var RETRY_MS = 15e3;
   var TRIES = 4;
+  // glibren.18: how often "Restart to apply" looks again whether the app's own work ended.
+  var APPLY_POLL_MS = 2e3;
+  const sameHolding = (a, b) => (a?.kind ?? "") === (b?.kind ?? "") && (a?.title ?? "") === (b?.title ?? "");
   // glibren.15: o tamanho maximo do aviso "notice=" em apply.txt (updater.c NOTICE_MAX - 1, com folga).
   var NOTICE_BYTES = 590;
   function stopped() {
@@ -66,6 +73,9 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     verifyZip = true,
     notify = () => {
     },
+    // glibren.18: () => { kind, title } of what the app itself is doing that the update waits for, or null
+    // (download-queue.js appWork): shown while it waits, and what "Restart to apply" waits for before closing the app.
+    busy = () => null,
     // glibren.15: () => o aviso, no idioma do app, que o updater.elf mostra quando nao consegue reabrir o app
     // depois da troca ("notice=" em apply.txt). Sem ele, o updater usa ingles + portugues.
     notice = () => "",
@@ -73,7 +83,18 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     log = (line) => console.log(`[auto-update] ${line}`)
   }) {
     const listeners = /* @__PURE__ */ new Set();
-    let view = { phase: "idle", version: null, written: 0, total: 0, file: "", error: "", outcome: null };
+    // glibren.18: holding = what the app is doing that the update waits for (busy()), or null; restarting = "Restart to
+    // apply" was pressed and waits for it to end.
+    let view = { phase: "idle", version: null, written: 0, total: 0, file: "", error: "", outcome: null, holding: null, restarting: false };
+    // glibren.18: the wait of "Restart to apply" (applyWhenIdle): { cancelled }.
+    let restart = null;
+    function holdingNow(options) {
+      try {
+        return busy(options) ?? null;
+      } catch {
+        return null;
+      }
+    }
     // The pipeline running now: { version, cancelled, task, release }.
     let run = null;
     const saved = () => store.get() ?? {};
@@ -196,8 +217,12 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
       for (; ; ) {
         if (current.cancelled) throw stopped();
         const release = lend(() => onYield());
-        if (release) return release;
-        if (view.phase !== "waiting") publish({ phase: "waiting" });
+        if (release) {
+          if (view.holding && !restart) publish({ holding: null });
+          return release;
+        }
+        const holding = holdingNow({ queued: true });
+        if (view.phase !== "waiting" || !sameHolding(view.holding, holding)) publish({ phase: "waiting", holding });
         await wait(RETRY_MS);
       }
     }
@@ -323,7 +348,7 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
       }
       const current = run = { version: release.version, cancelled: false, task: null };
       // MODIFIED (glibren.8): with verifyZip off only the image is downloaded, so the bar runs 0-100% over it alone.
-      publish({ phase: "waiting", version: release.version, written: 0, total: (verifyZip ? release.assets.zip.size : 0) + release.assets.image.size, file: "", error: "", outcome: null });
+      publish({ phase: "waiting", version: release.version, written: 0, total: (verifyZip ? release.assets.zip.size : 0) + release.assets.image.size, file: "", error: "", outcome: null, holding: null });
       void pipeline(current, release).catch((error) => {
         if (error.name === "AbortError" || current.cancelled) return;
         log(`${release.version}: ${error.message}`);
@@ -349,6 +374,8 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     /** Stops a download or check and deletes what it staged; a request to the updater is withdrawn. */
     function cancel() {
       const state = saved();
+      if (restart) restart.cancelled = true;
+      restart = null;
       if (run) {
         run.cancelled = true;
         try {
@@ -360,7 +387,7 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
       removeControl("apply.txt");
       if (state.staging) void removeQuietly(state.staging);
       store.set({});
-      publish({ phase: "idle", version: null, written: 0, total: 0, file: "", error: "" });
+      publish({ phase: "idle", version: null, written: 0, total: 0, file: "", error: "", holding: null, restarting: false });
     }
     // glibren.15: a linha "notice=" de apply.txt: uma linha so, sem caracteres de controle, ate NOTICE_BYTES
     // bytes em UTF-8 (o updater guarda ate 599; um texto maior ele troca pelo padrao); vazia sem aviso.
@@ -419,6 +446,48 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     const armOnClose = () => apply({ relaunch: false });
     /** "Restart to apply": the caller closes the app once this says ok; the updater opens it again. */
     const applyNow = () => apply({ relaunch: true });
+    /**
+     * glibren.18: "Restart to apply" that waits, first, for what the app itself is doing and closing it would cut
+     * (busy(): its own engine downloading, an extraction, a package install, ShadowMount, a move), and says which
+     * (view.holding, restarting). The background payload's downloads are not waited for: it is another process, keeps
+     * downloading while the app closes and the image is swapped, and the new build follows its jobs again. Then it arms
+     * the updater (applyNow) and calls exit(). Returns { ok, waiting } or { ok: false, reason } (nothing ready).
+     */
+    function applyWhenIdle(exit) {
+      if (restart) return { ok: true, waiting: view.holding };
+      if (!["ready", "armed"].includes(saved().phase)) return { ok: false, reason: "No update is ready." };
+      const holding = holdingNow();
+      if (!holding) {
+        const result = applyNow();
+        if (result.ok) exit();
+        return result;
+      }
+      log(`restart waits for the app's own work: ${holding.kind} ${holding.title}`);
+      const current = restart = { cancelled: false };
+      publish({ holding, restarting: true });
+      void (async () => {
+        for (; ; ) {
+          await wait(APPLY_POLL_MS);
+          if (current.cancelled) return;
+          const now = holdingNow();
+          if (!now) break;
+          if (!sameHolding(view.holding, now)) publish({ holding: now });
+        }
+        restart = null;
+        publish({ holding: null, restarting: false });
+        const result = applyNow();
+        if (result.ok) exit();
+        else publish({ error: result.reason });
+      })();
+      return { ok: true, waiting: holding };
+    }
+    /** glibren.18: the gamer gave up waiting: "Restart to apply" no longer closes the app by itself. */
+    function stopRestart() {
+      if (!restart) return;
+      restart.cancelled = true;
+      restart = null;
+      publish({ holding: null, restarting: false });
+    }
     /** Automatic installs turned off: an update armed to go in on close waits for "Restart to apply". */
     function disarm() {
       if (saved().phase !== "armed") return;
@@ -431,6 +500,8 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
       download,
       cancel,
       applyNow,
+      applyWhenIdle,
+      stopRestart,
       armOnClose,
       disarm,
       state: () => view,
