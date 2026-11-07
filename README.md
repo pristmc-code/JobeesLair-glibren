@@ -40,6 +40,9 @@
 > **glibren.12**: finished PS5 games are converted to `.exfat` on their own (originals kept in `BACKUP/`), PS4 `.pkg`
 > files go to `PS4/` and install on their own, the phone page gets sections, origin/format/system chips and BACKUP
 > details, and the Files tab no longer uninstalls a same-named game on another drive.
+> **glibren.13**: a maximum download speed (any value in MB/s, with - / + or typed) that also holds the background
+> downloads and can be changed live from the phone page; speeds shown in MB/s; the payload starts as soon as the app opens,
+> so the phone page and the TorBox store are up without starting a download.
 
 <p align="center">
   <b>English</b> ·
