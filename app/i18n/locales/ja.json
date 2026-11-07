@@ -1511,6 +1511,7 @@
   "torboxSearch.origin.list": "あなたのハッシュリスト",
   "torboxSearch.backport": "{count, plural, other {# 個のファイル}}、{size}。「すべて」（パッケージ全体）でダウンロードしてください：Jobee'sLair はまだバックポートのフォルダーだけをダウンロードできません",
   "torboxSearch.whole": "トレント全体（{count, plural, other {# 個のファイル}}）を1つのパッケージで",
+  "torboxSearch.parts": "{count, plural, other {# 個の分割ファイル}} · {size}",
   "torboxSearch.wholeType": "すべて",
   "settings.card.torboxLibrary": "TorBoxライブラリ",
   "storeMode.label": "ストア",

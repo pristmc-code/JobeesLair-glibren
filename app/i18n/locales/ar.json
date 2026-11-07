@@ -1511,6 +1511,7 @@
   "torboxSearch.origin.list": "قائمة التجزئات الخاصة بك",
   "torboxSearch.backport": "{count, plural, zero {لا ملفات} one {ملف واحد} two {ملفان} few {# ملفات} many {# ملفًا} other {# ملف}}، {size}. احصل عليه عبر «الكل» (الحزمة كاملة): لا يستطيع Jobee'sLair بعدُ تحميل مجلد الـ backport وحده",
   "torboxSearch.whole": "التورنت كاملًا، {count, plural, zero {لا ملفات} one {ملف واحد} two {ملفان} few {# ملفات} many {# ملفًا} other {# ملف}}، كحزمة واحدة",
+  "torboxSearch.parts": "{count, plural, zero {لا أجزاء} one {جزء واحد} two {جزآن} few {# أجزاء} many {# جزءًا} other {# جزء}} · {size}",
   "torboxSearch.wholeType": "الكل",
   "settings.card.torboxLibrary": "مكتبة TorBox",
   "storeMode.label": "المتجر",

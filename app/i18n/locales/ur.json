@@ -1511,6 +1511,7 @@
   "torboxSearch.origin.list": "آپ کی ہیش فہرست",
   "torboxSearch.backport": "{count, plural, one {# فائل} other {# فائلیں}}، {size}۔ اسے «سب» (پورا پیکج) سے حاصل کریں: Jobee'sLair ابھی صرف بیک پورٹ فولڈر ڈاؤن لوڈ نہیں کر سکتا",
   "torboxSearch.whole": "پورا ٹورنٹ، {count, plural, one {# فائل} other {# فائلیں}}، ایک پیکج کے طور پر",
+  "torboxSearch.parts": "{count, plural, one {# حصہ} other {# حصے}} · {size}",
   "torboxSearch.wholeType": "سب",
   "settings.card.torboxLibrary": "TorBox لائبریری",
   "storeMode.label": "اسٹور",

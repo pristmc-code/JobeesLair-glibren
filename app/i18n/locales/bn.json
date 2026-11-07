@@ -1511,6 +1511,7 @@
   "torboxSearch.origin.list": "আপনার হ্যাশ তালিকা",
   "torboxSearch.backport": "{count, plural, one {#টি ফাইল} other {#টি ফাইল}}, {size}। সব (পুরো প্যাকেজ) দিয়ে এটি নিন: Jobee'sLair এখনও শুধু ব্যাকপোর্ট ফোল্ডার ডাউনলোড করতে পারে না",
   "torboxSearch.whole": "পুরো টরেন্ট, {count, plural, one {#টি ফাইল} other {#টি ফাইল}}, একটি প্যাকেজ হিসেবে",
+  "torboxSearch.parts": "{count, plural, one {#টি অংশ} other {#টি অংশ}} · {size}",
   "torboxSearch.wholeType": "সব",
   "settings.card.torboxLibrary": "TorBox লাইব্রেরি",
   "storeMode.label": "স্টোর",

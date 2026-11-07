@@ -38,7 +38,7 @@ import { isoStamp } from './clock.js';
 import { youtubeId } from './youtube.js';
 import { formatFromName } from './link-formats.js';
 import { isMagnet, linkHashes, magnetHash, md5 } from '../services/torbox.js';
-import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFile, isPiece, magnetOf, matchesGame, plain, titleWords, worthShowing } from './torbox-search.js';
+import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePattern, filesOf, isBackportFile, isPiece, magnetOf, matchesGame, plain, titleWords, worthShowing } from './torbox-search.js';
 
   var LIBRARY_FILE = "torbox-biblioteca.json";
   var LIST_FILE = "torbox-lista.json";
@@ -58,9 +58,15 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
    *     sources: ["bundled" | "<url do feed>", ...],   // de onde o jogo vem
    *     genres: [...], cover: "https://..." | null, sizeBytes: number | null, formats: ["exfat", ...],
    *     torbox: { confirmed: bool, checkedAt: iso, run: "<id da rodada>", hash: string | null, name: string | null,
-   *               files: [{ name, size, format, via: "webdl" | "torrent" | "account", hash, release?, item?, file? }],
-   *               known?: [{ name, size, format, via: "name" | "code", hash }],  // só quando não confirmado
+   *               files: [{ name, size, format, via: "webdl" | "torrent" | "account", hash, release?, item?, file?,
+   *                         parts?: [{ hash, name?, size }] }],
+   *               known?: [{ name, size, format, via: "name" | "code" | "parts", hash, release?, parts?, missing?,
+   *                          total? }],  // só quando não confirmado
    *               error?: string }
+   *   glibren.16: um conjunto em partes (release.parts no catálogo) é UM arquivo: via "webdl", `release` o id do conjunto
+   *   (set-...), `parts` as partes guardadas na ordem (hash = MD5 do link da parte, ou o info hash de um magnet), `size`
+   *   a soma, `name` "<nome da parte 1 sem a parte> (N partes)". Só entra em `files` com TODAS as partes no TorBox; com
+   *   algumas, vai para `known` (via "parts", `missing` de `total` faltando) e não confirma o jogo.
    *   } }
    * }
    */
@@ -72,6 +78,8 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
    * `hash` (do jogo e de cada arquivo): via "torrent" é o info hash (40 hex; magnet:?xt=urn:btih:<hash>), via
    * "webdl" é o MD5 do link do catálogo (o link fica no app: `release` é o id da fonte em app/data/releases/<id>.json
    * ou no feed), via "account" é o hash do item que já está na conta (`item`: { kind, id }, `file`: id do arquivo).
+   * glibren.16: `parts` (opcional) num arquivo "webdl" diz que ele é um conjunto em partes (o payload lê só quantas são;
+   * um payload antigo ignora o campo e mostra o nome, "... (N partes)"). Formato continua 1: só campos novos opcionais.
    */
   var LIST_FORMAT = 1;
   /**
@@ -279,7 +287,7 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).map((file) => brokenFile(file) ? { ...file, broken: true } : file).sort((a, b) => Number(Boolean(a.broken)) - Number(Boolean(b.broken)) || Number(Boolean(a.piece)) - Number(Boolean(b.piece)) || rankOf(a.format) - rankOf(b.format) || b.size - a.size || a.name.localeCompare(b.name)).slice(0, MAX_FILES);
+    }).map((file) => brokenFile(file) ? { ...file, broken: true } : file).sort((a, b) => Number(Boolean(a.broken)) - Number(Boolean(b.broken)) || Number(Boolean(a.piece)) - Number(Boolean(b.piece)) || rankOf(a.format) - rankOf(b.format) || Number(Boolean(a.parts)) - Number(Boolean(b.parts)) || b.size - a.size || a.name.localeCompare(b.name)).slice(0, MAX_FILES);
   }
   // Os arquivos que contam de um item ou entrada do TorBox, cada um com de onde veio.
   function fileRows(item, fields, accept = () => true) {
@@ -330,6 +338,23 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
       if (named) rows.push(...fileRows(entry, { via: "torrent", hash, torrent: entry.name || "" }));
     }
     return rows;
+  }
+  /**
+   * glibren.16: os conjuntos em partes do catálogo (`sets`, de catalogSets) no que o TorBox tem: com todas as partes
+   * guardadas, uma linha só pela release inteira ({ name: "<nome> (N partes)", size: a soma, format, via: "webdl",
+   * hash: o da primeira parte, release: o id do conjunto, parts: [{ hash, name?, size }] }); com só algumas, uma linha
+   * em `partial` (o "known" do jogo: { ..., via: "parts", missing, total }), que não confirma o jogo.
+   */
+  function setFiles(sets, heldByLink) {
+    const rows = [], partial = [];
+    for (const set of sets) {
+      const holding = setHolding(set, heldByLink);
+      if (!holding.held) continue;
+      const row = { name: holding.name, size: holding.size, format: holding.format, hash: holding.parts[0].hash, release: set.release.id ?? null, parts: holding.parts, torrent: "" };
+      if (holding.complete) rows.push({ ...row, via: "webdl" });
+      else partial.push({ ...row, via: "parts", missing: holding.total - holding.held, total: holding.total });
+    }
+    return { rows, partial };
   }
   function catalogFiles(links, heldByLink) {
     const rows = [];
@@ -529,15 +554,19 @@ import { FORMAT_RANK, baseName, catalogLinks, codePattern, filesOf, isBackportFi
         if (signal?.aborted) throw stopped();
         const block = pending.slice(start, start + chunk);
         const linksOf = new Map(block.map(({ game }) => [game, catalogLinks(game)]));
-        const all = [...new Set([...linksOf.values()].flatMap((links) => [...links.keys()]))];
+        // glibren.16: as partes dos conjuntos vão no mesmo lote (nos mesmos grupos de WEB_GROUP/MAGNET_GROUP links).
+        const setsOf = new Map(block.map(({ game }) => [game, catalogSets(game)]));
+        const asked = (game) => [...linksOf.get(game).keys(), ...setsOf.get(game).flatMap((set) => set.links)];
+        const all = [...new Set(block.flatMap(({ game }) => asked(game)))];
         const failed = /* @__PURE__ */ new Map();
         const heldByLink = await heldAll(all, failed);
-        const rowsOf = new Map(block.map(({ game }) => [game, [...catalogFiles(linksOf.get(game), heldByLink), ...accountFiles(account, game), ...listFiles(listHeld, game)]]));
+        const setsHeld = new Map(block.map(({ game }) => [game, setFiles(setsOf.get(game), heldByLink)]));
+        const rowsOf = new Map(block.map(({ game }) => [game, [...catalogFiles(linksOf.get(game), heldByLink), ...setsHeld.get(game).rows, ...accountFiles(account, game), ...listFiles(listHeld, game)]]));
         const known = api.cachedByHash ? await knownByName(block.map(({ game }) => game).filter((game) => !rowsOf.get(game).length)) : /* @__PURE__ */ new Map();
         for (const { game, sources: from } of block) {
           const rows = rowsOf.get(game);
-          const errors = [...linksOf.get(game).keys()].map((link) => failed.get(link)).filter(Boolean);
-          const torbox = verdict(rows, run.id, now(), !rows.length && errors.length ? errors[0] : null, known.get(game));
+          const errors = asked(game).map((link) => failed.get(link)).filter(Boolean);
+          const torbox = verdict(rows, run.id, now(), !rows.length && errors.length ? errors[0] : null, [...known.get(game) ?? [], ...setsHeld.get(game).partial]);
           library.games[game.id] = { ...describe(game, from), torbox };
           run.done++;
           if (torbox.confirmed) run.found++;

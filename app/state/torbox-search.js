@@ -16,7 +16,7 @@
 import { debridSource, rememberTorBoxItem, torBoxApi } from './debrid.js';
 import { rememberDrive } from './last-drive.js';
 import { formatFromName } from './link-formats.js';
-import { magnetHash } from '../services/torbox.js';
+import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
 
   // The order the list is shown in: disk images first (exFAT before the rest), then packages, then archives.
   var FORMAT_RANK = ["exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip", "tar"];
@@ -96,7 +96,8 @@ import { magnetHash } from '../services/torbox.js';
       const index = list.indexOf(value);
       return index < 0 ? list.length : index;
     };
-    return [...files].sort((a, b) => ROW_RANK(a) - ROW_RANK(b) || rank(FORMAT_RANK, a.format) - rank(FORMAT_RANK, b.format) || rank(ORIGIN_RANK, a.origin) - rank(ORIGIN_RANK, b.origin) || (b.size || 0) - (a.size || 0) || a.name.localeCompare(b.name));
+    // glibren.16: no mesmo formato, o arquivo único vem antes do conjunto em partes.
+    return [...files].sort((a, b) => ROW_RANK(a) - ROW_RANK(b) || rank(FORMAT_RANK, a.format) - rank(FORMAT_RANK, b.format) || Number(Boolean(a.parts)) - Number(Boolean(b.parts)) || rank(ORIGIN_RANK, a.origin) - rank(ORIGIN_RANK, b.origin) || (b.size || 0) - (a.size || 0) || a.name.localeCompare(b.name));
   }
   // The same file found twice (in the account and among the catalog's links): kept once, where it is closest.
   function unique(files) {
@@ -108,7 +109,7 @@ import { magnetHash } from '../services/torbox.js';
       return true;
     });
   }
-  // The game's own single-file links, as the catalog lists them (a set in parts is not offered here).
+  // The game's own single-file links, as the catalog lists them (a set in parts: catalogSets).
   function catalogLinks(game) {
     const links = /* @__PURE__ */ new Map();
     for (const release of game.releases || []) {
@@ -117,6 +118,71 @@ import { magnetHash } from '../services/torbox.js';
       if (link && !links.has(link)) links.set(link, release);
     }
     return links;
+  }
+  // glibren.16: os conjuntos em partes do jogo (release-sets.js releaseSets: release.parts [{ number, sources }]) que o
+  // TorBox pode baixar: o link de cada parte é o da primeira fonte dela (a que debridSource marca), na ordem. Um conjunto
+  // com uma parte sem link, ou com o mesmo link em duas partes, fica de fora (não dá para conferir parte por parte).
+  function catalogSets(game) {
+    const sets = [];
+    for (const release of game.releases || []) {
+      if (!Array.isArray(release.parts) || !release.parts.length || release.unavailableReason) continue;
+      const links = release.parts.map((part) => part?.sources?.[0]).map((source) => source ? source.browserUrl || source.url || "" : "");
+      if (links.some((link) => !link) || new Set(links).size !== links.length) continue;
+      sets.push({ release, links });
+    }
+    return sets;
+  }
+  // O nome de um arquivo do TorBox sem a parte ("Jogo.part1.rar" -> "Jogo"), para dar nome ao conjunto.
+  var setStem = (name) => baseName(name).replace(/\.part\d{1,4}\.(?:rar|zip|7z)$/i, "").replace(/\.(?:rar|zip|7z|tar)\.\d{3}$/i, "").replace(/\.[a-z0-9]{1,6}$/i, "").trim();
+  // O formato de um conjunto: o do nome de uma parte no TorBox ("x.part1.rar" -> rar), senão o do link dela.
+  function setFormat(names) {
+    for (const name of names) {
+      const format = formatFromName(name);
+      if (format) return format;
+      const outer = /\.(rar|7z|zip|tar)(?:\.\d{3})?$/i.exec(baseName(name))?.[1];
+      if (outer) return outer.toLowerCase();
+    }
+    return null;
+  }
+  // O último pedaço do caminho de um link ("/file/x/Jogo.part1.rar/file" -> "Jogo.part1.rar").
+  function urlName(url) {
+    const last = String(url).split(/[?#]/)[0].replace(/\/file\/?$/i, "").split("/").pop() || "";
+    try {
+      return decodeURIComponent(last);
+    } catch {
+      return last;
+    }
+  }
+  // O maior arquivo de uma entrada do TorBox (a parte em si; um .txt do lado não conta).
+  function mainFile(entry) {
+    const files = filesOf(entry).filter(worthShowing);
+    return (files.length ? files : filesOf(entry)).reduce((best, file) => !best || file.size > best.size ? file : best, null);
+  }
+  /**
+   * O que o TorBox tem de um conjunto (`set` de catalogSets; `heldByLink`: link -> entrada do checkcached):
+   * { complete, held, total, name, size, format, parts: [{ hash, name, size }] } com as partes guardadas, na ordem.
+   * `name` é "<nome da primeira parte sem a parte> (N partes)"; `size` a soma das partes guardadas.
+   */
+  function setHolding(set, heldByLink) {
+    const parts = [];
+    const names = [];
+    set.links.forEach((link, index) => {
+      const entry = heldByLink.get(link);
+      if (!entry) return;
+      const file = mainFile(entry);
+      const name = baseName(file?.name || entry.name || "");
+      if (name) names.push(name);
+      const source = set.release.parts[index]?.sources?.[0] ?? {};
+      names.push(...[source.url, source.browserUrl].filter(Boolean).map(urlName));
+      parts.push({ hash: isMagnet(link) ? magnetHash(link) : linkHashes(link)[0], ...name ? { name } : {}, size: Number(file?.size) || Number(entry.size) || 0 });
+    });
+    const total = set.links.length;
+    const stem = setStem(parts[0]?.name || "") || String(set.release.label || "").replace(/\s*·\s*\d+\s+parts$/i, "").trim() || set.release.id;
+    return { complete: parts.length === total, held: parts.length, total, name: `${stem} (${total} partes)`, size: parts.reduce((sum, part) => sum + part.size, 0), format: setFormat(names), parts };
+  }
+  /** A linha da lista de um conjunto que o TorBox tem inteiro: `parts` é quantas partes (o "Baixar" põe todas na fila). */
+  function setRow(release, holding, link) {
+    return { ...entry({ origin: "catalog", link, release, fileId: "parts", name: holding.name, size: holding.size, host: release.provider || "" }), format: holding.format, type: holding.format ? holding.format.toUpperCase() : "?", piece: false, parts: holding.total };
   }
 
   /**
@@ -155,13 +221,21 @@ import { magnetHash } from '../services/torbox.js';
     });
     // The catalog's links TorBox holds, with their files.
     const links = catalogLinks(game);
+    // glibren.16: e os conjuntos em partes, numa linha só quando o TorBox tem todas as partes.
+    const sets = catalogSets(game);
     await run("catalog", async () => {
-      if (!links.size) return [];
-      const held = await api.cachedEntries([...links.keys()], { signal });
+      const asked = [...new Set([...links.keys(), ...sets.flatMap((set) => set.links)])];
+      if (!asked.length) return [];
+      const held = await api.cachedEntries(asked, { signal });
       const files = [];
       for (const [link, item] of held) {
         const release = links.get(link);
+        if (!release) continue;
         for (const file of filesOf(item)) if (worthShowing(file)) files.push(entry({ origin: "catalog", link, release, fileId: file.id, name: file.name || release.filename, size: file.size || release.sizeBytes || 0, host: release.provider || "" }));
+      }
+      for (const set of sets) {
+        const holding = setHolding(set, held);
+        if (holding.complete) files.push(setRow(set.release, holding, set.links[0]));
       }
       return files;
     });
@@ -270,6 +344,9 @@ import { magnetHash } from '../services/torbox.js';
    */
   function releaseFor(file) {
     const filename = file.whole ? /\.zip$/i.test(safeName(file.name)) ? safeName(file.name) : `${safeName(file.name).slice(0, 196)}.zip` : safeName(file.name);
+    // glibren.16: um conjunto em partes vai inteiro, como o botão do TorBox da ficha do jogo o põe na fila: cada parte
+    // resolvida no TorBox (debridSource marca a primeira fonte de cada uma), juntadas e extraídas pela fila.
+    if (file.origin === "catalog" && file.release?.parts) return debridSource(file.release);
     const fields = { filename, format: file.whole ? "zip" : formatFromName(filename), sizeBytes: file.whole ? null : file.size || null, sha256: void 0, checksum: void 0, ...file.whole ? { torboxZip: true } : {} };
     if (file.origin === "catalog") {
       const base = debridSource(file.release);
@@ -311,4 +388,4 @@ import { magnetHash } from '../services/torbox.js';
   var fakePackageWarning = (file, game, launches) => (file.format === "pkg" || file.format === "fpkg") && /^PPSA/i.test(String(game?.id || "")) && launches !== true;
 
 // glibren.9: the TorBox library builder (state/torbox-library.js) matches every game the same way, in one pass.
-export { FORMAT_RANK, baseName, catalogLinks, codePattern, downloadFile, fakePackageWarning, filesOf, hashListPaths, isBackportFile, isPiece, magnetOf, matchesGame, parseHashList, plain, readHashList, releaseFor, searchTexts, searchTorBox, sortFiles, titleWords, typeLabel, worthShowing };
+export { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, setRow, codePattern, downloadFile, fakePackageWarning, filesOf, hashListPaths, isBackportFile, isPiece, magnetOf, matchesGame, parseHashList, plain, readHashList, releaseFor, searchTexts, searchTorBox, sortFiles, titleWords, typeLabel, worthShowing };
