@@ -87,6 +87,10 @@
 #include <openssl/evp.h>
 
 #define BG_VERSION "1.0.0"
+// glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
+// anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
+// app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
+#define BG_API 13
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -3503,10 +3507,10 @@ static void route(int fd, Request* r) {
     current_ip(ip, sizeof ip);
     pthread_mutex_lock(&g_lock);
     const Job* active = first_running_locked();
-    snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
+    snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"api\":%d,\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
              "\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u,"
              "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s}",
-             BG_VERSION, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
+             BG_VERSION, BG_API, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
              g_running_count, g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
              g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp, ip, g_monitor_on ? "true" : "false",
              g_monitor_port_now(), g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false");
@@ -5464,7 +5468,7 @@ int main(void) {
   snprintf(g_log_path, sizeof g_log_path, "%s/bgdl.log", g_dir);
   set_process_name();
   read_previous_session();
-  logk_("==== iniciando bg-downloader %s (%s), pid %d, pai %d", BG_VERSION, BG_BUILD, (int)getpid(), (int)getppid());
+  logk_("==== iniciando bg-downloader %s (%s, api %d), pid %d, pai %d", BG_VERSION, BG_BUILD, BG_API, (int)getpid(), (int)getppid());
   g_lock_fd = take_lock();
   if (g_lock_fd < 0) { logk_("outra copia segura o lock; saindo"); printf("busy\n"); fflush(stdout); return 1; }
   report_previous_session(g_lock_contended);

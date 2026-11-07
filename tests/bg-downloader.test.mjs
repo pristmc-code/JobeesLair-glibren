@@ -63,6 +63,8 @@ if (!skip) {
     }
     const parts = url.pathname.split('/').filter(Boolean);
     let name = parts[parts.length - 1];
+    // glibren.13: /r/<token>/<nome> redireciona para /t/<token>/<nome>, como o link do TorBox que vai ao no da CDN.
+    if (parts[0] === 'r') { res.writeHead(302, { Location: `/t/${parts[1]}/${name}` }); return res.end(); }
     if (parts[0] === 't' && !srv.tokens.has(parts[1])) { res.writeHead(403); return res.end('expired'); }
     const size = name === 'big.bin' ? BIG : files[name]?.length;
     if (size === undefined) { res.writeHead(404); return res.end(); }
@@ -133,6 +135,20 @@ test('token obrigatorio em toda chamada, e so em 127.0.0.1', { skip }, async () 
   assert.equal((await call(base, 'GET', '/health')).status, 200);
   assert.equal(statSync(path.join(base, 'state/token')).mode & 0o777, 0o600);
   await stop(child);
+});
+
+test('glibren.13: o /health diz a api do payload, a mesma que o app exige (PAYLOAD_API)', { skip }, async () => {
+  const base = workspace();
+  const child = start(base);
+  try {
+    await up(base);
+    const health = (await call(base, 'GET', '/health')).data;
+    const wanted = Number(/var PAYLOAD_API = (\d+);/.exec(readFileSync(path.join(repo, 'app/state/background-downloads.js'), 'utf8'))[1]);
+    assert.equal(health.api, wanted, 'suba BG_API e PAYLOAD_API juntos');
+    assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), new RegExp(`api ${wanted}\\)`));
+  } finally {
+    await stop(child);
+  }
 });
 
 test('uma copia so: a nova pede para a antiga sair e fica com o lock', { skip }, async () => {
@@ -218,6 +234,31 @@ test('link vencido (403): pede outro ao TorBox com a chave e continua a mesma pa
   assert.ok(!readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').includes(KEY));
   assert.ok(!readFileSync(path.join(base, 'state/jobs.json'), 'utf8').includes(KEY));
   await stop(child);
+});
+
+test('glibren.13: TorBox com redirecionamento e limite de velocidade baixo: conexoes pausadas nao viram "link vencido"', { skip }, async () => {
+  const base = workspace();
+  files['tl.bin'] = randomBytes(8 * MiB);
+  srv.tokens.add('limited');
+  srv.rate = 0;
+  const child = start(base); // sem chave do TorBox: se pedisse renovacao, terminaria em needs-app
+  try {
+    await up(base);
+    assert.equal((await call(base, 'POST', '/config', { speedLimit: 2 })).status, 200);
+    const asked = srv.requestdl;
+    const dest = path.join(base, 'disk/downloads/tl.bin');
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/r/limited/tl.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 8, sha256: sha(files['tl.bin']), source: { provider: 'torbox', kind: 'webdl', id: 1, fileId: 'a' } });
+    const job = await until(base, data.id, ['completed', 'failed', 'needs-app'], () => true, 30000);
+    assert.equal(job.state, 'completed', job.error);
+    assert.equal(job.renewals, 0, 'nenhuma renovacao');
+    assert.equal(srv.requestdl, asked, 'nao pediu link novo ao TorBox');
+    assert.equal(sha(readFileSync(dest)), sha(files['tl.bin']));
+    assert.ok(!/negada|vencido/.test(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8')));
+  } finally {
+    await stop(child);
+    srv.tokens.delete('limited');
+    delete files['tl.bin'];
+  }
 });
 
 test('glibren.6: o jobs.json guarda o link do TorBox sem a chave (token=); ao reabrir, pede outro link e termina a parcial', { skip }, async () => {

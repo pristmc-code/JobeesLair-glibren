@@ -58,6 +58,8 @@ import { originOf } from './link-formats.js';
   var ELF = "/app0/bg-downloader.elf";
   var STATE_DIR = "/data/JobeesLair/bg";
   var PORT = 34200;
+  // glibren.13: a versao do protocolo do bg-downloader.elf deste app (BG_API em app/native/bg_downloader.c, no /health).
+  var PAYLOAD_API = 13;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -207,6 +209,8 @@ import { originOf } from './link-formats.js';
     // manda o campo. adoptSpeedLimit grava nas Configuracoes o escolhido no celular (setSpeedLimit), ou null.
     speedLimit = () => null,
     adoptSpeedLimit = null,
+    // glibren.13: a "api" minima do payload no ar; um mais antigo e trocado pelo ELF deste app (ensurePayloadNow).
+    payloadApi = PAYLOAD_API,
     // glibren: poe na fila um pedido da Biblioteca TorBox feito no celular ({ id, hash, file, whole, code, platform,
     // title, size }; lanca o motivo quando nao da), ou null; e de quanto em quanto os pedidos sao vistos (0 = so quando
     // adoptRequests() e chamado).
@@ -290,24 +294,49 @@ import { originOf } from './link-formats.js';
       });
       return ensuring;
     }
+    // glibren.13: o payload no ar pode ser de uma versao anterior do app (ele nao sai sozinho: continua rodando depois
+    // de o app ser atualizado, ate o PS5 reiniciar) e nao ter o que este app usa (o limite de velocidade). O /health diz
+    // a "api" dele; menor que PAYLOAD_API (ou sem ela), o app manda o ELF novo, que pede ao antigo para sair (ele grava
+    // os checkpoints e a fila) e continua a fila de onde parou. So quando o antigo nao esta baixando nada: ocupado, ele
+    // fica ate a proxima vez que o app precisar do payload sem nada rodando.
+    const upToDate = (state) => Number.isInteger(state?.api) && state.api >= payloadApi;
+    let staleSaid = null;
     async function ensurePayloadNow() {
       let token = readToken();
-      if (token && await health(token)) return token;
+      let state = token ? await health(token) : null;
+      if (state && upToDate(state)) return token;
+      if (state) {
+        if (platform !== "ps5" || !payloads) return token;
+        if (state.running > 0 || state.quiet) {
+          if (staleSaid !== state.pid) log(`payload ${state.pid} is an older one (api ${state.api ?? "none"}) and busy; replaced when it is idle`);
+          staleSaid = state.pid;
+          return token;
+        }
+        log(`payload ${state.pid} is an older one (api ${state.api ?? "none"}); sending this app's payload in its place`);
+      }
       if (platform !== "ps5" || !payloads) return "";
       try {
         const result = payloads.send(ELF, { answer: false });
         if (!result?.ok) {
           log(`payload not sent: ${result?.error ?? "no answer"}`);
-          return "";
+          return state ? token : "";
         }
       } catch (error) {
         log(`payload not sent: ${error?.message ?? error}`);
-        return "";
+        return state ? token : "";
       }
+      let answered = "";
       for (const until = Date.now() + startWaitMs; Date.now() < until; ) {
         await wait(Math.min(400, startWaitMs));
         token = readToken();
-        if (token && await health(token)) return token;
+        state = token ? await health(token) : null;
+        if (state && upToDate(state)) return token;
+        if (state) answered = token;
+      }
+      // O antigo ainda responde (o novo nao subiu): segue com ele, como antes.
+      if (answered) {
+        log("the new payload did not take over in time; keeping the one running");
+        return answered;
       }
       log("payload did not answer in time; downloading in the app");
       return "";
@@ -902,4 +931,4 @@ import { originOf } from './link-formats.js';
     return wrapper;
   }
 
-export { backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };
+export { PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };
