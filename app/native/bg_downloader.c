@@ -90,7 +90,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 14
+#define BG_API 15
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -818,6 +818,14 @@ typedef struct {
   // De onde vem o arquivo (files[].via da lista): "torrent" (lib_hash = infohash), "webdl" (lib_hash = MD5 do link do
   // catalogo; lib_release = a fonte no app) ou "account" (item ja na conta: lib_item_kind/lib_item_id + lib_file_id).
   char lib_via[12], lib_release[96], lib_item_kind[12], lib_item_id[32], lib_file_id[32];
+  // glibren.18: o link publico do catalogo (webdl) e o pedido comecado pelo payload com o app fechado: auto_started
+  // (virou um job de verdade), auto_adopted (o app abriu e o pos na fila dele), auto_convert (vira .exfat no fim, se o app
+  // nao o adotar), auto_note (por que ainda espera: "no-key", "no-root", "no-link", "parts", "exists", "torbox",
+  // "preparing"). Gravados em jobs.json ("library").
+  char lib_link[1024];
+  int auto_started, auto_adopted, auto_convert;
+  char auto_note[16];
+  int64_t auto_retry_at; // so na memoria
   // glibren.12: de onde vem e o que e, para os selos da pagina do celular: `host` o site do download direto (so o
   // dominio, "mediafire.com"; vazio = o do url), `format` a extensao ("exfat", "rar"; vazio = a do nome), `parts` as
   // partes de um conjunto (0/1 = arquivo unico). O app manda (POST /jobs e /queue); gravados em jobs.json.
@@ -865,6 +873,10 @@ static int g_speed_limit;
 static int g_speed_remote;
 static unsigned g_speed_stamp;
 static void rate_set(int megabytes);
+// glibren.18: para comecar sozinho (app fechado) um pedido da Biblioteca TorBox feito no celular: o disco padrao de
+// downloads do app ("autoRoot", POST /config) e se a conversao para .exfat esta ligada ("autoConvert"). Em config.json.
+static char g_auto_root[1024];
+static int g_auto_convert = 1;
 static int g_running_count;
 static int g_dirty;
 // A pagina do celular (porta 34201): ligada por padrao; o PIN chega do app so como sal + SHA-256 (hex), e o texto
@@ -974,7 +986,12 @@ static void job_json_as(Buf* b, const Job* j, int for_disk) {
     buf_str(b, ",\"item\":{\"kind\":"); buf_json(b, j->lib_item_kind);
     buf_str(b, ",\"id\":"); buf_json(b, j->lib_item_id);
     buf_str(b, "},\"fileId\":"); buf_json(b, j->lib_file_id);
-    buf_fmt(b, ",\"whole\":%s,\"size\":%llu}", j->lib_whole ? "true" : "false", (unsigned long long)j->total);
+    buf_fmt(b, ",\"whole\":%s,\"size\":%llu", j->lib_whole ? "true" : "false", (unsigned long long)j->total);
+    buf_str(b, ",\"link\":"); buf_json(b, j->lib_link);
+    buf_fmt(b, ",\"autoStarted\":%s,\"autoAdopted\":%s,\"autoConvert\":%s", j->auto_started ? "true" : "false",
+            j->auto_adopted ? "true" : "false", j->auto_convert ? "true" : "false");
+    buf_str(b, ",\"autoNote\":"); buf_json(b, j->auto_note);
+    buf_str(b, "}");
   }
   buf_str(b, "}");
 }
@@ -1071,6 +1088,19 @@ static int source_field(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 
+// glibren.18: um link publico do catalogo: http(s), sem espaco, sem chave nem token na consulta (nunca um assinado).
+static int lib_link_ok(const char* link) {
+  if (strncmp(link, "https://", 8) && strncmp(link, "http://", 7)) return 0;
+  const size_t n = strlen(link);
+  if (n >= 1000) return 0;
+  char lower[1024];
+  for (size_t i = 0; i <= n; ++i) {
+    const unsigned char c = (unsigned char)link[i];
+    if (i < n && (c <= ' ' || c == 0x7f || c == '"' || c == 0x5c)) return 0;
+    lower[i] = (char)tolower(c);
+  }
+  return !strstr(lower, "token=") && !strstr(lower, "apikey") && !strstr(lower, "api_key") && !strstr(lower, "key=");
+}
 static int library_item_field(JP* jp, const char* key, void* ctx) {
   Job* j = ctx;
   if (!strcmp(key, "kind")) return lib_text(jp, j->lib_item_kind, sizeof j->lib_item_kind) ? 1 : -1;
@@ -1093,6 +1123,12 @@ static int library_field(JP* jp, const char* key, void* ctx) {
     if (jp->p >= jp->end || *jp->p != '{') return jp_skip(jp) ? 1 : -1;
     return jp_object(jp, library_item_field, j) ? 1 : -1;
   }
+  // glibren.18
+  if (!strcmp(key, "link")) { if (!lib_text(jp, j->lib_link, sizeof j->lib_link)) return -1; if (!lib_link_ok(j->lib_link)) j->lib_link[0] = 0; return 1; }
+  if (!strcmp(key, "autoStarted")) return jp_bool(jp, &j->auto_started) ? 1 : -1;
+  if (!strcmp(key, "autoAdopted")) return jp_bool(jp, &j->auto_adopted) ? 1 : -1;
+  if (!strcmp(key, "autoConvert")) return jp_bool(jp, &j->auto_convert) ? 1 : -1;
+  if (!strcmp(key, "autoNote")) return lib_text(jp, j->auto_note, sizeof j->auto_note) ? 1 : -1;
   return 0;
 }
 
@@ -2662,6 +2698,7 @@ static void finish(Job* j, const char* state, const char* error) {
   pthread_mutex_unlock(&g_lock);
 }
 
+static void auto_after_download(Job* j); // glibren.18 (abaixo, perto da Biblioteca TorBox)
 static void notify_job(Job* j, int ok) {
   char text[600];
   const char* custom = ok ? j->notify_done : j->notify_failed;
@@ -2773,6 +2810,7 @@ static void run_job(Job* j) {
   logk_("job %s: concluido (%llu bytes)%s", j->id, (unsigned long long)e->total, j->awaiting_app ? "; aguardando o app" : "");
   finish(j, "completed", NULL);
   notify_job(j, 1);
+  auto_after_download(j); // glibren.18: pedido do celular baixado com o app fechado: a conversao, se for o caso
   goto out;
 done:
   if (e->fd >= 0 && e->ranged && e->completed && !e->fail[0]) write_checkpoint(e);
@@ -2894,6 +2932,9 @@ typedef struct {
   // glibren.13: e o mesmo para o limite de velocidade.
   int from_disk, has_by, has_speed_by;
   char by[8], speed_by[8];
+  // glibren.18: o disco padrao e a conversao, para os pedidos do celular comecados com o app fechado.
+  int has_auto_root, has_auto_convert, auto_convert;
+  char auto_root[1024];
   uint64_t stamp, speed_stamp;
 } ConfigBody;
 static int config_field(JP* jp, const char* key, void* ctx) {
@@ -2907,6 +2948,8 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (c->from_disk && !strcmp(key, "concurrencyBy")) { c->has_by = 1; return jp_text(jp, c->by, sizeof c->by) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "concurrencyStamp")) return jp_uint(jp, &c->stamp) ? 1 : -1;
   if (!strcmp(key, "speedLimit")) { c->found = c->has_speed = 1; return jp_uint(jp, &c->speed) ? 1 : -1; }
+  if (!strcmp(key, "autoRoot")) { c->found = c->has_auto_root = 1; return jp_text(jp, c->auto_root, sizeof c->auto_root) ? 1 : -1; }
+  if (!strcmp(key, "autoConvert")) { c->found = c->has_auto_convert = 1; return jp_bool(jp, &c->auto_convert) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "speedLimitBy")) { c->has_speed_by = 1; return jp_text(jp, c->speed_by, sizeof c->speed_by) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "speedLimitStamp")) return jp_uint(jp, &c->speed_stamp) ? 1 : -1;
   if (!strcmp(key, "pauseOnCloseSeconds")) {
@@ -2925,6 +2968,7 @@ static int config_valid(const ConfigBody* c) {
   if (c->has_concurrency && (c->concurrency < 1 || c->concurrency > MAX_WORKERS)) return 0;
   if (c->has_pause && c->pause_seconds > MAX_PAUSE_SECONDS) return 0;
   if (c->has_speed && c->speed > MAX_SPEED_LIMIT) return 0;
+  if (c->has_auto_root && c->auto_root[0] && !safe_path(c->auto_root)) return 0;
   if (c->has_pin_salt != c->has_pin_hash) return 0;
   if (c->has_pin_hash && !((is_hex64(c->pin_salt) && is_hex64(c->pin_hash)) || (!c->pin_salt[0] && !c->pin_hash[0]))) return 0;
   return 1;
@@ -2954,6 +2998,13 @@ static int config_apply_locked(const ConfigBody* c) {
     g_speed_remote = c->has_speed_by && !strcmp(c->speed_by, "remote");
     g_speed_stamp = (unsigned)c->speed_stamp;
   }
+  // glibren.18: o disco e a conversao para os pedidos do celular com o app fechado.
+  if (c->has_auto_root && strcmp(g_auto_root, c->auto_root)) {
+    snprintf(g_auto_root, sizeof g_auto_root, "%s", c->auto_root);
+    logf_("pedidos do celular com o app fechado: disco %s", g_auto_root[0] ? g_auto_root : "(nenhum)");
+    changed = 1;
+  }
+  if (c->has_auto_convert && g_auto_convert != (c->auto_convert ? 1 : 0)) { g_auto_convert = c->auto_convert ? 1 : 0; changed = 1; }
   if (c->has_monitor && g_monitor_on != (c->monitor ? 1 : 0)) {
     g_monitor_on = c->monitor ? 1 : 0;
     logf_("pagina do celular: %s", g_monitor_on ? "ligada" : "desligada");
@@ -3020,6 +3071,9 @@ static void save_config_locked(void) {
   buf_fmt(&b, ",\"powerTick\":%s", g_power_tick ? "true" : "false");
   buf_fmt(&b, ",\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u", g_concurrency_remote ? "remote" : "app", g_concurrency_stamp);
   buf_fmt(&b, ",\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u", g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp);
+  buf_str(&b, ",\"autoRoot\":");
+  buf_json(&b, g_auto_root);
+  buf_fmt(&b, ",\"autoConvert\":%s", g_auto_convert ? "true" : "false");
   // glibren.5: so quando o app mandou o tempo (sem ele, vale o padrao de quem roda: 30 s, ou BGDL_QUIET_MS nos testes).
   if (g_pause_seconds >= 0) buf_fmt(&b, ",\"pauseOnCloseSeconds\":%d", g_pause_seconds);
   buf_str(&b, "}\n");
@@ -3450,6 +3504,11 @@ static int job_action_locked(Job* j, const char* action, int remote, int* remove
     }
   } else if (remote) {
     return 404;
+  } else if (!strcmp(action, "adopt")) {
+    // glibren.18: o app abriu e pos na fila dele um pedido do celular que o payload ja tinha comecado: nao o adota de
+    // novo, e no fim a conversao fica com o app.
+    if (!j->requested || !j->auto_started) return 404;
+    j->auto_adopted = 1;
   } else if (!strcmp(action, "follow")) {
     j->followed = 1;
     pthread_cond_broadcast(&g_wake_downloader);
@@ -3540,11 +3599,17 @@ static int refuse_field(JP* jp, const char* key, void* ctx) {
 // glibren.12: conversao para .exfat (exfat_writer.c + pkg_source.c + bg_convert.c, no mesmo arquivo compilado).
 #include "bg_convert.c"
 
+static void auto_plan_route(int fd, const char* query); // glibren.18 (perto da Biblioteca TorBox)
 static void route(int fd, Request* r) {
   if (!token_ok(r->token)) { respond_error(fd, 401, "missing or wrong token"); return; }
   // glibren.5: logo depois de um POST /bye, uma chamada atrasada do app nao o faz "voltar a falar".
   if (strcmp(r->path, "/bye") && mono_ms() - g_bye_ms >= BYE_GRACE_MS) g_last_app_ms = mono_ms();
   if (conv_route(fd, r)) return; // glibren.12: /convert
+  // glibren.18: o destino que o payload daria a um pedido do celular (o teste o compara com o do app).
+  if (!strcmp(r->method, "GET") && !strncmp(r->path, "/auto/plan", 10) && (!r->path[10] || r->path[10] == '?')) {
+    auto_plan_route(fd, r->path[10] ? r->path + 11 : "");
+    return;
+  }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
     char body[700], ip[64];
     current_ip(ip, sizeof ip);
@@ -4039,6 +4104,9 @@ static void monitor_status(Buf* b) {
     if (j->requested) buf_str(b, ",\"requested\":true,\"via\":\"TorBox\""); // glibren: pedido pela Biblioteca TorBox
     else if (!strcmp(j->provider, "torbox")) buf_str(b, ",\"via\":\"TorBox\"");
     else if (!strcmp(j->provider, "alldebrid")) buf_str(b, ",\"via\":\"AllDebrid\"");
+    // glibren.18: comecado pelo payload com o app fechado (ainda nao adotado), ou por que ainda espera (so o codigo).
+    if (j->requested && j->auto_started && !j->auto_adopted) buf_str(b, ",\"auto\":true");
+    if (j->requested && j->placeholder && j->auto_note[0]) { buf_str(b, ",\"autoNote\":"); buf_json(b, j->auto_note); }
     // glibren.12: download direto: o site (o que o app mandou, ou o do link); pelo TorBox/AllDebrid o host e o CDN
     // deles, e a pagina mostra o "via". E o formato (o do app, ou a extensao do destino/nome) e as partes.
     {
@@ -4382,6 +4450,7 @@ typedef struct {
 // das partes, ou so o numero); 0 num arquivo unico. O app baixa todas pelo `release` (o id do conjunto).
 typedef struct {
   char name[256], format[16], via[12], hash[72], release[96], item_kind[12], item_id[32], file_id[32];
+  char link[1024]; // glibren.18: num "webdl", o link PUBLICO do catalogo (o payload o pede ao TorBox com o app fechado)
   uint64_t size;
   int piece;
   unsigned parts;
@@ -4532,6 +4601,7 @@ static int lib_file_field(JP* jp, const char* key, void* ctx) {
     return jp_object(jp, lib_file_item_field, f) ? 1 : -1;
   }
   if (!strcmp(key, "name")) return lib_text(jp, f->name, sizeof f->name) ? 1 : -1;
+  if (!strcmp(key, "link")) { if (!lib_text(jp, f->link, sizeof f->link)) return -1; if (!lib_link_ok(f->link)) f->link[0] = 0; return 1; }
   if (!strcmp(key, "size")) return lib_uint(jp, &f->size) ? 1 : -1;
   if (!strcmp(key, "format")) return lib_text(jp, f->format, sizeof f->format) ? 1 : -1;
   if (!strcmp(key, "parts")) {
@@ -5284,6 +5354,9 @@ static void lib_request_source(Job* j, const LibGame* g, const LibFile* from, in
   snprintf(j->lib_item_id, sizeof j->lib_item_id, "%s", from ? from->item_id : "");
   snprintf(j->lib_file_id, sizeof j->lib_file_id, "%s", from && !whole ? from->file_id : "");
   copy_text(j->lib_file, sizeof j->lib_file, from && !whole ? from->name : "");
+  copy_text(j->lib_link, sizeof j->lib_link, from && !whole ? from->link : ""); // glibren.18
+  j->auto_note[0] = 0;
+  j->auto_retry_at = 0;
 }
 static void monitor_library_add(int fd, Request* r) {
   if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
@@ -5384,12 +5457,553 @@ static void monitor_library_add(int fd, Request* r) {
     // Com o app fechado, o PS5 avisa que o pedido espera a Jobee'sLair abrir.
     if (away) {
       char text[400];
-      snprintf(text, sizeof text, "Jobee'sLair: %.200s entrou na fila pelo celular. Abra a Jobee'sLair para baixar.", g->title);
+      // glibren.18: com o disco padrao do app conhecido, o payload comeca sozinho (auto_loop).
+      if (g_auto_root[0]) snprintf(text, sizeof text, "Jobee'sLair: %.200s entrou na fila pelo celular e vai baixar pelo payload.", g->title);
+      else snprintf(text, sizeof text, "Jobee'sLair: %.200s entrou na fila pelo celular. Abra a Jobee'sLair para baixar.", g->title);
       notify(text);
     }
   }
   lib_find_free(&p);
   monitor_json(fd, 200, answer);
+}
+
+// ---- glibren.18: pedido da Biblioteca TorBox comecado pelo payload com o app FECHADO ----------------------------
+// Antes, um "Baixar" no celular so virava um marcador "waiting-app" que o app adotava ao abrir. Agora, com o app fechado
+// (app_away), auto_loop pega o pedido e o comeca aqui mesmo:
+//   - account (item ja na conta TorBox: lib_item_kind/lib_item_id + lib_file_id): requestdl direto;
+//   - torrent (lib_hash = infohash): createtorrent (magnet) -> espera ficar pronto (mylist?id=) -> requestdl do arquivo
+//     certo (pelo nome) ou do torrent inteiro (zip);
+//   - webdl: o link PUBLICO do catalogo (files[].link na torbox-lista.json, glibren.18) -> createwebdownload -> espera ->
+//     requestdl. Sem o link (lista de antes), espera o app ("no-link").
+// Ritmo da API: TB_PACE_MS entre chamadas; 429 espera TB_RATE_WAIT_MS e tenta de novo. A chave e a de debrid_key(): a
+// que o app entregou por POST /secret nesta vida do payload (so em memoria; o app sobe o payload e entrega a chave ao
+// abrir, glibren.13) ou o debrid.json do app enquanto o sistema mantem a pasta dele montada. Sem chave: "no-key" (a
+// pagina pede para abrir a Jobee'sLair uma vez). Conjuntos em partes (lib parts > 1) continuam so pelo app ("parts").
+// O destino segue AS MESMAS regras do app (download-formats.js artifact + exfat-convert.js destinationFor +
+// download-queue.js stagedPath), duplicadas aqui em auto_plan: o teste "auto_plan = app" compara os dois (GET /auto/plan).
+// Pronto: o job vira um job de verdade, entregue com antecedencia (ahead, como os da fila do app), que o trabalhador baixa
+// com o app fechado. Se o app abrir no meio, ele o adota (background-downloads.js: poe na fila dele com o mesmo destino,
+// que acha a parcial e acompanha este job; POST /jobs/<id>/adopt). Terminado com o app ainda fechado: jogo de PS5
+// compactado ou .pkg vira .exfat aqui (bg_convert, que pede a varredura ao ShadowMount+); .pkg de PS4 fica em PS4/ para
+// instalar pela Jobee'sLair (aba Arquivos); imagem vai para homebrew/ (place_image).
+static int g_tb_pace_ms = 400, g_tb_rate_wait_ms = 61000, g_tb_poll_ms = 5000, g_tb_ready_ms = 300000, g_auto_retry_ms = 120000;
+static int64_t g_tb_last_ms;
+
+typedef struct { char id[32], name[256]; uint64_t size; } TbFile;
+#define TB_FILES 64
+typedef struct {
+  int success, items;
+  char code[64], text[8192], id[32];
+  int finished, present;
+  int nfiles;
+  TbFile files[TB_FILES];
+} TbReply;
+
+static int tb_bool(JP* jp, int* out) {
+  jp_ws(jp);
+  if (jp->p < jp->end && (*jp->p == 't' || *jp->p == 'f')) return jp_bool(jp, out);
+  *out = 0;
+  return jp_skip(jp);
+}
+static int tb_text(JP* jp, char* out, size_t cap) {
+  jp_ws(jp);
+  if (jp->p < jp->end && *jp->p == '"') return jp_text(jp, out, cap);
+  return jp_skip(jp);
+}
+static int tb_file_field(JP* jp, const char* key, void* ctx) {
+  TbFile* f = ctx;
+  if (!strcmp(key, "id")) return jp_id(jp, f->id, sizeof f->id) ? 1 : -1;
+  if (!strcmp(key, "short_name")) return tb_text(jp, f->name, sizeof f->name) ? 1 : -1;
+  if (!strcmp(key, "name")) {
+    char name[256] = "";
+    if (!tb_text(jp, name, sizeof name)) return -1;
+    if (!f->name[0]) copy_text(f->name, sizeof f->name, base_name(name));
+    return 1;
+  }
+  if (!strcmp(key, "size")) { jp_ws(jp); if (jp->p < jp->end && isdigit((unsigned char)*jp->p)) return jp_uint(jp, &f->size) ? 1 : -1; return jp_skip(jp) ? 1 : -1; }
+  return 0;
+}
+static int tb_file_item(JP* jp, void* ctx) {
+  TbReply* r = ctx;
+  jp_ws(jp);
+  if (r->nfiles >= TB_FILES || jp->p >= jp->end || *jp->p != '{') return jp_skip(jp);
+  TbFile f;
+  memset(&f, 0, sizeof f);
+  if (!jp_object(jp, tb_file_field, &f)) return 0;
+  r->files[r->nfiles++] = f;
+  return 1;
+}
+static int tb_data_field(JP* jp, const char* key, void* ctx) {
+  TbReply* r = ctx;
+  if (!strcmp(key, "torrent_id") || !strcmp(key, "webdownload_id")) return jp_id(jp, r->id, sizeof r->id) ? 1 : -1;
+  if (!strcmp(key, "id")) { char id[32] = ""; if (!jp_id(jp, id, sizeof id)) return -1; if (!r->id[0]) copy_text(r->id, sizeof r->id, id); return 1; }
+  if (!strcmp(key, "download_finished")) return tb_bool(jp, &r->finished) ? 1 : -1;
+  if (!strcmp(key, "download_present")) return tb_bool(jp, &r->present) ? 1 : -1;
+  if (!strcmp(key, "files")) { jp_ws(jp); if (jp->p < jp->end && *jp->p == '[') return jp_array(jp, tb_file_item, r) ? 1 : -1; return jp_skip(jp) ? 1 : -1; }
+  return 0;
+}
+// Uma lista (mylist sem filtro devolve [..]): so o primeiro item conta.
+static int tb_data_item(JP* jp, void* ctx) {
+  TbReply* r = ctx;
+  jp_ws(jp);
+  if (r->items++ || jp->p >= jp->end || *jp->p != '{') return jp_skip(jp);
+  return jp_object(jp, tb_data_field, r);
+}
+static int tb_top_field(JP* jp, const char* key, void* ctx) {
+  TbReply* r = ctx;
+  if (!strcmp(key, "success")) return tb_bool(jp, &r->success) ? 1 : -1;
+  if (!strcmp(key, "error")) return tb_text(jp, r->code, sizeof r->code) ? 1 : -1;
+  if (!strcmp(key, "data")) {
+    jp_ws(jp);
+    if (jp->p < jp->end && *jp->p == '"') return jp_text(jp, r->text, sizeof r->text) ? 1 : -1;
+    if (jp->p < jp->end && *jp->p == '{') return jp_object(jp, tb_data_field, r) ? 1 : -1;
+    if (jp->p < jp->end && *jp->p == '[') return jp_array(jp, tb_data_item, r) ? 1 : -1;
+    return jp_skip(jp) ? 1 : -1;
+  }
+  return 0;
+}
+
+// Uma chamada a API do TorBox (g_torbox_base + `path`): GET, ou POST com um campo (multipart ou urlencoded). A chave vai
+// no cabecalho Authorization (no requestdl, como o renew_link, na consulta: o caminho ja a leva); nada disso vai ao
+// diario. 1 = respondeu (r preenchido); 0 = sem resposta util; o 429 espera e repete (ate 3 vezes).
+static int tb_request(const char* path, const char* field, const char* value, int multipart, const char* key, TbReply* r, long* status) {
+  for (int attempt = 0; attempt < 4 && !g_stop; ++attempt) {
+    for (int64_t gap; (gap = g_tb_last_ms + g_tb_pace_ms - mono_ms()) > 0;) sleep_ms((int)gap);
+    g_tb_last_ms = mono_ms();
+    memset(r, 0, sizeof *r);
+    char url[2048];
+    snprintf(url, sizeof url, "%s%s", g_torbox_base, path);
+    CURL* curl = curl_easy_init();
+    if (!curl) return 0;
+    Body body = {0};
+    configure_transport(curl, url);
+    memset(url, 0, sizeof url);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, on_small_body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+    char auth[160];
+    snprintf(auth, sizeof auth, "Authorization: Bearer %s", key);
+    struct curl_slist* headers = curl_slist_append(NULL, auth);
+    memset(auth, 0, sizeof auth);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_mime* mime = NULL;
+    char* escaped = NULL;
+    char form[4096];
+    if (field && multipart) {
+      mime = curl_mime_init(curl);
+      curl_mimepart* part = curl_mime_addpart(mime);
+      curl_mime_name(part, field);
+      curl_mime_data(part, value, CURL_ZERO_TERMINATED);
+      curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
+    } else if (field) {
+      escaped = curl_easy_escape(curl, value, 0);
+      snprintf(form, sizeof form, "%s=%s", field, escaped ? escaped : "");
+      curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, form);
+    }
+    const CURLcode result = curl_easy_perform(curl);
+    *status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, status);
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    if (mime) curl_mime_free(mime);
+    if (escaped) curl_free(escaped);
+    if (result != CURLE_OK) { free(body.data); return 0; }
+    if (*status == 429) {
+      free(body.data);
+      logf_("TorBox: 429 (devagar); esperando %d s", g_tb_rate_wait_ms / 1000);
+      for (int64_t until = mono_ms() + g_tb_rate_wait_ms; mono_ms() < until && !g_stop;) sleep_ms(200);
+      continue;
+    }
+    int parsed = 0;
+    if (body.data) { JP jp = {body.data, body.data + body.size, 0}; parsed = jp_object(&jp, tb_top_field, r); }
+    free(body.data);
+    return parsed;
+  }
+  return 0;
+}
+
+typedef struct {
+  char id[24], via[12], hash[72], file[256], link[1024], item_kind[12], item_id[32], file_id[32], name[256], code[16], format[9];
+  int whole;
+  unsigned parts;
+  uint64_t size;
+} AutoReq;
+typedef struct {
+  char url[8192], kind[16], item_id[32], file_id[32];
+  int zip;
+} AutoSource;
+
+// Espera o item ficar pronto no TorBox (mylist?id=): 1 pronto (r com os arquivos), 0 ainda nao, -1 erro.
+static int tb_wait_ready(const char* kind, const char* id, const char* key, TbReply* r, char* why, size_t cap) {
+  char path[160];
+  snprintf(path, sizeof path, "/%s/mylist?id=%s&bypass_cache=true", !strcmp(kind, "webdl") ? "webdl" : "torrents", id);
+  for (int64_t until = mono_ms() + g_tb_ready_ms; !g_stop;) {
+    long status = 0;
+    if (!tb_request(path, NULL, NULL, 0, key, r, &status)) { snprintf(why, cap, "TorBox didn't answer (HTTP %ld)", status); return -1; }
+    if (!r->success) { snprintf(why, cap, "TorBox: %s", r->code[0] ? r->code : "item not found"); return -1; }
+    if ((r->finished || r->present) && r->nfiles) return 1;
+    if (mono_ms() >= until) return 0;
+    for (int64_t next = mono_ms() + g_tb_poll_ms; mono_ms() < next && !g_stop;) sleep_ms(100);
+  }
+  return -1;
+}
+// O arquivo pedido no item (pelo nome; um item de um arquivo so, ele). 1 achou.
+static int tb_pick(const TbReply* r, const AutoReq* q, char* file_id, size_t cap) {
+  const char* want = base_name(q->file);
+  for (int i = 0; i < r->nfiles; ++i) if (want[0] && !strcasecmp(base_name(r->files[i].name), want)) { copy_text(file_id, cap, r->files[i].id); return 1; }
+  if (r->nfiles == 1) { copy_text(file_id, cap, r->files[0].id); return 1; }
+  return 0;
+}
+
+// O link de download (requestdl) do arquivo, ou do item inteiro como zip. 1 = ok.
+static int tb_link(const char* kind, const char* id, const char* file_id, int zip, const char* key, char* url, size_t cap, char* why, size_t why_cap) {
+  char path[512];
+  if (!strcmp(kind, "webdl")) snprintf(path, sizeof path, "/webdl/requestdl?token=%s&web_id=%s&file_id=%s&zip_link=false", key, id, file_id);
+  else if (zip) snprintf(path, sizeof path, "/torrents/requestdl?token=%s&torrent_id=%s&zip_link=true", key, id);
+  else snprintf(path, sizeof path, "/torrents/requestdl?token=%s&torrent_id=%s&file_id=%s&zip_link=false", key, id, file_id);
+  TbReply* r = calloc(1, sizeof *r);
+  if (!r) { snprintf(why, why_cap, "out of memory"); return 0; }
+  long status = 0;
+  const int answered = tb_request(path, NULL, NULL, 0, key, r, &status);
+  memset(path, 0, sizeof path);
+  int ok = 0;
+  const int scheme_ok = !strncmp(r->text, "https://", 8) || (!strncmp(g_torbox_base, "http://", 7) && !strncmp(r->text, "http://", 7));
+  if (!answered) snprintf(why, why_cap, "TorBox didn't answer (HTTP %ld)", status);
+  else if (!r->success || !scheme_ok || !safe_url(r->text)) snprintf(why, why_cap, "TorBox gave no download link (%s)", r->code[0] ? r->code : "no link");
+  else { copy_text(url, cap, r->text); ok = 1; }
+  free(r);
+  return ok;
+}
+
+// Pede o arquivo ao TorBox como o app faria. 1 = `out` pronto; 0 = espera (`note`, e `why` com o detalhe).
+static int auto_resolve(const AutoReq* q, const char* key, AutoSource* out, char* note, size_t note_cap, char* why, size_t why_cap) {
+  memset(out, 0, sizeof *out);
+  TbReply* r = calloc(1, sizeof *r);
+  if (!r) return 0;
+  int ok = 0;
+  long status = 0;
+  if (!strcmp(q->via, "account")) {
+    snprintf(out->kind, sizeof out->kind, "%s", !strcmp(q->item_kind, "webdl") ? "webdl" : "torrent");
+    copy_text(out->item_id, sizeof out->item_id, q->item_id);
+    out->zip = q->whole;
+    copy_text(out->file_id, sizeof out->file_id, q->whole ? "" : q->file_id);
+    ok = out->item_id[0] && (out->zip || out->file_id[0]);
+    if (!ok) snprintf(why, why_cap, "this TorBox list entry has no account item");
+  } else {
+    const int webdl = !strcmp(q->via, "webdl");
+    char magnet[160];
+    if (webdl) {
+      ok = tb_request("/webdl/createwebdownload", "link", q->link, 0, key, r, &status);
+    } else {
+      snprintf(magnet, sizeof magnet, "magnet:?xt=urn:btih:%s", q->hash);
+      ok = tb_request("/torrents/createtorrent", "magnet", magnet, 1, key, r, &status);
+    }
+    if (!ok) snprintf(why, why_cap, "TorBox didn't answer (HTTP %ld)", status);
+    else if (!r->success || !r->id[0]) { snprintf(why, why_cap, "TorBox: %s", r->code[0] ? r->code : "not added"); ok = 0; }
+    if (ok) {
+      snprintf(out->kind, sizeof out->kind, "%s", webdl ? "webdl" : "torrent");
+      copy_text(out->item_id, sizeof out->item_id, r->id);
+      const int ready = tb_wait_ready(out->kind, out->item_id, key, r, why, why_cap);
+      if (ready == 0) { snprintf(note, note_cap, "preparing"); free(r); return 0; }
+      ok = ready == 1;
+      if (ok && !webdl && q->whole) out->zip = 1;
+      else if (ok && !tb_pick(r, q, out->file_id, sizeof out->file_id)) { snprintf(why, why_cap, "the file is not in the TorBox item"); ok = 0; }
+    }
+  }
+  if (ok) ok = tb_link(out->kind, out->item_id, out->file_id, out->zip, key, out->url, sizeof out->url, why, why_cap);
+  free(r);
+  if (!ok) snprintf(note, note_cap, "torbox");
+  return ok;
+}
+
+// ---- O destino: AS MESMAS regras do app ----
+// app: ps5-react/runtime/js/download-formats.js downloadArtifact (pasta pelo tipo), app/state/exfat-convert.js
+// destinationFor/backupFolder/safeFolderName/platformOf/kindOf e download-queue.js stagedPath (imagem baixa em
+// downloads/images e vai para homebrew). Mudou la, mude aqui (o teste "auto_plan = app" acusa).
+typedef struct { char destination[1500], publish[1500], format[16]; int convert, image, pkg, archive, ps4; } AutoPlan;
+static const char* const AUTO_IMAGES[] = {"ffpkg", "exfat", "ffpfs", "ffpfsc"};
+static const char* const AUTO_ARCHIVES[] = {"zip", "rar", "7z", "tar", "tar.gz", "tgz", "tar.bz2", "tar.xz", "tar.zst"};
+static int ends_with_ci(const char* text, const char* tail) {
+  const size_t n = strlen(text), m = strlen(tail);
+  return n > m && text[n - m - 1] == '.' && !strcasecmp(text + n - m, tail);
+}
+// safeName (torbox-search.js): sem pasta, sem controle nem barra invertida, ate 200 (guardando a extensao).
+static void auto_safe_name(const char* name, char* out, size_t cap) {
+  char clean[1024];
+  size_t n = 0;
+  for (const char* p = base_name(name); *p && n + 1 < sizeof clean; ++p) if ((unsigned char)*p >= 0x20 && *p != '\\') clean[n++] = *p;
+  clean[n] = 0;
+  char* start = clean;
+  while (*start == ' ' || *start == '\t') ++start;
+  n = strlen(start);
+  while (n && (start[n - 1] == ' ' || start[n - 1] == '\t')) start[--n] = 0;
+  if (!n) { copy_text(out, cap, "torbox-file"); return; }
+  if (n <= 200) { copy_text(out, cap, start); return; }
+  const char* dot = strrchr(start, '.');
+  size_t ext = dot && strlen(dot) <= 7 ? strlen(dot) : 0;
+  snprintf(out, cap, "%.*s%s", (int)(200 - ext), start, ext ? dot : "");
+}
+// safeFolderName (exfat-convert.js), em bytes (o app conta em unidades UTF-16: igual para titulos ASCII).
+static void auto_folder_name(const char* title, char* out, size_t cap) {
+  char tmp[512];
+  size_t n = 0;
+  int space = 0;
+  for (const unsigned char* p = (const unsigned char*)title; *p && n + 1 < sizeof tmp; ++p) {
+    const int bad = *p < 0x20 || strchr("/\\:*?\"<>|", *p) || *p == ' ' || *p == '\t';
+    if (bad) { space = 1; continue; }
+    if (space && n) tmp[n++] = ' ';
+    space = 0;
+    tmp[n++] = (char)*p;
+  }
+  tmp[n] = 0;
+  char* start = tmp;
+  while (*start == '.' || *start == ' ') ++start;
+  n = strlen(start);
+  if (n > 96) { n = 96; start[n] = 0; }
+  while (n && (start[n - 1] == '.' || start[n - 1] == ' ')) start[--n] = 0;
+  copy_text(out, cap, n ? start : "Jogo");
+}
+// Um PPSA/CUSA seguido de 5 digitos em qualquer lugar do texto (sem diferenciar maiusculas), como o app (/PPSA\d{5}/).
+static int auto_code_in(const char* text, const char* prefix) {
+  for (const char* p = text; *p; ++p) {
+    if (strncasecmp(p, prefix, 4)) continue;
+    if (p != text && isalnum((unsigned char)p[-1])) continue;
+    int digits = 0;
+    while (digits < 5 && isdigit((unsigned char)p[4 + digits])) ++digits;
+    if (digits == 5) return 1;
+  }
+  return 0;
+}
+// Para onde vai: `name` o nome do arquivo (ja limpo), `title` o titulo do jogo, `code` o PPSA/CUSA. 1 = ok.
+static int auto_plan(const char* root, const char* name, const char* title, const char* code, int convert, AutoPlan* plan) {
+  memset(plan, 0, sizeof *plan);
+  if (!safe_path(root) || !name[0] || strlen(name) > 220) return 0;
+  // O tipo pela extensao (o formato da lista e a extensao: o app manda formatFromName(nome)).
+  const char* type = "binary";
+  for (size_t i = 0; i < sizeof AUTO_IMAGES / sizeof *AUTO_IMAGES; ++i) if (ends_with_ci(name, AUTO_IMAGES[i])) { type = AUTO_IMAGES[i]; plan->image = 1; }
+  if (ends_with_ci(name, "pkg") || ends_with_ci(name, "fpkg")) { type = "pkg"; plan->pkg = 1; }
+  for (size_t i = 0; i < sizeof AUTO_ARCHIVES / sizeof *AUTO_ARCHIVES; ++i) if (ends_with_ci(name, AUTO_ARCHIVES[i])) { type = AUTO_ARCHIVES[i]; plan->archive = 1; }
+  copy_text(plan->format, sizeof plan->format, type);
+  // platformOf: PPSA/CUSA no codigo ou no nome; senao PS5.
+  const int ps5 = auto_code_in(code, "PPSA") || auto_code_in(name, "PPSA");
+  plan->ps4 = !ps5 && (auto_code_in(code, "CUSA") || auto_code_in(name, "CUSA"));
+  const char* sub = plan->image ? "homebrew" : plan->pkg ? "downloads/packages" : plan->archive ? "downloads/archives" : "downloads/files";
+  char artifact[1500];
+  snprintf(artifact, sizeof artifact, "%s/%s/%s", root, sub, name);
+  if (convert && plan->pkg && plan->ps4) {
+    snprintf(plan->destination, sizeof plan->destination, "%s/PS4/%s", root, name);
+    return 1;
+  }
+  if (convert && (plan->archive || (plan->pkg && !plan->ps4))) {
+    char folder[256], base[1100], dir[1200];
+    auto_folder_name(title[0] ? title : code, folder, sizeof folder);
+    snprintf(base, sizeof base, "%s/BACKUP/%s", root, folder);
+    // backupFolder com o `taken` do app: uma pasta que ja existe e "tomada", a nao ser que guarde a parcial deste arquivo.
+    for (int n = 1; n < 100; ++n) {
+      if (n == 1) snprintf(dir, sizeof dir, "%s", base);
+      else snprintf(dir, sizeof dir, "%s (%d)", base, n);
+      char part[1500];
+      snprintf(part, sizeof part, "%s/%s.part", dir, name);
+      struct stat st;
+      if (stat(dir, &st) || !stat(part, &st)) break;
+    }
+    snprintf(plan->destination, sizeof plan->destination, "%s/%s", dir, name);
+    plan->convert = !plan->ps4;
+    return 1;
+  }
+  if (plan->image) {
+    snprintf(plan->destination, sizeof plan->destination, "%s/downloads/images/%s", root, name);
+    copy_text(plan->publish, sizeof plan->publish, artifact);
+  } else {
+    copy_text(plan->destination, sizeof plan->destination, artifact);
+  }
+  return 1;
+}
+
+// GET /auto/plan?root=&name=&title=&code=&convert=1 (API local, com o token): o destino que auto_plan da, para o teste
+// que o compara com o do app.
+static void auto_plan_route(int fd, const char* query) {
+  char root[600] = "", name[300] = "", title[300] = "", code[32] = "", convert[8] = "";
+  for (const char* p = query ? query : ""; *p;) {
+    const size_t n = strcspn(p, "&");
+    if (n > 5 && !strncmp(p, "root=", 5)) url_decode(p + 5, n - 5, root, sizeof root);
+    else if (n > 5 && !strncmp(p, "name=", 5)) url_decode(p + 5, n - 5, name, sizeof name);
+    else if (n > 6 && !strncmp(p, "title=", 6)) url_decode(p + 6, n - 6, title, sizeof title);
+    else if (n > 5 && !strncmp(p, "code=", 5)) url_decode(p + 5, n - 5, code, sizeof code);
+    else if (n > 8 && !strncmp(p, "convert=", 8)) url_decode(p + 8, n - 8, convert, sizeof convert);
+    p += n;
+    if (*p == '&') ++p;
+  }
+  char safe[256];
+  auto_safe_name(name, safe, sizeof safe);
+  AutoPlan plan;
+  if (!auto_plan(root, safe, title, code, !strcmp(convert, "1"), &plan)) { respond_error(fd, 400, "plan"); return; }
+  Buf b = {0};
+  buf_str(&b, "{\"destination\":"); buf_json(&b, plan.destination);
+  buf_str(&b, ",\"publishTo\":"); buf_json(&b, plan.publish);
+  buf_fmt(&b, ",\"convert\":%s}", plan.convert ? "true" : "false");
+  respond(fd, 200, b.failed || !b.data ? "{}" : b.data);
+  free(b.data);
+}
+
+// Muda a nota de um pedido que espera (com g_lock); grava so quando mudou.
+static void auto_note_locked(Job* j, const char* note, const char* why) {
+  if (!strcmp(j->auto_note, note) && !strcmp(j->error, why ? why : "")) return;
+  snprintf(j->auto_note, sizeof j->auto_note, "%s", note);
+  snprintf(j->error, sizeof j->error, "%s", why ? why : "");
+  j->updated = now_s();
+  save_jobs_locked();
+  if (note[0]) logf_("job %s: pedido do celular espera (%s)%s%s", j->id, note, why && why[0] ? ": " : "", why ? why : "");
+}
+
+static void* auto_loop(void* arg) {
+  (void)arg;
+  g_tb_pace_ms = atoi(env_or("BGDL_TB_PACE_MS", "400"));
+  g_tb_rate_wait_ms = atoi(env_or("BGDL_TB_RATE_WAIT_MS", "61000"));
+  g_tb_poll_ms = atoi(env_or("BGDL_TB_POLL_MS", "5000"));
+  g_tb_ready_ms = atoi(env_or("BGDL_TB_READY_MS", "300000"));
+  g_auto_retry_ms = atoi(env_or("BGDL_AUTO_RETRY_MS", "120000"));
+  while (!g_stop) {
+    sleep_ms(500);
+    if (!app_away() || quiet_now()) continue;
+    AutoReq q;
+    memset(&q, 0, sizeof q);
+    char root[1024];
+    int convert = 0, found = 0;
+    const int64_t now = mono_ms();
+    pthread_mutex_lock(&g_lock);
+    copy_text(root, sizeof root, g_auto_root);
+    convert = g_auto_convert;
+    for (int i = 0; i < g_job_count && !found; ++i) {
+      Job* j = g_jobs[i];
+      if (!j->requested || !j->placeholder || strcmp(j->state, "waiting-app") || j->auto_retry_at > now) continue;
+      // O que falta para comecar sem o app (barato: nada de rede aqui).
+      char key[96];
+      const int has_key = debrid_key("torbox", key, sizeof key);
+      memset(key, 0, sizeof key);
+      const char* note = !root[0] ? "no-root" : !has_key ? "no-key" : j->parts > 1 ? "parts" : !strcmp(j->lib_via, "webdl") && !j->lib_link[0] ? "no-link" : "";
+      if (note[0]) { auto_note_locked(j, note, NULL); j->auto_retry_at = now + 5000; continue; }
+      found = 1;
+      copy_text(q.id, sizeof q.id, j->id);
+      copy_text(q.via, sizeof q.via, j->lib_via[0] ? j->lib_via : "torrent");
+      copy_text(q.hash, sizeof q.hash, j->lib_hash);
+      copy_text(q.file, sizeof q.file, j->lib_file);
+      copy_text(q.link, sizeof q.link, j->lib_link);
+      copy_text(q.item_kind, sizeof q.item_kind, j->lib_item_kind);
+      copy_text(q.item_id, sizeof q.item_id, j->lib_item_id);
+      copy_text(q.file_id, sizeof q.file_id, j->lib_file_id);
+      copy_text(q.name, sizeof q.name, j->name);
+      copy_text(q.code, sizeof q.code, j->lib_code);
+      q.whole = j->lib_whole;
+      q.size = j->total;
+      j->auto_retry_at = now + g_auto_retry_ms; // uma tentativa por vez
+    }
+    pthread_mutex_unlock(&g_lock);
+    if (!found) continue;
+    // O nome do arquivo e o destino (as regras do app), antes de pedir qualquer coisa ao TorBox.
+    char name[256];
+    if (q.whole) {
+      char base[256];
+      auto_safe_name(q.name, base, sizeof base);
+      if (ends_with_ci(base, "zip")) copy_text(name, sizeof name, base);
+      else snprintf(name, sizeof name, "%.196s.zip", base);
+    } else auto_safe_name(q.file, name, sizeof name);
+    AutoPlan plan;
+    struct stat st;
+    char note[16] = "", why[400] = "";
+    if (!auto_plan(root, name, q.name, q.code, convert, &plan)) {
+      snprintf(note, sizeof note, "torbox");
+      snprintf(why, sizeof why, "no place for the file on the drive");
+    } else if (!stat(plan.destination, &st) || (plan.publish[0] && !stat(plan.publish, &st))) {
+      snprintf(note, sizeof note, "exists");
+      snprintf(why, sizeof why, "the file is already on the drive");
+    }
+    AutoSource src;
+    char key[96];
+    if (!note[0] && !debrid_key("torbox", key, sizeof key)) snprintf(note, sizeof note, "no-key");
+    else if (!note[0]) {
+      logf_("job %s: pedido do celular comecando sem o app (%s)", q.id, q.via);
+      const int ok = auto_resolve(&q, key, &src, note, sizeof note, why, sizeof why);
+      memset(key, 0, sizeof key);
+      if (ok) note[0] = 0;
+    }
+    char parent[1500];
+    copy_text(parent, sizeof parent, plan.destination);
+    char* slash = strrchr(parent, '/');
+    if (!note[0] && slash) { *slash = 0; mkdir_p(parent); }
+    pthread_mutex_lock(&g_lock);
+    Job* j = NULL;
+    for (int i = 0; i < g_job_count && !j; ++i) if (!strcmp(g_jobs[i]->id, q.id)) j = g_jobs[i];
+    // O app pode ter aberto (e adotado o pedido) enquanto o TorBox respondia: entao fica para ele.
+    if (j && j->placeholder && !strcmp(j->state, "waiting-app") && app_away()) {
+      if (note[0]) auto_note_locked(j, note, why);
+      else {
+        j->placeholder = 0;
+        j->ahead = 1;
+        j->followed = 0;
+        j->auto_started = 1;
+        j->auto_adopted = 0;
+        j->auto_convert = plan.convert;
+        j->auto_note[0] = 0;
+        j->error[0] = 0;
+        copy_text(j->url, sizeof j->url, src.url);
+        copy_text(j->destination, sizeof j->destination, plan.destination);
+        copy_text(j->storage_root, sizeof j->storage_root, root);
+        copy_text(j->publish_to, sizeof j->publish_to, plan.publish);
+        snprintf(j->provider, sizeof j->provider, "torbox");
+        copy_text(j->kind, sizeof j->kind, src.kind);
+        copy_text(j->item_id, sizeof j->item_id, src.item_id);
+        copy_text(j->file_id, sizeof j->file_id, src.file_id);
+        j->zip = src.zip;
+        j->link_at = now_s();
+        j->reject_html = 1;
+        j->range_bytes = DEFAULT_RANGE;
+        if (!j->connections) j->connections = 8;
+        j->expected_bytes = 0; // o tamanho da lista e so uma ideia; o do servidor vale
+        copy_text(j->code, sizeof j->code, q.code);
+        snprintf(j->platform, sizeof j->platform, "%s", plan.ps4 ? "ps4" : "ps5");
+        copy_text(j->file, sizeof j->file, name);
+        snprintf(j->state, sizeof j->state, "queued");
+        snprintf(j->notify_done, sizeof j->notify_done, "Jobee'sLair: %.120s %s", j->name,
+                 plan.convert ? "baixado pelo celular; convertendo para .exfat." : plan.pkg && plan.ps4 ? "baixado pelo celular; abra a Jobee'sLair para instalar (aba Arquivos)." : "baixado pelo celular.");
+        j->updated = now_s();
+        save_jobs_locked();
+        logf_("job %s: pedido do celular entregue ao trabalhador (app fechado): %s", j->id, j->destination);
+        pthread_cond_broadcast(&g_wake_downloader);
+      }
+    }
+    pthread_mutex_unlock(&g_lock);
+    memset(&src, 0, sizeof src);
+  }
+  return NULL;
+}
+
+// Terminou com o app fechado: um job (do celular OU da fila do app) cujo destino esta em <disco>/BACKUP/<jogo>/ (o app
+// so poe la jogo de PS5 compactado ou .pkg de PS5, com a conversao ligada) e convertido aqui (bg_convert.c backup_convert).
+// A chave e a do item da fila do app quando ha: se o app abrir depois e pedir a conversao, ele so acompanha esta.
+static void auto_after_download(Job* j) {
+  char root[1024], dest[1024], key[160];
+  pthread_mutex_lock(&g_lock);
+  const int completed = !strcmp(j->state, "completed");
+  copy_text(root, sizeof root, j->storage_root);
+  copy_text(dest, sizeof dest, j->destination);
+  if (j->key[0] && strncmp(j->key, "lib-", 4)) snprintf(key, sizeof key, "%.150s", j->key);
+  else snprintf(key, sizeof key, "auto-%.140s", j->key[0] ? j->key : j->id);
+  const int convert = g_auto_convert;
+  pthread_mutex_unlock(&g_lock);
+  if (!completed || !convert || !app_away() || !root[0]) return;
+  char backup[1100];
+  snprintf(backup, sizeof backup, "%s/BACKUP/", root);
+  const size_t n = strlen(backup);
+  if (strncmp(dest, backup, n)) return;
+  char name[256];
+  const char* rest = dest + n;
+  const char* slash = strchr(rest, '/');
+  if (!slash || (size_t)(slash - rest) >= sizeof name || strchr(slash + 1, '/')) return;
+  memcpy(name, rest, (size_t)(slash - rest));
+  name[slash - rest] = 0;
+  const int rc = backup_convert(root, name, key);
+  logf_("job %s: terminou no BACKUP com o app fechado; conversao pelo payload: %s", j->id, rc == 1 ? "pedida" : rc == -1 ? "jogo de PS4 (nao)" : rc == -2 ? "ja convertido" : "nada a converter");
 }
 
 static void monitor_route(int fd, Request* r, uint32_t ip) {
@@ -5622,6 +6236,9 @@ int main(void) {
   pthread_t converter;
   const int converter_started = !spawn_thread(conv_loop, NULL, &converter);
   if (!converter_started) logf_("conversao para .exfat: thread nao criada");
+  pthread_t starter; // glibren.18: os pedidos do celular comecados com o app fechado
+  if (spawn_thread(auto_loop, NULL, &starter)) logf_("pedidos do celular com o app fechado: thread nao criada");
+  else pthread_detach(starter);
   char ip[64] = "", last_ip[64] = "";
   current_ip(last_ip, sizeof last_ip);
   int64_t last_save = mono_ms();

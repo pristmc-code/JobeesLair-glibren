@@ -50,6 +50,11 @@ import { loadList, saveList } from './saved.js';
     }, []);
     return current;
   }
+  /** glibren.18: calls `listener(root)` when the default drive changes; returns the function that stops it. */
+  function onDefaultDrive(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
   /**
    * The index in `roots` a new download starts on: the default drive (glibren.6), else the last drive used, when it
    * is listed and `fits(root)`; else the first drive that fits (as before 0.5.5), else the first.
@@ -60,4 +65,4 @@ import { loadList, saveList } from './saved.js';
     return Math.max(0, roots.findIndex(fits));
   }
 
-export { defaultDrive, lastDrive, rememberDrive, setDefaultDrive, startingDrive, useDefaultDrive };
+export { defaultDrive, lastDrive, onDefaultDrive, rememberDrive, setDefaultDrive, startingDrive, useDefaultDrive };

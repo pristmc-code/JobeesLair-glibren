@@ -4,7 +4,7 @@
 // sha256 errado recusado, link vencido trocado por um novo do TorBox preservando a parcial, e um arquivo > 4 GB
 // (esparso: so as faixas depois dos 4 GB sao baixadas). Precisa de cc e dos cabecalhos do libcurl e do OpenSSL;
 // sem eles o teste e pulado. Run: npm test
-import test, { after } from 'node:test';
+import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -27,6 +27,13 @@ const MiB = 1024 * 1024;
 const KEY = 'TESTKEY-1234567890abcdef-0000';
 const children = new Set();
 let server;
+// Um teste que falhou no meio (maquina carregada) pode deixar o payload dele no ar segurando a porta da API: o seguinte
+// nao subiria ("payload did not start") e a falha viraria uma cascata. Cada teste comeca sem nenhum payload de antes.
+beforeEach(async () => {
+  const left = [...children];
+  for (const child of left) child.kill('SIGKILL');
+  await Promise.all(left.map((child) => child.exitCode !== null || child.signalCode ? null : new Promise((resolve) => child.once('exit', resolve))));
+});
 after(() => {
   for (const child of children) child.kill('SIGKILL');
   // fetch mantem conexoes vivas (keep-alive): sem fecha-las, o servidor segura o node e o teste nunca termina.
@@ -52,6 +59,34 @@ if (!skip) {
   port = await freePort();
   server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
+    // glibren.18: o TorBox falso dos pedidos do celular comecados pelo payload (createtorrent, createwebdownload, mylist,
+    // requestdl por item), com um 429 de vez em quando e o registro de cada chamada (hora, chave, corpo).
+    if (srv.tb && /\/(torrents|webdl)\/(createtorrent|createwebdownload|mylist|requestdl)$/.test(url.pathname)) {
+      const [, kind, op] = /\/(torrents|webdl)\/(\w+)$/.exec(url.pathname);
+      const body = await new Promise((resolve) => { const chunks = []; req.on('data', (c) => chunks.push(c)); req.on('end', () => resolve(Buffer.concat(chunks).toString())); });
+      srv.tb.calls.push({ at: Date.now(), kind, op, auth: req.headers.authorization || '', token: url.searchParams.get('token') || '', body, query: url.search });
+      const json = (status, data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
+      if (srv.tb.limit > 0 && op.startsWith('create')) { srv.tb.limit--; return json(429, { success: false, error: 'RATE_LIMITED' }); }
+      const authed = op === 'requestdl' ? url.searchParams.get('token') === KEY : req.headers.authorization === `Bearer ${KEY}`;
+      if (!authed) return json(403, { success: false, error: 'BAD_TOKEN' });
+      if (op === 'createtorrent') {
+        const hash = /btih:([0-9a-f]{40})/.exec(body)?.[1];
+        const item = srv.tb.torrents.find((t) => t.hash === hash);
+        return item ? json(200, { success: true, data: { torrent_id: item.id, hash } }) : json(200, { success: false, error: 'INVALID_MAGNET' });
+      }
+      if (op === 'createwebdownload') {
+        const link = new URLSearchParams(body).get('link');
+        const item = srv.tb.webdl.find((w) => w.link === link);
+        return item ? json(200, { success: true, data: { webdownload_id: item.id, hash: 'h' } }) : json(200, { success: false, error: 'BAD_LINK' });
+      }
+      const list = kind === 'torrents' ? srv.tb.torrents : srv.tb.webdl;
+      const id = Number(url.searchParams.get(op === 'mylist' ? 'id' : kind === 'torrents' ? 'torrent_id' : 'web_id'));
+      const item = list.find((t) => t.id === id);
+      if (!item) return json(404, { success: false, error: 'ITEM_NOT_FOUND' });
+      if (op === 'mylist') { const ready = ++item.asked >= (item.readyAfter || 1); return json(200, { success: true, data: { id: item.id, download_finished: ready, download_present: ready, files: item.files } }); }
+      const file = item.files.find((f) => String(f.id) === url.searchParams.get('file_id'));
+      return file ? json(200, { success: true, data: `http://127.0.0.1:${port}/f/${file.serve}` }) : json(200, { success: false, error: 'FILE_NOT_FOUND' });
+    }
     if (url.pathname.endsWith('/requestdl')) {
       srv.requestdl++;
       if (url.searchParams.get('token') !== KEY) { res.writeHead(403); return res.end('{"success":false,"error":"BAD_TOKEN"}'); }
@@ -1351,7 +1386,9 @@ test('biblioteca TorBox: incluir download pelo celular (sessao, duplicado, arqui
   assert.deepEqual([shownJob.name, shownJob.state, shownJob.requested, shownJob.via, shownJob.total], ['Jogo 003 Normal', 'waiting-app', true, 'TorBox', 80 * GiB + 3]);
   assert.ok(!JSON.stringify(shownJob).includes('03'.repeat(20)), 'o hash nao vai para a pagina');
   let job = (await call(base, 'GET', '/jobs')).data.jobs.find((item) => item.id === add.data.id);
-  assert.deepEqual(job.library, { id: 'g3', hash: '03'.repeat(20), file: 'Jogo 3/Jogo-3.exfat', code: 'CUSA10003', platform: 'ps4', via: 'torrent', release: '', item: { kind: '', id: '' }, fileId: '', whole: false, size: 80 * GiB + 3 });
+  assert.deepEqual(job.library, { id: 'g3', hash: '03'.repeat(20), file: 'Jogo 3/Jogo-3.exfat', code: 'CUSA10003', platform: 'ps4', via: 'torrent', release: '', item: { kind: '', id: '' }, fileId: '', whole: false, size: 80 * GiB + 3,
+    // glibren.18: o link publico (so webdl) e o estado do pedido comecado pelo payload com o app fechado.
+    link: '', autoStarted: false, autoAdopted: false, autoConvert: false, autoNote: '' });
   assert.equal(job.placeholder, true);
   assert.match(job.key, /^lib-[0-9a-f]{24}$/);
   assert.match(readFileSync(path.join(base, 'notify.txt'), 'utf8'), /Jogo 003 Normal entrou na fila pelo celular/);
@@ -1554,4 +1591,182 @@ test('glibren.12: a lista do BACKUP diz o sistema, o codigo, o formato, as parte
   const marker = JSON.parse(readFileSync(path.join(root, 'BACKUP/Novo/.jobe-backup.json'), 'utf8'));
   assert.deepEqual(marker, { titleId: 'PPSA05555', platform: 'ps5', format: 'rar', source: '127.0.0.1' });
   await stop(child);
+});
+
+// ---- glibren.18: pedido do celular comecado pelo payload com o app FECHADO ----
+
+test('glibren.18: com o app fechado, o payload comeca sozinho os pedidos do celular (conta, torrent, webdl): sem chave espera, 429 respeitado, destino do app, conversao no fim', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const disk = path.join(base, 'disk');
+  const file = path.join(base, 'torbox-lista.json');
+  files['auto-conta.exfat'] = randomBytes(2 * MiB);
+  files['auto-tor.rar'] = randomBytes(2 * MiB);
+  files['auto-web.pkg'] = randomBytes(2 * MiB);
+  const HASH = 'ab12'.repeat(10);
+  const LINK = 'https://host.example/file/77/Jogo.Web.pkg';
+  srv.tb = { calls: [], limit: 1, torrents: [
+    { id: 77, hash: 'cc'.repeat(20), files: [{ id: 5, name: 'Conta/Conta Jogo.exfat', short_name: 'Conta Jogo.exfat', size: 2 * MiB, serve: 'auto-conta.exfat' }], asked: 0 },
+    { id: 501, hash: HASH, readyAfter: 3, files: [{ id: 3, name: 'Tor/PPSA20010 Tor Game.rar', short_name: 'PPSA20010 Tor Game.rar', size: 2 * MiB, serve: 'auto-tor.rar' }, { id: 4, name: 'Tor/leia.nfo', short_name: 'leia.nfo', size: 100, serve: 'x' }], asked: 0 }
+  ], webdl: [{ id: 601, link: LINK, files: [{ id: 0, name: 'CUSA20011 Jogo Web.pkg', size: 2 * MiB, serve: 'auto-web.pkg' }], asked: 0 }] };
+  const list = { version: 1, builtAt: '2026-11-07T10:00:00Z', games: [
+    { id: 'acc', title: 'Conta Jogo', code: 'PPSA20009', files: [{ name: 'Conta Jogo.exfat', size: 2 * MiB, format: 'exfat', via: 'account', hash: 'cc'.repeat(20), item: { kind: 'torrent', id: 77 }, file: 5 }] },
+    { id: 'tor', title: 'Jogo Torrent', code: 'PPSA20010', hash: HASH, files: [{ name: 'PPSA20010 Tor Game.rar', size: 2 * MiB, format: 'rar', via: 'torrent', hash: HASH }] },
+    { id: 'web', title: 'Jogo Web', code: 'CUSA20011', files: [{ name: 'CUSA20011 Jogo Web.pkg', size: 2 * MiB, format: 'pkg', via: 'webdl', hash: 'ee'.repeat(16), release: 'rel-web', link: LINK }] },
+    { id: 'old', title: 'Lista Antiga', code: 'PPSA20012', files: [{ name: 'Antigo.exfat', size: 2 * MiB, format: 'exfat', via: 'webdl', hash: 'ef'.repeat(16), release: 'rel-old' }] }
+  ] };
+  writeFileSync(file, JSON.stringify(list));
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file, BGDL_APP_SILENCE_MS: '600', BGDL_TB_PACE_MS: '80', BGDL_TB_RATE_WAIT_MS: '300', BGDL_TB_POLL_MS: '100', BGDL_AUTO_RETRY_MS: '400', BGDL_SMP_BASE: `http://127.0.0.1:${port}/smp` });
+  try {
+    await up(base);
+    await pageUp();
+    const session = await unlocked(base);
+    assert.equal((await call(base, 'POST', '/config', { autoRoot: disk, autoConvert: true })).status, 200);
+    assert.equal((await call(base, 'POST', '/config', { autoRoot: 'relativo' })).status, 400, 'so caminho absoluto');
+    const ids = {};
+    for (const id of ['acc', 'tor', 'web', 'old']) ids[id] = (await page('/api/library/add', { method: 'POST', session, body: { id } })).data.id;
+    // App fechado (calado) e sem a chave do TorBox: nada comeca; a pagina diz para abrir a Jobe uma vez.
+    let status = await statusUntil((s) => ['acc', 'tor', 'web'].every((k) => s.jobs.find((j) => j.id === ids[k])?.autoNote === 'no-key'), 15000);
+    assert.equal(status.jobs.find((j) => j.id === ids.acc).state, 'waiting-app');
+    assert.equal(srv.tb.calls.length, 0, 'sem chave, nenhuma chamada ao TorBox');
+    // O app entrega a chave (POST /secret) e fecha de novo.
+    assert.equal((await call(base, 'POST', '/secret', { service: 'torbox', key: KEY })).status, 200);
+    status = await statusUntil((s) => ['acc', 'tor', 'web'].every((k) => s.jobs.find((j) => j.id === ids[k])?.state === 'completed'), 45000);
+    for (const k of ['acc', 'tor', 'web']) assert.equal(status.jobs.find((j) => j.id === ids[k]).auto, true, `${k}: comecado pelo payload`);
+    await statusUntil((s) => s.jobs.find((j) => j.id === ids.old)?.autoNote === 'no-link', 10000); // webdl de lista antiga (sem o link): espera o app
+    // Os destinos do app: imagem em homebrew/ (publicada com o app fechado), PS5 compactado no BACKUP, .pkg de PS4 em PS4/.
+    assert.equal(sha(readFileSync(path.join(disk, 'homebrew/Conta Jogo.exfat'))), sha(files['auto-conta.exfat']));
+    assert.equal(sha(readFileSync(path.join(disk, 'BACKUP/Jogo Torrent/PPSA20010 Tor Game.rar'))), sha(files['auto-tor.rar']));
+    assert.equal(sha(readFileSync(path.join(disk, 'PS4/CUSA20011 Jogo Web.pkg'))), sha(files['auto-web.pkg']));
+    assert.equal(JSON.parse(readFileSync(path.join(disk, 'BACKUP/Jogo Torrent/.jobe-backup.json'), 'utf8')).titleId, 'PPSA20010');
+    // TorBox: o 429 esperado e repetido; o torrent pelo magnet e o webdl pelo link publico; a chave so no cabecalho
+    // (e no requestdl, como o renew_link); no ritmo.
+    const creates = srv.tb.calls.filter((c) => c.op.startsWith('create'));
+    assert.ok(creates.some((c) => c.op === 'createtorrent' && c.body.includes(`magnet:?xt=urn:btih:${HASH}`)));
+    assert.ok(creates.some((c) => c.op === 'createwebdownload' && new URLSearchParams(c.body).get('link') === LINK));
+    assert.equal(creates.length, 3, 'um 429 e repetido: 2 pedidos + 1 repetido');
+    assert.ok(srv.tb.calls.filter((c) => c.op !== 'requestdl').every((c) => c.auth === `Bearer ${KEY}`));
+    const gaps = srv.tb.calls.slice(1).map((c, i) => c.at - srv.tb.calls[i].at);
+    assert.ok(gaps.every((g) => g >= 60), `ritmo entre chamadas: ${gaps.join(',')}`);
+    assert.ok(srv.tb.calls.some((c) => c.op === 'requestdl' && c.query.includes('torrent_id=77') && c.query.includes('file_id=5')), 'conta: requestdl direto');
+    assert.ok(srv.tb.calls.filter((c) => c.op === 'mylist' && c.kind === 'torrents').length >= 3, 'esperou o torrent ficar pronto');
+    // Fim com o app fechado: o jogo de PS5 compactado vai para a conversao (a do payload); o .pkg de PS4 nao.
+    const convs = (await call(base, 'GET', '/convert')).data.conversions;
+    assert.deepEqual(convs.map((c) => [c.kind, c.output, c.label]), [['archive', path.join(disk, 'homebrew/PPSA20010.exfat'), 'PPSA20010']]);
+    assert.match(convs[0].key, /^auto-/);
+    const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+    assert.ok(!log.includes(KEY), 'a chave nunca no diario');
+    assert.ok(!readFileSync(path.join(base, 'state/jobs.json'), 'utf8').includes(KEY), 'nem no jobs.json');
+    // O app abre e adota (POST /jobs/<id>/adopt): fica marcado e nao e adotado de novo.
+    assert.equal((await call(base, 'POST', `/jobs/${ids.tor}/adopt`)).status, 200);
+    const jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+    assert.deepEqual([jobs.find((j) => j.id === ids.tor).library.autoAdopted, jobs.find((j) => j.id === ids.acc).library.autoAdopted], [true, false]);
+    assert.equal((await call(base, 'POST', `/jobs/${ids.old}/adopt`)).status, 404, 'so um comecado pelo payload');
+  } finally {
+    await stop(child);
+    delete srv.tb;
+    for (const name of ['auto-conta.exfat', 'auto-tor.rar', 'auto-web.pkg']) delete files[name];
+  }
+});
+
+test('glibren.18: auto_plan (payload) = destino do app (download-formats + destinationFor + stagedPath) nos mesmos casos', { skip }, async () => {
+  const base = workspace();
+  const child = start(base);
+  const cases = [];
+  for (const convert of [true, false]) {
+    for (const [name, title, code] of [['Jogo.exfat', 'Jogo', 'PPSA01234'], ['PPSA01234 Jogo.rar', 'Jogo: Edição <Especial>', 'PPSA01234'], ['Jogo.7z', 'Jogo', ''], ['Jogo.pkg', 'Jogo PS5', 'PPSA01234'],
+      ['Jogo.pkg', 'Jogo PS4', 'CUSA01234'], ['CUSA09999 Jogo.fpkg', 'Sem Codigo', ''], ['Jogo.ffpkg', 'Jogo', 'PPSA01234'], ['Jogo.tar', '  .Jogo. ', 'PPSA01234'], ['Jogo.binary', 'Jogo', 'PPSA01234'], ['Jogo.zip', 'Jogo', 'CUSA01234']]) {
+      cases.push({ root: '/mnt/ext0', name, title, code, convert });
+    }
+  }
+  try {
+    await up(base);
+    const payload = [];
+    for (const c of cases) {
+      const q = new URLSearchParams({ root: c.root, name: c.name, title: c.title, code: c.code, convert: c.convert ? '1' : '0' });
+      const { status, data } = await call(base, 'GET', `/auto/plan?${q}`);
+      assert.equal(status, 200, JSON.stringify(c));
+      payload.push({ destination: data.destination, publishTo: data.publishTo, convert: data.convert });
+    }
+    // O app, num node a parte com os stubs de react/@ps5-react (as mesmas funcoes que a fila usa).
+    const script = path.join(dir, 'app-plan.mjs');
+    writeFileSync(script, [
+      "import { pathToFileURL } from 'node:url';",
+      `const load = (rel) => import(pathToFileURL(${JSON.stringify(repo)} + '/' + rel).href);`,
+      "const { DownloadFormats } = await load('ps5-react/runtime/js/download-formats.js');",
+      "const { destinationFor } = await load('app/state/exfat-convert.js');",
+      "const { formatFromName } = await load('app/state/link-formats.js');",
+      'const cases = JSON.parse(process.argv[2]);',
+      'const out = cases.map((c) => {',
+      '  const release = { filename: c.name, format: formatFromName(c.name) || undefined };',
+      "  const game = { id: c.code || 'torbox-x', titleId: c.code || undefined, title: c.title };",
+      "  const plan = destinationFor({ on: c.convert, role: 'game', artifact: DownloadFormats.artifact(release, c.root), release, root: c.root, title: game.title, titleId: game.titleId || game.id, game, taken: () => false });",
+      "  const image = plan.artifact.nextAction === 'shadowmount';",
+      "  const name = plan.artifact.destination.slice(plan.artifact.destination.lastIndexOf('/') + 1);",
+      "  return { destination: image ? c.root + '/downloads/images/' + name : plan.artifact.destination, publishTo: image ? plan.artifact.destination : '', convert: plan.convert };",
+      '});',
+      'console.log(JSON.stringify(out));'
+    ].join('\n'));
+    const ran = spawnSync(process.execPath, ['--import', path.join(repo, 'tests/stub-loader.mjs'), script, JSON.stringify(cases)], { encoding: 'utf8' });
+    assert.equal(ran.status, 0, ran.stderr);
+    const app = JSON.parse(ran.stdout.trim().split('\n').pop());
+    for (let i = 0; i < cases.length; i++) assert.deepEqual(payload[i], app[i], JSON.stringify(cases[i]));
+  } finally {
+    await stop(child);
+  }
+});
+
+test('glibren.18: job da fila do app que termina no BACKUP com o app FECHADO vira .exfat pelo payload (chave do item: o app depois so acompanha); com o app ABERTO, fica para o app', { skip: skip || (spawnSync('sh', ['-c', 'command -v 7z']).status !== 0 ? '7z ausente' : false) }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const disk = path.join(base, 'disk');
+  // Um jogo de PS5 (eboot.bin + sce_sys/param.json) num 7z, servido pelo servidor local.
+  const src = path.join(base, 'src');
+  mkdirSync(path.join(src, 'Jogo (PS5)/sce_sys'), { recursive: true });
+  writeFileSync(path.join(src, 'Jogo (PS5)/eboot.bin'), randomBytes(64 * 1024));
+  writeFileSync(path.join(src, 'Jogo (PS5)/sce_sys/param.json'), '{"titleId":"PPSA07777","contentVersion":"01.000.000"}');
+  writeFileSync(path.join(src, 'Jogo (PS5)/data.bin'), randomBytes(MiB));
+  const made = spawnSync('7z', ['a', '-bd', '-bso0', path.join(base, 'jogo.7z'), 'Jogo (PS5)'], { cwd: src, encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  files['auto-jogo.7z'] = readFileSync(path.join(base, 'jogo.7z'));
+  files['auto-jogo2.7z'] = files['auto-jogo.7z'];
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '800', BGDL_SMP_BASE: `http://127.0.0.1:${port}/smp` });
+  try {
+    await up(base);
+    await pageUp();
+    // O app entrega o job (destino no BACKUP, como destinationFor) e fecha (fica calado).
+    const dest = path.join(disk, 'BACKUP/Jogo Sete/PPSA07777 jogo.7z');
+    mkdirSync(path.dirname(dest), { recursive: true });
+    srv.rate = 400 * 1024; // devagar o bastante para o app ja estar calado (fechado) quando o download termina
+    const { data } = await call(base, 'POST', '/jobs', { key: 'PPSA07777/r1', url: `http://127.0.0.1:${port}/f/auto-jogo.7z`, destination: dest, storageRoot: disk, rangeBytes: MiB, connections: 2, code: 'PPSA07777', platform: 'ps5' });
+    await statusUntil((s) => s.jobs.find((j) => j.id === data.id)?.state === 'completed', 30000);
+    srv.rate = 0;
+    await wait(1500);
+    let convs = (await call(base, 'GET', '/convert')).data.conversions;
+    assert.equal(convs.length, 1, JSON.stringify(convs));
+    assert.deepEqual([convs[0].key, convs[0].kind, convs[0].output], ['PPSA07777/r1', 'archive', path.join(disk, 'homebrew/PPSA07777.exfat')]);
+    for (const end = Date.now() + 30000; Date.now() < end && !['done', 'failed'].includes(convs[0].state); await wait(200)) convs = (await call(base, 'GET', '/convert')).data.conversions;
+    assert.equal(convs[0].state, 'done', convs[0].error);
+    assert.ok(existsSync(path.join(disk, 'homebrew/PPSA07777.exfat')));
+    // O app abre e pede a conversao do mesmo item (a mesma chave): so acompanha a que ja esta pronta.
+    const asked = await call(base, 'POST', '/convert', { key: 'PPSA07777/r1', name: 'Jogo Sete', kind: 'archive', source: dest, sources: [dest], output: path.join(disk, 'homebrew/PPSA07777-2.exfat'), root: disk, label: 'PPSA07777' });
+    assert.deepEqual([asked.data.attached, asked.data.state], [true, 'done']);
+    // Com o app ABERTO (falando com o payload) ate o fim: o payload nao converte; isso fica com o app, como antes.
+    const dest2 = path.join(disk, 'BACKUP/Jogo Oito/PPSA08888 jogo.7z');
+    mkdirSync(path.dirname(dest2), { recursive: true });
+    const second = await call(base, 'POST', '/jobs', { key: 'PPSA08888/r1', url: `http://127.0.0.1:${port}/f/auto-jogo2.7z`, destination: dest2, storageRoot: disk, rangeBytes: MiB, connections: 2 });
+    for (const end = Date.now() + 30000; Date.now() < end; await wait(200)) {
+      const job = (await call(base, 'GET', '/jobs')).data.jobs.find((j) => j.id === second.data.id); // o app falando
+      if (job?.state === 'completed') break;
+    }
+    await call(base, 'GET', '/health');
+    await wait(500);
+    convs = (await call(base, 'GET', '/convert')).data.conversions;
+    assert.equal(convs.length, 1, 'nenhuma conversao nova com o app aberto');
+  } finally {
+    await stop(child);
+    srv.rate = 0;
+    delete files['auto-jogo.7z'];
+    delete files['auto-jogo2.7z'];
+  }
 });

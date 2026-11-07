@@ -217,7 +217,11 @@ const T = {
     noPin: "Defina um PIN nas configurações da Jobee'sLair para usar os controles.",
     limit: "Downloads simultâneos", connsLbl: "Conexões", connsHint: "ativas / alvo", connsWait: "o app decide", auto: "auto", manual: "manual",
     backToAuto: "Voltar ao número do app", less: "Menos", more: "Mais", setOnPhone: "celular",
-    requestedWait: "Pedido pelo celular (Biblioteca TorBox): entra na fila de downloads quando a Jobee'sLair estiver aberta.",
+    requestedWait: "Pedido pelo celular (Biblioteca TorBox): com a Jobee'sLair fechada, o payload começa a baixar sozinho; com ela aberta, entra na fila dela.",
+    autoRun: "Baixando pelo payload (Jobee'sLair fechada)",
+    autoNotes: { "no-key": "Abra a Jobee'sLair uma vez para entregar a chave do TorBox ao payload; depois ele baixa sozinho.", "no-root": "Abra a Jobee'sLair uma vez para o payload saber em que disco baixar.",
+      "no-link": "Este jogo precisa da Jobee'sLair aberta (a lista da Biblioteca é antiga: monte-a de novo para baixar pelo celular).", parts: "Conjunto em partes: começa quando a Jobee'sLair abrir.",
+      exists: "O arquivo já está no disco.", torbox: "O TorBox não entregou o arquivo agora; o payload tenta de novo em 2 min.", preparing: "O TorBox ainda está preparando o arquivo; o payload tenta de novo em 2 min." },
     confirmReq: "Tirar este pedido da fila?", yesReq: "Sim, tirar",
     via: "via", direct: "direto", parts: "{n} partes", viaTitle: "Baixado pelo serviço {s}", directTitle: "Download direto do site {s}", fmtTitle: "Formato do arquivo",
     sysTitle: "Sistema e código do jogo", fileTitle: "Arquivo",
@@ -239,7 +243,11 @@ const T = {
     noPin: "Set a PIN in Jobee'sLair's settings to use the controls.",
     limit: "Simultaneous downloads", connsLbl: "Connections", connsHint: "active / target", connsWait: "the app decides", auto: "auto", manual: "manual",
     backToAuto: "Back to the app's number", less: "Fewer", more: "More", setOnPhone: "phone",
-    requestedWait: "Requested from the phone (TorBox library): joins the download queue when Jobee'sLair is open.",
+    requestedWait: "Requested from the phone (TorBox library): with Jobee'sLair closed, the payload starts it by itself; with it open, it joins its queue.",
+    autoRun: "Downloading through the payload (Jobee'sLair closed)",
+    autoNotes: { "no-key": "Open Jobee'sLair once to hand the TorBox key to the payload; then it downloads by itself.", "no-root": "Open Jobee'sLair once so the payload knows which drive to use.",
+      "no-link": "This game needs Jobee'sLair open (the library list is old: build it again to download from the phone).", parts: "A set in parts: it starts when Jobee'sLair opens.",
+      exists: "The file is already on the drive.", torbox: "TorBox didn't hand the file over just now; the payload tries again in 2 min.", preparing: "TorBox is still preparing the file; the payload tries again in 2 min." },
     confirmReq: "Remove this request from the queue?", yesReq: "Yes, remove",
     via: "via", direct: "direct", parts: "{n} parts", viaTitle: "Downloaded through {s}", directTitle: "Direct download from {s}", fmtTitle: "File format",
     sysTitle: "System and game code", fileTitle: "File",
@@ -365,7 +373,14 @@ function render() {
     if (j.error) { const e = document.createElement("div"); e.className = "err"; e.textContent = j.error; el.append(e); }
     // So o app sabe baixar este (pagina de site, navegador...): sem botoes aqui; cancelar fica no app.
     // glibren: um pedido da Biblioteca TorBox feito aqui espera o app abrir; ele sim pode ser pausado ou tirado da fila.
-    if (j.state === "waiting-app") { const w = document.createElement("div"); w.className = "wait"; w.textContent = j.requested ? L.requestedWait : L.waitingApp; el.append(w); }
+    // glibren.18: um pedido do celular com a Jobe fechada: o payload o comeca sozinho; se nao da, diz por que.
+    if (j.state === "waiting-app") {
+      const w = document.createElement("div"); w.className = "wait";
+      const note = j.requested && typeof j.autoNote === "string" ? L.autoNotes[j.autoNote] : "";
+      w.textContent = note || (j.requested ? L.requestedWait : L.waitingApp); // o detalhe (j.error) ja vai na linha de erro
+      el.append(w);
+    }
+    if (j.auto && j.state !== "waiting-app") { const w = document.createElement("div"); w.className = "wait"; w.textContent = L.autoRun; el.append(w); }
     // glibren.8: as conexoes, em todo download que nao terminou (inclusive os que esperam o app).
     if (j.state !== "completed" && !j.requested) el.append(connRow(j, running));
     if ((j.state === "waiting-app" && !j.requested) || j.state === "completed") { /* sem pausar/cancelar aqui */ }
@@ -800,7 +815,9 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
       text: "Os arquivos originais dos jogos convertidos para .exfat. Ficam até você apagar; apagar não mexe no jogo já convertido.",
       empty: "Nada no BACKUP.", del: "Apagar", confirm: "Apagar o original de \"{g}\" ({s})? Não dá para desfazer.", yes: "Sim, apagar", no: "Não",
       back: "Fechar", busy: "Esse original ainda está sendo convertido.", fail: "Não deu para apagar. Tente de novo.", files: "{n} arquivo(s)",
-      converted: "Convertido: {f}", notConverted: "Não convertido", more: "e mais {n}" },
+      converted: "Convertido: {f}", notConverted: "Não convertido", more: "e mais {n}",
+      convertNow: "Converter agora", convertAsked: "Conversão pedida: o payload converte sozinho (aparece em Convertendo).",
+      convertNo: { ps4: "Jogo de PS4: não vira .exfat.", converted: "Já convertido.", nothing: "Nada aqui que dê para converter." } },
     en: { converting: "Converting to EXFAT", verifying: "Checking the EXFAT", queued: "Queued for EXFAT", done: "Ready (EXFAT)", failed: "Conversion failed",
       errors: { space: "Not enough space on the drive for the .exfat.", "not-direct": "It could not be converted straight from the archive: Jobee'sLair extracts and converts it.",
         "not-a-game": "Not the game (an update or DLC): it stays as it came.", source: "The game's files could not be read.", write: "The .exfat could not be written.", verify: "The written .exfat did not check out." },
@@ -809,7 +826,9 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
       text: "The original files of the games converted to .exfat. They stay until you delete them; deleting does not touch the converted game.",
       empty: "Nothing in BACKUP.", del: "Delete", confirm: "Delete the original of \"{g}\" ({s})? This cannot be undone.", yes: "Yes, delete", no: "No",
       back: "Close", busy: "That original is still being converted.", fail: "It could not be deleted. Try again.", files: "{n} file(s)",
-      converted: "Converted: {f}", notConverted: "Not converted", more: "and {n} more" }
+      converted: "Converted: {f}", notConverted: "Not converted", more: "and {n} more",
+      convertNow: "Convert now", convertAsked: "Conversion requested: the payload converts it by itself (see Converting).",
+      convertNo: { ps4: "A PS4 game: it does not become an .exfat.", converted: "Already converted.", nothing: "Nothing here that can be converted." } }
   }[L === T.pt ? "pt" : "en"];
   const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
   const demoConv = [{ id: "c1", name: "Astro Bot", state: "converting", written: 18.2 * GB, total: 41.7 * GB, error: "" }, { id: "c2", name: "Stellar Blade", state: "done", written: 33.4 * GB, total: 33.4 * GB, error: "" }];
@@ -883,6 +902,12 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
       const cv = document.createElement("div"); cv.className = `bk-conv${g.converted ? " ok" : ""}`;
       cv.textContent = g.converted ? fill(C.converted, { f: g.converted }) : C.notConverted;
       item.append(cv);
+      // glibren.18: "Converter agora" (com o PIN): o payload converte sozinho, sem a Jobee'sLair.
+      if (!g.converted && g.platform !== "ps4") {
+        const go = document.createElement("button"); go.type = "button"; go.className = "btn"; go.textContent = C.convertNow;
+        go.onclick = () => guarded(() => convertNow(g));
+        item.append(go);
+      }
       const del = item.querySelector("[data-d]"); del.textContent = C.del;
       const key = `${g.root}/${g.name}`;
       if (confirmingBk === key) {
@@ -899,6 +924,14 @@ refresh(); setInterval(() => { if (!document.hidden) refresh(); }, 2000);
       }
       box.append(item);
     }
+  }
+  async function convertNow(g) {
+    $("bkMsg").textContent = "";
+    const r = DEMO ? { status: 200, data: { ok: true } } : await api("POST", "/api/backup/convert", { root: g.root, name: g.name }).catch(() => ({ status: 0, data: {} }));
+    if (r.status === 401) { session = ""; lockButton(); pending = () => convertNow(g); openPin(); return; }
+    $("bkMsg").textContent = r.status === 200 ? C.convertAsked : C.convertNo[r.data?.error] || C.fail;
+    await loadBackup();
+    await refresh();
   }
   async function remove(g) {
     confirmingBk = null;

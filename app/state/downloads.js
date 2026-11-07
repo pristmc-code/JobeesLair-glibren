@@ -16,7 +16,8 @@ import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownload
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
 import { adoptSpeedLimit, onSpeedLimit, speedLimitNow } from './speed-limit.js';
 import { recordCapture } from './capture-hosts.js';
-import { queueLibraryRequest } from './phone-library.js';
+import { libraryRoot, queueLibraryRequest } from './phone-library.js';
+import { onDefaultDrive } from './last-drive.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
 import { freeBytes, storageRoots } from './drives.js';
 import { createShadowClient, createShadowMountProbe } from './shadowmount.js';
@@ -27,7 +28,7 @@ import { deviceFacts } from './device.js';
 import { OLD_TITLE_ID } from './title-migration.js';
 import { TITLE_ID } from '../version.js';
 import { autoContinueParts } from './auto-continue.js';
-import { convertToExfatOn } from './exfat-convert.js';
+import { convertToExfatOn, onConvertToExfat } from './exfat-convert.js';
 import { ps5PkgWarningOn } from './ps5-pkg-warning.js';
 import { online } from './online.js';
 import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileSystem, Http, Linking, Notifications, Packages, Payloads, Platform, Power } from '@ps5-react/core';
@@ -80,6 +81,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       // glibren.13: o limite de velocidade das Configuracoes vale tambem no payload; o escolhido no celular volta para ca.
       speedLimit: speedLimitNow,
       adoptSpeedLimit,
+      // glibren.18: o disco padrao e a conversao, para o payload comecar sozinho (app fechado) um pedido do celular.
+      autoStart: () => ({ root: libraryRoot(storageRoots()), convert: convertToExfatOn() }),
       // glibren: um jogo pedido na Biblioteca TorBox do celular entra nesta fila, pelo TorBox, no disco padrao.
       onLibraryRequest: (request) => queueLibraryRequest(request, { queue: downloadQueue(), roots: storageRoots(), getGame })
     }),
@@ -123,6 +126,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   onPauseOnClose(() => background?.refreshConfig?.());
   // glibren.13: mudar o limite de velocidade (Configuracoes, ou adotado do celular) chega ao payload no ar na hora.
   onSpeedLimit(() => background?.refreshConfig?.());
+  // glibren.18: o disco padrao ou a conversao mudados chegam ao payload no ar (pedidos do celular com o app fechado).
+  onDefaultDrive(() => background?.refreshConfig?.());
+  onConvertToExfat(() => background?.refreshConfig?.());
   // glibren.13: the background payload up at launch, for the phone page and its TorBox library/store (only on the PS5,
   // with background downloads and the phone page on: background-downloads.js startAtLaunch). Never throws or blocks.
   function startBackgroundAtLaunch() {

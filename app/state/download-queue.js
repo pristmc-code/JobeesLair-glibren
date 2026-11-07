@@ -3247,7 +3247,12 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         if (release.unavailableReason) throw new Error(release.unavailableReason);
         // glibren.12: with the conversion on, archives and PS5 packages download into <drive>/BACKUP/<game>/ and PS4 packages
         // into <drive>/PS4/ (state/exfat-convert.js destinationFor); images and everything with it off, as before.
-        const plan = destinationFor({ on: convertExfat(), role: roleOf(release), artifact: artifactFor(release, root2), release, root: root2, title: game.title, titleId: game.titleId || game.id, game, taken: (path) => fs.exists(path) || jobs.some((job2) => job2.backupDir === path) });
+        // glibren.18: a pasta do BACKUP que ja guarda a parcial deste arquivo nao conta como "tomada": e a de um pedido do
+        // celular que o payload comecou com o app fechado (bg_downloader.c auto_plan); a fila a reusa, acha a parcial e
+        // acompanha o job dele em vez de baixar de novo.
+        const baseArtifact = artifactFor(release, root2);
+        const partialIn = (path) => fs.exists(`${path}/${baseName(baseArtifact.destination)}.part`);
+        const plan = destinationFor({ on: convertExfat(), role: roleOf(release), artifact: baseArtifact, release, root: root2, title: game.title, titleId: game.titleId || game.id, game, taken: (path) => fs.exists(path) && !partialIn(path) || jobs.some((job2) => job2.backupDir === path) });
         const artifact2 = plan.artifact;
         if (fs.exists(artifact2.destination)) throw new Error("Destination already exists. Choose another release or inspect the existing file.");
         if (jobs.some((job2) => job2.artifact.destination === artifact2.destination)) throw new Error("Another queued release owns this filename.");

@@ -379,7 +379,10 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
       const entry = heldByLink.get(link);
       if (!entry) continue;
       const magnet = isMagnet(link);
-      const fields = { via: magnet ? "torrent" : "webdl", hash: magnet ? magnetHash(link) : linkHashes(link)[0], release: release.id ?? null, torrent: entry.name || "" };
+      // glibren.18: num "webdl", o link PUBLICO do catalogo (o que o TorBox guarda; nunca um assinado nem com chave), para o
+      // payload pedir o arquivo ao TorBox sozinho quando o celular pede um jogo com a Jobee'sLair fechada.
+      const publicLink = !magnet && /^https?:\/\/[^\s"\\]+$/i.test(link) && link.length < 1000 && !/(?:token|key|apikey|api_key)=/i.test(link) ? { link } : {};
+      const fields = { via: magnet ? "torrent" : "webdl", hash: magnet ? magnetHash(link) : linkHashes(link)[0], release: release.id ?? null, ...publicLink, torrent: entry.name || "" };
       const rowsOf = fileRows(entry, fields);
       // Um link guardado sem lista de arquivos ainda é o arquivo do catálogo.
       rows.push(...rowsOf.length ? rowsOf : [{ name: baseName(release.filename || entry.name || link), size: Number(entry.size) || Number(release.sizeBytes) || 0, format: release.format || formatFromName(release.filename || ""), ...fields }]);

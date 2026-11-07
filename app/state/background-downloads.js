@@ -60,7 +60,7 @@ import { setConversionSource } from './payload-conversions.js';
   var STATE_DIR = "/data/JobeesLair/bg";
   var PORT = 34200;
   // glibren.13: a versao do protocolo do bg-downloader.elf deste app (BG_API em app/native/bg_downloader.c, no /health).
-  var PAYLOAD_API = 14;
+  var PAYLOAD_API = 15;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -210,6 +210,9 @@ import { setConversionSource } from './payload-conversions.js';
     // manda o campo. adoptSpeedLimit grava nas Configuracoes o escolhido no celular (setSpeedLimit), ou null.
     speedLimit = () => null,
     adoptSpeedLimit = null,
+    // glibren.18: o disco padrao e a conversao ({ root, convert }) que vao no POST /config ("autoRoot", "autoConvert"):
+    // com eles o payload comeca sozinho, com o app fechado, um pedido da Biblioteca TorBox feito no celular. null: nada.
+    autoStart = () => null,
     // glibren.13: a "api" minima do payload no ar; um mais antigo e trocado pelo ELF deste app (ensurePayloadNow).
     payloadApi = PAYLOAD_API,
     // glibren: poe na fila um pedido da Biblioteca TorBox feito no celular ({ id, hash, file, whole, code, platform,
@@ -366,7 +369,9 @@ import { setConversionSource } from './payload-conversions.js';
       const count = concurrency();
       const pause = pauseOnCloseSeconds();
       const cap = speedLimit(); // glibren.13
-      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...Number.isInteger(cap) && cap >= 0 ? { speedLimit: cap } : {}, ...monitor() ?? {} };
+      const auto = autoStart(); // glibren.18
+      const autoFields = auto && typeof auto.root === "string" && /^\/[^\u0000\\]*[^/]$/.test(auto.root) && !auto.root.split("/").includes("..") ? { autoRoot: auto.root, autoConvert: auto.convert !== false } : {};
+      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...Number.isInteger(cap) && cap >= 0 ? { speedLimit: cap } : {}, ...autoFields, ...monitor() ?? {} };
       const key = `${state?.pid}:${JSON.stringify(body)}`;
       if (!state || configFor === key) return;
       const answer = await call(token, "POST", "/config", body);
@@ -804,7 +809,11 @@ import { setConversionSource } from './payload-conversions.js';
     }
     // glibren: os pedidos da Biblioteca TorBox feitos no celular. Um por vez (adopting): a fila os recebe na ordem em que
     // foram pedidos; o pedido so sai do payload depois de a fila aceitar (forget) ou recusar (refuse, com o motivo).
+    // glibren.18: um pedido que o payload ja comecou sozinho (app fechado; library.autoStarted) e adotado sem baixar de
+    // novo: a fila o recebe igual (o mesmo destino: ela acha a parcial e acompanha o job do payload) e o payload fica
+    // sabendo (POST /jobs/<id>/adopt); um que ja terminou so e marcado (a conversao ou o .pkg em PS4/ ja estao no disco).
     let adopting = null;
+    const autoTried = /* @__PURE__ */ new Set(); // os que a fila recusou nesta sessao: o payload segue com eles
     async function adoptRequests(token) {
       if (typeof onLibraryRequest !== "function" || !token) return 0;
       if (adopting) return adopting;
@@ -829,6 +838,22 @@ import { setConversionSource } from './payload-conversions.js';
               log(`${request.title || job.id}: queued from the phone's TorBox library`);
               await call(token, "POST", `/jobs/${job.id}/forget`).catch(() => {});
             }
+          }
+          const started = answer.status === 200 ? (answer.data?.jobs ?? []).filter((job) => job?.library?.autoStarted && !job.library.autoAdopted && !autoTried.has(job.id) && !["failed", "cancelled"].includes(job.state)) : [];
+          for (const job of started) {
+            const title = String(job.name || "");
+            if (job.state !== "completed") {
+              try {
+                await onLibraryRequest({ ...job.library, title, size: Number(job.library.size || job.total) || 0 });
+              } catch (error) {
+                autoTried.add(job.id);
+                log(`${title || job.id}: started by the payload with the app closed; not queued here (${String(error?.message || error).slice(0, 200)}); the payload goes on with it`);
+                continue;
+              }
+              taken += 1;
+            }
+            log(`${title || job.id}: ${job.state === "completed" ? "downloaded" : "being downloaded"} by the payload with the app closed; adopted`);
+            await call(token, "POST", `/jobs/${job.id}/adopt`).catch(() => {});
           }
         } catch {
         }

@@ -83,7 +83,10 @@ test('glibren.13: velocidades em MB/s (nunca Mbps) e a velocidade maxima livre (
     // glibren.13: arquivo quebrado no TorBox (o payload marca "broken"): fora da escolha, aviso na ficha, recusa explicada.
     '!f.broken', 'r.data?.error === "broken"', 'Arquivo quebrado no TorBox ({s})', 'Broken file in TorBox ({s})', '.fmsg.broken{',
     // glibren.13: so copias quebradas (lista antiga): sem "Baixar", com o que fazer.
-    'data.game?.brokenOnly', 'get.hidden = true', 'B.brokenAll', 'Apague no TorBox e use outra fonte', 'Delete it in TorBox and use another source']) assert.ok(page.includes(piece), piece);
+    'data.game?.brokenOnly', 'get.hidden = true', 'B.brokenAll', 'Apague no TorBox e use outra fonte', 'Delete it in TorBox and use another source',
+    // glibren.18: o payload sozinho: pedido do celular com a Jobe fechada (notas e "Baixando pelo payload") e "Converter agora".
+    'L.autoNotes[j.autoNote]', 'j.auto && j.state !== "waiting-app"', 'Baixando pelo payload (Jobee\'sLair fechada)', 'Downloading through the payload',
+    '"no-key": "Abra a Jobee\'sLair uma vez para entregar a chave do TorBox', '/api/backup/convert', 'Converter agora', 'Convert now']) assert.ok(page.includes(piece), piece);
   // A mesma conta da pagina (MB = 1024 * 1024), num pedaco isolado.
   const fn = /const speed = \(b\) => [^\n]+/.exec(page)[0];
   const speed = new Function('MB', 'nf', `${fn}; return speed;`)(1024 ** 2, (v, d) => v.toFixed(d));

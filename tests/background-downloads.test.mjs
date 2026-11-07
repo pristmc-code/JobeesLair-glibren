@@ -36,6 +36,7 @@ function fakePayload({ up = true, pid = 7 } = {}) {
         if (action[2] === 'release' || action[2] === 'forget') state.jobs = state.jobs.filter((item) => item !== job);
         if (action[2] === 'resume') job.state = 'queued';
         if (action[2] === 'follow') job.followed = true;
+        if (action[2] === 'adopt' && job.library) job.library.autoAdopted = true; // glibren.18
         // glibren.8: "park" pausa e devolve o job a fila entregue (ahead, sem follow); um payload antigo nao conhece.
         if (action[2] === 'park') {
           if (state.noPark) return respond(404, { error: 'unknown action' });
@@ -813,4 +814,43 @@ test('conversoes do payload para a tela de Downloads: lista, cancelar e esquecer
   payload.tokenOnDisk = false;
   assert.equal(await wrapper.conversions(), null, 'sem token, sem pergunta');
   assert.equal(payload.calls.filter((call) => call.path === '/convert').length, 1);
+});
+
+// ---- glibren.18: o payload comeca sozinho os pedidos do celular com o app fechado ----
+
+test('glibren.18: o disco padrao e a conversao vao ao payload (autoRoot/autoConvert); um caminho estranho nao vai', async () => {
+  const payload = fakePayload();
+  let auto = { root: '/mnt/ext0', convert: true };
+  const wrapper = make(payload, fakeEngine(), { autoStart: () => auto, monitor: () => ({ monitor: true }), requestsMs: 0 });
+  await wrapper.startAtLaunch();
+  assert.deepEqual([payload.configs.at(-1).autoRoot, payload.configs.at(-1).autoConvert], ['/mnt/ext0', true]);
+  auto = { root: '/data', convert: false };
+  await wrapper.refreshConfig();
+  assert.deepEqual([payload.configs.at(-1).autoRoot, payload.configs.at(-1).autoConvert], ['/data', false]);
+  auto = { root: '../fora', convert: true };
+  await wrapper.refreshConfig();
+  assert.ok(!('autoRoot' in payload.configs.at(-1)), 'so caminho absoluto');
+});
+
+test('glibren.18: ao abrir, o pedido que o payload ja comecou e adotado sem baixar de novo (fila + adopt); o terminado so e marcado; um recusado nao volta', async () => {
+  const payload = fakePayload();
+  const library = (extra) => ({ id: 'g1', hash: 'ab'.repeat(20), file: 'Jogo.rar', via: 'torrent', whole: false, size: 9, autoStarted: true, autoAdopted: false, ...extra });
+  payload.jobs.push(
+    { id: 'b1', name: 'Baixando', state: 'downloading', library: library({ id: 'g1' }) },
+    { id: 'b2', name: 'Pronto', state: 'completed', library: library({ id: 'g2' }) },
+    { id: 'b3', name: 'Recusado', state: 'downloading', library: library({ id: 'g3' }) },
+    { id: 'b4', name: 'Ja adotado', state: 'downloading', library: library({ id: 'g4', autoAdopted: true }) }
+  );
+  const queued = [];
+  const wrapper = make(payload, fakeEngine(), { requestsMs: 0, onLibraryRequest: async (request) => {
+    if (request.title === 'Recusado') throw new Error('Not enough space');
+    queued.push(request.title);
+  } });
+  assert.equal(await wrapper.adoptRequests(), 1, 'um posto na fila');
+  assert.deepEqual(queued, ['Baixando'], 'o terminado e o ja adotado nao vao a fila; o recusado tentou');
+  const adopted = payload.calls.filter((c) => c.method === 'POST' && /\/adopt$/.test(c.path)).map((c) => c.path);
+  assert.deepEqual(adopted, ['/jobs/b1/adopt', '/jobs/b2/adopt']);
+  assert.ok(!payload.calls.some((c) => /\/jobs\/b[1-4]\/(forget|refuse)$/.test(c.path)), 'nem forget nem refuse: o payload segue com eles');
+  await wrapper.adoptRequests();
+  assert.deepEqual(queued, ['Baixando'], 'o adotado nao volta; o recusado nao e tentado de novo nesta sessao');
 });

@@ -79,10 +79,17 @@ import { formatFromName } from './link-formats.js';
     if (!queue || typeof queue.enqueue !== "function") throw new Error("The download queue is not ready.");
     const game = libraryGame(request, getGame);
     const file = libraryFile(request, game);
+    return downloadFile(queue, game, file, libraryRoot(roots));
+  }
+  /**
+   * glibren.18: o disco onde um pedido do celular baixa: o padrao das Configuracoes > Downloads, senao o que a tela do
+   * "Procurar no TorBox" escolheria. O mesmo vai ao payload ("autoRoot", POST /config), que comeca o pedido sozinho com
+   * a Jobee'sLair fechada.
+   */
+  function libraryRoot(roots) {
     const drives = Array.isArray(roots) && roots.length ? roots : ["/data"];
     const chosen = defaultDrive();
-    const root = chosen && drives.includes(chosen) ? chosen : drives[startingDrive(drives, () => true)] ?? drives[0];
-    return downloadFile(queue, game, file, root);
+    return chosen && drives.includes(chosen) ? chosen : drives[startingDrive(drives, () => true)] ?? drives[0];
   }
 
-export { libraryFile, libraryGame, queueLibraryRequest };
+export { libraryFile, libraryGame, libraryRoot, queueLibraryRequest };

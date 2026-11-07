@@ -463,3 +463,97 @@ test('BACKUP na pagina do celular: lista por jogo com tamanho; apagar so com o P
   assert.deepEqual((await page('/api/backup')).data, { games: [], totalBytes: 0 });
   await stop(child);
 });
+
+// ---- glibren.18: o payload converte sozinho, sem o app ----
+
+async function phoneSession(base) {
+  const salt = randomBytes(32).toString('hex');
+  assert.equal((await call(base, 'POST', '/config', { pinSalt: salt, pinHash: sha(`${salt}:${PIN}`) })).status, 200);
+  return (await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data.session;
+}
+const conversions = async (base) => (await call(base, 'GET', '/convert')).data.conversions;
+async function convUntil(base, check, ms = 60000) {
+  let last;
+  for (const end = Date.now() + ms; Date.now() < end; await wait(100)) { last = await conversions(base); if (check(last)) return last; }
+  throw new Error(`conversions never got there: ${JSON.stringify(last)}`);
+}
+
+test('glibren.18: "Converter agora" na lista do BACKUP (com o PIN): .pkg de PS5 e 7z direto viram .exfat pelo payload; PS4, convertido e vazio recusados; o app so acompanha a mesma fonte', { skip: skip || (!tool('7z') ? '7z ausente' : false) }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const disk = path.join(base, 'disk');
+  const pkgDir = path.join(disk, 'BACKUP/Jogo Pkg');
+  mkdirSync(pkgDir, { recursive: true });
+  await gunzipTo('jogo_fast', path.join(pkgDir, 'jogo_fast.pkg'));
+  writeFileSync(path.join(pkgDir, '.jobe-backup.json'), JSON.stringify({ titleId: 'PPSA01234', platform: 'ps5', format: 'pkg', source: 'torbox' }));
+  const sevenDir = path.join(disk, 'BACKUP/Jogo Sete');
+  mkdirSync(sevenDir, { recursive: true });
+  const src = path.join(base, 'src');
+  gameFolder(path.join(src, 'Jogo (PS5)'), 2);
+  make('7z', ['a', '-bd', '-bso0', path.join(sevenDir, 'PPSA05555 jogo.7z'), 'Jogo (PS5)'], src);
+  mkdirSync(path.join(disk, 'BACKUP/Jogo PS4'), { recursive: true });
+  writeFileSync(path.join(disk, 'BACKUP/Jogo PS4/CUSA00900.pkg'), randomBytes(4096));
+  mkdirSync(path.join(disk, 'BACKUP/Vazio'), { recursive: true });
+  const child = start(base);
+  try {
+    await up(base);
+    const session = await phoneSession(base);
+    assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Pkg' } })).status, 401, 'sem o PIN, nada');
+    assert.deepEqual((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo PS4' }, session })).data, { error: 'ps4' });
+    assert.deepEqual((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Vazio' }, session })).data, { error: 'nothing' });
+    assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: '../fora' }, session })).status, 400);
+    assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Pkg' }, session })).status, 200);
+    assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Sete' }, session })).status, 200);
+    // O app abre e pede a conversao da MESMA fonte (outra chave): acompanha a do payload, sem uma segunda.
+    const again = await call(base, 'POST', '/convert', { key: 'PPSA01234/r9', name: 'Jogo Pkg', kind: 'pkg', source: path.join(pkgDir, 'jogo_fast.pkg'), output: path.join(disk, 'homebrew/PPSA01234-2.exfat'), root: disk, label: 'PPSA01234' });
+    assert.equal(again.data.attached, true, JSON.stringify(again.data));
+    const done = await convUntil(base, (list) => list.length === 2 && list.every((c) => ['done', 'failed'].includes(c.state)));
+    for (const c of done) assert.equal(c.state, 'done', `${c.name}: ${c.error}`);
+    assert.deepEqual(done.map((c) => [c.kind, path.basename(c.output)]).sort(), [['archive', 'PPSA05555.exfat'], ['pkg', 'PPSA01234.exfat']]);
+    readImage(path.join(disk, 'homebrew/PPSA01234.exfat'));
+    readImage(path.join(disk, 'homebrew/PPSA05555.exfat'));
+    assert.ok(scans >= 2, 'pediu a varredura ao ShadowMount+');
+    // Convertido: a lista diz e o botao recusa.
+    const list = Object.fromEntries((await page('/api/backup')).data.games.map((g) => [g.name, g]));
+    assert.equal(list['Jogo Pkg'].converted, 'PPSA01234.exfat');
+    assert.deepEqual((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Pkg' }, session })).data, { error: 'converted' });
+  } finally {
+    await stop(child);
+  }
+});
+
+test('glibren.18: compactado que nao da direto (um .pkg dentro): o payload EXTRAI no disco e converte o .pkg de PS5; o de PS4 vai para PS4/', { skip: skip || (!tool('zip') ? 'zip ausente' : false) }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const disk = path.join(base, 'disk');
+  const five = path.join(disk, 'BACKUP/Jogo Cinco');
+  const four = path.join(disk, 'BACKUP/Jogo Quatro');
+  mkdirSync(five, { recursive: true });
+  mkdirSync(four, { recursive: true });
+  const src = path.join(base, 'src');
+  mkdirSync(src, { recursive: true });
+  await gunzipTo('jogo_fast', path.join(src, 'PPSA01234-jogo.pkg'));
+  make('zip', ['-q', '-0', path.join(five, 'PPSA01234 cinco.zip'), 'PPSA01234-jogo.pkg'], src);
+  writeFileSync(path.join(src, 'CUSA00900-jogo.pkg'), randomBytes(200 * 1024));
+  make('zip', ['-q', '-0', path.join(four, 'quatro.zip'), 'CUSA00900-jogo.pkg'], src);
+  writeFileSync(path.join(four, '.jobe-backup.json'), JSON.stringify({ titleId: '', platform: '', format: 'zip', source: '' }));
+  const child = start(base);
+  try {
+    await up(base);
+    const session = await phoneSession(base);
+    assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Cinco' }, session })).status, 200);
+    const list = await convUntil(base, (l) => l.some((c) => c.kind === 'pkg' && ['done', 'failed'].includes(c.state)));
+    const first = list.find((c) => c.kind === 'archive');
+    assert.match(first.error, /^not-direct:/, 'o direto recusou (pacote dentro)');
+    const pkg = list.find((c) => c.kind === 'pkg');
+    assert.equal(pkg.state, 'done', pkg.error);
+    assert.ok(existsSync(path.join(disk, 'homebrew/PPSA01234.exfat')));
+    assert.ok(!existsSync(path.join(disk, 'downloads/extract', first.id)), 'a pasta de trabalho foi apagada no fim');
+    assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Quatro' }, session })).status, 200);
+    for (const end = Date.now() + 30000; Date.now() < end && !existsSync(path.join(disk, 'PS4/CUSA00900-jogo.pkg')); await wait(100));
+    assert.ok(existsSync(path.join(disk, 'PS4/CUSA00900-jogo.pkg')), 'o .pkg de PS4 extraido foi para PS4/ (o app instala)');
+    assert.ok(existsSync(path.join(four, 'quatro.zip')), 'o original fica no BACKUP');
+  } finally {
+    await stop(child);
+  }
+});

@@ -77,7 +77,7 @@ test('every game is checked in batches: at most 50 links (100 hashes) a call, th
   const held = library.games.PPSA00002;
   assert.equal(held.torbox.confirmed, true);
   assert.equal(held.torbox.hash, md5('https://host.example/file/2/game-2.exfat'));
-  assert.deepEqual(held.torbox.files, [{ name: 'game-2.exfat', size: 2e9, format: 'exfat', via: 'webdl', hash: md5('https://host.example/file/2/game-2.exfat'), release: 'r2' }], 'the small text file is left out');
+  assert.deepEqual(held.torbox.files, [{ name: 'game-2.exfat', size: 2e9, format: 'exfat', via: 'webdl', hash: md5('https://host.example/file/2/game-2.exfat'), release: 'r2', link: 'https://host.example/file/2/game-2.exfat' }], 'the small text file is left out; glibren.18: the public catalog link, for the payload');
   assert.equal(held.code, 'PPSA00002');
   assert.equal(library.games.PPSA00001.torbox.confirmed, false);
   assert.ok(library.builtAt && library.run.finishedAt);
@@ -261,8 +261,9 @@ test('the library and the payload list are written and read back; the list has o
   assert.equal(list.builtAt, library.builtAt);
   assert.deepEqual(list.games.map((g) => g.id), ['PPSA00002', 'PPSA00004']);
   assert.deepEqual(Object.keys(list.games[0]), ['id', 'title', 'code', 'platform', 'genres', 'sizeBytes', 'formats', 'hash', 'files', 'cover']);
-  assert.deepEqual(list.games[0].files[0], { name: 'game-2.exfat', size: 2e9, format: 'exfat', via: 'webdl', hash: md5('https://host.example/file/2/game-2.exfat'), release: 'r2' });
-  assert.ok(!files.get(ps5.list).includes('https://host.example'), 'no links in the list');
+  assert.deepEqual(list.games[0].files[0], { name: 'game-2.exfat', size: 2e9, format: 'exfat', via: 'webdl', hash: md5('https://host.example/file/2/game-2.exfat'), release: 'r2', link: 'https://host.example/file/2/game-2.exfat' });
+  // glibren.18: only the public catalog links (webdl) go in the list, for the payload; never a signed one or a key.
+  assert.ok(!/token=|apikey|key=/i.test(files.get(ps5.list)), 'no signed links or keys in the list');
   assert.deepEqual([...lib.readConfirmedIds(fs, ps5)], ['PPSA00002', 'PPSA00004']);
   assert.deepEqual(JSON.parse(files.get(ps5.ids)), { version: 1, builtAt: library.builtAt, rules: ['broken'], ids: ['PPSA00002', 'PPSA00004'] }, 'the store reads only the ids');
   files.delete(ps5.ids);
