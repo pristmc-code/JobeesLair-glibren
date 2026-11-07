@@ -10,7 +10,7 @@ import { jsx, jsxs } from 'react/jsx-runtime';
 import { useState } from 'react';
 import { useT } from '../i18n/index.js';
 import { formatBytes } from '../state/size.js';
-import { canInstall, cancelUpdate, closeUpdateDialog, downloadUpdate, restartToApply, useInstall, useUpdate, useUpdateDialog } from '../state/update.js';
+import { canInstall, cancelUpdate, closeUpdateDialog, downloadUpdate, restartToApply, stopRestart, useInstall, useUpdate, useUpdateDialog } from '../state/update.js';
 import { VERSION_LABEL } from '../version.js';
 import { Button2 } from './Button.jsx';
 import { ProgressBar } from './ProgressBar.jsx';
@@ -25,12 +25,17 @@ import { FocusScope, Linking, Text, View, motion } from '@ps5-react/core';
   var BAR = logical(756);
   var sans = (size, color, extra) => ({ fontFamily: "Exo2", fontSize: size, lineHeight: Math.round(size * 1.42), color, ...extra });
   var fractionOf = (install) => install.total ? Math.min(1, install.written / install.total) : 0;
+  // glibren.18: what the app itself is doing that the update waits for (state/auto-update.js view.holding).
+  var HOLDING = ["download", "extract", "install", "move", "shadowmount"];
+  var holdingText = (t2, holding) => HOLDING.includes(holding?.kind) ? t2(`update.install.holding.${holding.kind}`, { title: holding.title || "" }) : t2("update.install.waiting");
   // What the install says under the notes, and in which color, for each phase.
   function status(t2, install, update) {
     if (install.version !== update.version) return null;
+    // glibren.18: Restart to apply waits for the app's own work (state/auto-update.js applyWhenIdle).
+    if (install.restarting && ["ready", "armed"].includes(install.phase)) return [`${holdingText(t2, install.holding)} ${t2("update.install.restartPending")}`, colors.muted];
     switch (install.phase) {
       case "waiting":
-        return [t2("update.install.waiting"), colors.muted];
+        return [holdingText(t2, install.holding), colors.muted];
       case "downloading":
         return [t2("update.install.downloading", { done: formatBytes(install.written), total: formatBytes(install.total) }), colors.muted];
       case "checking":
@@ -81,7 +86,9 @@ import { FocusScope, Linking, Text, View, motion } from '@ps5-react/core';
     };
     // The first button is the step that comes next; the release page and Close follow.
     const actions = [
-      ready ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", size: "lg", icon: "restart", label: t2("update.install.restart"), autoFocus: true, onPress: restart }, "restart") : null,
+      ready && !install.restarting ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", size: "lg", icon: "restart", label: t2("update.install.restart"), autoFocus: true, onPress: restart }, "restart") : null,
+      // glibren.18: Restart to apply waits for the app's own work; this gives the wait up (the update stays ready).
+      ready && install.restarting ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", size: "lg", icon: "x", label: t2("update.install.restartCancel"), autoFocus: true, onPress: () => stopRestart() }, "stop") : null,
       busy ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", size: "lg", icon: "x", label: t2("update.install.cancel"), autoFocus: true, onPress: () => cancelUpdate() }, "cancel") : null,
       installable && !ready && !busy ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", size: "lg", icon: "download", label: t2(phase === "failed" ? "update.install.retry" : "update.install.download"), autoFocus: true, onPress: start }, "download") : null,
       /* @__PURE__ */ (0, jsx)(Button2, { variant: installable ? "secondary" : "primary", size: "lg", icon: "external", label: t2("update.view"), autoFocus: !installable, onPress: view }, "view"),
