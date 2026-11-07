@@ -43,6 +43,9 @@
 > **glibren.13**: a maximum download speed (any value in MB/s, with - / + or typed) that also holds the background
 > downloads and can be changed live from the phone page; speeds shown in MB/s; the payload starts as soon as the app opens,
 > so the phone page and the TorBox store are up without starting a download.
+> **glibren.14**: R3 switches between the full store and the TorBox store (hint in the footer); catalog feeds without the
+> limit of 3 and from a .json file on the PS5, read again at every launch; a broken TorBox copy (an error page instead of
+> the game) fails once with the reason instead of renewing the link in a loop; an old payload left running is replaced.
 
 <p align="center">
   <b>English</b> ·
