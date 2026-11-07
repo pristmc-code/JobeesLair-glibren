@@ -54,6 +54,9 @@
 > **glibren.17**: a download whose format only shows in its bytes (a generic .binary name) goes to BACKUP and is converted
 > to .exfat like any other; a PS5 game left as a folder is converted (Files tab: Convert to .exfat); Search TorBox lists the same
 > options as the sources list; the updater waits ~15 s before reopening the app.
+> **glibren.18**: the background payload works on its own with Jobe closed (phone requests start, downloads in BACKUP
+> are converted or extracted, "Convert now" in the phone's BACKUP list); games whose only TorBox copy is broken leave the
+> TorBox store; the app update no longer waits for the payload's downloads.
 
 <p align="center">
   <b>English</b> ·
