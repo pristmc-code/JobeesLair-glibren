@@ -51,6 +51,9 @@
 > **glibren.16**: .exfat conversions shown on the PS5 Downloads screen (with Cancel conversion, also those the payload
 > runs on its own); an optional warning before installing a PS5 .pkg on firmware above 11.60 (the Install button stays);
 > the TorBox Library also checks downloads in parts (confirmed only with every part in TorBox).
+> **glibren.17**: a download whose format only shows in its bytes (a generic .binary name) goes to BACKUP and is converted
+> to .exfat like any other; a PS5 game left as a folder is converted (Files tab: Convert to .exfat); Search TorBox lists the same
+> options as the sources list; the updater waits ~15 s before reopening the app.
 
 <p align="center">
   <b>English</b> ·
