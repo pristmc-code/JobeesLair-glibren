@@ -73,7 +73,11 @@
 #define READY_STABLE 2
 #define LAUNCH_TRIES 4
 #define LAUNCH_CONFIRM_MS 10000
-static const int RETRY_MS[LAUNCH_TRIES - 1] = {3000, 6000, 12000};
+// glibren.17: no PS5 real (updater.log da .16) o games/info disse "pronto" na hora, mas o console recusou o
+// lancamento com 0x80940033 aos 4 s e aos 7 s e abriu aos 14 s. Cada recusa mostra um erro na tela: a primeira
+// tentativa so sai FIRST_LAUNCH_MS depois do inicio da reabertura, e as pausas sao maiores.
+#define FIRST_LAUNCH_MS 15000
+static const int RETRY_MS[LAUNCH_TRIES - 1] = {5000, 10000, 20000};
 #define MANUAL_OPEN_WAIT_MS 600000
 #define NOTICE_MAX 600
 #define DEFAULT_NOTICE "Jobee'sLair: open it from the home screen to finish the update. / " \
@@ -171,6 +175,11 @@ static void notify_gamer(const char* text) {
 #endif
 
 static void sleep_ms(int ms) { usleep((useconds_t)scaled(ms) * 1000u); }
+static long long mono_ms(void) {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
 
 static char g_title[16], g_control[1024];
 
@@ -583,6 +592,7 @@ static void tell_gamer(const Apply* apply) {
 // tries up to LAUNCH_TRIES times.
 static int relaunch_if(const Apply* apply) {
   if (!apply->relaunch) return 0;
+  const long long started = mono_ms();
   sleep_ms(SETTLE_MS);
   if (title_running(g_title)) {
     note("the app is already open");
@@ -596,6 +606,11 @@ static int relaunch_if(const Apply* apply) {
     return 0;
   }
   if (state != TITLE_READY) note("opening it anyway (ShadowMount+: %s)", title_state_name(state));
+  const long long rest = scaled(FIRST_LAUNCH_MS) - (mono_ms() - started);
+  if (rest > 0) {
+    note("waiting %lld ms more before the first attempt", rest);
+    usleep((useconds_t)rest * 1000u);
+  }
   for (int attempt = 1; attempt <= LAUNCH_TRIES; ++attempt) {
     if (title_running(g_title)) {
       note("the app is open");

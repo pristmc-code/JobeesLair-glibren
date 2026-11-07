@@ -179,7 +179,7 @@ def main():
   assert finished(process)==0 and outcome(control)["outcome"]=="applied",outcome(control)
   text=log(control)
   assert "attempt 1 of 4: could not open the app (error 0x80940005)" in text and "attempt 2 of 4: could not open" in text,text
-  assert "trying again in 3000 ms" in text and "trying again in 6000 ms" in text and "opened the app again (attempt 3 of 4)" in text,text
+  assert "before the first attempt" in text and "trying again in 5000 ms" in text and "trying again in 10000 ms" in text and "opened the app again (attempt 3 of 4)" in text,text
   assert notices(control)==[]
 
   # ShadowMount+ never has the title from the new image: no launch at all (each would show the console's
