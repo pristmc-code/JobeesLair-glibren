@@ -48,6 +48,9 @@
 > the game) fails once with the reason instead of renewing the link in a loop; an old payload left running is replaced.
 > **glibren.15**: after an in-app update, the app is reopened only when ShadowMount+ has the new image ready (it waits,
 > then tries again a few times) instead of failing with "can't start the game/app"; if it still cannot, a notification asks to open it.
+> **glibren.16**: .exfat conversions shown on the PS5 Downloads screen (with Cancel conversion, also those the payload
+> runs on its own); an optional warning before installing a PS5 .pkg on firmware above 11.60 (the Install button stays);
+> the TorBox Library also checks downloads in parts (confirmed only with every part in TorBox).
 
 <p align="center">
   <b>English</b> ·
