@@ -68,6 +68,9 @@
 > the payload itself in <drive>/BACKUP/_temp/<id> and converted in the same conversion, whether Jobe or the phone asked
 > (the temporary folder is deleted at the end); conversions left waiting for Jobe are resumed when the new payload starts;
 > the phone's BACKUP list gets "Convert all" and "View the payload log".
+> **glibren.21**: encrypted RAR archives (such as DLPSGAME's), which the payload's libarchive cannot open, are extracted
+> by the app's own rar-extract.elf (RarLab's UnRAR in a separate program, as the engine does), sent by the payload to the
+> payload loader, trying the known passwords; the app hands the ELF to the payload folder when it starts it.
 
 <p align="center">
   <b>English</b> ·

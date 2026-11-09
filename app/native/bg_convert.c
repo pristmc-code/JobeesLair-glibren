@@ -1278,6 +1278,9 @@ static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) 
   archive_write_free(out);
   return rc;
 }
+// glibren.20b: RAR (cifrado ou nao) pelo rar-extract.elf do app, num processo separado (bg_rar.c).
+#include "bg_rar.c"
+
 // glibren.20: uma conversao de compactado que nao deu direto: extrai em <disco>/BACKUP/_temp/<id> (o mesmo disco do
 // original, entao sem copiar entre discos) e a MESMA conversao segue com a pasta do jogo ("dir") ou o .pkg de PS5 de
 // dentro ("pkg"), com a pasta temporaria como pasta de trabalho: apagada quando o .exfat fica pronto, e tambem quando a
@@ -1305,7 +1308,22 @@ static void conv_extract_in_place(Conv* c) {
   c->written = c->total = 0;
   pthread_mutex_unlock(&g_conv_lock);
   logk_("conversao %s: extraindo %s em %s", c->id, base_name(c->source), work);
-  const int extracted = auto_extract(c, work, err, sizeof err);
+  // glibren.20b: RAR vai ao rar-extract (abre os cifrados); sem ele (ELF ou carregador ausentes), a libarchive.
+  int extracted;
+  if (rar_name(c->source)) {
+    const int rar = rar_extract(c, work, err, sizeof err);
+    if (rar < 0) {
+      logk_("conversao %s: rar-extract indisponivel (%s); tentando a libarchive", c->id, err);
+      conv_remove_tree(work, 0);
+      mkdir_p(work);
+      err[0] = 0;
+      extracted = auto_extract(c, work, err, sizeof err);
+    } else {
+      extracted = rar;
+    }
+  } else {
+    extracted = auto_extract(c, work, err, sizeof err);
+  }
   pthread_mutex_lock(&g_conv_lock);
   c->running = 0;
   const int cancelled = c->cancel;

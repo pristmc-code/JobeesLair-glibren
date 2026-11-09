@@ -62,7 +62,8 @@ import { setOrbitSource } from './orbit-feed.js';
   var PORT = 34200;
   // glibren.13: a versao do protocolo do bg-downloader.elf deste app (BG_API em app/native/bg_downloader.c, no /health).
   // glibren.20: 16, a lista Orbit Store (GET/POST /orbit).
-  var PAYLOAD_API = 16;
+  // glibren.21: 17, RAR cifrado pelo rar-extract.elf do app (o payload da glibren.20 nao abre).
+  var PAYLOAD_API = 17;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -307,7 +308,27 @@ import { setOrbitSource } from './orbit-feed.js';
     // fica ate a proxima vez que o app precisar do payload sem nada rodando.
     const upToDate = (state) => Number.isInteger(state?.api) && state.api >= payloadApi;
     let staleSaid = null;
+    // glibren.20b: o rar-extract.elf do app (UnRAR num programa separado) vai para a pasta do payload: com ele o payload
+    // descompacta RAR cifrado (os do DLPSGAME), que a libarchive dele nao abre. Uma vez por abertura, so quando mudou.
+    let rarStaged = false;
+    function stageRarWorker() {
+      if (rarStaged || platform !== "ps5" || typeof fs.copyAsync !== "function") return;
+      rarStaged = true;
+      const from = "/app0/rar-extract.elf", to = `${stateDir}/rar-extract.elf`;
+      try {
+        const source = fs.stat(from);
+        const here = fs.exists(to) ? fs.stat(to) : null;
+        if (!source || here && here.size === source.size) return;
+        if (here) fs.remove(to);
+        if (fs.exists(`${to}.partial`)) fs.remove(`${to}.partial`);
+        const task = fs.copyAsync(from, to, { verify: false, resume: false });
+        task?.done?.then(() => log("rar-extract.elf handed to the payload"), (problem) => log(`rar-extract.elf not copied: ${problem?.message ?? problem}`));
+      } catch (problem) {
+        log(`rar-extract.elf not copied: ${problem?.message ?? problem}`);
+      }
+    }
     async function ensurePayloadNow() {
+      stageRarWorker();
       let token = readToken();
       let state = token ? await health(token) : null;
       if (state && upToDate(state)) return token;

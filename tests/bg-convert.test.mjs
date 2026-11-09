@@ -616,3 +616,63 @@ test('glibren.18: compactado que nao da direto (um .pkg dentro): o payload EXTRA
     await stop(child);
   }
 });
+
+// glibren.20b: RAR cifrado (como os do DLPSGAME) que a libarchive nao abre: o payload manda o rar-extract.elf ao
+// carregador de payloads (aqui um falso: le o "ELF" ate o pedido RARX1 e o repassa ao rar-extract de desktop, o UnRAR de
+// verdade, por um pipe, como o elfldr liga o socket ao programa) e tenta as senhas conhecidas; a pasta temporaria some.
+const RAR_WORKER = path.join(repo, 'ps5-react/.build/app/desktop/rar-extract');
+async function fakeLoader() {
+  const port = await freePort();
+  const seen = [];
+  const server = net.createServer((socket) => {
+    let buffered = Buffer.alloc(0), worker = null;
+    socket.on('data', (chunk) => {
+      if (worker) { worker.stdin.write(chunk); return; }
+      buffered = Buffer.concat([buffered, chunk]);
+      const at = buffered.indexOf('RARX1\n');
+      if (at < 0) return;
+      const request = buffered.subarray(at);
+      seen.push(request.toString());
+      worker = spawn(RAR_WORKER, [], { stdio: ['pipe', 'pipe', 'ignore'] });
+      worker.stdout.pipe(socket);
+      worker.on('exit', () => socket.end());
+      worker.stdin.write(request);
+    });
+    socket.on('error', () => {});
+  }).listen(port, '127.0.0.1');
+  return { port, seen, close: () => server.close() };
+}
+
+test('RAR cifrado (DLPSGAME): o payload descompacta pelo rar-extract com a senha conhecida e converte; senha desconhecida falha com o motivo', { skip: skip || (!tool('rar') ? 'rar ausente' : !existsSync(RAR_WORKER) ? 'rar-extract de desktop nao compilado' : false) }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const loader = await fakeLoader();
+  const fakeElf = path.join(base, 'rar-extract.elf');
+  writeFileSync(fakeElf, Buffer.from('\x7fELF fake payload bytes\n'.repeat(100)));
+  const child = start(base, { BGDL_RAR_ELF: fakeElf, BGDL_ELFLDR_PORT: String(loader.port) });
+  try {
+    await up(base);
+    const backup = path.join(base, 'disk/BACKUP/Cifrado');
+    mkdirSync(backup, { recursive: true });
+    const src = path.join(base, 'src');
+    gameFolder(path.join(src, 'PPSA01234-app'), 2);
+    make('rar', ['a', '-r', '-idq', '-hpDLPSGAME.COM', path.join(backup, '[DLPSGAME.COM]-PPSA01234.rar'), 'PPSA01234-app'], src);
+    const done = await convertArchive(base, [path.join(backup, '[DLPSGAME.COM]-PPSA01234.rar')]);
+    assert.equal(done.state, 'done', done.error);
+    assert.ok(existsSync(path.join(base, 'disk/homebrew/PPSA01234.exfat')));
+    assert.ok(loader.seen.length >= 1 && /password [0-9a-f]+/.test(loader.seen.at(-1)), 'o pedido levou uma senha (hex)');
+    assert.ok(!existsSync(path.join(base, 'disk/BACKUP/_temp', done.id)), 'a pasta temporaria foi apagada');
+    const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+    assert.match(log, /RAR extraido pelo rar-extract \(com uma das senhas conhecidas\)/);
+    // Uma senha que ninguem conhece: tenta todas e falha dizendo isso.
+    rmSync(path.join(base, 'disk/homebrew/PPSA01234.exfat'));
+    make('rar', ['a', '-r', '-idq', '-hpNINGUEM', path.join(backup, 'outro.rar'), 'PPSA01234-app'], src);
+    const failed = await convertArchive(base, [path.join(backup, 'outro.rar')]);
+    assert.equal(failed.state, 'failed');
+    assert.match(failed.error, /none of the known passwords/);
+    assert.ok(!existsSync(path.join(base, 'disk/BACKUP/_temp', failed.id)));
+  } finally {
+    await stop(child);
+    loader.close();
+  }
+});
