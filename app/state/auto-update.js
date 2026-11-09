@@ -42,6 +42,8 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
   var TRIES = 4;
   // glibren.18: how often "Restart to apply" looks again whether the app's own work ended.
   var APPLY_POLL_MS = 2e3;
+  // glibren.22: o maximo que "Reiniciar para aplicar" espera um pacote sendo instalado ou o ShadowMount+; depois fecha.
+  var APPLY_WAIT_MAX_MS = 3 * 6e4;
   const sameHolding = (a, b) => (a?.kind ?? "") === (b?.kind ?? "") && (a?.title ?? "") === (b?.title ?? "");
   // glibren.15: o tamanho maximo do aviso "notice=" em apply.txt (updater.c NOTICE_MAX - 1, com folga).
   var NOTICE_BYTES = 590;
@@ -54,6 +56,12 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     archives,
     // (onYield) => release | null: download-queue.js lendNetwork.
     lend,
+    // glibren.22: () => Promise<release>: a rede na frente dos downloads (download-queue.js claimNetwork), que pausam e
+    // voltam depois. Sem ela, a atualizacao espera a fila parar (lend), como antes.
+    claim = null,
+    // glibren.22: () => void: chamado antes de o app fechar para a atualizacao (download-queue.js prepareUpdateRestart).
+    beforeExit = () => {
+    },
     // async () => the installed image's path, from ShadowMount+ (games/info).
     locate,
     // (controlDir) => true | the reason the updater could not be armed (SelfUpdate.arm).
@@ -220,6 +228,17 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
         if (release) {
           if (view.holding && !restart) publish({ holding: null });
           return release;
+        }
+        if (claim) {
+          // glibren.22: nao espera ninguem: os downloads pausam enquanto a atualizacao baixa e voltam depois.
+          publish({ phase: "waiting", holding: { kind: "pausing", title: "" } });
+          const back = await claim();
+          if (current.cancelled) {
+            back();
+            throw stopped();
+          }
+          if (!restart) publish({ holding: null });
+          return back;
         }
         const holding = holdingNow({ queued: true });
         if (view.phase !== "waiting" || !sameHolding(view.holding, holding)) publish({ phase: "waiting", holding });
@@ -453,30 +472,50 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
      * downloading while the app closes and the image is swapped, and the new build follows its jobs again. Then it arms
      * the updater (applyNow) and calls exit(). Returns { ok, waiting } or { ok: false, reason } (nothing ready).
      */
+    // glibren.22: so espera o que fechar o app estragaria (um pacote sendo instalado, um pedido ao ShadowMount+), e no
+    // maximo APPLY_WAIT_MAX_MS; downloads, extracoes e o que vai para outro disco param e voltam sozinhos quando o app
+    // reabre (beforeExit marca a fila).
+    const RESTART_WAITS = ["install", "shadowmount"];
+    function restartHolding() {
+      const holding = holdingNow({ restart: true });
+      return holding && RESTART_WAITS.includes(holding.kind) ? holding : null;
+    }
+    function leave(exit) {
+      try {
+        beforeExit();
+      } catch (error) {
+        log(`before the restart: ${error.message}`);
+      }
+      exit();
+    }
     function applyWhenIdle(exit) {
       if (restart) return { ok: true, waiting: view.holding };
       if (!["ready", "armed"].includes(saved().phase)) return { ok: false, reason: "No update is ready." };
-      const holding = holdingNow();
+      const holding = restartHolding();
       if (!holding) {
         const result = applyNow();
-        if (result.ok) exit();
+        if (result.ok) leave(exit);
         return result;
       }
       log(`restart waits for the app's own work: ${holding.kind} ${holding.title}`);
       const current = restart = { cancelled: false };
       publish({ holding, restarting: true });
       void (async () => {
-        for (; ; ) {
+        for (let waited = 0; ; waited += APPLY_POLL_MS) {
           await wait(APPLY_POLL_MS);
           if (current.cancelled) return;
-          const now = holdingNow();
+          const now = restartHolding();
           if (!now) break;
+          if (waited + APPLY_POLL_MS >= APPLY_WAIT_MAX_MS) {
+            log(`restart goes on after ${Math.round(APPLY_WAIT_MAX_MS / 1e3)} s: ${now.kind} ${now.title}`);
+            break;
+          }
           if (!sameHolding(view.holding, now)) publish({ holding: now });
         }
         restart = null;
         publish({ holding: null, restarting: false });
         const result = applyNow();
-        if (result.ok) exit();
+        if (result.ok) leave(exit);
         else publish({ error: result.reason });
       })();
       return { ok: true, waiting: holding };

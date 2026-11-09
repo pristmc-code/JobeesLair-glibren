@@ -269,7 +269,8 @@ import { t as t2Static } from '../i18n/core.js';
   // as a download's: chip, title, the state under it (or the error), the meter with its percentage, sizes, speed and
   // time left; "Cancel conversion" while it runs (the payload stops it and deletes its .part; the original stays), the X
   // to clear it from the list once it ended.
-  var CONVERSION_TEXT = { queued: "downloads.convert.queued", converting: "downloads.convert.running", verifying: "downloads.convert.verifying", done: "downloads.convert.done", failed: "downloadState.failed" };
+  // glibren.22: "extracting": the payload unpacks the archive first (glibren.20).
+  var CONVERSION_TEXT = { queued: "downloads.convert.queued", extracting: "downloads.convert.extracting", converting: "downloads.convert.running", verifying: "downloads.convert.verifying", done: "downloads.convert.done", failed: "downloadState.failed" };
   var conversionKey = (item) => `conv-${item.id}`;
   function conversionError(item) {
     return t2Static(`downloads.convert.error.${errorCode(item.error)}`, { detail: errorDetail(item.error) });
@@ -277,7 +278,7 @@ import { t as t2Static } from '../i18n/core.js';
   function ConversionCard({ item, game, autoFocus, onCancel, onForget }) {
     const t2 = useT();
     const [within, setWithin] = (0, useState)(null);
-    const active = ["queued", "converting", "verifying"].includes(item.state);
+    const active = ["queued", "extracting", "converting", "verifying"].includes(item.state);
     const tone = item.state === "failed" ? RED : item.state === "done" ? GREEN : colors.accentHi;
     const text = t2(CONVERSION_TEXT[item.state] ?? "downloads.convert.queued");
     const note = item.state === "failed" ? conversionError(item) : t2("downloads.payloadConv.hint");

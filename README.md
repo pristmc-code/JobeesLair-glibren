@@ -71,6 +71,13 @@
 > **glibren.21**: encrypted RAR archives (such as DLPSGAME's), which the payload's libarchive cannot open, are extracted
 > by the app's own rar-extract.elf (RarLab's UnRAR in a separate program, as the engine does), sent by the payload to the
 > payload loader, trying the known passwords; the app hands the ELF to the payload folder when it starts it.
+> **glibren.22**: an app update never waits for downloads any more: while it downloads, the downloads in progress pause
+> (and the queue starts nothing) and resume as soon as it is in; "Restart to apply" closes the app at once (it waits only
+> for a package being installed or ShadowMount+, 3 minutes at most) and everything that was downloading or queued comes
+> back by itself when the app reopens. An older background payload is replaced even while it downloads or converts (it
+> saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
+> in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
+> page offered before; conversions being unpacked first show in Downloads too.
 
 <p align="center">
   <b>English</b> ·

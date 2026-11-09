@@ -9,6 +9,9 @@
 // converts outside the queue (state/payload-conversions.js: started with the app closed, say) gets its own card
 // (DownloadCard.jsx ConversionCard), in progress, on hold (failed) or finished (the last 24 h). The title's summary
 // counts them ("1 converting"). Install on a PS5 package asks first when the warning is on (state/ps5-pkg-warning.js).
+// MODIFIED (glibren.22): "BACKUP folder" beside the queue's buttons (and under the empty page's) opens BackupSheet.jsx:
+// the originals the payload keeps in <drive>/BACKUP, convert one or all, delete one, and the payload's log, which only
+// the phone page offered before.
 
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -18,6 +21,7 @@ import { cancelPayloadConversion, conversionActive, forgetPayloadConversion, out
 import { installWithPs5Warning } from '../state/ps5-pkg-warning.js';
 import { FileSystem } from '@ps5-react/core';
 import { Telemetry } from './Telemetry.jsx';
+import { BackupSheet } from './BackupSheet.jsx';
 import { DiagnosisSheet } from '../game/DiagnosisSheet.jsx';
 import { finalError } from './errors.js';
 import { useJobs } from './useQueue.js';
@@ -49,7 +53,7 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
   // 0.5.1: the whole list at once, at its top (0.5.3: beside the library band). "Clear finished" tidies every
   // finished card away; "Cancel all" stops and removes every download that is not finished, on a second press
   // within three seconds (the first arms it, like a card's X).
-  function QueueActions({ finished, unfinished, run }) {
+  function QueueActions({ finished, unfinished, run, openBackup }) {
     const t2 = useT();
     const [armed, setArmed] = (0, useState)(false);
     (0, useEffect)(() => {
@@ -58,6 +62,8 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
       return () => clearTimeout(timer);
     }, [armed]);
     return /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", justifyContent: "flex-end", gap: 12 }, children: [
+      // glibren.22
+      /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", size: "md", icon: "folder", label: t2("downloads.backup.open"), focusKey: "downloads:backup", onPress: openBackup }),
       finished ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", size: "md", icon: "check", label: t2("downloads.clearFinished"), focusKey: "downloads:clear-finished", onPress: () => run("clearFinished") }) : null,
       unfinished ? /* @__PURE__ */ (0, jsx)(Button2, { variant: armed ? "primary" : "secondary", size: "md", icon: armed ? "delete" : "x", label: t2(armed ? "downloads.cancelAllArmed" : "downloads.cancelAll"), focusKey: "downloads:cancel-all", onBlur: () => setArmed(false), onPress: () => {
         if (armed) run("cancelAll");
@@ -121,13 +127,17 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
   }
   // 0.5.3: right under the telemetry. Centered in what was left, it rode up over the telemetry while an announcement
   // took the page's top (state/online.js), there being less left than the card is tall.
-  function Empty({ error: error2, onBack }) {
+  function Empty({ error: error2, onBack, openBackup }) {
     const t2 = useT();
     return /* @__PURE__ */ (0, jsx)(View, { style: { flex: 1, alignItems: "center", justifyContent: "flex-start", paddingTop: 30 }, children: /* @__PURE__ */ (0, jsxs)(View, { style: { width: CARD_WIDTH, alignItems: "center", borderRadius: radius.xl, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, paddingVertical: 48, paddingHorizontal: 60 }, children: [
       /* @__PURE__ */ (0, jsx)(View, { style: { width: 84, height: 84, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.surface2 }, children: /* @__PURE__ */ (0, jsx)(Icon, { name: "download", size: 36, color: colors.glow }) }),
       /* @__PURE__ */ (0, jsx)(Text, { style: { marginTop: 24, fontFamily: "Exo2", fontSize: 30, fontWeight: 600, color: colors.fg, lineHeight: 42 }, children: t2(error2 ? "downloads.unavailable" : "downloads.empty") }),
       /* @__PURE__ */ (0, jsx)(Text, { style: { marginTop: 6, width: 720, textAlign: "center", fontFamily: "Exo2", fontSize: 23, color: colors.muted, numberOfLines: 3, ellipsizeMode: "tail", lineHeight: 34 }, children: error2 || t2("downloads.emptyDetail") }),
-      /* @__PURE__ */ (0, jsx)(View, { style: { marginTop: 36 }, children: /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", label: t2("downloads.browseGames"), focusKey: EMPTY_KEY, autoFocus: true, onPress: onBack }) })
+      /* @__PURE__ */ (0, jsxs)(View, { style: { marginTop: 36, flexDirection: "row", gap: 12 }, children: [
+        /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", label: t2("downloads.browseGames"), focusKey: EMPTY_KEY, autoFocus: true, onPress: onBack }),
+        // glibren.22
+        /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", icon: "folder", label: t2("downloads.backup.open"), focusKey: "downloads:backup-empty", onPress: openBackup })
+      ] })
     ] }) });
   }
   function DownloadsScreen({ onBack, onOpenGame }) {
@@ -147,6 +157,8 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
     const [note, setNote] = (0, useState)("");
     // The job whose "See why" is open: what ShadowMount's logs say about its last launch.
     const [diagnosing, setDiagnosing] = (0, useState)(null);
+    // glibren.22: the BACKUP folder sheet, and the button focus goes back to when it closes.
+    const [backup, setBackup] = (0, useState)(null);
     const { focusLater } = useNavActions();
     const focused = (0, useRef)(null);
     const latest2 = (0, useRef)(jobs);
@@ -264,7 +276,7 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
           // back. With an announcement up, the first card no longer fits under them, so the page scrolls to it.
           /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 20 }, children: [
             /* @__PURE__ */ (0, jsx)(View, { style: { flex: 1 }, children: /* @__PURE__ */ (0, jsx)(CountBand, {}) }),
-            /* @__PURE__ */ (0, jsx)(QueueActions, { finished: done.length, unfinished: active2.length + stopped.length, run: handlers.runAll })
+            /* @__PURE__ */ (0, jsx)(QueueActions, { finished: done.length, unfinished: active2.length + stopped.length, run: handlers.runAll, openBackup: () => setBackup("downloads:backup") })
           ] }),
           /* @__PURE__ */ (0, jsx)(Telemetry, { error: error2 }),
           /* @__PURE__ */ (0, jsx)(View, { style: { marginTop: 30 }, children: /* @__PURE__ */ (0, jsx)(Section, { ...section, first, handlers, anchor: false }, section.title) })
@@ -272,13 +284,17 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
       ) }) }) : [
         /* @__PURE__ */ (0, jsx)(View, { style: { marginBottom: 20 }, children: /* @__PURE__ */ (0, jsx)(CountBand, {}) }, "band"),
         /* @__PURE__ */ (0, jsx)(Telemetry, { error: error2 }, "telemetry"),
-        /* @__PURE__ */ (0, jsx)(Empty, { error: error2, onBack }, "empty")
+        /* @__PURE__ */ (0, jsx)(Empty, { error: error2, onBack, openBackup: () => setBackup("downloads:backup-empty") }, "empty")
       ],
       /* @__PURE__ */ (0, jsx)(ButtonHints, { hints: shown > 0 ? LIST_HINTS : EMPTY_HINTS }),
       /* @__PURE__ */ (0, jsx)(AnimatePresence, { children: diagnosing ? /* @__PURE__ */ (0, jsx)(DiagnosisSheet, { title: diagnosing.title, jobId: diagnosing.id, onClose: () => {
         setDiagnosing(null);
         focusLater(primaryKey(diagnosing.id));
-      } }, "diagnosis") : null })
+      } }, "diagnosis") : backup ? /* @__PURE__ */ (0, jsx)(BackupSheet, { onClose: () => {
+        const back3 = backup;
+        setBackup(null);
+        focusLater(back3);
+      } }, "backup") : null })
     ] }) });
   }
 

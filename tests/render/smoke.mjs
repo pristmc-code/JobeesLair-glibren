@@ -211,6 +211,22 @@ assert.ok(downloadsScreen.some((text) => /^12 GB of 40 GB/.test(text)), 'the pay
 assert.ok(downloadsScreen.includes(en['downloads.payloadConv.hint']), 'one outside the queue says so');
 assert.ok(downloadsScreen.some((text) => text.startsWith('Not enough space for the .exfat: needs 40 GB, 12 GB free')), 'a failed one says why');
 assert.ok(downloadsScreen.includes('Ready (EXFAT)'), 'a finished one');
+// glibren.22: the BACKUP folder sheet: each original with what became of it, Convert all and the log button.
+const { noteBackup } = await load('app/state/payload-conversions.js');
+const { BackupSheet } = await load('app/downloads/BackupSheet.jsx');
+noteBackup({ totalBytes: 90 * GB, games: [
+  { root: '/mnt/usb0', name: 'Game A', bytes: 40 * GB, files: 3, platform: 'ps5', code: 'PPSA01234', format: 'rar', parts: 3, converted: '' },
+  { root: '/mnt/usb0', name: 'Game B', bytes: 30 * GB, files: 1, platform: 'ps5', code: 'PPSA05678', format: 'zip', parts: 0, converted: '', conversion: { id: 'c9', state: 'extracting', error: '', written: 10 * GB, total: 40 * GB } },
+  { root: '/mnt/usb0', name: 'Game C', bytes: 15 * GB, files: 1, platform: 'ps5', code: 'PPSA09999', format: 'rar', parts: 0, converted: '', conversion: { id: 'c8', state: 'failed', error: 'source: none of the known passwords opens this RAR', written: 0, total: 0 } },
+  { root: '/mnt/usb0', name: 'Old PS4', bytes: 5 * GB, files: 1, platform: 'ps4', code: 'CUSA01234', format: 'pkg', parts: 0, converted: '' },
+  { root: '/data', name: 'Done', bytes: 1, files: 1, platform: 'ps5', code: 'PPSA07777', format: 'pkg', parts: 0, converted: 'PPSA07777.exfat', conversion: { id: 'c1', state: 'done', error: '', written: 1, total: 1 } },
+] });
+const backupSheet = await screen('BACKUP folder (glibren.22)', { type: BackupSheet, props: { onClose() {} } });
+for (const text of ['BACKUP folder', 'Convert all', 'Payload log', 'Game A', 'Not converted yet', 'Unpacking to convert: 25%', 'PS4 game: install it from the Files tab', 'Converted: PPSA07777.exfat', 'Convert again', 'Delete', '2 not converted yet'])
+  assert.ok(backupSheet.includes(text), `${text}: ${backupSheet.join('|')}`);
+assert.ok(backupSheet.some((text) => text.startsWith('The conversion failed: source: none of the known passwords')), backupSheet.join('|'));
+const downloadsBackup = await screen('Downloads (glibren.22: BACKUP folder button)', { type: DownloadsScreen, props: { onBack() {}, onOpenGame() {} } });
+assert.ok(downloadsBackup.includes('BACKUP folder'), downloadsBackup.join('|'));
 const settingsWarn = await screen('Settings (Downloads, glibren.16)', { type: SettingsScreen, props: { onBack() {}, start: 'downloads' } });
 assert.ok(settingsWarn.includes("Warn that PS5 .pkg files won't open on this firmware"), settingsWarn.join('|'));
 const { Ps5PkgWarning } = await load('app/ui/Ps5PkgWarning.jsx');

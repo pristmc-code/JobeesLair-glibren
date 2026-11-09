@@ -44,6 +44,10 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
     downloads: Downloads,
     archives: Archives,
     lend: (onYield) => downloadQueue().lendNetwork?.(onYield) ?? null,
+    // glibren.22: a atualizacao nao espera os downloads: eles pausam enquanto ela baixa e voltam depois; ao reiniciar
+    // para aplicar, o que baixava fica marcado e volta sozinho quando o app reabre.
+    claim: () => downloadQueue().claimNetwork("app update"),
+    beforeExit: () => downloadQueue().prepareUpdateRestart?.(),
     // glibren.18: what the app itself is doing that the update waits for (download-queue.js appWork); the background
     // payload's downloads are not in it.
     busy: (options) => downloadQueue().appWork?.(options) ?? null,

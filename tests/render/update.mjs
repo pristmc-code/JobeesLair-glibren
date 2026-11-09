@@ -72,22 +72,22 @@ if (which === 'ready') {
   assert.ok(has(/^Restart to apply$/) && has(/^View release$/));
   assert.ok(has(/the new version takes this one's place/));
   assert.ok(writes.some(([p, text]) => p === '/data/JobeesLair/update/booted.txt.tmp' && text === `${VERSION}\n`), 'this build said it started');
-  // glibren.18: Restart to apply while the app itself extracts a game waits for it, says so, and closes the app once it
-  // ends; a download in the background payload (not in appWork) is not waited for.
+  // glibren.18/22: Restart to apply while the app installs a package waits for it, says so, and closes the app once it
+  // ends; a download, an extraction or a move is not waited for (they resume when the app reopens).
   sizes.set('/mnt/usb0/homebrew/JobeesLair.exfat', 466616320);
-  let work = { kind: 'extract', title: 'Game X' };
+  let work = { kind: 'install', title: 'Game X' };
   globalThis.__fake.queue.appWork = () => work;
   assert.equal(update.restartToApply(), '', 'no error while it waits');
   texts.length = 0;
   walk({ type: UpdateDialog, props: {} });
   console.log(`--- update dialog (ready, restart waiting)\n${texts.join('\n')}`);
-  assert.ok(has(/^Waiting for Game X to finish extracting… The app restarts to apply the update as soon as that ends\./), 'it says what it waits for');
+  assert.ok(has(/^Waiting for Game X to finish installing… The app restarts to apply the update as soon as that ends \(3 minutes at most\)\./), 'it says what it waits for');
   assert.ok(has(/^Don't restart$/) && !has(/^Restart to apply$/), 'Restart to apply turns into Don\'t restart');
-  assert.deepEqual(globalThis.__fake.exits, [], 'the app stays open while it extracts');
+  assert.deepEqual(globalThis.__fake.exits, [], 'the app stays open while it installs');
   assert.deepEqual(globalThis.__fake.arms, [], 'the updater is not armed yet');
   work = null;
   await new Promise((resolve) => setTimeout(resolve, 2600));
-  assert.deepEqual(globalThis.__fake.arms, ['/data/JobeesLair/update'], 'armed once the extraction ended');
+  assert.deepEqual(globalThis.__fake.arms, ['/data/JobeesLair/update'], 'armed once the install ended');
   assert.deepEqual(globalThis.__fake.exits, [true], 'and the app closes');
 } else if (which === 'paused') {
   assert.ok(has(/^Download and install$/) && has(/download stopped when Jobee'sLair closed/));

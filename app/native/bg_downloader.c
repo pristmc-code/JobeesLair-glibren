@@ -93,7 +93,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 17
+#define BG_API 18
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -3612,6 +3612,7 @@ static void route(int fd, Request* r) {
   if (strcmp(r->path, "/bye") && mono_ms() - g_bye_ms >= BYE_GRACE_MS) g_last_app_ms = mono_ms();
   if (conv_route(fd, r)) return; // glibren.12: /convert
   if (orbit_route(fd, r)) return; // glibren.20: /orbit
+  if (conv_app_route(fd, r)) return; // glibren.22: /backup e /log (a tela Pasta BACKUP do app)
   // glibren.18: o destino que o payload daria a um pedido do celular (o teste o compara com o do app).
   if (!strcmp(r->method, "GET") && !strncmp(r->path, "/auto/plan", 10) && (!r->path[10] || r->path[10] == '?')) {
     auto_plan_route(fd, r->path[10] ? r->path + 11 : "");

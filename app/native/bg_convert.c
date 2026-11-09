@@ -987,7 +987,40 @@ static unsigned backup_parts(const BackupInfo* info) {
   return 0;
 }
 
-static void conv_backup_list(int fd) {
+// glibren.22: as acoes do BACKUP servem a pagina do celular (com o PIN) e o app (a API local, com o token, app = 1): a
+// mesma resposta, pelo canal de cada um.
+static void backup_reply(int fd, int app, int status, const char* body) {
+  if (app) respond(fd, status, body);
+  else monitor_json(fd, status, body);
+}
+static const char* backup_who(int app) { return app ? "app" : "celular"; }
+
+// glibren.22: a conversao mais recente do item do BACKUP (pela chave "backup-<nome>" ou pelo original dentro dele), para
+// o app mostrar o estado ao lado do item: ,"conversion":{"id","state","error","written","total"} ou nada.
+static void backup_conv_json(Buf* b, const char* path, const char* key) {
+  pthread_mutex_lock(&g_conv_lock);
+  const Conv* best = NULL;
+  for (int i = 0; i < g_conv_count; ++i) {
+    const Conv* c = g_convs[i];
+    if (!strcmp(c->state, "cancelled")) continue;
+    int mine = !strcmp(c->key, key) || !strcmp(c->source, path) || conv_inside(c->source, path);
+    for (int k = 0; !mine && k < c->nsources; ++k) mine = !strcmp(c->sources[k], path) || conv_inside(c->sources[k], path);
+    if (mine && (!best || c->updated >= best->updated)) best = c;
+  }
+  if (best) {
+    buf_str(b, ",\"conversion\":{\"id\":"); buf_json(b, best->id);
+    buf_str(b, ",\"state\":"); buf_json(b, best->state);
+    buf_str(b, ",\"error\":"); buf_json(b, best->error);
+    buf_fmt(b, ",\"written\":%llu,\"total\":%llu}", (unsigned long long)best->written, (unsigned long long)best->total);
+  }
+  pthread_mutex_unlock(&g_conv_lock);
+}
+static void backup_key(char* key, size_t cap, const char* name) {
+  snprintf(key, cap, "backup-%.100s", name);
+  for (char* p = key; *p; ++p) if ((unsigned char)*p < 0x20 || *p == '"' || *p == '\\') *p = '_';
+}
+
+static void conv_backup_list(int fd, int app) {
   char roots[24][256];
   const int count = conv_backup_roots(roots, 24);
   Buf b = {0};
@@ -1023,13 +1056,18 @@ static void conv_backup_list(int fd) {
       for (int k = 0; k < info.named; ++k) { if (k) buf_str(&b, ","); buf_json(&b, info.names[k]); }
       buf_fmt(&b, "],\"moreFiles\":%d,\"converted\":", info.more);
       buf_json(&b, converted);
+      if (app) { // glibren.22
+        char key[128];
+        backup_key(key, sizeof key, it->d_name);
+        backup_conv_json(&b, path, key);
+      }
       buf_str(&b, "}");
     }
     closedir(d);
   }
   buf_fmt(&b, "],\"totalBytes\":%llu}", (unsigned long long)all);
-  if (b.failed || !b.data) monitor_json(fd, 500, "{\"error\":\"out of memory\"}");
-  else monitor_json(fd, 200, b.data);
+  if (b.failed || !b.data) backup_reply(fd, app, 500, "{\"error\":\"out of memory\"}");
+  else backup_reply(fd, app, 200, b.data);
   free(b.data);
 }
 
@@ -1041,29 +1079,29 @@ static int backup_delete_field(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 
-static void conv_backup_delete(int fd, Request* r) {
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+static void conv_backup_delete(int fd, Request* r, int app) {
+  if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   BackupDelete d = {{0}, {0}};
   JP jp = {r->body, r->body + r->content_length, 0};
-  if (!r->content_length || !jp_object(&jp, backup_delete_field, &d)) { monitor_json(fd, 400, "{\"error\":\"expected {root, name}\"}"); return; }
+  if (!r->content_length || !jp_object(&jp, backup_delete_field, &d)) { backup_reply(fd, app, 400, "{\"error\":\"expected {root, name}\"}"); return; }
   char roots[24][256];
   const int count = conv_backup_roots(roots, 24);
   int known = 0;
   for (int i = 0; i < count; ++i) if (!strcmp(roots[i], d.root)) known = 1;
-  if (!known || !d.name[0] || d.name[0] == '.' || strchr(d.name, '/') || strchr(d.name, '\\')) { monitor_json(fd, 400, "{\"error\":\"invalid backup\"}"); return; }
+  if (!known || !d.name[0] || d.name[0] == '.' || strchr(d.name, '/') || strchr(d.name, '\\')) { backup_reply(fd, app, 400, "{\"error\":\"invalid backup\"}"); return; }
   char path[600];
   snprintf(path, sizeof path, "%.255s/BACKUP/%.255s", d.root, d.name);
   struct stat st;
-  if (lstat(path, &st)) { monitor_json(fd, 404, "{\"error\":\"no such backup\"}"); return; }
+  if (lstat(path, &st)) { backup_reply(fd, app, 404, "{\"error\":\"no such backup\"}"); return; }
   // Nao apaga o original de uma conversao que ainda o le (um .pkg convertido direto do BACKUP).
   pthread_mutex_lock(&g_conv_lock);
   int busy = 0;
   for (int i = 0; i < g_conv_count; ++i) if (!conv_terminal(g_convs[i]->state) && (conv_inside(g_convs[i]->source, path) || !strcmp(g_convs[i]->source, path))) busy = 1;
   pthread_mutex_unlock(&g_conv_lock);
-  if (busy) { monitor_json(fd, 409, "{\"error\":\"converting\"}"); return; }
+  if (busy) { backup_reply(fd, app, 409, "{\"error\":\"converting\"}"); return; }
   const int failed = conv_remove_tree(path, 0);
-  logk_("celular: BACKUP %s apagado%s", path, failed ? " (em parte)" : "");
-  monitor_json(fd, failed ? 500 : 200, failed ? "{\"error\":\"not all deleted\"}" : "{\"ok\":true}");
+  logk_("%s: BACKUP %s apagado%s", backup_who(app), path, failed ? " (em parte)" : "");
+  backup_reply(fd, app, failed ? 500 : 200, failed ? "{\"error\":\"not all deleted\"}" : "{\"ok\":true}");
 }
 
 // ---- glibren.18: o payload converte sozinho, sem o app ----
@@ -1379,28 +1417,27 @@ static void conv_extract_in_place(Conv* c) {
 }
 
 // POST /api/backup/convert {root, name} (com o PIN): "Converter agora" na lista do BACKUP.
-static void conv_backup_convert(int fd, Request* r) {
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+static void conv_backup_convert(int fd, Request* r, int app) {
+  if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   BackupDelete d = {{0}, {0}};
   JP jp = {r->body, r->body + r->content_length, 0};
-  if (!r->content_length || !jp_object(&jp, backup_delete_field, &d)) { monitor_json(fd, 400, "{\"error\":\"expected {root, name}\"}"); return; }
+  if (!r->content_length || !jp_object(&jp, backup_delete_field, &d)) { backup_reply(fd, app, 400, "{\"error\":\"expected {root, name}\"}"); return; }
   char roots[24][256];
   const int count = conv_backup_roots(roots, 24);
   int known = 0;
   for (int i = 0; i < count; ++i) if (!strcmp(roots[i], d.root)) known = 1;
-  if (!known || !d.name[0] || d.name[0] == '.' || !strcmp(d.name, "_temp") || strchr(d.name, '/') || strchr(d.name, '\\')) { monitor_json(fd, 400, "{\"error\":\"invalid backup\"}"); return; }
+  if (!known || !d.name[0] || d.name[0] == '.' || !strcmp(d.name, "_temp") || strchr(d.name, '/') || strchr(d.name, '\\')) { backup_reply(fd, app, 400, "{\"error\":\"invalid backup\"}"); return; }
   char key[128];
-  snprintf(key, sizeof key, "backup-%.100s", d.name);
-  for (char* p = key; *p; ++p) if ((unsigned char)*p < 0x20 || *p == '"' || *p == '\\') *p = '_';
+  backup_key(key, sizeof key, d.name);
   const int rc = backup_convert(d.root, d.name, key);
-  logk_("celular: converter agora %s/BACKUP/%s -> %d", d.root, d.name, rc);
-  monitor_json(fd, rc == 1 ? 200 : 400, rc == 1 ? "{\"ok\":true}" : rc == -1 ? "{\"error\":\"ps4\"}" : rc == -2 ? "{\"error\":\"converted\"}" : "{\"error\":\"nothing\"}");
+  logk_("%s: converter agora %s/BACKUP/%s -> %d", backup_who(app), d.root, d.name, rc);
+  backup_reply(fd, app, rc == 1 ? 200 : 400, rc == 1 ? "{\"ok\":true}" : rc == -1 ? "{\"error\":\"ps4\"}" : rc == -2 ? "{\"error\":\"converted\"}" : "{\"error\":\"nothing\"}");
 }
 
 // glibren.20: POST /api/backup/convert-all (com o PIN): "Converter todos" na lista do BACKUP: cada jogo de PS5 ainda nao
 // convertido entra na fila (os que nao derem direto o payload extrai em BACKUP/_temp). {queued, ps4, converted, nothing}.
-static void conv_backup_convert_all(int fd, Request* r) {
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+static void conv_backup_convert_all(int fd, Request* r, int app) {
+  if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   char roots[24][256];
   const int count = conv_backup_roots(roots, 24);
   int queued = 0, ps4 = 0, converted = 0, nothing = 0;
@@ -1418,22 +1455,21 @@ static void conv_backup_convert_all(int fd, Request* r) {
     closedir(d);
     for (int k = 0; k < n; ++k) {
       char key[128];
-      snprintf(key, sizeof key, "backup-%.100s", names[k]);
-      for (char* p = key; *p; ++p) if ((unsigned char)*p < 0x20 || *p == '"' || *p == '\\') *p = '_';
+      backup_key(key, sizeof key, names[k]);
       const int rc = backup_convert(roots[i], names[k], key);
       if (rc == 1) ++queued; else if (rc == -1) ++ps4; else if (rc == -2) ++converted; else ++nothing;
     }
   }
-  logk_("celular: converter todos -> %d na fila, %d de PS4, %d ja convertidos, %d sem o que converter", queued, ps4, converted, nothing);
+  logk_("%s: converter todos -> %d na fila, %d de PS4, %d ja convertidos, %d sem o que converter", backup_who(app), queued, ps4, converted, nothing);
   char body[160];
   snprintf(body, sizeof body, "{\"ok\":true,\"queued\":%d,\"ps4\":%d,\"converted\":%d,\"nothing\":%d}", queued, ps4, converted, nothing);
-  monitor_json(fd, 200, body);
+  backup_reply(fd, app, 200, body);
 }
 
 // glibren.20: GET /api/log (com o PIN): o diario do payload (bgdl.log.old + bgdl.log, os ultimos ~1,5 MiB), para ver no
 // celular por que uma conversao ou um download falhou e mandar a quem for ajudar.
-static void conv_log(int fd, Request* r) {
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+static void conv_log(int fd, Request* r, int app) {
+  if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   const size_t cap = 1536 * 1024;
   Buf b = {0};
   char old[700];
@@ -1446,7 +1482,12 @@ static void conv_log(int fd, Request* r) {
     buf_add(&b, text, size);
     free(text);
   }
-  if (b.failed || !b.data) { monitor_send(fd, 200, "text/plain; charset=utf-8", "", 0); free(b.data); return; }
+  if (b.failed || !b.data) {
+    if (app) respond(fd, 200, "{\"text\":\"\"}");
+    else monitor_send(fd, 200, "text/plain; charset=utf-8", "", 0);
+    free(b.data);
+    return;
+  }
   const char* from = b.data;
   size_t size = b.size;
   if (size > cap) {
@@ -1455,16 +1496,43 @@ static void conv_log(int fd, Request* r) {
     const char* line = memchr(from, '\n', size);
     if (line) { size -= (size_t)(line + 1 - from); from = line + 1; }
   }
-  monitor_send(fd, 200, "text/plain; charset=utf-8", from, size);
+  if (app) {
+    // glibren.22: para o app, o texto num JSON ({"text": ...}), como o resto da API local.
+    Buf j = {0};
+    buf_str(&j, "{\"text\":");
+    char* text = malloc(size + 1);
+    if (text) { memcpy(text, from, size); text[size] = 0; buf_json(&j, text); free(text); }
+    else buf_str(&j, "\"\"");
+    buf_str(&j, "}");
+    respond(fd, j.failed || !j.data ? 500 : 200, j.failed || !j.data ? "{\"error\":\"out of memory\"}" : j.data);
+    free(j.data);
+  } else {
+    monitor_send(fd, 200, "text/plain; charset=utf-8", from, size);
+  }
   free(b.data);
 }
 
 // Rotas da pagina do celular. 1 = tratou.
 static int conv_monitor_route(int fd, Request* r) {
-  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/convert-all")) { conv_backup_convert_all(fd, r); return 1; } // glibren.20
-  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/log")) { conv_log(fd, r); return 1; } // glibren.20
-  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/backup")) { conv_backup_list(fd); return 1; }
-  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/delete")) { conv_backup_delete(fd, r); return 1; }
-  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/convert")) { conv_backup_convert(fd, r); return 1; } // glibren.18
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/convert-all")) { conv_backup_convert_all(fd, r, 0); return 1; } // glibren.20
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/log")) { conv_log(fd, r, 0); return 1; } // glibren.20
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/backup")) { conv_backup_list(fd, 0); return 1; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/delete")) { conv_backup_delete(fd, r, 0); return 1; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/convert")) { conv_backup_convert(fd, r, 0); return 1; } // glibren.18
+  return 0;
+}
+
+// glibren.22: as mesmas acoes para o app, na API local (com o token): a tela "Pasta BACKUP" da aba Downloads da Jobe.
+//   GET  /backup                       a lista, com a conversao de cada item ("conversion")
+//   POST /backup/convert {root, name}  converte um item
+//   POST /backup/convert-all           converte todos os de PS5 ainda nao convertidos
+//   POST /backup/delete {root, name}   apaga um item
+//   GET  /log                          o diario do payload ({text})
+static int conv_app_route(int fd, Request* r) {
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/backup")) { conv_backup_list(fd, 1); return 1; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/backup/convert")) { conv_backup_convert(fd, r, 1); return 1; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/backup/convert-all")) { conv_backup_convert_all(fd, r, 1); return 1; }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/backup/delete")) { conv_backup_delete(fd, r, 1); return 1; }
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/log")) { conv_log(fd, r, 1); return 1; }
   return 0;
 }

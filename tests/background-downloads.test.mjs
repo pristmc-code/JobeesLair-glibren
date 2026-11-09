@@ -680,17 +680,18 @@ test('glibren.13: payload antigo (sem api) parado e trocado pelo ELF deste app, 
   assert.equal(payload.sent, 1, 'atual: nao manda de novo');
 });
 
-test('glibren.13: payload antigo baixando nao e trocado (segue com ele); trocado quando fica ocioso', async () => {
+test('glibren.22: payload antigo baixando e trocado mesmo assim (ele grava onde estava; o novo continua)', async () => {
   const payload = fakePayload({ pid: 5 });
   Object.assign(payload, { api: 12, running: 1 });
-  const payloads = { send: () => { payload.sent = (payload.sent || 0) + 1; Object.assign(payload, { pid: 9, api: PAYLOAD_API, running: 0 }); return { ok: true }; } };
-  const wrapper = make(payload, fakeEngine(), { payloads, monitor: () => ({ monitor: true }) });
-  assert.equal(await wrapper.startAtLaunch(), TOKEN, 'o antigo continua servindo');
-  assert.equal(payload.sent, undefined, 'nada de trocar no meio de um download');
-  payload.running = 0;
-  await wrapper.startAtLaunch();
-  assert.equal(payload.sent, 1, 'ocioso: trocado');
+  const payloads = { send: () => { payload.sent = (payload.sent || 0) + 1; Object.assign(payload, { pid: 9, api: PAYLOAD_API }); return { ok: true }; } };
+  const lines = [];
+  const wrapper = make(payload, fakeEngine(), { payloads, monitor: () => ({ monitor: true }), log: (line) => lines.push(line) });
+  assert.equal(await wrapper.startAtLaunch(), TOKEN);
+  assert.equal(payload.sent, 1, 'trocado no meio do download');
   assert.equal(payload.pid, 9);
+  assert.ok(lines.some((line) => /payload 5 is an older one \(api 12\) and busy; it saves where it was/.test(line)), lines.join('\n'));
+  await wrapper.startAtLaunch();
+  assert.equal(payload.sent, 1, 'atual: nao manda de novo');
 });
 
 test('glibren.13: o ELF novo nao sobe a tempo: o app segue com o antigo que ainda responde', async () => {

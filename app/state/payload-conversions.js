@@ -12,7 +12,8 @@
 
 import { useEffect, useState } from 'react';
 
-  var ACTIVE_CONVERSION = ["queued", "converting", "verifying"];
+  // glibren.22: "extracting" (o payload descompacta antes de converter, glibren.20) tambem esta em andamento.
+  var ACTIVE_CONVERSION = ["queued", "extracting", "converting", "verifying"];
   var RECENT_SECONDS = 24 * 3600;
   var source = null; // { list(): Promise<array|null>, cancel(id), forget(id) }
   var latest = [];
@@ -121,4 +122,85 @@ import { useEffect, useState } from 'react';
     });
   }
 
-export { cancelPayloadConversion, conversionActive, forgetPayloadConversion, noteConversions, outsideQueue, payloadConversions, refreshConversions, setConversionSource, usePayloadConversions };
+  // ---- glibren.22: a pasta BACKUP, para a tela Pasta BACKUP da aba Downloads (downloads/BackupSheet.jsx) ----
+  // O que antes so a pagina do celular fazia: ver o que ficou em <disco>/BACKUP, converter um ou todos para .exfat,
+  // apagar um item e ler o diario do payload. Quem pergunta e o background-downloads.js (setBackupSource).
+  var backupSource = null; // { list(), convert(root, name), convertAll(), remove(root, name), log() }
+  var backupLatest = null; // { games, totalBytes } ou null (sem payload)
+  var backupRead = false; // ja perguntou alguma vez (antes disso a tela diz "Lendo...")
+  var backupListeners = /* @__PURE__ */ new Set();
+  function setBackupSource(next) {
+    backupSource = next ?? null;
+  }
+  const tellBackup = () => {
+    for (const listener of [...backupListeners]) listener(backupLatest);
+  };
+  /** A pasta como o payload a deu (GET /backup), ou null sem ele; avisa quem ouve. */
+  function noteBackup(data) {
+    backupRead = true;
+    backupLatest = data && Array.isArray(data.games) ? { games: data.games.filter((item) => item && typeof item.name === "string" && typeof item.root === "string"), totalBytes: Number(data.totalBytes) || 0 } : null;
+    tellBackup();
+    return backupLatest;
+  }
+  /** Le a pasta de novo pelo payload; null sem ele. */
+  async function refreshBackup() {
+    if (!backupSource?.list) return noteBackup(null);
+    let data = null;
+    try {
+      data = await backupSource.list();
+    } catch {
+      data = null;
+    }
+    return noteBackup(data);
+  }
+  // O erro de uma acao, como o payload o deu ({ error }), ou "" quando deu certo.
+  const failureOf = (answer) => answer?.status === 200 ? "" : String(answer?.data?.error || (answer?.status ? `HTTP ${answer.status}` : "no payload"));
+  async function backupAction(run) {
+    let answer = null;
+    try {
+      answer = await run();
+    } catch (error) {
+      answer = { status: 0, data: { error: error?.message ?? String(error) } };
+    }
+    void refreshBackup();
+    void refreshConversions();
+    return { ok: answer?.status === 200, error: failureOf(answer), data: answer?.data ?? {} };
+  }
+  var convertBackup = (item) => backupAction(() => backupSource.convert(item.root, item.name));
+  var convertAllBackup = () => backupAction(() => backupSource.convertAll());
+  var deleteBackup = (item) => backupAction(() => backupSource.remove(item.root, item.name));
+  async function payloadLog() {
+    try {
+      return await backupSource?.log?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
+  /** A pasta BACKUP, lida a cada `ms` enquanto o componente esta na tela: undefined = lendo; null = sem payload. */
+  function useBackup(ms = 3e3) {
+    const [data, setData] = useState(() => backupRead ? backupLatest : void 0);
+    useEffect(() => {
+      backupListeners.add(setData);
+      void refreshBackup();
+      const timer = setInterval(() => void refreshBackup(), ms);
+      return () => {
+        backupListeners.delete(setData);
+        clearInterval(timer);
+      };
+    }, [ms]);
+    return data;
+  }
+  /**
+   * O que dizer de um item do BACKUP: "converted" (o .exfat existe), "ps4", "queued"/"extracting"/"converting"/
+   * "verifying" (a conversao dele), "failed" (com o erro) ou "idle" (nada feito ainda).
+   */
+  function backupStatus(item) {
+    const conversion = item?.conversion;
+    if (conversion && ACTIVE_CONVERSION.includes(conversion.state)) return { state: conversion.state, written: Number(conversion.written) || 0, total: Number(conversion.total) || 0 };
+    if (item?.converted) return { state: "converted", file: item.converted };
+    if (item?.platform === "ps4") return { state: "ps4" };
+    if (conversion?.state === "failed") return { state: "failed", error: String(conversion.error || "") };
+    return { state: "idle" };
+  }
+
+export { backupStatus, convertAllBackup, convertBackup, deleteBackup, noteBackup, payloadLog, refreshBackup, setBackupSource, useBackup, cancelPayloadConversion, conversionActive, forgetPayloadConversion, noteConversions, outsideQueue, payloadConversions, refreshConversions, setConversionSource, usePayloadConversions };

@@ -623,6 +623,8 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
     });
     // Work that is asking ShadowMount and cannot wait for a download (quietNetwork); no job starts meanwhile.
     let holds = 0;
+    // glibren.22: a atualizacao do app esta com a rede (claimNetwork): os downloads esperam por ela, e nao o contrario.
+    let claimed = 0;
     // Who borrowed the network while the queue had nothing to do (lendNetwork): the app's own update
     // download. { yield }: asked to stop and give it back when a job is queued or ShadowMount must be asked.
     let borrower = null;
@@ -648,12 +650,16 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
      * "move" (um jogo sendo movido para outro disco). Os downloads e as conversoes do payload nao contam: ele e outro
      * processo, segue baixando enquanto a atualizacao baixa, quando o app fecha para troca-la e depois que ele reabre.
      */
-    function appWork({ queued = false } = {}) {
-      if (holds) return { kind: "shadowmount", title: "" };
+    // glibren.22: `restart`: so o que fechar o app estragaria (um pacote sendo instalado, um pedido ao ShadowMount+); o
+    // resto (downloads, extracao, mover) para e volta sozinho quando o app reabre (restore, prepareUpdateRestart).
+    function appWork({ queued = false, restart = false } = {}) {
+      if (holds && !claimed) return { kind: "shadowmount", title: "" };
       for (const job2 of jobs) {
         if (job2.state === "installing") return { kind: "install", title: job2.title ?? "" };
+        if (restart) continue;
         if (job2.state === "extracting" && (extractor2?.job === job2 || lanes.has(job2))) return { kind: "extract", title: job2.title ?? "" };
       }
+      if (restart) return null;
       for (const job2 of lanes.keys()) if (APP_TRANSFER.includes(job2.state) && !inPayload(job2)) return { kind: "download", title: job2.title ?? "" };
       for (const job2 of moves.keys()) return { kind: "move", title: job2.title ?? "" };
       if (queued) {
@@ -3009,6 +3015,47 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         pump();
       }
     }
+    // glibren.22: a atualizacao do app vai na frente. Antes ela so baixava com a fila parada (lendNetwork) e esperava
+    // "seus downloads terminarem"; uma checagem de links, a fila de conversao ou um download sem fim a seguravam para
+    // sempre. Agora: os downloads em andamento (do app e do payload) pausam, o que estava emprestado devolve a rede, a
+    // fila nao comeca nada, e tudo volta como estava quando a funcao devolvida e chamada (quietNetwork). Resolve com
+    // essa funcao assim que a rede esta livre.
+    function claimNetwork(reason = "app update") {
+      let entered, release;
+      const inside = new Promise((resolve) => entered = resolve);
+      const gate = new Promise((resolve) => release = resolve);
+      claimed++;
+      console.log(`[download-queue] ${reason}: downloads pause until it is done; they resume after`);
+      void quietNetwork(reason, () => {
+        entered();
+        return gate;
+      }).finally(() => {
+        claimed--;
+      });
+      let given = false;
+      return inside.then(() => () => {
+        if (given) return;
+        given = true;
+        release();
+      });
+    }
+    // glibren.22: o app vai fechar para a atualizacao entrar: o que esta baixando ou na fila fica marcado e volta sozinho
+    // quando ele reabre (restore), sem contar como uma abertura que caiu no meio de um download. Grava a fila agora.
+    function prepareUpdateRestart() {
+      let marked = 0;
+      for (const job2 of jobs) {
+        if (!BUSY.includes(job2.state)) continue;
+        job2.updateRestart = true;
+        marked++;
+      }
+      try {
+        save();
+      } catch (error2) {
+        console.log(`[download-queue] queue not saved before the update restart: ${error2.message}`);
+      }
+      if (marked) console.log(`[download-queue] ${marked} download(s) resume after the update restart`);
+      return marked;
+    }
     // A deleted game's launch history goes with it, so downloading it again starts at "Not played yet":
     // the last launch the log still holds is remembered as forgotten and not learned again; a new one is.
     function forgetLaunches(job2, log2) {
@@ -3238,8 +3285,12 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       } catch {
         continue;
       }
-      if (was === "running" && (job2.launches || 0) >= 2) continue;
-      if (was === "running") {
+      // glibren.22: cortado pelo reinicio da atualizacao do app (prepareUpdateRestart): volta para a fila sem contar
+      // como uma abertura que caiu com ele baixando.
+      const updated = job2.updateRestart === true;
+      delete job2.updateRestart;
+      if (was === "running" && !updated && (job2.launches || 0) >= 2) continue;
+      if (was === "running" && !updated) {
         job2.launches = (job2.launches || 0) + 1;
         running = job2;
       }
@@ -3592,6 +3643,10 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       transferring,
       /** glibren.18: o que o app faz agora e a atualizacao do app espera ({ kind, title } ou null; ver appWork). */
       appWork,
+      /** glibren.22: a rede para a atualizacao do app, na frente dos downloads (ver claimNetwork). */
+      claimNetwork,
+      /** glibren.22: marca o que esta baixando para voltar sozinho depois do reinicio da atualizacao. */
+      prepareUpdateRestart,
       /**
        * Lends the runtime's one network task while the queue has nothing to do: no job running or queued, and
        * nothing asking ShadowMount. Returns the function that gives it back, or null when the queue needs it.
@@ -3602,7 +3657,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
        * Emprestada, o motor fica com LENT_LANES faixas (applyConcurrency) ate ela voltar.
        */
       lendNetwork(onYield) {
-        if (borrower || appWork({ queued: true })) return null;
+        if (borrower || claimed || appWork({ queued: true })) return null;
         const lease = { yield: () => {
           try {
             onYield();

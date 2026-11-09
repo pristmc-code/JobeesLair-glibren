@@ -26,7 +26,8 @@ import { FocusScope, Linking, Text, View, motion } from '@ps5-react/core';
   var sans = (size, color, extra) => ({ fontFamily: "Exo2", fontSize: size, lineHeight: Math.round(size * 1.42), color, ...extra });
   var fractionOf = (install) => install.total ? Math.min(1, install.written / install.total) : 0;
   // glibren.18: what the app itself is doing that the update waits for (state/auto-update.js view.holding).
-  var HOLDING = ["download", "extract", "install", "move", "shadowmount"];
+  // glibren.22: "pausing": the downloads pause for the update (state/download-queue.js claimNetwork).
+  var HOLDING = ["download", "extract", "install", "move", "shadowmount", "pausing"];
   var holdingText = (t2, holding) => HOLDING.includes(holding?.kind) ? t2(`update.install.holding.${holding.kind}`, { title: holding.title || "" }) : t2("update.install.waiting");
   // What the install says under the notes, and in which color, for each phase.
   function status(t2, install, update) {

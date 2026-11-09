@@ -523,6 +523,53 @@ test('BACKUP na pagina do celular: lista por jogo com tamanho; apagar so com o P
   await stop(child);
 });
 
+test('glibren.22: a tela Pasta BACKUP do app: lista com a conversao de cada item, converter todos, apagar e o diario, pela API local com o token', { skip: skip || (!tool('zip') ? 'zip ausente' : false) }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const disk = path.join(base, 'disk');
+  const src = path.join(base, 'src');
+  gameFolder(path.join(src, 'A'), 1);
+  const novo = path.join(disk, 'BACKUP/Novo');
+  mkdirSync(novo, { recursive: true });
+  make('zip', ['-qr', path.join(novo, 'PPSA01234 novo.zip'), 'A'], src);
+  mkdirSync(path.join(disk, 'BACKUP/Lixo'), { recursive: true });
+  writeFileSync(path.join(disk, 'BACKUP/Lixo/x.bin'), randomBytes(100));
+  const child = start(base);
+  try {
+    await up(base);
+    const anonymous = await fetch(`http://127.0.0.1:${api}/backup`);
+    assert.equal(anonymous.status, 401, 'so com o token');
+    const listed = await call(base, 'GET', '/backup');
+    assert.equal(listed.status, 200);
+    assert.deepEqual(listed.data.games.map((g) => g.name).sort(), ['Lixo', 'Novo']);
+    assert.ok(!('conversion' in listed.data.games.find((g) => g.name === 'Novo')), 'nada convertido ainda');
+    const all = await call(base, 'POST', '/backup/convert-all', {});
+    assert.equal(all.status, 200);
+    assert.equal(all.data.queued, 1, JSON.stringify(all.data));
+    const after = (await call(base, 'GET', '/backup')).data.games.find((g) => g.name === 'Novo');
+    assert.ok(after.conversion?.id, 'o item diz qual conversao e a dele');
+    const done = await until(base, after.conversion.id, ['done', 'failed']);
+    assert.equal(done.state, 'done', done.error);
+    const converted = (await call(base, 'GET', '/backup')).data.games.find((g) => g.name === 'Novo');
+    assert.equal(converted.conversion.state, 'done');
+    assert.equal(converted.converted, 'PPSA01234.exfat');
+    // Converter um item ja convertido: recusado com o motivo.
+    const again = await call(base, 'POST', '/backup/convert', { root: disk, name: 'Novo' });
+    assert.equal(again.status, 400);
+    assert.equal(again.data.error, 'converted');
+    assert.equal((await call(base, 'POST', '/backup/convert', { root: disk, name: '_temp' })).status, 400);
+    assert.equal((await call(base, 'POST', '/backup/delete', { root: disk, name: '..' })).status, 400);
+    assert.equal((await call(base, 'POST', '/backup/delete', { root: disk, name: 'Lixo' })).status, 200);
+    assert.ok(!existsSync(path.join(disk, 'BACKUP/Lixo')));
+    const log = await call(base, 'GET', '/log');
+    assert.equal(log.status, 200);
+    assert.match(log.data.text, /app: converter todos -> 1 na fila/);
+    assert.match(log.data.text, /app: BACKUP .*Lixo apagado/);
+  } finally {
+    await stop(child);
+  }
+});
+
 // ---- glibren.18: o payload converte sozinho, sem o app ----
 
 async function phoneSession(base) {

@@ -53,7 +53,7 @@
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
 import { originOf } from './link-formats.js';
-import { setConversionSource } from './payload-conversions.js';
+import { setBackupSource, setConversionSource } from './payload-conversions.js';
 import { setOrbitSource } from './orbit-feed.js';
 
   var SETTINGS = "settings.json";
@@ -63,7 +63,9 @@ import { setOrbitSource } from './orbit-feed.js';
   // glibren.13: a versao do protocolo do bg-downloader.elf deste app (BG_API em app/native/bg_downloader.c, no /health).
   // glibren.20: 16, a lista Orbit Store (GET/POST /orbit).
   // glibren.21: 17, RAR cifrado pelo rar-extract.elf do app (o payload da glibren.20 nao abre).
-  var PAYLOAD_API = 17;
+  // glibren.22: 18, a tela Pasta BACKUP do app (GET /backup, POST /backup/convert, /backup/convert-all, /backup/delete,
+  // GET /log); e o antigo e trocado mesmo ocupado (ver ensurePayloadNow).
+  var PAYLOAD_API = 18;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -334,12 +336,11 @@ import { setOrbitSource } from './orbit-feed.js';
       if (state && upToDate(state)) return token;
       if (state) {
         if (platform !== "ps5" || !payloads) return token;
-        if (state.running > 0 || state.quiet) {
-          if (staleSaid !== state.pid) log(`payload ${state.pid} is an older one (api ${state.api ?? "none"}) and busy; replaced when it is idle`);
-          staleSaid = state.pid;
-          return token;
-        }
-        log(`payload ${state.pid} is an older one (api ${state.api ?? "none"}); sending this app's payload in its place`);
+        // glibren.22: trocado mesmo baixando ou convertendo. Esperar ele ficar ocioso deixava o antigo no ar para sempre
+        // com uma fila longa (ou uma conversao que nunca acabava), e o app novo sem o que ele traz. O antigo grava os
+        // checkpoints e a fila ao sair; o novo continua os downloads de onde pararam e poe as conversoes de volta na fila.
+        if (state.running > 0 || state.quiet) log(`payload ${state.pid} is an older one (api ${state.api ?? "none"}) and busy; it saves where it was and this app's payload carries on`);
+        else log(`payload ${state.pid} is an older one (api ${state.api ?? "none"}); sending this app's payload in its place`);
       }
       if (platform !== "ps5" || !payloads) return "";
       try {
@@ -1004,6 +1005,32 @@ import { setOrbitSource } from './orbit-feed.js';
       return answer.status === 200 ? answer.data : null;
     };
     setOrbitSource(wrapper.orbit);
+    // glibren.22: a tela Pasta BACKUP (state/payload-conversions.js): a lista, converter um ou todos, apagar e o diario.
+    // Lista e diario so perguntam a um payload no ar; converter e apagar sobem o payload se preciso (so no PS5).
+    const backupToken = async (start) => {
+      const token = readToken();
+      if (token || !start || platform !== "ps5" || !payloads) return token;
+      return await ensurePayload();
+    };
+    async function backupCall(start, method, path, body) {
+      const token = await backupToken(start);
+      if (!token) return { status: 0, data: { error: "no payload" } };
+      return await call(token, method, path, body);
+    }
+    wrapper.backup = {
+      async list() {
+        const answer = await backupCall(false, "GET", "/backup");
+        return answer.status === 200 && Array.isArray(answer.data?.games) ? answer.data : null;
+      },
+      convert: (root, name) => backupCall(true, "POST", "/backup/convert", { root, name }),
+      convertAll: () => backupCall(true, "POST", "/backup/convert-all", {}),
+      remove: (root, name) => backupCall(true, "POST", "/backup/delete", { root, name }),
+      async log() {
+        const answer = await backupCall(false, "GET", "/log");
+        return answer.status === 200 && typeof answer.data?.text === "string" ? answer.data.text : null;
+      }
+    };
+    setBackupSource(wrapper.backup);
     current = wrapper;
     return wrapper;
   }
