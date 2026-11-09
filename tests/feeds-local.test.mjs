@@ -124,10 +124,10 @@ test('a file that is not a feed, or too big, is reported and changes nothing', a
   let feeds = await launch();
   assert.equal(feeds.loadFeedGames().filter((item) => item.feed === FILE).length, 1, 'the last good read');
   assert.match(feeds.feedsSnapshot()[0].error, /Not JSON/);
-  put(FILE, 'x'.repeat(2 * 1024 * 1024 + 1));
+  put(FILE, 'x'.repeat(8 * 1024 * 1024 + 1)); // glibren.20: 8 MiB (was 2)
   feeds = await launch();
   feeds.loadFeedGames();
-  assert.match(feeds.feedsSnapshot()[0].error, /larger than 2 MiB/);
+  assert.match(feeds.feedsSnapshot()[0].error, /larger than 8 MiB/);
 });
 
 test('removing the link never deletes the file', async () => {

@@ -168,6 +168,10 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 }
 @media (min-width:900px) and (min-height:521px){ .list{grid-template-columns:1fr 1fr} }
 @media (prefers-reduced-motion:reduce){ .bar>i{transition:none} }
+.bk-log{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.bk-log .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bk-log b{flex:1}
+.bk-log pre{max-height:60vh;overflow:auto;margin:0;padding:10px;border-radius:10px;background:rgba(0,0,0,.35);font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
 </style>
 </head>
 <body>
@@ -828,9 +832,12 @@ pinOnOpen();
 (() => {
   const C = {
     pt: { converting: "Convertendo para EXFAT", verifying: "Conferindo o EXFAT", queued: "Na fila para EXFAT", done: "Pronto (EXFAT)", failed: "Conversão falhou",
-      errors: { space: "Falta espaço no disco para o .exfat.", "not-direct": "Não deu para converter direto do arquivo compactado: a Jobee'sLair extrai e converte.",
+      extracting: "Descompactando para converter",
+      errors: { space: "Falta espaço no disco para o .exfat.", "not-direct": "Não deu para converter direto do arquivo compactado: o payload descompacta em BACKUP/_temp e converte.",
         "not-a-game": "Não é o jogo (atualização ou DLC): fica como veio.", source: "Não deu para ler os arquivos do jogo.", write: "Não deu para gravar o .exfat.", verify: "O .exfat gravado não conferiu." },
-      openApp: "Abra a Jobee'sLair para tentar de novo ou usar sem converter.",
+      openApp: "Tente de novo em Pasta BACKUP > Converter agora, ou veja o motivo em Ver diário do payload.",
+      convertAll: "Converter todos", convertAllDone: "{n} conversão(ões) na fila. O payload converte uma de cada vez (aparece em Convertendo).", convertAllNone: "Nada para converter: os jogos de PS5 do BACKUP já estão convertidos.",
+      log: "Ver diário do payload", logTitle: "Diário do payload", logSave: "Baixar", logClose: "Fechar", logEmpty: "O diário está vazio.", logFail: "Não deu para ler o diário. Tente de novo.",
       button: "Pasta BACKUP: {n} jogo(s), {s}", buttonEmpty: "Pasta BACKUP: vazia", title: "Pasta BACKUP",
       text: "Os arquivos originais dos jogos convertidos para .exfat. Ficam até você apagar; apagar não mexe no jogo já convertido.",
       empty: "Nada no BACKUP.", del: "Apagar", confirm: "Apagar o original de \"{g}\" ({s})? Não dá para desfazer.", yes: "Sim, apagar", no: "Não",
@@ -839,9 +846,12 @@ pinOnOpen();
       convertNow: "Converter agora", convertAsked: "Conversão pedida: o payload converte sozinho (aparece em Convertendo).",
       convertNo: { ps4: "Jogo de PS4: não vira .exfat.", converted: "Já convertido.", nothing: "Nada aqui que dê para converter." } },
     en: { converting: "Converting to EXFAT", verifying: "Checking the EXFAT", queued: "Queued for EXFAT", done: "Ready (EXFAT)", failed: "Conversion failed",
-      errors: { space: "Not enough space on the drive for the .exfat.", "not-direct": "It could not be converted straight from the archive: Jobee'sLair extracts and converts it.",
+      extracting: "Extracting to convert",
+      errors: { space: "Not enough space on the drive for the .exfat.", "not-direct": "It could not be converted straight from the archive: the payload extracts it in BACKUP/_temp and converts it.",
         "not-a-game": "Not the game (an update or DLC): it stays as it came.", source: "The game's files could not be read.", write: "The .exfat could not be written.", verify: "The written .exfat did not check out." },
-      openApp: "Open Jobee'sLair to try again or use it without converting.",
+      openApp: "Try again in BACKUP folder > Convert now, or see why in View the payload log.",
+      convertAll: "Convert all", convertAllDone: "{n} conversion(s) queued. The payload converts one at a time (see Converting).", convertAllNone: "Nothing to convert: the PS5 games in BACKUP are already converted.",
+      log: "View the payload log", logTitle: "Payload log", logSave: "Download", logClose: "Close", logEmpty: "The log is empty.", logFail: "The log could not be read. Try again.",
       button: "BACKUP folder: {n} game(s), {s}", buttonEmpty: "BACKUP folder: empty", title: "BACKUP folder",
       text: "The original files of the games converted to .exfat. They stay until you delete them; deleting does not touch the converted game.",
       empty: "Nothing in BACKUP.", del: "Delete", confirm: "Delete the original of \"{g}\" ({s})? This cannot be undone.", yes: "Yes, delete", no: "No",
@@ -901,9 +911,20 @@ pinOnOpen();
     renderButton();
     renderSheet();
   }
+  const logView = document.createElement("div"); logView.className = "bk-log"; logView.hidden = true;
+  let logText = "";
   function renderSheet() {
     const box = $("bkList"); box.textContent = "";
-    if (!backup.games.length) { const e = document.createElement("div"); e.className = "bk-note"; e.textContent = C.empty; box.append(e); return; }
+    // glibren.20: o diario do payload (com o PIN), para ver por que algo nao converteu.
+    const logBtn = document.createElement("button"); logBtn.type = "button"; logBtn.className = "btn"; logBtn.textContent = C.log;
+    logBtn.onclick = () => guarded(showLog);
+    if (!backup.games.length) { const e = document.createElement("div"); e.className = "bk-note"; e.textContent = C.empty; box.append(e, logBtn, logView); return; }
+    // glibren.20: "Converter todos": cada jogo de PS5 ainda nao convertido (os que nao derem direto o payload descompacta).
+    if (backup.games.some((g) => !g.converted && g.platform !== "ps4")) {
+      const all = document.createElement("button"); all.type = "button"; all.className = "btn"; all.textContent = C.convertAll;
+      all.onclick = () => guarded(convertAll);
+      box.append(all);
+    }
     for (const g of backup.games) {
       const item = document.createElement("div"); item.className = "bk-item";
       item.innerHTML = '<b></b><button class="btn danger" type="button" data-d></button><small></small>';
@@ -944,6 +965,41 @@ pinOnOpen();
       }
       box.append(item);
     }
+    box.append(logBtn, logView);
+  }
+  async function showLog() {
+    $("bkMsg").textContent = "";
+    let r = { status: 200, text: "demo: conversao c3: nao da direto (RAR5 cifrado); o payload extrai antes\n" };
+    if (!DEMO) {
+      try {
+        const res = await fetch("/api/log", { headers: session ? { "X-Session": session } : {}, cache: "no-store" });
+        r = { status: res.status, text: res.status === 200 ? await res.text() : "" };
+      } catch { r = { status: 0, text: "" }; }
+    }
+    if (r.status === 401) { session = ""; lockButton(); pending = () => showLog(); openPin(); return; }
+    if (r.status !== 200) { $("bkMsg").textContent = C.logFail; return; }
+    logText = r.text;
+    logView.textContent = "";
+    const head = document.createElement("div"); head.className = "row";
+    const title = document.createElement("b"); title.textContent = C.logTitle;
+    const save = document.createElement("button"); save.type = "button"; save.className = "btn"; save.textContent = C.logSave;
+    save.onclick = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([logText], { type: "text/plain" })); a.download = "bgdl.log.txt"; document.body.append(a); a.click(); a.remove(); };
+    const close = document.createElement("button"); close.type = "button"; close.className = "btn"; close.textContent = C.logClose;
+    close.onclick = () => { logView.hidden = true; logText = ""; logView.textContent = ""; };
+    head.append(title, save, close);
+    const pre = document.createElement("pre");
+    // As ultimas linhas primeiro: o que aconteceu por ultimo fica no topo.
+    pre.textContent = logText.trim() ? logText.trim().split("\n").reverse().slice(0, 1500).join("\n") : C.logEmpty;
+    logView.append(head, pre);
+    logView.hidden = false;
+  }
+  async function convertAll() {
+    $("bkMsg").textContent = "";
+    const r = DEMO ? { status: 200, data: { ok: true, queued: 1 } } : await api("POST", "/api/backup/convert-all", {}).catch(() => ({ status: 0, data: {} }));
+    if (r.status === 401) { session = ""; lockButton(); pending = () => convertAll(); openPin(); return; }
+    $("bkMsg").textContent = r.status === 200 ? (r.data.queued ? fill(C.convertAllDone, { n: r.data.queued }) : C.convertAllNone) : C.fail;
+    await loadBackup();
+    await refresh();
   }
   async function convertNow(g) {
     $("bkMsg").textContent = "";

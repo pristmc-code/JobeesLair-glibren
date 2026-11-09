@@ -3,7 +3,7 @@
 A catalog feed is a JSON file, served over `http://` or `https://`, that adds games to Jobee'sLair
 or adds sources to games its catalog already lists. Add one in **Settings → Storage & feeds → Add a feed**
 by typing its full address, or from the phone companion's **Feeds** tab. As many feeds as you like (a
-safety ceiling of 50), each at most 2 MiB.
+safety ceiling of 50), each at most 8 MiB, 5000 games and 20000 links (glibren.20; it was 2 MiB and 1500 games).
 Step-by-step instructions, including hosting a feed, are in [INSTALLATION-GUIDE.md](INSTALLATION-GUIDE.md#catalog-feeds).
 
 A feed can also be a `.json` file already on the console (glibren fork): **Settings → Storage & feeds → Add a
@@ -13,6 +13,11 @@ file from the PS5** opens a picker over the internal drive (`/data`) and the USB
 and on **Refresh feeds**, so an edited file shows the next time Jobee'sLair opens. A file that is missing (its
 drive unplugged) keeps its link and the games of its last good read, and Settings says why it could not be read.
 **Remove link** removes only the link: the file itself is never changed or deleted. A file has no mirrors.
+
+The glibren fork also has a built-in, optional **Orbit Store list** (Settings > Feeds, off by default): the background
+payload downloads the public Orbit Store catalogue every 6 hours and writes it as a feed file on the console
+(`/data/JobeesLair/orbit/orbit-store.json`), read like any other file feed. A PS5 notification and a warning bar
+say when it stops updating.
 
 > [!WARNING]
 > Only add feeds that point to content you legally own or have explicit permission to download, such as your

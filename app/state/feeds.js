@@ -21,19 +21,24 @@ import { isoStamp } from './clock.js';
 import { DATA_DIR, LEGACY_DATA_DIR } from './data-dir.js';
 import { webURL } from './download-sources.js';
 import { checkLocalPath, isLocalFeed } from './local-feed.js';
+import { ORBIT_FEED, onOrbitFeed, orbitFeedOn, requestOrbitRefresh } from './orbit-feed.js';
 import { savedList } from './saved.js';
 import { FileSystem, Http } from '@ps5-react/core';
 
   // The JS heap is 32 MiB for everything: a few modest feeds, each read whole. glibren.14: no longer three of the
   // player's own; MAX_FEEDS is only a safety ceiling, far above what anyone links.
-  var MAX_FEEDS = 50, MAX_BYTES = 2 * 1024 * 1024;
+  // glibren.20: 8 MiB por feed (eram 2 MiB): a lista Orbit Store tem ~3,2 MB com descricao e fundo, e um feed de 5000
+  // jogos chega perto de 7 MB. Pesa no heap do console: testar no PS5 antes de subir mais.
+  var MAX_FEEDS = 50, MAX_BYTES = 8 * 1024 * 1024;
+  var TOO_BIG = "The file is larger than 8 MiB.";
   // MODIFIED (0.5.1): the live catalog, built every few hours from the public Pegasus catalogs
   // (tools/catalog/live-feed.mjs, .github/workflows/catalog-live.yml): games and links newer than this build's
   // bundled catalog. Every console reads it like a feed the player added, without being listed in Settings,
   // so a game added there shows up in the store the next time Jobee'sLair starts.
   var LIVE_FEED = "https://raw.githubusercontent.com/JVK3R/JobeesLair/main/catalog/live.json";
   // The feeds read and refreshed: the live catalog first, then the player's.
-  var allFeeds = () => [LIVE_FEED, ...feedList.get().filter((url) => url !== LIVE_FEED)];
+  // glibren.20: e a lista Orbit Store (um arquivo que o payload grava), so com a opcao ligada.
+  var allFeeds = () => [LIVE_FEED, ...orbitFeedOn() ? [ORBIT_FEED] : [], ...feedList.get().filter((url) => url !== LIVE_FEED && url !== ORBIT_FEED)];
   var DIR = `${DATA_DIR}/feeds`;
   // Caches an earlier build left in the old data folder are read until the feed refreshes into this one.
   var LEGACY_DIR = `${LEGACY_DATA_DIR}/feeds`;
@@ -77,7 +82,7 @@ import { FileSystem, Http } from '@ps5-react/core';
     }
     if (!info) throw new Error("File not found. Is its drive connected?");
     if (info.isDirectory) throw new Error("That is a folder, not a file.");
-    if (typeof info.size === "number" && info.size > MAX_BYTES) throw new Error("The file is larger than 2 MiB.");
+    if (typeof info.size === "number" && info.size > MAX_BYTES) throw new Error(TOO_BIG);
     return info;
   }
   function readLocalDocument(path) {
@@ -88,7 +93,7 @@ import { FileSystem, Http } from '@ps5-react/core';
       throw new Error(`File not readable (${error2.message}).`);
     }
     if (typeof text2 !== "string") throw new Error("File not readable.");
-    if (text2.length > MAX_BYTES) throw new Error("The file is larger than 2 MiB.");
+    if (text2.length > MAX_BYTES) throw new Error(TOO_BIG);
     try {
       return JSON.parse(text2);
     } catch {
@@ -222,7 +227,7 @@ import { FileSystem, Http } from '@ps5-react/core';
     if (!inflight.has(url)) inflight.set(url, fetchFeed(url).finally(() => inflight.delete(url)));
     return inflight.get(url);
   }
-  var listed = (url) => url === LIVE_FEED || feedList.get().includes(url);
+  var listed = (url) => url === LIVE_FEED || url === ORBIT_FEED && orbitFeedOn() || feedList.get().includes(url);
   // A refresh runs while the store or Settings is on screen, and checking a 2 MiB feed took the console's
   // interpreter about a second per feed in one piece: the screen stopped answering (Settings froze when
   // opened just after launch, when the feeds refresh, or on Refresh feeds). Its checking and hashing now
@@ -346,6 +351,7 @@ import { FileSystem, Http } from '@ps5-react/core';
     const url = addressOf(value);
     const urls = feedList.get();
     if (urls.includes(url) || url === LIVE_FEED) throw new Error("That feed is already added.");
+    if (url === ORBIT_FEED) throw new Error("That is the Orbit Store list: turn it on in Settings.");
     if (urls.length >= MAX_FEEDS) throw new Error(`Up to ${MAX_FEEDS} feeds. Remove one first.`);
     if (isLocalFeed(url)) statLocal(url);
     feedList.set([...urls, url]);
@@ -467,7 +473,22 @@ import { FileSystem, Http } from '@ps5-react/core';
     return feedsSnapshot(urls);
   }
 
+// glibren.20: a lista Orbit Store ligada le o arquivo do payload (se ja existe); desligada, o que estava guardado sai.
+  onOrbitFeed((on) => {
+    if (on) void refreshFeed(ORBIT_FEED);
+    else forget(ORBIT_FEED);
+    notify();
+  });
+  /** glibren.20: a lista Orbit Store como as Configuracoes a mostram (o mesmo resumo de um feed), ou null desligada. */
+  var orbitFeedSnapshot = () => orbitFeedOn() ? feedsSnapshot([ORBIT_FEED])[0] : null;
+  var refreshOrbitFeed = () => orbitFeedOn() ? refreshFeed(ORBIT_FEED) : Promise.resolve();
+  /** glibren.20: o "Atualizar feeds" das Configuracoes: pede ao payload a lista Orbit Store agora e rele os feeds. */
+  function refreshFeedsNow() {
+    void requestOrbitRefresh();
+    return refreshFeeds();
+  }
+
 /** glibren.9: a feed's name as its last good copy says (null when none is cached). */
 var feedName = (url) => meta.get(url)?.name ?? null;
 
-export { LIVE_FEED, MAX_FEEDS, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };
+export { LIVE_FEED, MAX_FEEDS, orbitFeedSnapshot, refreshOrbitFeed, refreshFeedsNow, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };

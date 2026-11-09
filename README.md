@@ -59,6 +59,15 @@
 > TorBox store; the app update no longer waits for the payload's downloads.
 > **glibren.19**: the phone page asks for the PIN once (the session is kept on the phone and by the payload for 30 days,
 > renewed on use, and survives a payload restart).
+> **glibren.20**: optional **Orbit Store list** (Settings > Feeds, off by default): the background payload downloads the
+> public Orbit Store catalogue (GPL-3, github.com/saawant12/orbit-store-ps5) every 6 hours, decrypts it with the key
+> published in Orbit's own source, and writes it as a Jobe feed on the console (PS5 and PS4 games with description and
+> artwork); when it stops updating (catalogue changed, no update for 24 h, nothing new for 14 days) a PS5 notification and
+> a warning bar say so. Feeds may now hold 5000 games, 20000 links and 8 MiB; "pippo" joins the known archive passwords.
+> Archives that cannot be converted straight to .exfat (RAR5, passwords, missing sizes...) are now always extracted by
+> the payload itself in <drive>/BACKUP/_temp/<id> and converted in the same conversion, whether Jobe or the phone asked
+> (the temporary folder is deleted at the end); conversions left waiting for Jobe are resumed when the new payload starts;
+> the phone's BACKUP list gets "Convert all" and "View the payload log".
 
 <p align="center">
   <b>English</b> ·

@@ -386,38 +386,97 @@ test('compactado direto: RAR, RAR em volumes, 7z e zip com senha viram .exfat se
   await stop(child);
 });
 
-test('compactado direto: quando nao da, o erro e not-direct (o app cai para extrair): sem jogo, dois jogos, pacote dentro, senha errada, zip em fluxo sem tamanho', { skip: skip || (!tool('rar') || !tool('zip') ? 'rar/zip ausentes' : false) }, async () => {
+// glibren.20: o que nao da direto nao volta mais para a Jobe extrair: a MESMA conversao passa a "extracting", o payload
+// descompacta em <disco>/BACKUP/_temp/<id> e converte a pasta (ou o .pkg de PS5 de dentro); a pasta temporaria some no
+// fim, deu certo ou nao. Sem jogo dentro e senha errada viram falhas com o motivo.
+test('compactado que nao da direto: o payload descompacta em BACKUP/_temp e converte na mesma conversao; a pasta temporaria some', { skip: skip || (!tool('rar') || !tool('zip') ? 'rar/zip ausentes' : false) }, async () => {
   monitorPort = await freePort();
   const base = workspace();
   const child = start(base);
   await up(base);
   const backup = path.join(base, 'disk/BACKUP/Outro');
+  const temp = path.join(base, 'disk/BACKUP/_temp');
   mkdirSync(backup, { recursive: true });
   const src = path.join(base, 'src/x');
   mkdirSync(src, { recursive: true });
+  const fs = await import('node:fs');
+  const tempEmpty = () => !existsSync(temp) || fs.readdirSync(temp).length === 0;
   writeFileSync(path.join(src, 'notas.txt'), 'nada de jogo');
   make('zip', ['-q', path.join(backup, 'nada.zip'), 'notas.txt'], src);
   let done = await convertArchive(base, [path.join(backup, 'nada.zip')]);
-  assert.match(done.error, /^not-direct: no PS5 game folder/);
-  writeFileSync(path.join(src, 'game.pkg'), 'pkg');
-  make('zip', ['-q', path.join(backup, 'pkg.zip'), 'game.pkg'], src);
-  done = await convertArchive(base, [path.join(backup, 'pkg.zip')]);
-  assert.match(done.error, /^not-direct: the archive holds a package or an image/);
+  assert.equal(done.state, 'failed');
+  assert.match(done.error, /^not-a-game: no PS5 game folder or package/);
+  assert.ok(tempEmpty(), 'nada sobra em BACKUP/_temp');
   gameFolder(path.join(src, 'A'), 1);
-  gameFolder(path.join(src, 'B'), 1);
-  make('zip', ['-qr', path.join(backup, 'dois.zip'), 'A', 'B'], src);
-  done = await convertArchive(base, [path.join(backup, 'dois.zip')]);
-  assert.match(done.error, /^not-direct: more than one game/);
   make('rar', ['a', '-r', '-idq', '-hpSEGREDO', path.join(backup, 'cifrado.rar'), 'A'], src);
   done = await convertArchive(base, [path.join(backup, 'cifrado.rar')], { passwords: ['outra'] });
-  assert.match(done.error, /^not-direct: /);
-  // zip gravado em fluxo (data descriptor: o cabecalho local nao diz o tamanho)
-  const streamed = spawnSync('sh', ['-c', `cd "${src}" && tar cf - A >/dev/null; cat A/eboot.bin | zip -q - - > "${path.join(backup, 'fluxo.zip')}"`]);
-  assert.equal(streamed.status, 0);
-  done = await convertArchive(base, [path.join(backup, 'fluxo.zip')]);
-  assert.match(done.error, /^not-direct: /);
-  assert.ok(!(await import('node:fs')).readdirSync(path.join(base, 'disk/homebrew')).some((name) => name.endsWith('.part')));
+  assert.equal(done.state, 'failed');
+  assert.match(done.error, /^source: the archive could not be extracted either/);
+  assert.ok(tempEmpty());
+  // Dois jogos no mesmo compactado (nao da direto): descompacta e converte o primeiro achado.
+  gameFolder(path.join(src, 'B'), 1);
+  make('zip', ['-qr', path.join(backup, 'dois.zip'), 'A', 'B'], src);
+  const states = new Set();
+  const { data } = await call(base, 'POST', '/convert', body(base, { key: 'app-dois', kind: 'archive', source: path.join(backup, 'dois.zip'), sources: [path.join(backup, 'dois.zip')] }));
+  for (const end = Date.now() + 60000; Date.now() < end; await wait(20)) {
+    const item = await conversion(base, data.id);
+    states.add(item.state);
+    if (['done', 'failed'].includes(item.state)) { done = item; break; }
+  }
+  assert.equal(done.state, 'done', done.error);
+  assert.ok(!states.has('failed'), 'a Jobe nunca ve "failed" no meio (ela nao extrai mais)');
+  assert.ok(states.has('extracting') || states.has('queued'), [...states].join(','));
+  assert.equal(done.kind, 'dir', 'a mesma conversao seguiu com a pasta do jogo');
+  assert.ok(existsSync(path.join(base, 'disk/homebrew/PPSA01234.exfat')));
+  assert.ok(tempEmpty(), 'a pasta do jogo descompactada foi apagada depois de converter');
+  assert.ok(existsSync(path.join(backup, 'dois.zip')), 'o original fica no BACKUP');
+  assert.ok(!fs.readdirSync(path.join(base, 'disk/homebrew')).some((name) => name.endsWith('.part')));
   await stop(child);
+});
+
+// glibren.20: as que falharam por "not-direct" antes (esperando a Jobe extrair) voltam para a fila quando o payload novo
+// sobe; "Converter todos" e o diario do payload na pagina do celular, com o PIN; BACKUP/_temp nao aparece na lista.
+test('ao subir, as conversoes que ficaram "not-direct" sao retomadas; Converter todos e o diario no celular (com o PIN)', { skip: skip || (!tool('zip') ? 'zip ausente' : false) }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const disk = path.join(base, 'disk');
+  const old = path.join(disk, 'BACKUP/Antigo');
+  mkdirSync(old, { recursive: true });
+  const src = path.join(base, 'src');
+  gameFolder(path.join(src, 'A'), 1);
+  gameFolder(path.join(src, 'B'), 1);
+  make('zip', ['-qr', path.join(old, 'antigo.zip'), 'A', 'B'], src);
+  const request = body(base, { key: 'app-antigo', kind: 'archive', source: path.join(old, 'antigo.zip'), sources: [path.join(old, 'antigo.zip')] });
+  // Uma conversao gravada por um payload antigo: falhou "not-direct" e ficou esperando a Jobe.
+  writeFileSync(path.join(base, 'state/conversions.json'), JSON.stringify({ version: 1, next: 7, conversions: [{ ...request, id: 'c7', state: 'failed', error: 'not-direct: more than one game in the archive', written: 0, total: 0, created: 1, updated: 1 }] }));
+  const child = start(base);
+  try {
+    await up(base);
+    const item = await until(base, 'c7', ['done', 'failed']);
+    assert.equal(item.state, 'done', item.error);
+    assert.ok(existsSync(path.join(disk, 'homebrew/PPSA01234.exfat')));
+    // Converter todos: o que ja foi convertido nao entra; um novo entra.
+    const novo = path.join(disk, 'BACKUP/Novo');
+    mkdirSync(novo, { recursive: true });
+    make('zip', ['-qr', path.join(novo, 'PPSA05678 novo.zip'), 'A'], src);
+    mkdirSync(path.join(disk, 'BACKUP/_temp/lixo'), { recursive: true });
+    assert.equal((await page('/api/backup/convert-all', { method: 'POST', body: {} })).status, 401, 'so com o PIN');
+    const session = await phoneSession(base);
+    const listed = await page('/api/backup', { session });
+    assert.ok(!listed.data.games.some((g) => g.name === '_temp'), 'BACKUP/_temp nao e um jogo');
+    const all = await page('/api/backup/convert-all', { method: 'POST', body: {}, session });
+    assert.equal(all.status, 200);
+    assert.ok(all.data.queued >= 1, JSON.stringify(all.data));
+    assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: '_temp' }, session })).status, 400);
+    // O diario: so com o PIN; texto com as linhas do payload.
+    assert.equal((await page('/api/log')).status, 401);
+    const log = await page('/api/log', { session });
+    assert.equal(log.status, 200);
+    assert.match(log.text, /bg-downloader/);
+    assert.match(log.text, /voltam para a fila \(o payload extrai\)/);
+  } finally {
+    await stop(child);
+  }
 });
 
 test('BACKUP na pagina do celular: lista por jogo com tamanho; apagar so com o PIN; nomes invalidos e original em uso recusados', { skip }, async () => {
@@ -543,12 +602,12 @@ test('glibren.18: compactado que nao da direto (um .pkg dentro): o payload EXTRA
     const session = await phoneSession(base);
     assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Cinco' }, session })).status, 200);
     const list = await convUntil(base, (l) => l.some((c) => c.kind === 'pkg' && ['done', 'failed'].includes(c.state)));
-    const first = list.find((c) => c.kind === 'archive');
-    assert.match(first.error, /^not-direct:/, 'o direto recusou (pacote dentro)');
+    // glibren.20: a mesma conversao (o direto recusou: pacote dentro) seguiu com o .pkg descompactado em BACKUP/_temp.
     const pkg = list.find((c) => c.kind === 'pkg');
     assert.equal(pkg.state, 'done', pkg.error);
+    assert.equal(list.filter((c) => c.key.startsWith('backup-Jogo Cinco')).length, 1, 'uma conversao so');
     assert.ok(existsSync(path.join(disk, 'homebrew/PPSA01234.exfat')));
-    assert.ok(!existsSync(path.join(disk, 'downloads/extract', first.id)), 'a pasta de trabalho foi apagada no fim');
+    assert.ok(!existsSync(path.join(disk, 'BACKUP/_temp', pkg.id)), 'a pasta temporaria foi apagada no fim');
     assert.equal((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Quatro' }, session })).status, 200);
     for (const end = Date.now() + 30000; Date.now() < end && !existsSync(path.join(disk, 'PS4/CUSA00900-jogo.pkg')); await wait(100));
     assert.ok(existsSync(path.join(disk, 'PS4/CUSA00900-jogo.pkg')), 'o .pkg de PS4 extraido foi para PS4/ (o app instala)');

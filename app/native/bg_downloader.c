@@ -93,7 +93,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 15
+#define BG_API 16
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -3602,12 +3602,16 @@ static int refuse_field(JP* jp, const char* key, void* ctx) {
 // glibren.12: conversao para .exfat (exfat_writer.c + pkg_source.c + bg_convert.c, no mesmo arquivo compilado).
 #include "bg_convert.c"
 
+// glibren.20: o catalogo do Orbit Store como feed da Jobe (GET/POST /orbit).
+#include "bg_orbit.c"
+
 static void auto_plan_route(int fd, const char* query); // glibren.18 (perto da Biblioteca TorBox)
 static void route(int fd, Request* r) {
   if (!token_ok(r->token)) { respond_error(fd, 401, "missing or wrong token"); return; }
   // glibren.5: logo depois de um POST /bye, uma chamada atrasada do app nao o faz "voltar a falar".
   if (strcmp(r->path, "/bye") && mono_ms() - g_bye_ms >= BYE_GRACE_MS) g_last_app_ms = mono_ms();
   if (conv_route(fd, r)) return; // glibren.12: /convert
+  if (orbit_route(fd, r)) return; // glibren.20: /orbit
   // glibren.18: o destino que o payload daria a um pedido do celular (o teste o compara com o do app).
   if (!strcmp(r->method, "GET") && !strncmp(r->path, "/auto/plan", 10) && (!r->path[10] || r->path[10] == '?')) {
     auto_plan_route(fd, r->path[10] ? r->path + 11 : "");
@@ -6345,6 +6349,8 @@ int main(void) {
   pthread_t converter;
   const int converter_started = !spawn_thread(conv_loop, NULL, &converter);
   if (!converter_started) logf_("conversao para .exfat: thread nao criada");
+  orbit_setup(); // glibren.20: a lista Orbit Store (so baixa quando o app a liga)
+  if (spawn_thread(orbit_loop, NULL, NULL)) logf_("orbit: thread nao criada");
   pthread_t starter; // glibren.18: os pedidos do celular comecados com o app fechado
   if (spawn_thread(auto_loop, NULL, &starter)) logf_("pedidos do celular com o app fechado: thread nao criada");
   else pthread_detach(starter);

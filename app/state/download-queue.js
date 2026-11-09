@@ -125,7 +125,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
   // on the archive's headers before anything is written ("RAR archive password is missing.",
   // "Incorrect RAR archive password.", "Incorrect RAR5 archive password."), and a failed attempt leaves
   // no staging behind, so each one costs a moment. They are checked on the console: nothing counts them.
-  var KNOWN_PASSWORDS = ["DLPSGAME.COM", "[DLPSGAME.COM]", "www.DLPSGAME.COM", "SuperPSX", "downloadgameps3.com", "hako"];
+  var KNOWN_PASSWORDS = ["DLPSGAME.COM", "[DLPSGAME.COM]", "www.DLPSGAME.COM", "SuperPSX", "downloadgameps3.com", "hako", "pippo"];
   var PASSWORD_FAILURE = /archive password|passphrase/i;
   function durable(fs, stateDir2) {
     try {

@@ -12,7 +12,9 @@ import { youtubeId } from './youtube.js';
 
   // MAX_TOTAL_RELEASES bounds a whole feed: 1500 games × 64 releases would be ~96 000 records, far
   // more than the 32 MiB JS heap holds beside the catalog; real feeds list a few per game.
-  var MAX_GAMES = 1500, MAX_RELEASES = 64, MAX_TOTAL_RELEASES = 6e3, MAX_MIRRORS = 4;
+  // glibren.20: 5000 jogos e 20000 links por feed (a lista Orbit Store sozinha tem ~2400 jogos e ~5200 links, com
+  // descricao e fundo). Ainda e um teto: um feed maior so le os primeiros.
+  var MAX_GAMES = 5e3, MAX_RELEASES = 64, MAX_TOTAL_RELEASES = 2e4, MAX_MIRRORS = 4;
   var FORMATS = /* @__PURE__ */ new Set(["pkg", "fpkg", "binary", "ffpfsc", "ffpfs", "ffpkg", "exfat", "rar", "7z", "zip"]);
   var TITLE_ID = /^(?:CUSA|PPSA)\d{5}$/;
   var DATE = /^\d{4}-\d{2}-\d{2}$/;

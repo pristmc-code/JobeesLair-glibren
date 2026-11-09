@@ -39,6 +39,7 @@
 
 static int session_ok(const char* given);
 static void monitor_json(int fd, int status, const char* body);
+static void monitor_send(int fd, int status, const char* type, const void* body, size_t size); // glibren.20: /api/log
 static const char* base_name(const char* path);
 
 typedef struct {
@@ -202,7 +203,7 @@ static void conv_load(void) {
         free(c);
       } else {
         // Parada no meio: recomeca limpa (o .part some quando ela rodar de novo).
-        if (!strcmp(c->state, "converting") || !strcmp(c->state, "verifying") || !c->state[0]) {
+        if (!strcmp(c->state, "converting") || !strcmp(c->state, "verifying") || !strcmp(c->state, "extracting") || !c->state[0]) {
           snprintf(c->state, sizeof c->state, "queued");
           c->written = 0;
           logf_("conversao %s (%s): parada no meio; recomeca do zero", c->id, c->name);
@@ -638,6 +639,17 @@ end:
   }
   if (listed) exw_free_entries(listed, count);
   if (strcmp(outcome, "done") && strcmp(outcome, "queued")) unlink(part);
+  // glibren.20: um compactado que nao da direto (RAR5, senha, tamanho ausente, ...) nao falha mais, venha do app ou do
+  // proprio payload: a MESMA conversao passa a "extracting" e o payload extrai em <disco>/BACKUP/_temp/<id> e converte a
+  // pasta (conv_extract_in_place). O app so acompanha (antes ele extraia, e so com a Jobe aberta).
+  if (!strcmp(outcome, "failed") && !strncmp(message, "not-direct:", 11) && !strcmp(c->kind, "archive") && !c->cancel && !g_stop) {
+    logk_("conversao %s: nao da direto (%s); o payload extrai antes", c->id, message + 11);
+    pthread_mutex_lock(&g_conv_lock);
+    copy_utf8(c->error, sizeof c->error, "");
+    pthread_mutex_unlock(&g_conv_lock);
+    conv_set_state(c, "extracting");
+    return;
+  }
   if (!strcmp(outcome, "failed")) logk_("conversao %s: falhou: %s", c->id, message);
   conv_finish(c, outcome, !strcmp(outcome, "failed") ? message : "");
   if (!strcmp(outcome, "done")) {
@@ -646,7 +658,7 @@ end:
     notify(text);
     conv_ask_scan();
   } else if (!strcmp(outcome, "failed")) {
-    // glibren.18: uma do payload que nao da direto segue extraindo (auto_after_not_direct): ainda nao e falha.
+    // glibren.20: nao chega aqui com "not-direct" (conv_run passa a "extracting" antes); fica para outras falhas.
     const int extracting = !strncmp(c->error, "not-direct:", 11) && !strcmp(c->kind, "archive") && (!strncmp(c->key, "auto-", 5) || !strncmp(c->key, "backup-", 7));
     char text[400];
     snprintf(text, sizeof text, "%s: conversao para EXFAT falhou", c->name);
@@ -654,7 +666,8 @@ end:
   }
 }
 
-static void auto_after_not_direct(Conv* c); // glibren.18 (abaixo)
+static void conv_extract_in_place(Conv* c); // glibren.20 (abaixo)
+static int conv_temp_work(const Conv* c) { return c->work[0] && strstr(c->work, "/BACKUP/_temp/") != NULL; }
 static void* conv_loop(void* arg) {
   (void)arg;
   while (!g_stop) {
@@ -675,11 +688,14 @@ static void* conv_loop(void* arg) {
     conv_run(next);
     pthread_mutex_lock(&g_conv_lock);
     next->running = 0;
-    // glibren.18: uma do payload (app fechado ou "Converter agora") que nao da direto: extrai e converte a pasta.
-    const int extract = !strcmp(next->state, "failed") && !strncmp(next->error, "not-direct:", 11) && !strcmp(next->kind, "archive") &&
-                        (!strncmp(next->key, "auto-", 5) || !strncmp(next->key, "backup-", 7));
+    // glibren.20: qualquer conversao que nao deu direto (do app, do payload ou "Converter agora") e extraida aqui.
+    const int extract = !strcmp(next->state, "extracting");
+    const int leftover = (!strcmp(next->state, "failed") || !strcmp(next->state, "cancelled")) && conv_temp_work(next);
+    char work[1024];
+    copy_text(work, sizeof work, next->work);
     pthread_mutex_unlock(&g_conv_lock);
-    if (extract) auto_after_not_direct(next);
+    if (extract) conv_extract_in_place(next);
+    else if (leftover && conv_remove_tree(work, 0)) logf_("conversao %s: pasta temporaria %s nao apagada inteira", next->id, work);
   }
   return NULL;
 }
@@ -689,6 +705,18 @@ static void conv_start(void) {
   g_conv_delay_ms = atoi(env_or("BGDL_CONVERT_DELAY_MS", "0"));
   pthread_mutex_lock(&g_conv_lock);
   conv_load();
+  // glibren.20: as que falharam por "not-direct" antes (ficavam esperando a Jobe extrair) voltam para a fila: agora o
+  // payload extrai. As outras falhas ficam (sem espaco, nao e o jogo, ...): "Converter agora" tenta de novo.
+  int again = 0;
+  for (int i = 0; i < g_conv_count; ++i) {
+    Conv* c = g_convs[i];
+    if (strcmp(c->state, "failed") || strncmp(c->error, "not-direct:", 11) || strcmp(c->kind, "archive")) continue;
+    snprintf(c->state, sizeof c->state, "queued");
+    c->error[0] = 0;
+    c->written = 0;
+    ++again;
+  }
+  if (again) { conv_save_locked(); logk_("conversoes: %d que nao deram direto voltam para a fila (o payload extrai)", again); }
   pthread_mutex_unlock(&g_conv_lock);
 }
 
@@ -972,7 +1000,7 @@ static void conv_backup_list(int fd) {
     DIR* d = opendir(dir);
     if (!d) continue;
     for (struct dirent* it; (it = readdir(d));) {
-      if (it->d_name[0] == '.') continue;
+      if (it->d_name[0] == '.' || !strcmp(it->d_name, "_temp")) continue; // glibren.20: a pasta das extracoes
       char path[600];
       snprintf(path, sizeof path, "%.299s/%.255s", dir, it->d_name);
       uint64_t bytes = 0;
@@ -1050,7 +1078,7 @@ static void conv_backup_delete(int fd, Request* r) {
 //   - sem trabalho dobrado: o POST /convert do app que pede a MESMA fonte de uma conversao em andamento ou pronta so a
 //     acompanha (attached), como ja fazia com a mesma chave.
 // As senhas que se tenta num compactado sao as conhecidas do app (KNOWN_PASSWORDS em download-queue.js).
-static const char* const AUTO_PASSWORDS[] = {"DLPSGAME.COM", "[DLPSGAME.COM]", "www.DLPSGAME.COM", "SuperPSX", "downloadgameps3.com", "hako"};
+static const char* const AUTO_PASSWORDS[] = {"DLPSGAME.COM", "[DLPSGAME.COM]", "www.DLPSGAME.COM", "SuperPSX", "downloadgameps3.com", "hako", "pippo"};
 
 // Uma conversao da mesma fonte, em andamento ou pronta (falhou/cancelada nao conta).
 static Conv* conv_by_source_locked(const char* source) {
@@ -1083,7 +1111,25 @@ static int conv_add_auto(const char* key, const char* name, const char* kind, co
   char error[200];
   if (!conv_validate(body, error, sizeof error)) { logf_("conversao automatica recusada: %s", error); free(body); return 0; }
   pthread_mutex_lock(&g_conv_lock);
-  if (conv_by_key_locked(body->key) || conv_by_source_locked(body->source)) { pthread_mutex_unlock(&g_conv_lock); free(body); return 1; }
+  // glibren.20: a mesma chave que falhou ou foi cancelada (um "Converter agora" de novo) volta para a fila, do comeco.
+  Conv* again = conv_by_key_locked(body->key);
+  if (again && (!strcmp(again->state, "failed") || !strcmp(again->state, "cancelled")) && !again->running) {
+    char id[sizeof again->id];
+    const __typeof__(again->created) created = again->created;
+    copy_text(id, sizeof id, again->id);
+    *again = *body;
+    copy_text(again->id, sizeof again->id, id);
+    again->created = created;
+    again->updated = now_s();
+    snprintf(again->state, sizeof again->state, "queued");
+    conv_save_locked();
+    logf_("conversao %s pedida de novo pelo payload: %s (%s)", again->id, again->name, again->kind);
+    pthread_cond_broadcast(&g_conv_wake);
+    pthread_mutex_unlock(&g_conv_lock);
+    free(body);
+    return 1;
+  }
+  if (again || conv_by_source_locked(body->source)) { pthread_mutex_unlock(&g_conv_lock); free(body); return 1; }
   for (int i = 0; g_conv_count >= MAX_CONVS && i < g_conv_count; ++i) {
     if (!conv_terminal(g_convs[i]->state) || g_convs[i]->running) continue;
     free(g_convs[i]);
@@ -1232,42 +1278,86 @@ static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) 
   archive_write_free(out);
   return rc;
 }
-// Uma conversao do payload que deu "not-direct:": extrai e converte a pasta do jogo (ou o .pkg de PS5 de dentro); um
-// .pkg de PS4 vai para <disco>/PS4/ (o app instala). A pasta de trabalho e apagada pela conversao no fim (ou aqui, se
-// nao houver o que converter).
-static void auto_after_not_direct(Conv* c) {
-  char work[1100], err[300] = "", game[1200] = "", pkg[1200] = "";
-  snprintf(work, sizeof work, "%.900s/downloads/extract/%s", c->root, c->id);
-  mkdir_p(work);
-  logf_("conversao %s: nao da direto; extraindo no payload em %s", c->id, work);
-  if (!auto_extract(c, work, err, sizeof err)) { logf_("conversao %s: extracao falhou: %s", c->id, err); conv_remove_tree(work, 0); return; }
-  const int found = auto_find_game(work, 0, game, sizeof game, pkg, sizeof pkg);
-  char key[128];
-  snprintf(key, sizeof key, "%.110s-x", c->key);
-  if (found) {
-    const char* one[1] = {game};
-    conv_add_auto(key, c->name, "dir", one, 1, c->output, c->root, c->label, work);
+// glibren.20: uma conversao de compactado que nao deu direto: extrai em <disco>/BACKUP/_temp/<id> (o mesmo disco do
+// original, entao sem copiar entre discos) e a MESMA conversao segue com a pasta do jogo ("dir") ou o .pkg de PS5 de
+// dentro ("pkg"), com a pasta temporaria como pasta de trabalho: apagada quando o .exfat fica pronto, e tambem quando a
+// conversao falha ou e cancelada (conv_loop). Um .pkg de PS4 vai para <disco>/PS4/ (o app instala).
+static void conv_fail_extract(Conv* c, const char* work, const char* message) {
+  conv_remove_tree(work, 0);
+  logk_("conversao %s: falhou: %s", c->id, message);
+  conv_finish(c, "failed", message);
+  char text[400];
+  snprintf(text, sizeof text, "%s: conversao para EXFAT falhou", c->name);
+  notify(text);
+}
+static void conv_extract_in_place(Conv* c) {
+  char work[1100], dir[1100], err[300] = "", game[1200] = "", pkg[1200] = "", message[700];
+  snprintf(dir, sizeof dir, "%.900s/BACKUP/_temp", c->root);
+  snprintf(work, sizeof work, "%.1000s/%s", dir, c->id);
+  conv_remove_tree(work, 0); // uma extracao interrompida antes recomeca limpa
+  if (mkdir_p(work)) {
+    snprintf(message, sizeof message, "source: the temporary folder %s could not be created (%s)", work, strerror(errno));
+    conv_fail_extract(c, work, message);
     return;
   }
-  if (pkg[0]) {
-    // Um .pkg dentro do compactado: de PS5 converte; de PS4 vai para PS4/.
+  pthread_mutex_lock(&g_conv_lock);
+  c->running = 1;
+  c->written = c->total = 0;
+  pthread_mutex_unlock(&g_conv_lock);
+  logk_("conversao %s: extraindo %s em %s", c->id, base_name(c->source), work);
+  const int extracted = auto_extract(c, work, err, sizeof err);
+  pthread_mutex_lock(&g_conv_lock);
+  c->running = 0;
+  const int cancelled = c->cancel;
+  pthread_mutex_unlock(&g_conv_lock);
+  if (cancelled || g_stop) {
+    conv_remove_tree(work, 0);
+    if (g_stop && !cancelled) return; // fica "extracting": conv_load a poe na fila de novo
+    conv_finish(c, "cancelled", "");
+    return;
+  }
+  if (!extracted) {
+    snprintf(message, sizeof message, "source: the archive could not be extracted either: %s", err);
+    conv_fail_extract(c, work, message);
+    return;
+  }
+  const char* kind = "dir";
+  const char* source = game;
+  if (!auto_find_game(work, 0, game, sizeof game, pkg, sizeof pkg)) {
     char code[16] = "";
-    for (const char* p = base_name(pkg); *p && !code[0]; ++p) if (!strncasecmp(p, "CUSA", 4) || !strncasecmp(p, "PPSA", 4)) { snprintf(code, sizeof code, "%.9s", p); for (char* q = code; *q; ++q) *q = (char)toupper((unsigned char)*q); }
-    if (!strncmp(code, "CUSA", 4)) {
-      char dir[1100], to[1400];
-      snprintf(dir, sizeof dir, "%.900s/PS4", c->root);
-      mkdir_p(dir);
-      snprintf(to, sizeof to, "%s/%s", dir, base_name(pkg));
-      if (!rename(pkg, to)) logk_("conversao %s: .pkg de PS4 extraido para %s (instalar pela Jobee'sLair)", c->id, to);
-      conv_remove_tree(work, 0);
+    for (const char* p = pkg[0] ? base_name(pkg) : ""; *p && !code[0]; ++p)
+      if (!strncasecmp(p, "CUSA", 4) || !strncasecmp(p, "PPSA", 4)) { snprintf(code, sizeof code, "%.9s", p); for (char* q = code; *q; ++q) *q = (char)toupper((unsigned char)*q); }
+    if (pkg[0] && !strncmp(code, "CUSA", 4)) {
+      char ps4[1100], to[1400];
+      snprintf(ps4, sizeof ps4, "%.900s/PS4", c->root);
+      mkdir_p(ps4);
+      snprintf(to, sizeof to, "%s/%s", ps4, base_name(pkg));
+      const int moved = !rename(pkg, to);
+      if (moved) logk_("conversao %s: .pkg de PS4 extraido para %s (instalar pela Jobee'sLair)", c->id, to);
+      snprintf(message, sizeof message, "not-a-game: a PS4 package, %s %.500s (install it in Jobee'sLair)", moved ? "moved to" : "could not be moved to", ps4);
+      conv_fail_extract(c, work, message);
       return;
     }
-    const char* one[1] = {pkg};
-    conv_add_auto(key, c->name, "pkg", one, 1, c->output, c->root, c->label, work);
-    return;
+    if (!pkg[0]) {
+      conv_fail_extract(c, work, "not-a-game: no PS5 game folder or package in the archive");
+      return;
+    }
+    kind = "pkg";
+    source = pkg;
   }
-  logf_("conversao %s: nada de jogo de PS5 no que foi extraido", c->id);
-  conv_remove_tree(work, 0);
+  pthread_mutex_lock(&g_conv_lock);
+  copy_text(c->kind, sizeof c->kind, kind);
+  copy_text(c->source, sizeof c->source, source);
+  copy_text(c->work, sizeof c->work, work);
+  c->nsources = 0;
+  c->error[0] = 0;
+  c->written = c->total = 0;
+  snprintf(c->state, sizeof c->state, "queued");
+  c->updated = now_s();
+  conv_save_locked();
+  pthread_cond_broadcast(&g_conv_wake);
+  pthread_mutex_unlock(&g_conv_lock);
+  logk_("conversao %s: extraido; converte agora %s (%s)", c->id, source, kind);
 }
 
 // POST /api/backup/convert {root, name} (com o PIN): "Converter agora" na lista do BACKUP.
@@ -1280,7 +1370,7 @@ static void conv_backup_convert(int fd, Request* r) {
   const int count = conv_backup_roots(roots, 24);
   int known = 0;
   for (int i = 0; i < count; ++i) if (!strcmp(roots[i], d.root)) known = 1;
-  if (!known || !d.name[0] || d.name[0] == '.' || strchr(d.name, '/') || strchr(d.name, '\\')) { monitor_json(fd, 400, "{\"error\":\"invalid backup\"}"); return; }
+  if (!known || !d.name[0] || d.name[0] == '.' || !strcmp(d.name, "_temp") || strchr(d.name, '/') || strchr(d.name, '\\')) { monitor_json(fd, 400, "{\"error\":\"invalid backup\"}"); return; }
   char key[128];
   snprintf(key, sizeof key, "backup-%.100s", d.name);
   for (char* p = key; *p; ++p) if ((unsigned char)*p < 0x20 || *p == '"' || *p == '\\') *p = '_';
@@ -1289,8 +1379,72 @@ static void conv_backup_convert(int fd, Request* r) {
   monitor_json(fd, rc == 1 ? 200 : 400, rc == 1 ? "{\"ok\":true}" : rc == -1 ? "{\"error\":\"ps4\"}" : rc == -2 ? "{\"error\":\"converted\"}" : "{\"error\":\"nothing\"}");
 }
 
+// glibren.20: POST /api/backup/convert-all (com o PIN): "Converter todos" na lista do BACKUP: cada jogo de PS5 ainda nao
+// convertido entra na fila (os que nao derem direto o payload extrai em BACKUP/_temp). {queued, ps4, converted, nothing}.
+static void conv_backup_convert_all(int fd, Request* r) {
+  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  char roots[24][256];
+  const int count = conv_backup_roots(roots, 24);
+  int queued = 0, ps4 = 0, converted = 0, nothing = 0;
+  for (int i = 0; i < count; ++i) {
+    char dir[300];
+    snprintf(dir, sizeof dir, "%.255s/BACKUP", roots[i]);
+    DIR* d = opendir(dir);
+    if (!d) continue;
+    char names[256][256];
+    int n = 0;
+    for (struct dirent* it; (it = readdir(d)) && n < 256;) {
+      if (it->d_name[0] == '.' || !strcmp(it->d_name, "_temp") || strlen(it->d_name) >= 256) continue;
+      copy_text(names[n++], sizeof names[0], it->d_name);
+    }
+    closedir(d);
+    for (int k = 0; k < n; ++k) {
+      char key[128];
+      snprintf(key, sizeof key, "backup-%.100s", names[k]);
+      for (char* p = key; *p; ++p) if ((unsigned char)*p < 0x20 || *p == '"' || *p == '\\') *p = '_';
+      const int rc = backup_convert(roots[i], names[k], key);
+      if (rc == 1) ++queued; else if (rc == -1) ++ps4; else if (rc == -2) ++converted; else ++nothing;
+    }
+  }
+  logk_("celular: converter todos -> %d na fila, %d de PS4, %d ja convertidos, %d sem o que converter", queued, ps4, converted, nothing);
+  char body[160];
+  snprintf(body, sizeof body, "{\"ok\":true,\"queued\":%d,\"ps4\":%d,\"converted\":%d,\"nothing\":%d}", queued, ps4, converted, nothing);
+  monitor_json(fd, 200, body);
+}
+
+// glibren.20: GET /api/log (com o PIN): o diario do payload (bgdl.log.old + bgdl.log, os ultimos ~1,5 MiB), para ver no
+// celular por que uma conversao ou um download falhou e mandar a quem for ajudar.
+static void conv_log(int fd, Request* r) {
+  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  const size_t cap = 1536 * 1024;
+  Buf b = {0};
+  char old[700];
+  snprintf(old, sizeof old, "%.690s.old", g_log_path);
+  const char* paths[2] = {old, g_log_path};
+  for (int i = 0; i < 2; ++i) {
+    size_t size = 0;
+    char* text = read_text(paths[i], 8u * 1024 * 1024, &size);
+    if (!text) continue;
+    buf_add(&b, text, size);
+    free(text);
+  }
+  if (b.failed || !b.data) { monitor_send(fd, 200, "text/plain; charset=utf-8", "", 0); free(b.data); return; }
+  const char* from = b.data;
+  size_t size = b.size;
+  if (size > cap) {
+    from += size - cap;
+    size = cap;
+    const char* line = memchr(from, '\n', size);
+    if (line) { size -= (size_t)(line + 1 - from); from = line + 1; }
+  }
+  monitor_send(fd, 200, "text/plain; charset=utf-8", from, size);
+  free(b.data);
+}
+
 // Rotas da pagina do celular. 1 = tratou.
 static int conv_monitor_route(int fd, Request* r) {
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/convert-all")) { conv_backup_convert_all(fd, r); return 1; } // glibren.20
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/log")) { conv_log(fd, r); return 1; } // glibren.20
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/backup")) { conv_backup_list(fd); return 1; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/delete")) { conv_backup_delete(fd, r); return 1; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/backup/convert")) { conv_backup_convert(fd, r); return 1; } // glibren.18

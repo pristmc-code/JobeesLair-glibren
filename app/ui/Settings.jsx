@@ -42,7 +42,8 @@ import { useNavActions } from '../state/nav.jsx';
 import { downloadQueue, driveName } from '../state/downloads.js';
 import { useDrives } from '../state/drives.js';
 import { setDefaultDrive, useDefaultDrive } from '../state/last-drive.js';
-import { MAX_FEEDS, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, refreshFeeds, removeFeed, removeMirror, useFeeds } from '../state/feeds.js';
+import { MAX_FEEDS, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, orbitFeedSnapshot, refreshFeedsNow, refreshOrbitFeed, removeFeed, removeMirror, useFeeds } from '../state/feeds.js';
+import { setOrbitFeed, useOrbitFeed, useOrbitStatus } from '../state/orbit-feed.js';
 import { isoStamp, parseStamp } from '../state/clock.js';
 import { FeedFilePicker } from './FeedFilePicker.jsx';
 import { formatBytes } from '../state/size.js';
@@ -508,16 +509,41 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       ...drives.roots.map((root) => /* @__PURE__ */ (0, jsx)(Drive, { root, usage: drives.usage[root] }, root))
     ] });
   }
+  // glibren.20: the Orbit Store list (off by default): the switch, what the payload last did, and a warning while it has
+  // stopped updating. A new copy written by the payload is read as soon as Settings sees it (shown after a restart).
+  function OrbitRow() {
+    const t2 = useT();
+    const { on, status, stale } = useOrbitStatus();
+    const lastOk = Number(status?.lastOk) || 0;
+    (0, useEffect)(() => {
+      if (on && lastOk) void refreshOrbitFeed();
+    }, [on, lastOk]);
+    const feed = on ? orbitFeedSnapshot() : null;
+    let detail = t2("settings.orbit.off");
+    if (on && status?.busy) detail = t2("settings.orbit.busy");
+    else if (on && !lastOk) detail = status?.error ? t2("settings.orbit.error", { error: status.error }) : t2("settings.orbit.waiting");
+    else if (on) {
+      const ok = t2("settings.orbit.ok", { count: Number(status.games) || feed?.games || 0, links: Number(status.releases) || 0, revision: Number(status.revision) || 0, date: readTime(isoStamp(lastOk * 1e3)) });
+      detail = status?.error ? `${ok} · ${t2("settings.orbit.error", { error: status.error })}` : ok;
+    }
+    return /* @__PURE__ */ (0, jsxs)(Fragment, { children: [
+      jsx(Row, { focusKey: "settings:feeds:orbit", name: t2("settings.orbit.name"), detail, hint: t2("settings.orbit.hint"), end: jsx(Switch, { on }), onPress: () => setOrbitFeed(!on) }),
+      stale ? /* @__PURE__ */ (0, jsx)(Callout, { tone: "warn", children: t2(`orbit.stale.${stale}`) }) : null,
+      feed?.restart ? /* @__PURE__ */ (0, jsx)(Callout, { children: t2("settings.feeds.restart") }) : null
+    ] });
+  }
   // glibren.14: no limit of three feeds any more (MAX_FEEDS is only a safety ceiling), and "Add a file from the PS5".
   function FeedsCard({ onAdd, onAddFile, onMirror }) {
     const t2 = useT();
     const feeds = useFeeds();
+    const orbitOn = useOrbitFeed();
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
       /* @__PURE__ */ (0, jsx)(CardHead, { icon: "layers", title: t2("settings.card.feeds") }),
+      jsx(OrbitRow, {}),
       ...feeds.map((feed) => /* @__PURE__ */ (0, jsx)(FeedRow, { feed, onMirror }, feed.url)),
       feeds.length < MAX_FEEDS ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:feeds:add", name: t2("settings.feeds.add"), hint: t2("settings.feeds.detail"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "external", color: colors.muted }), onPress: onAdd }) : null,
       feeds.length < MAX_FEEDS ? jsx(Row, { focusKey: "settings:feeds:addFile", name: t2("settings.feeds.addFile"), hint: t2("settings.feeds.addFileHint"), end: jsx(Icon, { name: "folder", color: colors.muted }), onPress: onAddFile }) : null,
-      feeds.length ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:feeds:refresh", name: t2("settings.feeds.refresh"), detail: feeds.some((feed) => feed.state === "refreshing") ? t2("settings.feeds.refreshing") : null, hint: t2("settings.feeds.refreshHint"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "restart", color: colors.muted }), onPress: () => void refreshFeeds() }) : null,
+      feeds.length || orbitOn ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:feeds:refresh", name: t2("settings.feeds.refresh"), detail: feeds.some((feed) => feed.state === "refreshing") ? t2("settings.feeds.refreshing") : null, hint: t2("settings.feeds.refreshHint"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "restart", color: colors.muted }), onPress: () => void refreshFeedsNow() }) : null,
       feeds.some((feed) => feed.restart) ? /* @__PURE__ */ (0, jsx)(Callout, { children: t2("settings.feeds.restart") }) : null
     ] });
   }

@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, Text, View, motion } from '@ps5-react/core';
 import { LATIN_IN_RTL, useLocale, useT } from '../i18n/index.js';
 import { online, useOnline } from '../state/online.js';
+import { useOrbitStale } from '../state/orbit-feed.js';
 import { Icon } from './Icon.jsx';
 import { colors, radius } from './colors.js';
 import { EASE_OUT } from './ease.js';
@@ -45,7 +46,10 @@ import { logical } from './scale.js';
   function AnnouncementBar() {
     const t2 = useT();
     const { rtl } = useLocale();
-    const { announcements } = useOnline();
+    // glibren.20: a lista Orbit Store parada entra primeiro, como aviso (amarelo), enquanto durar.
+    const { announcements: posted } = useOnline();
+    const orbit = useOrbitStale();
+    const announcements = orbit ? [{ id: `orbit-${orbit}`, level: "warning", text: t2(`orbit.stale.${orbit}`) }, ...posted] : posted;
     const [index, setIndex] = useState(0);
     const [leaving, setLeaving] = useState(false);
     const count = announcements.length;
@@ -84,7 +88,9 @@ import { logical } from './scale.js';
   function useBarSpace() {
     const [up, setUp] = useState(() => online().snapshot().announcements.length > 0);
     useEffect(() => online().subscribe((now) => setUp(now.announcements.length > 0)), []);
-    return up ? BAR_SPACE : 0;
+    // glibren.20: e enquanto a lista Orbit Store estiver parada.
+    const orbit = useOrbitStale();
+    return up || orbit ? BAR_SPACE : 0;
   }
   /**
    * 0.5.2: where a page is while the bar comes or goes, gliding instead of jumping (ui/page-glide.js): { top, its

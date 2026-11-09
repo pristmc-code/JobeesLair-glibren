@@ -31,6 +31,8 @@ import { LocaleProvider, useLocale } from './i18n/index.js';
 import { SearchScreen } from './search/index.jsx';
 import { getGame, warmCovers } from './state/catalog.js';
 import { refreshFeeds } from './state/feeds.js';
+import { startOrbitFeed } from './state/orbit-feed.js';
+import { t as tNow } from './i18n/core.js';
 import { startCompanionIfEnabled } from './companion/service.js';
 import { startSandboxSweeper } from './state/sandbox-sweeper.js';
 import { refreshDrives } from './state/drives.js';
@@ -123,7 +125,11 @@ import './state/picture-route.js';
     }, []);
     (0, useEffect)(() => {
       if (HOMEBREW_ONLY) return void 0;
-      const id = setTimeout(() => void refreshFeeds(), FEEDS_DELAY_MS);
+      // glibren.20: e a lista Orbit Store: a opcao vai ao payload, e uma lista parada avisa (uma vez por problema).
+      const id = setTimeout(() => {
+        startOrbitFeed(tNow);
+        void refreshFeeds();
+      }, FEEDS_DELAY_MS);
       return () => clearTimeout(id);
     }, []);
     (0, useEffect)(() => HOMEBREW_ONLY ? void 0 : startCompanionIfEnabled(), []);

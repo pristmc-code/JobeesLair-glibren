@@ -1841,12 +1841,12 @@ test('a set of images unpacked into one folder moves image by image, and the emp
   assert.deepEqual(state.manual, [`${usb}/Game.exfat`, `${usb}/Game-Update-1.05.exfat`]);
 });
 
-test('versions: 0.2.0 is newer than every 0.1.1 beta and 0.1.1, and the app now reports 0.5.5-glibren.19 (glibren fork)', async () => {
+test('versions: 0.2.0 is newer than every 0.1.1 beta and 0.1.1, and the app now reports 0.5.5-glibren.20 (glibren fork)', async () => {
   assert.equal(newer('v0.2.0', '0.1.1-beta.4'), true);
   assert.equal(newer('v0.2.0', '0.1.1'), true);
   assert.equal(newer('0.1.1-beta.4', '0.2.0'), false);
   const { VERSION, VERSION_LABEL } = await load('app/version.js');
-  assert.deepEqual([VERSION, VERSION_LABEL], ['0.5.5-glibren.19', '0.5.5-glibren.19']);
+  assert.deepEqual([VERSION, VERSION_LABEL], ['0.5.5-glibren.20', '0.5.5-glibren.20']);
 });
 
 
@@ -1866,12 +1866,12 @@ const releaseJson = (overrides = {}) => ({
 });
 
 test('versions: 0.5.0 is newer than 0.4.1 and every 0.5.0 pre-release, and older than 0.5.1; 0.5.5 is newer than 0.5.4', () => {
-  assert.equal(VERSION, '0.5.5-glibren.19');
+  assert.equal(VERSION, '0.5.5-glibren.20');
   assert.equal(newer(VERSION, '0.5.4'), true, 'it is newer than 0.5.4');
   assert.equal(newer('v0.5.4', VERSION), false, 'so 0.5.4 is not offered to it');
-  assert.equal(newer('v0.5.5-glibren.19', VERSION), false, 'not to itself');
-  assert.equal(newer(VERSION, '0.5.5-glibren.18'), true, 'offered to glibren.18');
-  assert.equal(newer('v0.5.5-glibren.20', VERSION), true, 'the next fork build is offered to it');
+  assert.equal(newer('v0.5.5-glibren.20', VERSION), false, 'not to itself');
+  assert.equal(newer(VERSION, '0.5.5-glibren.19'), true, 'offered to glibren.19');
+  assert.equal(newer('v0.5.5-glibren.21', VERSION), true, 'the next fork build is offered to it');
   assert.equal(newer('v0.5.5', '0.5.5-pre.1'), true, '0.5.5 is offered to its testers');
   assert.equal(newer(VERSION, '0.5.3'), true, 'it is newer than 0.5.3');
   assert.equal(newer('v0.5.3', VERSION), false, 'so 0.5.3 is not offered to it');
@@ -2478,14 +2478,14 @@ async function withSteppingClock(run) {
 }
 
 test('feeds: the paced check gives exactly what the one-shot check gives, a frame after each 6 ms of it', async () => {
-  const document = sampleFeed(1600);
+  const document = sampleFeed(5100);
   const once = feedFormat.parseFeed(document, 'https://example.com/feed.json');
   let pauses = 0;
   const paced = await withSteppingClock(() => feedFormat.parseFeedAsync(document, 'https://example.com/feed.json', async () => { pauses++; }));
   assert.deepEqual(paced, once);
-  assert.equal(once.games.length, 1500, 'the 1500-game cap holds');
+  assert.equal(once.games.length, 5000, 'the 5000-game cap holds (glibren.20; it was 1500)');
   // Steps of 4 games, one clock read each: a frame after every 6 of them.
-  assert.equal(pauses, Math.floor(1500 / 4 / 6));
+  assert.equal(pauses, Math.floor(5000 / 4 / 6));
   // On the real clock a fast check needs few frames or none, and gives the same.
   assert.deepEqual(await feedFormat.parseFeedAsync(document, 'https://example.com/feed.json', async () => {}), once);
   await assert.rejects(feedFormat.parseFeedAsync({ version: 2 }, 'https://example.com/feed.json', async () => {}), /Not a catalog feed/);

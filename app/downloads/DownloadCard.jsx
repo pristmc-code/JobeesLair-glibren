@@ -305,7 +305,7 @@ import { t as t2Static } from '../i18n/core.js';
       jsx(CardMeter, {
         id: conversionKey(item),
         tone,
-        moving: item.state === "converting",
+        moving: item.state === "converting" || item.state === "extracting", // glibren.20: o payload descompacta antes
         complete: item.state === "done",
         waiting: item.state === "queued" || item.state === "verifying",
         label: text,

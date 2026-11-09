@@ -54,13 +54,15 @@ import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
 import { originOf } from './link-formats.js';
 import { setConversionSource } from './payload-conversions.js';
+import { setOrbitSource } from './orbit-feed.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
   var STATE_DIR = "/data/JobeesLair/bg";
   var PORT = 34200;
   // glibren.13: a versao do protocolo do bg-downloader.elf deste app (BG_API em app/native/bg_downloader.c, no /health).
-  var PAYLOAD_API = 15;
+  // glibren.20: 16, a lista Orbit Store (GET/POST /orbit).
+  var PAYLOAD_API = 16;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -970,6 +972,17 @@ import { setConversionSource } from './payload-conversions.js';
       if (token && id) await call(token, "POST", `/convert/${encodeURIComponent(id)}/forget`);
     };
     setConversionSource({ list: wrapper.conversions, cancel: wrapper.cancelConversion, forget: wrapper.forgetConversion });
+    // glibren.20: a lista Orbit Store (state/orbit-feed.js): liga/desliga e pede uma atualizacao no payload, que sobe
+    // para isso (so no PS5). Devolve o estado dele, ou null sem payload.
+    wrapper.orbit = async (body) => {
+      if (platform !== "ps5" || !payloads) return null;
+      const token = await ensurePayload();
+      if (!token) return null;
+      const answer = await call(token, "POST", "/orbit", body);
+      if (answer.status !== 200) log(`payload did not take the Orbit Store list setting (HTTP ${answer.status})`);
+      return answer.status === 200 ? answer.data : null;
+    };
+    setOrbitSource(wrapper.orbit);
     current = wrapper;
     return wrapper;
   }
