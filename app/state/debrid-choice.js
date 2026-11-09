@@ -3,7 +3,7 @@
 // ("TorBox Instant") first, then one whose format the filter wants (an exFAT image, say), then the app's own
 // ranking (game/sources.js sourceOrder). Without a key the setting does nothing.
 
-import { activeService, debridSupports, heldByTorBox } from './debrid.js';
+import { activeService, debridSupports, heldByTorBox, torBoxReady } from './debrid.js';
 import { passes } from './format-filter.js';
 import { effectiveFormat, groupOf } from './link-formats.js';
 import { isBackport, isDlc, sourceOrder } from '../game/sources.js';
@@ -22,7 +22,8 @@ import { isBackport, isDlc, sourceOrder } from '../game/sources.js';
       const format = effectiveFormat(releases[index], recordOf).format;
       return passes(filter, groupOf(format), format);
     };
-    const score = (index) => (heldByTorBox(releases[index]) === true ? 2 : 0) + (fits(index) ? 1 : 0);
+    // glibren.23: held already (Instant) first, then on a host TorBox has ready today (quick check), then the rest.
+    const score = (index) => (heldByTorBox(releases[index]) === true ? 4 : torBoxReady(releases[index]) ? 2 : 0) + (fits(index) ? 1 : 0);
     return order.reduce((best, index) => score(index) > score(best) ? index : best, order[0]);
   }
 

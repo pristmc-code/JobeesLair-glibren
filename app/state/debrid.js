@@ -27,10 +27,10 @@
 // lendNetwork); a check the gamer asks for pauses the download meanwhile (`quiet`, its quietNetwork).
 
 import { useEffect, useState } from 'react';
-import { createTorBox, fileNamesOf, hostSupported, isMagnet, md5, validKey } from '../services/torbox.js';
+import { createTorBox, fileNamesOf, hostSupported, isMagnet, md5, quotaLeft, validKey } from '../services/torbox.js';
 import { createAllDebrid, hostSupported as allDebridHost, validKey as validAllDebridKey } from '../services/alldebrid.js';
 import { cancellation, sourceKind } from './download-sources.js';
-import { savedList } from './saved.js';
+import { loadList, saveList, savedList } from './saved.js';
 import { formatDate2 } from '../i18n/core.js';
 import { log, logger } from '../services/logger.js';
 import { DATA_DIR } from './data-dir.js';
@@ -38,7 +38,8 @@ import { brokenEntry } from './broken-copy.js';
 import { newSecret, open as openBox, seal } from './secret-box.js';
 import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
 
-  var HOSTERS_MS = 24 * 36e5;
+  // MODIFIED (glibren.23): 10 minutes (was a day): the hosts' daily quotas (services/torbox.js) change all day.
+  var HOSTERS_MS = 10 * 6e4;
   var INSTANT_MS = 30 * 6e4;
   var KEPT_ITEMS = 200;
   // ---- The keys, sealed (see the top of this file) ----
@@ -358,7 +359,94 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
   var debridSecret = (service) => service === "alldebrid" ? allKeyOf() : service === "torbox" ? keyOf() : "";
 
   // "TorBox Instant": which links TorBox already holds (so they start at once), asked once per half hour per
-  // link, only while no download needs the network. Its hosts list is refreshed in the same turn once a day.
+  // link, only while no download needs the network. Its hosts list is refreshed in the same turn (every 10 minutes).
+  // glibren.23: the quick check (settings.json "torboxQuick", on by default), as Orbit Store does it: no checkcached per
+  // link; a release whose every link is on a host TorBox has working, with today's quota left, shows "TorBox ready" at
+  // once (availableByTorBox), from the hosts list alone. What TorBox holds already (Instant) still shows when known.
+  var SETTINGS_FILE = "settings.json";
+  var quickListeners = /* @__PURE__ */ new Set();
+  // Read once (it is asked for every row of a source list), then kept as set.
+  var quickOn = null;
+  function torBoxQuick() {
+    if (quickOn === null) {
+      try {
+        quickOn = loadList(SETTINGS_FILE, "settings").torboxQuick !== false;
+      } catch {
+        quickOn = true;
+      }
+    }
+    return quickOn;
+  }
+  function setTorBoxQuick(on) {
+    quickOn = Boolean(on);
+    try {
+      saveList(SETTINGS_FILE, "settings", { ...loadList(SETTINGS_FILE, "settings"), torboxQuick: quickOn });
+    } catch (error) {
+      console.log(`[debrid] quick check setting not saved: ${error.message}`);
+    }
+    for (const listener of [...quickListeners]) listener(quickOn);
+    notify();
+  }
+  function useTorBoxQuick() {
+    const [on, setOn] = (0, useState)(torBoxQuick);
+    (0, useEffect)(() => {
+      quickListeners.add(setOn);
+      return () => quickListeners.delete(setOn);
+    }, []);
+    return on;
+  }
+  /** glibren.23: whether every link of `release` is on a host TorBox has working with quota left: true, false or null. */
+  function availableByTorBox(release) {
+    if (activeService() !== "torbox" || !release) return null;
+    const hosters = record().hosters?.list ?? null;
+    if (!hosters) return null;
+    const links = sourcesOf(release).map(linkOf);
+    if (!links.length || links.some((link) => !link || isMagnet(link))) return null;
+    return links.every((link) => hostSupported(hosters, link) === true);
+  }
+  /** glibren.23: TorBox would start `release` now: held already (Instant), or, with the quick check, on a ready host. */
+  var torBoxReady = (release) => heldByTorBox(release) === true || torBoxQuick() && availableByTorBox(release) === true;
+  /**
+   * glibren.23: the hosts' quota today, for Settings: { at, working, out, hosts: [{ name, working, quota, linkUsed,
+   * linkLimit, bytesUsed, bytesLimit }] } (only hosts with a limit or not working), or null before the list is read.
+   */
+  function torBoxQuotas() {
+    const kept = record().hosters;
+    if (!kept?.list) return null;
+    const hosts = kept.list.map((host) => ({ name: host.name, working: host.working !== false, quota: quotaLeft(host), linkUsed: host.linkUsed ?? 0, linkLimit: host.linkLimit ?? 0, bytesUsed: host.bytesUsed ?? 0, bytesLimit: host.bytesLimit ?? 0 }));
+    return {
+      at: kept.at,
+      working: hosts.filter((host) => host.working && host.quota).length,
+      out: hosts.filter((host) => host.working && !host.quota).length,
+      hosts: hosts.filter((host) => !host.working || host.linkLimit || host.bytesLimit).sort((a, b) => Number(a.working && a.quota) - Number(b.working && b.quota) || String(a.name).localeCompare(String(b.name)))
+    };
+  }
+  /** glibren.23: reads the hosts list again now (Settings), the way a check the gamer asks for does (`quiet`). */
+  async function refreshTorBoxHosts({ quiet = (_reason, work) => work() } = {}) {
+    return quiet("TorBox hosts", async () => {
+      saveHosters(await torbox().hosters({ fresh: true }));
+      notify();
+      return torBoxQuotas();
+    });
+  }
+  // glibren.23: the quick check only keeps the hosts list fresh (every HOSTERS_MS), borrowing the network like Instant.
+  var refreshingHosts = false;
+  async function refreshHostsQuietly(lend) {
+    if (refreshingHosts || Date.now() - (record().hosters?.at ?? 0) <= HOSTERS_MS) return;
+    const lease = lend(() => {
+    });
+    if (!lease) return;
+    refreshingHosts = true;
+    try {
+      saveHosters(await torbox().hosters({ fresh: true }));
+      notify();
+    } catch (error) {
+      console.log(`[debrid] TorBox hosts not read: ${error.message}`);
+    } finally {
+      refreshingHosts = false;
+      lease();
+    }
+  }
   var instant = /* @__PURE__ */ new Map();
   var asking = null;
   async function askInstant(links, lend) {
@@ -412,8 +500,13 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
   /** Asks TorBox which of `releases`' links it holds (while `lend` lets it); re-renders as it learns. */
   function useTorBoxInstant(releases, lend) {
     const [, setVersion] = (0, useState)(0);
-    const links = activeService() === "torbox" ? [...new Set(releases.filter(debridSupports).flatMap((release) => sourcesOf(release).map(linkOf)))] : [];
+    // glibren.23: the quick check asks nothing per link; it only keeps the hosts list fresh.
+    const quick = torBoxQuick();
+    const links = activeService() === "torbox" && !quick ? [...new Set(releases.filter(debridSupports).flatMap((release) => sourcesOf(release).map(linkOf)))] : [];
     const stale = links.filter((link) => !instant.has(link) || Date.now() - instant.get(link).at > INSTANT_MS);
+    (0, useEffect)(() => {
+      if (quick && activeService() === "torbox" && releases.length) void refreshHostsQuietly(lend);
+    }, [quick, releases.length]);
     (0, useEffect)(() => {
       const listener = () => setVersion((value) => value + 1);
       listeners.add(listener);
@@ -464,4 +557,4 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
     return typeof api.cachedFiles === "function" ? api.cachedFiles(links) : null;
   }
 
-export { activeService, askInstant as askTorBoxInstant, brokenAtTorBox, rememberTorBoxItem, torBoxApi, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant };
+export { activeService, askInstant as askTorBoxInstant, brokenAtTorBox, rememberTorBoxItem, torBoxApi, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant, availableByTorBox, refreshTorBoxHosts, setTorBoxQuick, torBoxQuick, torBoxQuotas, torBoxReady, useTorBoxQuick };

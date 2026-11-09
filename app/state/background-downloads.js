@@ -65,7 +65,8 @@ import { setOrbitSource } from './orbit-feed.js';
   // glibren.21: 17, RAR cifrado pelo rar-extract.elf do app (o payload da glibren.20 nao abre).
   // glibren.22: 18, a tela Pasta BACKUP do app (GET /backup, POST /backup/convert, /backup/convert-all, /backup/delete,
   // GET /log); e o antigo e trocado mesmo ocupado (ver ensurePayloadNow).
-  var PAYLOAD_API = 18;
+  // glibren.23: 19, TorBox como o Orbit Store (procura o link na conta antes de criar; um createwebdownload a cada 61 s).
+  var PAYLOAD_API = 19;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 

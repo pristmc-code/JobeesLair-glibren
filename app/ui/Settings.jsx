@@ -26,7 +26,7 @@ import { chooseLanguage, languageChoice, systemLocale, tWhole, useT } from '../i
 import { LOCALES } from '../i18n/locales.js';
 import { autoReportsChoice, reportCode, reportRelay, sendReport, setAutoReports, subscribeAutoReports } from '../state/bug-report.js';
 import { online, useOnline } from '../state/online.js';
-import { debridStatus, setAllDebridKey, setTorBoxKey, testAllDebrid, testTorBox, useDebrid } from '../state/debrid.js';
+import { debridStatus, refreshTorBoxHosts, setAllDebridKey, setTorBoxKey, setTorBoxQuick, testAllDebrid, testTorBox, torBoxQuotas, useDebrid, useTorBoxQuick } from '../state/debrid.js';
 import { HOMEBREW_ONLY } from '../edition.js';
 import { MAX_SPEED_LIMIT, setSpeedLimit, stepSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
@@ -551,6 +551,15 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
   // connection test that pauses a running download while it asks (the network is one task at a time),
   // and removing the key. With a key, the source list offers TorBox on the hosts it supports.
   var quietly = (reason, work) => downloadQueue().quietNetwork ? downloadQueue().quietNetwork(reason, work) : work();
+  // glibren.23: one host's quota today: "1fichier: 3 of 5 links · 20 GB of 100 GB", or that it is out of it or down.
+  function quotaLine(t2, host) {
+    const parts = [];
+    if (host.linkLimit) parts.push(t2("settings.debrid.quotaLinks", { used: formatNumber2(host.linkUsed), limit: formatNumber2(host.linkLimit) }));
+    if (host.bytesLimit) parts.push(t2("settings.debrid.quotaBytes", { used: formatBytes(host.bytesUsed), limit: formatBytes(host.bytesLimit) }));
+    if (!host.working) parts.push(t2("settings.debrid.quotaDown"));
+    else if (!host.quota) parts.push(t2("settings.debrid.quotaOut"));
+    return `${host.name}: ${parts.join(" \xB7 ")}`;
+  }
   function DebridCard({ onKey, onAllDebridKey }) {
     const t2 = useT();
     const debrid = useDebrid();
@@ -575,11 +584,32 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       );
     };
     const status = test.state === "testing" ? t2("settings.debrid.testing") : test.state === "failed" ? null : debridStatus(t2, "torbox", debrid.account);
+    // glibren.23
+    const quick = useTorBoxQuick();
+    const [quota, setQuota] = (0, useState)({ state: "idle", error: "" });
+    const [showQuota, setShowQuota] = (0, useState)(false);
+    const quotas = torBoxQuotas();
+    const readQuota = () => {
+      if (quota.state === "reading") return;
+      if (showQuota) {
+        setShowQuota(false);
+        return;
+      }
+      setShowQuota(true);
+      setQuota({ state: "reading", error: "" });
+      refreshTorBoxHosts({ quiet: quietly }).then(() => setQuota({ state: "ok", error: "" }), (error2) => setQuota({ state: "failed", error: error2.message }));
+    };
+    const quotaText = quota.state === "reading" ? t2("settings.debrid.quotaReading") : quotas ? t2("settings.debrid.quotaSummary", { working: formatNumber2(quotas.working), out: formatNumber2(quotas.out) }) : t2("settings.debrid.quotaUnknown");
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
       /* @__PURE__ */ (0, jsx)(CardHead, { icon: "zap", title: t2("settings.card.debrid") }),
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:torbox:key", name: t2("settings.debrid.key"), detail: debrid.configured ? t2("settings.debrid.keySet", { key: debrid.masked }) : t2("settings.debrid.keyNone"), hint: `${t2("settings.debrid.detail")} ${t2("settings.debrid.stored")}`, end: /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", color: colors.muted }), onPress: onKey }),
       debrid.configured ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:torbox:test", name: t2("settings.debrid.test"), detail: status, hint: t2("settings.debrid.testDetail"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: test.state === "testing" ? "globe" : "restart", color: colors.muted }), onPress: run }) : null,
       test.state === "failed" ? /* @__PURE__ */ (0, jsx)(Callout, { tone: "error", children: test.error }) : null,
+      // glibren.23: the quick check (Orbit Store's way) and the hosts' quota today.
+      debrid.configured ? jsx(Row, { focusKey: "settings:torbox:quick", name: t2("settings.debrid.quick"), hint: t2("settings.debrid.quickDetail"), end: jsx(Switch, { on: quick }), onPress: () => setTorBoxQuick(!quick) }) : null,
+      debrid.configured ? jsx(Row, { focusKey: "settings:torbox:quota", name: t2("settings.debrid.quota"), detail: quotaText, hint: t2("settings.debrid.quotaDetail"), end: jsx(Icon, { name: quota.state === "reading" ? "globe" : showQuota ? "chevronUp" : "chevronDown", color: colors.muted }), onPress: readQuota }) : null,
+      debrid.configured && showQuota && quotas?.hosts.length ? jsx(View, { style: { gap: 4, paddingHorizontal: 24, paddingBottom: 12 }, children: quotas.hosts.slice(0, 40).map((host) => jsx(Text, { style: { fontFamily: "Exo2", fontSize: 19, lineHeight: 27, color: host.working && host.quota ? colors.muted : "#fbbf24" }, children: quotaLine(t2, host) }, host.name)) }) : null,
+      quota.state === "failed" ? jsx(Callout, { tone: "error", children: quota.error }) : null,
       debrid.configured ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:torbox:remove", name: t2("settings.debrid.remove"), hint: t2("settings.debrid.removeDetail"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "trash", color: colors.muted }), onPress: () => {
         setTorBoxKey("");
         setTest({ state: "idle", error: "" });

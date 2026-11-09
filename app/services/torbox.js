@@ -31,7 +31,13 @@ import { parseStamp } from '../state/clock.js';
   // glibren.6: TorBox's search API (torrents by name), a service of its own.
   var SEARCH_BASE = "https://search-api.torbox.app";
   var PLANS = ["free", "essential", "pro", "standard"];
-  var HOSTERS_MS = 6 * 36e5;
+  // glibren.23: 10 minutes (was 6 hours), as Orbit Store reads it: the daily quotas in it change all day.
+  var HOSTERS_MS = 10 * 6e4;
+  // glibren.23: at most one createwebdownload per CREATE_GAP_MS, and a 429 on it waits at least RATE_WAIT_MS (Orbit Store
+  // does the same: TorBox throttles accounts that add links in bursts).
+  var CREATE_GAP_MS = 61e3;
+  var RATE_WAIT_MS = 6e4;
+  var CREATE_TRIES = 3;
   // How long a resolve waits for TorBox to finish fetching a file it did not hold, asking every POLL_MS.
   // A held (cached) file is ready at once; one it has to fetch can take longer than anyone should wait on a
   // console, so past this the resolve stops and says how far TorBox got (resuming asks again).
@@ -175,8 +181,10 @@ import { parseStamp } from '../state/clock.js';
    * TorBox's API for one account. `key()` reads the API key (empty: not set up); `http` is the runtime's
    * Http (request(url, options) -> { status, ok, json() }); `wait(ms, signal)` pauses between polls.
    */
-  function createTorBox({ http, key, wait = sleep, now = Date.now, log = () => {} }) {
+  function createTorBox({ http, key, wait = sleep, now = Date.now, log = () => {}, createGapMs = CREATE_GAP_MS, rateWaitMs = RATE_WAIT_MS }) {
     let hosterList = null;
+    // glibren.23: when the next createwebdownload may go (CREATE_GAP_MS after the last one).
+    let nextCreate = 0;
     const secret = () => {
       const value = String(key() || "").trim();
       if (!value) throw new TorBoxError("NO_AUTH", MESSAGES.NO_AUTH);
@@ -247,7 +255,18 @@ import { parseStamp } from '../state/clock.js';
       async hosters({ signal, fresh = false } = {}) {
         if (!fresh && hosterList && now() - hosterList.at < HOSTERS_MS) return hosterList.list;
         const data = await call("/webdl/hosters", { signal });
-        const list = (Array.isArray(data) ? data : []).map((host) => ({ name: host.name, domains: host.domains || [], working: host.status !== false, regex: host.regex || null }));
+        // glibren.23: with each host's daily quota (links and bytes; 0 = no limit), as /webdl/hosters gives it.
+        const count = (value) => Math.max(0, Number(value) || 0);
+        const list = (Array.isArray(data) ? data : []).map((host) => ({
+          name: host.name,
+          domains: host.domains || [],
+          working: host.status !== false,
+          regex: host.regex || null,
+          linkLimit: count(host.daily_link_limit),
+          linkUsed: count(host.daily_link_used),
+          bytesLimit: count(host.daily_bandwidth_limit),
+          bytesUsed: count(host.daily_bandwidth_used)
+        }));
         hosterList = { at: now(), list };
         return list;
       },
@@ -310,8 +329,38 @@ import { parseStamp } from '../state/clock.js';
           const data = await call("/torrents/createtorrent", { method: "POST", multipart: { magnet: link }, signal });
           return { kind: "torrent", id: data?.torrent_id, hash: data?.hash ?? magnetHash(link) };
         }
-        const data = await call("/webdl/createwebdownload", { method: "POST", form: { link, password }, signal });
-        return { kind: "webdl", id: data?.webdownload_id, hash: data?.hash ?? md5(link) };
+        // glibren.23: the link already in the account (an earlier try, or added on torbox.app) is used again, not added a
+        // second time; a new one waits for its turn (one per CREATE_GAP_MS), and a 429 waits RATE_WAIT_MS and tries again.
+        const existing = await api.findWebDownload(link, { signal }).catch((error) => {
+          if (error?.name === "AbortError" || signal?.aborted) throw error;
+          return null;
+        });
+        if (existing) {
+          log(`createwebdownload skipped: the link is already item ${existing.id}`);
+          return existing;
+        }
+        for (let tries = 1; ; tries++) {
+          const gap = nextCreate - now();
+          if (gap > 0) {
+            log(`createwebdownload waits ${Math.ceil(gap / 1e3)} s for its turn`);
+            await wait(gap, signal);
+          }
+          nextCreate = now() + createGapMs;
+          try {
+            const data = await call("/webdl/createwebdownload", { method: "POST", form: { link, password }, signal });
+            return { kind: "webdl", id: data?.webdownload_id, hash: data?.hash ?? md5(link) };
+          } catch (error) {
+            if (error?.code !== "RATE_LIMITED" || tries >= CREATE_TRIES) throw error;
+            nextCreate = Math.max(nextCreate, now() + rateWaitMs);
+            log(`createwebdownload: TorBox asked to slow down; trying again in ${Math.ceil(rateWaitMs / 1e3)} s`);
+          }
+        }
+      },
+      /** glibren.23: the account's web download of `link` (mylist, matched by original_url): { kind, id, hash } or null. */
+      async findWebDownload(link, { signal } = {}) {
+        const data = await call("/webdl/mylist", { params: { bypass_cache: true, limit: 1e3 }, signal });
+        const found = (Array.isArray(data) ? data : []).find((item) => item && item.original_url === link && item.id !== void 0 && item.id !== null);
+        return found ? { kind: "webdl", id: found.id, hash: found.hash ?? md5(link) } : null;
       },
       /** glibren: removes an item from the account (control…, operation delete); true when TorBox said so. */
       async remove(kind, id, { signal } = {}) {
@@ -480,17 +529,20 @@ import { parseStamp } from '../state/clock.js';
     }
     return patterns.get(source);
   }
+  // glibren.23: whether a host still has today's quota (links and bytes; a limit of 0 is none).
+  var quotaLeft = (hoster) => (!hoster.linkLimit || (hoster.linkUsed ?? 0) < hoster.linkLimit) && (!hoster.bytesLimit || (hoster.bytesUsed ?? 0) < hoster.bytesLimit);
   // Whether TorBox lists `url`'s host and has it working: true, false, or null when its list is not known.
+  // MODIFIED (glibren.23): and with quota left today (a host out of it is refused by TorBox until the next day).
   function hostSupported(hosters, url) {
     if (!hosters) return null;
     if (isMagnet(url)) return true;
     const host = /^https?:\/\/([^/?#:]+)/i.exec(url || "")?.[1]?.toLowerCase();
     if (!host) return false;
     return hosters.some((hoster) => {
-      if (!hoster.working) return false;
+      if (!hoster.working || !quotaLeft(hoster)) return false;
       if (hoster.domains.some((domain) => host === domain.toLowerCase() || host.endsWith(`.${domain.toLowerCase()}`))) return true;
       return Boolean(hoster.regex) && patternOf(hoster.regex)?.test(url) === true;
     });
   }
 
-export { fileNamesOf, MESSAGES, PLANS, TorBoxError, chooseFiles, createTorBox, hostSupported, isMagnet, linkHashes, magnetHash, md5, pickFile, validKey };
+export { fileNamesOf, MESSAGES, PLANS, TorBoxError, chooseFiles, createTorBox, hostSupported, quotaLeft, isMagnet, linkHashes, magnetHash, md5, pickFile, validKey };

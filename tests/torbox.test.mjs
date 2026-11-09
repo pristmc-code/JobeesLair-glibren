@@ -9,7 +9,7 @@ import path from 'node:path';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const load = (rel) => import(pathToFileURL(path.join(repo, rel)).href);
-const { createTorBox, hostSupported, md5, magnetHash, pickFile, validKey, linkHashes } = await load('app/services/torbox.js');
+const { createTorBox, hostSupported, md5, magnetHash, pickFile, quotaLeft, validKey, linkHashes } = await load('app/services/torbox.js');
 const { createSourceResolver, sourceKind } = await load('app/state/download-sources.js');
 const debrid = await load('app/state/debrid.js');
 const { sameRelease } = await load('app/state/release-sets.js');
@@ -98,12 +98,15 @@ test('createDownload: a link as a form post to webdl, a magnet as a multipart po
   });
   const api = createTorBox({ http, key: () => KEY });
   assert.deepEqual(await api.createDownload(FICHIER), { kind: 'webdl', id: 41, hash: 'h' });
-  assert.equal(calls[0].headers['Content-Type'], 'application/x-www-form-urlencoded');
-  assert.equal(calls[0].body, `link=${encodeURIComponent(FICHIER)}`);
+  // glibren.23: the account is looked at first (the fake has no mylist: nothing found), then the link is added.
+  const created = calls.find((call) => call.url.includes('/webdl/createwebdownload'));
+  assert.equal(created.headers['Content-Type'], 'application/x-www-form-urlencoded');
+  assert.equal(created.body, `link=${encodeURIComponent(FICHIER)}`);
   const magnet = 'magnet:?xt=urn:btih:C12FE1C06BBA254A9DC9F519B335AA7C1367A88A';
   assert.equal((await api.createDownload(magnet)).kind, 'torrent');
-  assert.match(calls[1].headers['Content-Type'], /^multipart\/form-data; boundary=/);
-  assert.match(calls[1].body, /name="magnet"\r\n\r\nmagnet:\?xt=urn:btih:C12FE/);
+  const torrent = calls.find((call) => call.url.includes('/torrents/createtorrent'));
+  assert.match(torrent.headers['Content-Type'], /^multipart\/form-data; boundary=/);
+  assert.match(torrent.body, /name="magnet"\r\n\r\nmagnet:\?xt=urn:btih:C12FE/);
 });
 
 test('resolve, held by TorBox: added, already finished, its largest file asked for; the key only in requestdl\'s query', async () => {
@@ -241,4 +244,53 @@ test("TorBox's own server failing (DOWNLOAD_SERVER_ERROR) says it was TorBox, an
   const { explainError } = await load('app/downloads/errors.js');
   const said = explainError('TorBox had a server error. Try again in a few minutes.');
   assert.deepEqual([said.title, said.action], [en['errors.torboxServer'], en['errors.action.retryLater']]);
+});
+
+// ---- glibren.23: as Orbit Store does it ----
+
+test('glibren.23: a link already in the account is used again, not added a second time', async () => {
+  let created = 0;
+  const { http } = fakeApi({
+    'GET /webdl/mylist': () => ok([{ id: 7, original_url: 'https://other.example/x' }, { id: 8, original_url: FICHIER, hash: 'hh' }]),
+    'POST /webdl/createwebdownload': () => (created++, ok({ webdownload_id: 41 })),
+  });
+  const api = createTorBox({ http, key: () => KEY });
+  assert.deepEqual(await api.createDownload(FICHIER), { kind: 'webdl', id: 8, hash: 'hh' });
+  assert.equal(created, 0);
+});
+
+test('glibren.23: new links are added one per 61 s, and a 429 waits at least 60 s and tries again', async () => {
+  let clock = 1e6;
+  const waits = [];
+  let answers = [() => ok({ webdownload_id: 1 }), () => ({ status: 429, body: { success: false, error: 'RATE', detail: 'slow down' } }), () => ok({ webdownload_id: 2 })];
+  const { http } = fakeApi({
+    'GET /webdl/mylist': () => ok([]),
+    'POST /webdl/createwebdownload': () => answers.shift()(),
+  });
+  const api = createTorBox({ http, key: () => KEY, now: () => clock, wait: async (ms) => { waits.push(ms); clock += ms; } });
+  assert.equal((await api.createDownload(`${FICHIER}1`)).id, 1);
+  assert.deepEqual(waits, [], 'the first one goes at once');
+  clock += 10e3;
+  assert.equal((await api.createDownload(`${FICHIER}2`)).id, 2);
+  assert.equal(waits[0], 51e3, 'the second waits for the rest of the 61 s');
+  assert.ok(waits[1] >= 60e3, `the 429 waits at least 60 s (${waits[1]})`);
+  assert.equal(answers.length, 0);
+});
+
+test('glibren.23: the hosts list keeps each host\'s daily quota; a host out of it is not offered', async () => {
+  const { http } = fakeApi({
+    'GET /webdl/hosters': () => ok([
+      { name: '1fichier', domains: ['1fichier.com'], status: true, daily_link_limit: 5, daily_link_used: 5, daily_bandwidth_limit: 0, daily_bandwidth_used: 0 },
+      { name: 'mediafire', domains: ['mediafire.com'], status: true, daily_link_limit: 0, daily_link_used: 0, daily_bandwidth_limit: 100e9, daily_bandwidth_used: 20e9 },
+      { name: 'down', domains: ['down.example'], status: false },
+    ]),
+  });
+  const list = await createTorBox({ http, key: () => KEY }).hosters({ fresh: true });
+  assert.deepEqual(list[0].linkLimit, 5);
+  assert.deepEqual([list[1].bytesUsed, list[1].bytesLimit], [20e9, 100e9]);
+  assert.equal(quotaLeft(list[0]), false);
+  assert.equal(quotaLeft(list[1]), true);
+  assert.equal(hostSupported(list, FICHIER), false, 'out of quota today');
+  assert.equal(hostSupported(list, 'https://www.mediafire.com/file/x'), true);
+  assert.equal(hostSupported(list, 'https://down.example/x'), false);
 });

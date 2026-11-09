@@ -80,6 +80,8 @@ if (!skip) {
         return item ? json(200, { success: true, data: { webdownload_id: item.id, hash: 'h' } }) : json(200, { success: false, error: 'BAD_LINK' });
       }
       const list = kind === 'torrents' ? srv.tb.torrents : srv.tb.webdl;
+      // glibren.23: mylist sem id: a conta inteira (o payload procura o link pelo original_url antes de criar).
+      if (op === 'mylist' && !url.searchParams.get('id')) return json(200, { success: true, data: list.filter((t) => t.held).map((t) => ({ id: t.id, original_url: t.link ?? '' })) });
       const id = Number(url.searchParams.get(op === 'mylist' ? 'id' : kind === 'torrents' ? 'torrent_id' : 'web_id'));
       const item = list.find((t) => t.id === id);
       if (!item) return json(404, { success: false, error: 'ITEM_NOT_FOUND' });
@@ -1664,7 +1666,7 @@ test('glibren.18: com o app fechado, o payload comeca sozinho os pedidos do celu
     { id: 'old', title: 'Lista Antiga', code: 'PPSA20012', files: [{ name: 'Antigo.exfat', size: 2 * MiB, format: 'exfat', via: 'webdl', hash: 'ef'.repeat(16), release: 'rel-old' }] }
   ] };
   writeFileSync(file, JSON.stringify(list));
-  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file, BGDL_APP_SILENCE_MS: '600', BGDL_TB_PACE_MS: '80', BGDL_TB_RATE_WAIT_MS: '300', BGDL_TB_POLL_MS: '100', BGDL_AUTO_RETRY_MS: '400', BGDL_SMP_BASE: `http://127.0.0.1:${port}/smp` });
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_LIBRARY: file, BGDL_APP_SILENCE_MS: '600', BGDL_TB_PACE_MS: '80', BGDL_TB_RATE_WAIT_MS: '300', BGDL_TB_CREATE_GAP_MS: '500', BGDL_TB_POLL_MS: '100', BGDL_AUTO_RETRY_MS: '400', BGDL_SMP_BASE: `http://127.0.0.1:${port}/smp` });
   try {
     await up(base);
     await pageUp();
@@ -1693,6 +1695,10 @@ test('glibren.18: com o app fechado, o payload comeca sozinho os pedidos do celu
     assert.ok(creates.some((c) => c.op === 'createtorrent' && c.body.includes(`magnet:?xt=urn:btih:${HASH}`)));
     assert.ok(creates.some((c) => c.op === 'createwebdownload' && new URLSearchParams(c.body).get('link') === LINK));
     assert.equal(creates.length, 3, 'um 429 e repetido: 2 pedidos + 1 repetido');
+    // glibren.23: antes de criar o webdl, o payload procurou o link na conta (mylist sem id).
+    const look = srv.tb.calls.findIndex((c) => c.op === 'mylist' && c.kind === 'webdl' && !/[?&]id=/.test(c.query));
+    const made = srv.tb.calls.findIndex((c) => c.op === 'createwebdownload');
+    assert.ok(look >= 0 && look < made, 'procurou na conta antes de criar');
     assert.ok(srv.tb.calls.filter((c) => c.op !== 'requestdl').every((c) => c.auth === `Bearer ${KEY}`));
     const gaps = srv.tb.calls.slice(1).map((c, i) => c.at - srv.tb.calls[i].at);
     assert.ok(gaps.every((g) => g >= 60), `ritmo entre chamadas: ${gaps.join(',')}`);

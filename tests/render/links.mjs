@@ -157,7 +157,14 @@ console.log(`--- source list with TorBox\n${torSheet.join('\n')}`);
 assert.equal(torSheet.filter((text) => text === 'TorBox').length, 2, 'one per browser-only source, none on the file link');
 assert.ok(!has(torSheet, /^Show \d+ web browser source/), 'shown at once');
 assert.deepEqual(rowBadges(torSheet, '1fichier.com'), ['Rarely works here', 'TorBox Instant'], 'its captures fail on the console; TorBox holds it');
-assert.deepEqual(rowBadges(torSheet, 'rapidgator.net'), ['Rarely works here'], 'not held: no Instant badge');
+// glibren.23: with the quick check (on by default) a host TorBox has working with quota shows "TorBox ready"; off, the
+// link-by-link check shows only what TorBox holds.
+assert.deepEqual(rowBadges(torSheet, 'rapidgator.net'), ['Rarely works here', 'TorBox ready'], 'quick check: a ready host');
+debrid.setTorBoxQuick(false);
+const exactSheet = sheet(() => {});
+assert.deepEqual(rowBadges(exactSheet, 'rapidgator.net'), ['Rarely works here'], 'link by link, not held: no badge');
+assert.deepEqual(rowBadges(exactSheet, '1fichier.com'), ['Rarely works here', 'TorBox Instant']);
+debrid.setTorBoxQuick(true);
 // glibren: "TorBox only": the links TorBox fetches, the Instant one first; the download button starts with it.
 const { setFormatFilter: setFilter, DEFAULT_FORMAT_FILTER: NO_FILTER } = await load('app/state/format-filter.js');
 setFilter({ kinds: [], unknown: true, debridOnly: true });

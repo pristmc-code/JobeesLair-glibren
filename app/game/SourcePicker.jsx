@@ -13,7 +13,7 @@ import { VersionFace } from './VersionSheet.jsx';
 import { captureStanding, describeSource, isCdnProvider, preferredRelease, sourceSections } from './sources.js';
 import { useT } from '../i18n/index.js';
 import { getGame, readyLabel } from '../state/catalog.js';
-import { activeService, brokenAtTorBox, debridSupports, heldByTorBox, serviceName, useTorBoxInstant } from '../state/debrid.js';
+import { activeService, availableByTorBox, brokenAtTorBox, debridSupports, heldByTorBox, serviceName, torBoxQuick, torBoxReady, useTorBoxInstant } from '../state/debrid.js';
 import { downloadQueue } from '../state/downloads.js';
 import { deviceFacts } from '../state/device.js';
 import { backportAdvice, ps5FakePackagesLaunch } from '../state/firmware.js';
@@ -65,7 +65,8 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
   var GOLD = "#facc15";
   // "TorBox Instant": TorBox holds this source's file already, so it starts at once (state/debrid.js).
   // glibren.13: a link TorBox holds only as a broken copy (an error page kept as the file) says so, in red, not Instant.
-  var instantBadge = (t2, release) => heldByTorBox(release) === true ? { text: t2("debrid.instant"), ink: GOLD, line: GOLD } : brokenAtTorBox(release) ? { text: t2("debrid.brokenCopy"), ink: RED, line: RED } : null;
+  // glibren.23: with the quick check, a release on hosts TorBox has ready today shows "TorBox ready" (state/debrid.js).
+  var instantBadge = (t2, release) => heldByTorBox(release) === true ? { text: t2("debrid.instant"), ink: GOLD, line: GOLD } : brokenAtTorBox(release) ? { text: t2("debrid.brokenCopy"), ink: RED, line: RED } : torBoxQuick() && availableByTorBox(release) === true ? { text: t2("debrid.ready"), ink: GOLD, line: GOLD } : null;
   // A browser source's host on this console (state/capture-hosts.js): green when its captures finish, amber
   // when they fail; nothing while it is untried.
   function captureBadge(t2, release) {
@@ -401,7 +402,7 @@ import { FileSystem, Text, View, useIsFocused } from '@ps5-react/core';
     // glibren: "TorBox only": the links the debrid service fetches, the ones it holds already ("Instant") first.
     const debridOnly = !unfiltered && debridOnlyOn(filter);
     const filtered = unfiltered ? { sections: everySection, hidden: 0 } : filterSections(everySection, filter, { selected, recordOf, debrid: debridOnly ? debridSupports : null });
-    const sections = debridOnly ? filtered.sections.map((section) => ({ ...section, items: [...section.items].sort((a, b) => Number(heldByTorBox(b.release) === true) - Number(heldByTorBox(a.release) === true)) })) : filtered.sections;
+    const sections = debridOnly ? filtered.sections.map((section) => ({ ...section, items: [...section.items].sort((a, b) => Number(heldByTorBox(b.release) === true) - Number(heldByTorBox(a.release) === true) || Number(torBoxReady(b.release)) - Number(torBoxReady(a.release))) })) : filtered.sections;
     const noneViaDebrid = debridOnly && !filtered.viaDebrid;
     const advice = useBackportAdvice(current);
     const countIn = (list, group) => list.find((section) => section.group === group)?.items.length ?? 0;

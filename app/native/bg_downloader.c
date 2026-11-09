@@ -93,7 +93,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 18
+#define BG_API 19
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -5595,6 +5595,11 @@ static void monitor_library_add(int fd, Request* r) {
 // instalar pela Jobee'sLair (aba Arquivos); imagem vai para homebrew/ (place_image).
 static int g_tb_pace_ms = 400, g_tb_rate_wait_ms = 61000, g_tb_poll_ms = 5000, g_tb_ready_ms = 300000, g_auto_retry_ms = 120000;
 static int64_t g_tb_last_ms;
+// glibren.23: como o Orbit Store: no maximo um createwebdownload a cada g_tb_create_gap_ms, e antes de criar o link e
+// procurado na conta (mylist, pelo original_url): um que ja esta la e usado de novo, nao criado outra vez.
+static int g_tb_create_gap_ms = 61000;
+static int64_t g_tb_next_create_ms;
+static const char* g_tb_find_url; // so durante a procura: o link cujo item (original_url) se quer
 
 typedef struct { char id[32], name[256]; uint64_t size; } TbFile;
 #define TB_FILES 64
@@ -5649,10 +5654,28 @@ static int tb_data_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "files")) { jp_ws(jp); if (jp->p < jp->end && *jp->p == '[') return jp_array(jp, tb_file_item, r) ? 1 : -1; return jp_skip(jp) ? 1 : -1; }
   return 0;
 }
+// glibren.23: um item da lista lido so pelo id e o original_url (a procura de g_tb_find_url).
+typedef struct { char id[32], url[1100]; } TbSeen;
+static int tb_seen_field(JP* jp, const char* key, void* ctx) {
+  TbSeen* seen = ctx;
+  if (!strcmp(key, "id")) return jp_id(jp, seen->id, sizeof seen->id) ? 1 : -1;
+  if (!strcmp(key, "original_url")) return tb_text(jp, seen->url, sizeof seen->url) ? 1 : -1;
+  return 0;
+}
 // Uma lista (mylist sem filtro devolve [..]): so o primeiro item conta.
+// MODIFIED (glibren.23): procurando g_tb_find_url, conta o primeiro item cujo original_url e ele.
 static int tb_data_item(JP* jp, void* ctx) {
   TbReply* r = ctx;
   jp_ws(jp);
+  if (g_tb_find_url) {
+    if (jp->p >= jp->end || *jp->p != '{') return jp_skip(jp);
+    TbSeen seen;
+    memset(&seen, 0, sizeof seen);
+    if (!jp_object(jp, tb_seen_field, &seen)) return 0;
+    if (!r->id[0] && seen.id[0] && !strcmp(seen.url, g_tb_find_url)) copy_text(r->id, sizeof r->id, seen.id);
+    r->items++;
+    return 1;
+  }
   if (r->items++ || jp->p >= jp->end || *jp->p != '{') return jp_skip(jp);
   return jp_object(jp, tb_data_field, r);
 }
@@ -5800,7 +5823,18 @@ static int auto_resolve(const AutoReq* q, const char* key, AutoSource* out, char
     const int webdl = !strcmp(q->via, "webdl");
     char magnet[160];
     if (webdl) {
-      ok = tb_request("/webdl/createwebdownload", "link", q->link, 0, key, r, &status);
+      // glibren.23: o link ja na conta e usado de novo; um novo espera a vez (um a cada g_tb_create_gap_ms).
+      g_tb_find_url = q->link;
+      const int found = tb_request("/webdl/mylist?limit=1000&bypass_cache=true", NULL, NULL, 0, key, r, &status) && r->success && r->id[0];
+      g_tb_find_url = NULL;
+      if (found) {
+        logf_("TorBox: o link ja esta na conta (item %s); nao cria outro", r->id);
+        ok = 1;
+      } else {
+        for (int64_t gap; (gap = g_tb_next_create_ms - mono_ms()) > 0 && !g_stop;) sleep_ms(gap > 200 ? 200 : (int)gap);
+        g_tb_next_create_ms = mono_ms() + g_tb_create_gap_ms;
+        ok = tb_request("/webdl/createwebdownload", "link", q->link, 0, key, r, &status);
+      }
     } else {
       snprintf(magnet, sizeof magnet, "magnet:?xt=urn:btih:%s", q->hash);
       ok = tb_request("/torrents/createtorrent", "magnet", magnet, 1, key, r, &status);
@@ -5967,6 +6001,7 @@ static void* auto_loop(void* arg) {
   (void)arg;
   g_tb_pace_ms = atoi(env_or("BGDL_TB_PACE_MS", "400"));
   g_tb_rate_wait_ms = atoi(env_or("BGDL_TB_RATE_WAIT_MS", "61000"));
+  g_tb_create_gap_ms = atoi(env_or("BGDL_TB_CREATE_GAP_MS", "61000")); // glibren.23
   g_tb_poll_ms = atoi(env_or("BGDL_TB_POLL_MS", "5000"));
   g_tb_ready_ms = atoi(env_or("BGDL_TB_READY_MS", "300000"));
   g_auto_retry_ms = atoi(env_or("BGDL_AUTO_RETRY_MS", "120000"));
