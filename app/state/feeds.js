@@ -18,6 +18,8 @@
 import { useEffect, useState } from 'react';
 import { MAX_MIRRORS, feedDocument, parseFeed, parseFeedAsync, stableKey, stableKeyAsync } from './feed-format.js';
 import { isoStamp } from './clock.js';
+import { readJlxAsync } from './jlx.js';
+import { askListsHome, listsAddress, listsGone } from './lists-home.js';
 import { DATA_DIR, LEGACY_DATA_DIR } from './data-dir.js';
 import { webURL } from './download-sources.js';
 import { checkLocalPath, isLocalFeed } from './local-feed.js';
@@ -36,6 +38,12 @@ import { FileSystem, Http } from '@ps5-react/core';
   // bundled catalog. Every console reads it like a feed the player added, without being listed in Settings,
   // so a game added there shows up in the store the next time Jobee'sLair starts.
   var LIVE_FEED = "https://raw.githubusercontent.com/JVK3R/JobeesLair/main/catalog/live.json";
+  // MODIFIED (0.5.7): the live catalog is published as JLX1 (state/jlx.js), as ps5/live.jlx in a repository of its
+  // own, apart from the app's releases; live.json is gone. LIVE_FEED stays its name, so its release ids (and the
+  // downloads started from them) are the same as before. Its address is under the lists' home (state/lists-home.js):
+  // github.com/JVK3R/JobeesLair-Lists, or the place api.jobees.org names when that answers the file is not there.
+  var LIVE_PATH = "ps5/live.jlx";
+  var liveSource = () => listsAddress(LIVE_PATH);
   // The feeds read and refreshed: the live catalog first, then the player's.
   // glibren.20: e a lista Orbit Store (um arquivo que o payload grava), so com a opcao ligada.
   var allFeeds = () => [LIVE_FEED, ...orbitFeedOn() ? [ORBIT_FEED] : [], ...feedList.get().filter((url) => url !== LIVE_FEED && url !== ORBIT_FEED)];
@@ -216,7 +224,7 @@ import { FileSystem, Http } from '@ps5-react/core';
   var addressOf = (value) => /^\s*(?:\/|file:\/\/)/i.test(value || "") ? checkLocalPath(value) : checkURL(value);
   // The addresses a refresh tries, in order: the one that worked last, the feed's own, then its mirrors.
   function sourcesOf(url) {
-    const all = [url, ...mirrorsOf(url)];
+    const all = [url === LIVE_FEED ? liveSource() : url, ...mirrorsOf(url)];
     const last = meta.get(url)?.from;
     return [...new Set(last && all.includes(last) ? [last, ...all] : all)];
   }
@@ -241,7 +249,7 @@ import { FileSystem, Http } from '@ps5-react/core';
   async function fetchFrom(source, url) {
     // No custom headers: with them the transport will not follow a redirect (raw file hosts redirect).
     const response = await Http.request(source, { maxBytes: MAX_BYTES });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
     // 0.5.3: the copy the cache holds already, as the server's ETag says: it is not read, checked, hashed or
     // written again. Reading the live catalog (2 MiB at most) and building its copies held the console for
     // over a second after every launch, and its heap filled until a collection stopped the screen; the live
@@ -251,7 +259,8 @@ import { FileSystem, Http } from '@ps5-react/core';
     if (etag && known?.etag === etag && known.from === source) return { unchanged: true };
     let document2;
     try {
-      document2 = JSON.parse(await response.text());
+      // 0.5.7: a JLX1 feed (state/jlx.js) is decoded first, a few slices a frame; a plain one is read as it is.
+      document2 = JSON.parse(await readJlxAsync(await response.text(), nextFrame));
     } catch {
       throw new Error("Not JSON.");
     }
@@ -290,7 +299,7 @@ import { FileSystem, Http } from '@ps5-react/core';
     setStatus(url, { state: "refreshing" });
     try {
       const sources = sourcesOf(url);
-      let feed = null, from = null;
+      let feed = null, from = null, gone = false;
       const failures = [];
       for (const source of sources) {
         try {
@@ -299,7 +308,18 @@ import { FileSystem, Http } from '@ps5-react/core';
           break;
         } catch (error2) {
           failures.push(error2.message);
+          if (url === LIVE_FEED && source === liveSource() && listsGone(error2.status)) gone = true;
           console.log(`feeds: ${source} failed: ${error2.message}`);
+        }
+      }
+      // 0.5.7: the live catalog's file is not at its address: once, where the lists are now (state/lists-home.js).
+      if (!feed && gone && await askListsHome()) {
+        try {
+          from = liveSource();
+          feed = await fetchFrom(from, url);
+        } catch (error2) {
+          failures.push(error2.message);
+          console.log(`feeds: ${from} failed: ${error2.message}`);
         }
       }
       if (!feed) throw new Error(failures.length > 1 ? `${failures[0]} (${failures.length - 1} mirror${failures.length > 2 ? "s" : ""} also failed)` : failures[0]);

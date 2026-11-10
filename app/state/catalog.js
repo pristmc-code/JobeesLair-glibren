@@ -19,6 +19,7 @@ import { createPageCache } from './page-cache.js';
 import { feedRatings, loadFeedGames } from './feeds.js';
 import { ratings as bundledRatings } from '../data/ratings.js';
 import { createReleaseCache } from './release-cache.js';
+import { readJlx } from './jlx.js';
 import { KINDS, gameFormats, ready1360 } from './formats.js';
 import { deviceFacts } from './device.js';
 import { consoleFirmware, firmwareText, ps5FakePackagesLaunch } from './firmware.js';
@@ -48,7 +49,8 @@ import { noteRow, warmAtStart } from './cover-warm.js';
     const low = lowFirmware();
     return low ? text.replace("13.60", low) : text;
   };
-  var releaseCache = createReleaseCache((path) => FileSystem.readFile(`/app0/${path}`));
+  // 0.5.7: the bundled release files are JLX1 (state/jlx.js).
+  var releaseCache = createReleaseCache((path) => readJlx(FileSystem.readFile(`/app0/${path}`)));
   var pageCache = createPageCache((path) => FileSystem.readFile(`/app0/${path}`));
   var NO_PAGE = { about: [], shots: [], summary: "" };
   var SYNONYMS = {

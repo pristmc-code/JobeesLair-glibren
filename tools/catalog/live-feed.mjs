@@ -1,4 +1,4 @@
-// Builds catalog/live.json, the live catalog feed every Jobee'sLair reads at launch (state/feeds.js LIVE_FEED),
+// Builds ps5/live.jlx in the lists clone (tools/catalog/lists-dir.mjs), the live catalog feed every Jobee'sLair reads at launch (state/feeds.js LIVE_PATH),
 // from the public Pegasus catalogs (pegasus-dl.dev). Added in 0.5.1.
 //
 //   node tools/catalog/live-feed.mjs        (from the repository root, Node 20+)
@@ -8,14 +8,18 @@
 // dropped, and a game with nothing new left is dropped. What remains goes in, newest first and games the app
 // lacks before games it has, within the budget a console can read in one piece (state/feed-format.js:
 // 1500 games, 6000 links; state/feeds.js: 2 MiB). The scheduled workflow (.github/workflows/catalog-live.yml)
-// runs it every few hours and commits the file when it changed, so a game added to a Pegasus catalog reaches
+// (that repository's own workflow) runs it every few hours and commits the file when it changed, so a game added to a Pegasus catalog reaches
 // every console the next time Jobee'sLair starts, without a new release.
 import { readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const OUT = join(ROOT, 'catalog', 'live.json');
+// 0.5.7: written as JLX1 (app/state/jlx.js), as live.jlx, in JVK3R/JobeesLair-Lists (ps5/); live.json is gone.
+const { PS5_LIVE: OUT, PS5_NAMES: NAMES, PS5_RATINGS, PS5_FIRST_SEEN: FIRST_SEEN, PS5_ART: ART } = await import(new URL('./lists-dir.mjs', import.meta.url).href);
+const { encodeJlx, readJlx } = await import(new URL('../../app/state/jlx.js', import.meta.url).href);
+// A size as the console reads it: the encoded text, one character a byte.
+const jlxSize = (value) => encodeJlx(value).length - 5;
 const API = 'https://pegasus-dl.dev/api/catalogs';
 const UA = 'JobeesLair-live-feed (+https://github.com/JVK3R/JobeesLair)';
 // A little under the app's limits, so a console never has to cut the feed short.
@@ -44,7 +48,7 @@ function bundled() {
   const dir = join(ROOT, 'app/data/releases');
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.json')) continue;
-    for (const release of JSON.parse(readFileSync(join(dir, name), 'utf8'))) {
+    for (const release of JSON.parse(readJlx(readFileSync(join(dir, name), 'utf8')))) {
       if (release.url) urls.add(release.url);
       if (release.browserUrl) urls.add(release.browserUrl);
     }
@@ -84,9 +88,9 @@ function setsOf(links) {
 // 0.5.1 Pre Release 1: DLPS numbers a game's AkiraBox links "part 1, 2, 3" in page order, whether they are
 // the volumes of one archive or whole files side by side (PPSA21564: two complete .rar uploads and an .ffpkg,
 // as "part 1-3"; the app then waited for a "part 1" no page held). AkiraBox and Rootz say a file's name in
-// the page title, so those links are read once (catalog/names.json keeps what was read) and regrouped by
+// the page title, so those links are read once (ps5/names.jlx beside the catalog keeps what was read) and regrouped by
 // the names: volumes of one name together, any other file a download of its own.
-const NAMES = join(ROOT, 'catalog', 'names.json');
+// JLX1 like the catalog (0.5.7).
 const NAMED_HOST = /^(?:www\.)?(?:akirabox\.(?:com|to)|rootz\.so)$/;
 const DEAD = 'dead';
 // "Game.part02.rar", "Game.7z.002", "Game.r00": a volume of the archive named without it.
@@ -115,9 +119,8 @@ async function pageName(url) {
 // 0.5.2: the pictures of a game the app does not bundle come from the PlayStation Store, as the bundled games'
 // do: its square cover (MASTER, at the bundled covers' size) and its background for the game page. Pegasus's
 // poster stays as the last fallback: some catalogs link a WebP (cdn.prosperopatches.com .../icon0.webp), which the
-// console cannot draw, and those games showed no picture at all. Each game is asked once (catalog/art.json keeps
+// console cannot draw, and those games showed no picture at all. Each game is asked once (ps5/art.json keeps
 // the answer, `none` for a title the store does not know, asked again after ART_RETRY_DAYS).
-const ART = join(ROOT, 'catalog', 'art.json');
 const STORE = (id) => `https://m.np.playstation.com/api/catalog/v2/titles/${id}_00/concepts?country=US&language=en&age=999`;
 const COVERS = ['MASTER', 'GAMEHUB_COVER_ART', 'PORTRAIT_BANNER'], BACKDROPS = ['BACKGROUND_LAYER_ART', 'SIXTEEN_BY_NINE_BANNER', 'FOUR_BY_THREE_BANNER'];
 const ART_RETRY_DAYS = 14, ART_PER_RUN = 400;
@@ -280,28 +283,27 @@ async function main() {
     .sort((a, b) => Number(bundledIds.has(a.id)) - Number(bundledIds.has(b.id)) || b.at - a.at || a.id.localeCompare(b.id));
   // The file names of the AkiraBox and Rootz links the feed may take, read once and kept.
   let names = {};
-  try { names = JSON.parse(readFileSync(NAMES, 'utf8')); } catch {}
+  try { names = JSON.parse(readJlx(readFileSync(NAMES, 'utf8'))); } catch {}
   const wanted = candidates.slice(0, MAX_GAMES + 200).flatMap((game) => pick(game.links, bundledIds.has(game.id) ? KNOWN_GAME_LINKS : NEW_GAME_LINKS))
     .flatMap((set) => set.links.map((link) => link.url)).filter((url) => NAMED_HOST.test(new URL(url).host));
   const looked = await readNames(wanted, names);
   // Every game's store rating (tools/catalog/ratings.mjs), listed here or not: the console's Top Rated.
   let ratings = {};
   try {
-    ratings = Object.fromEntries(Object.entries(JSON.parse(readFileSync(join(ROOT, 'catalog', 'ratings.json'), 'utf8')))
+    ratings = Object.fromEntries(Object.entries(JSON.parse(readFileSync(PS5_RATINGS, 'utf8')))
       .filter(([, entry]) => entry.count > 0).map(([id, entry]) => [id, [entry.stars, entry.count]]));
   } catch {}
-  // 0.5.1: the day each game the app does not bundle was first listed here (catalog/first-seen.json), for the
+  // 0.5.1: the day each game the app does not bundle was first listed here (ps5/first-seen.json), for the
   // app's "New this week". Pegasus's own createdAt is when it imported a package, the same week for all of them.
-  const FIRST_SEEN = join(ROOT, 'catalog', 'first-seen.json');
   let firstSeen = {};
   try { firstSeen = JSON.parse(readFileSync(FIRST_SEEN, 'utf8')); } catch {}
   const today = new Date().toISOString().slice(0, 10);
-  // 0.5.2: the store's pictures of the games the app does not bundle (catalog/art.json, artOf).
+  // 0.5.2: the store's pictures of the games the app does not bundle (ps5/art.json, artOf).
   let art = {};
   try { art = JSON.parse(readFileSync(ART, 'utf8')); } catch {}
   const asked = await readArt(candidates.slice(0, MAX_GAMES + 200).filter((game) => !bundledIds.has(game.id)).map((game) => game.id), art, today);
   const out = [];
-  let links = 0, bytes = 200 + Buffer.byteLength(JSON.stringify(ratings)), fresh = 0, regrouped = 0;
+  let links = 0, bytes = 200 + jlxSize(ratings), fresh = 0, regrouped = 0;
   for (const game of candidates) {
     if (out.length >= MAX_GAMES || links >= MAX_LINKS) break;
     const known = bundledIds.has(game.id);
@@ -331,7 +333,7 @@ async function main() {
         record: set.parted ? `live-${game.id.toLowerCase()}-${tag(`${set.build}|${set.name}`)}` : `live-${game.id.toLowerCase()}-${tag(link.url)}`,
       }))),
     };
-    const size = Buffer.byteLength(JSON.stringify(entry)) + 1;
+    const size = jlxSize(entry) + 1;
     if (bytes + size > MAX_BYTES) break;
     bytes += size;
     links += entry.releases.length;
@@ -341,8 +343,8 @@ async function main() {
 
   const feed = { version: 1, name: "Jobee'sLair live catalog", source: 'pegasus-dl.dev', ratings, games: out };
   mkdirSync(dirname(OUT), { recursive: true });
-  writeFileSync(OUT, `${JSON.stringify(feed)}\n`);
-  writeFileSync(NAMES, `${JSON.stringify(Object.fromEntries(Object.entries(names).sort()), null, 0)}\n`);
+  writeFileSync(OUT, `${encodeJlx(feed)}\n`);
+  writeFileSync(NAMES, `${encodeJlx(Object.fromEntries(Object.entries(names).sort()))}\n`);
   writeFileSync(FIRST_SEEN, `${JSON.stringify(Object.fromEntries(Object.entries(firstSeen).sort()), null, 1)}\n`);
   // One game a line, so a run's changes read as lines added.
   writeFileSync(ART, `{\n${Object.entries(art).sort(([a], [b]) => a.localeCompare(b)).map(([id, entry]) => `${JSON.stringify(id)}:${JSON.stringify(entry)}`).join(',\n')}\n}\n`);
@@ -350,7 +352,7 @@ async function main() {
   console.log(`ratings: ${Object.keys(ratings).length} games`);
   console.log(`store art: ${Object.values(art).filter((entry) => !entry.none).length} games with pictures, ${Object.values(art).filter((entry) => entry.none).length} the store has none of (${asked} asked this run)`);
   console.log(`file names: ${Object.keys(names).length} known (${looked} pages read this run), ${regrouped} sets regrouped by them`);
-  console.log(`wrote catalog/live.json: ${out.length} games (${fresh} new to the app), ${links} links, ${(bytes / 1048576).toFixed(2)} MiB; ${candidates.length - out.length} left for a later run`);
+  console.log(`wrote ${OUT}: ${out.length} games (${fresh} new to the app), ${links} links, ${(bytes / 1048576).toFixed(2)} MiB; ${candidates.length - out.length} left for a later run`);
 }
 
 main().catch((error) => {

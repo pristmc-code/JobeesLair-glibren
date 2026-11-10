@@ -729,7 +729,9 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
   }
   // The optional donation link: a QR code for the phone and a short note, shown only when the row is
   // opened. Nothing in the app depends on it, asks for it or reminds anyone of it.
-  var SUPPORT_URL = "https://buymeacoffee.com/jvk3r";
+  // 0.5.6: Ko-fi in place of Buy Me a Coffee, its page itself, one step fewer than jobees.org's Support screen
+  // (which keeps the crypto addresses and the supporters' names).
+  var SUPPORT_URL = "https://ko-fi.com/jvk3r";
   // The panel takes focus when it opens, so the page scrolls until the whole code shows and stays there for a
   // phone to scan (only the rows around it could take focus before, and either one scrolled half the code
   // away). Cross on it folds it again.
@@ -769,7 +771,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
         (error2) => setReport({ state: "failed", error: error2.message })
       );
     };
-    const detail = report.state === "armed" ? t2("settings.report.armed") : report.state === "sending" ? t2("settings.report.sending") : report.state === "sent" ? t2("settings.report.sent") : t2("settings.report.code", { code: reportCode() });
+    const detail = report.state === "armed" ? t2("settings.report.armed") : report.state === "sending" ? t2("settings.report.sending") : report.state === "sent" ? t2("settings.report.sent", { code: reportCode() }) : t2("settings.report.code", { code: reportCode() });
     return jsxs(Fragment, { children: [
       jsx(Row, { focusKey: "settings:bugReport", name: t2("settings.report.row"), detail, hint: t2("settings.report.detail"), end: jsx(Icon, { name: report.state === "sent" ? "circleCheck" : "alert", color: report.state === "armed" ? colors.glow : colors.muted }), onPress: press }),
       report.state === "failed" ? jsx(Callout, { tone: "error", children: report.error }) : null,
