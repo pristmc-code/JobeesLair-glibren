@@ -3,7 +3,7 @@
 // Additional attribution term: see LICENSE-ATTRIBUTION.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {acquireImage, Archives, BrowserCapture, Controller, Downloads, FileSystem, Http, LocalNetwork, Power, SelfUpdate, Sound} from './native.js';
+import {acquireImage, Archives, BrowserCapture, Controller, DeviceInfo, Downloads, FileSystem, Http, LocalNetwork, Power, SelfUpdate, Sound} from './native.js';
 import {setFrameBatcher} from './frame.js';
 
 test('native network tasks deliver progress, release listeners and stop polling', async () => {
@@ -146,6 +146,20 @@ test('SelfUpdate.arm hands the control directory to the host and returns its ans
     for (const bad of ['relative/dir', '/data/a\nb', '/data/\0', 42, '/' + 'x'.repeat(900)])
       assert.throws(() => SelfUpdate.arm(bad), TypeError);
     assert.deepEqual(asked, ['/data/JobeesLair/update', '/data/other'], 'refused paths never reach the host');
+  } finally {
+    delete globalThis.__ps5ReactNative;
+  }
+});
+
+test('DeviceInfo.memory reads the host counters, passes detail as a boolean, and answers null on an older host', () => {
+  const asked = [];
+  globalThis.__ps5ReactNative = {device: {memory: detail => (asked.push(detail), {heapUsed: 21 << 20, heapLimit: 64 << 20, processUsed: null, processSize: null, processPeak: null})}};
+  try {
+    assert.equal(DeviceInfo.memory().heapUsed, 21 << 20);
+    DeviceInfo.memory(1);
+    assert.deepEqual(asked, [false, true]);
+    globalThis.__ps5ReactNative = {device: {info: () => ({})}};
+    assert.equal(DeviceInfo.memory(), null);
   } finally {
     delete globalThis.__ps5ReactNative;
   }

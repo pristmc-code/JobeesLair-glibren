@@ -7,6 +7,7 @@
 #include "copies.hpp"
 #include "disk_probes.hpp"
 #include "text_shaper.hpp"
+#include "js_heap.hpp"
 
 extern "C" {
 #include "er_runtime.h"
@@ -27,6 +28,7 @@ extern "C" {
 #include <vector>
 
 std::atomic<const char*> host::current_call{nullptr};
+void (*host::process_heap)(std::size_t*, std::size_t*, std::size_t*) = nullptr;
 
 namespace {
 bool exit_requested = false;
@@ -419,6 +421,31 @@ JSValue device_info(JSContext* ctx, JSValueConst, int, JSValueConst*) {
   return object;
 }
 
+// glibren: device.memory(detail) (host_api.hpp). The plain call reads counters only, so the app can sample it on
+// every screen change; detail walks the heap (JS_ComputeMemoryUsage) for the object counts.
+JSValue device_memory(JSContext* ctx, JSValueConst, int, JSValueConst* argv) {
+  JSValue object = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, object, "heapUsed", JS_NewInt64(ctx, static_cast<std::int64_t>(js_heap_live())));
+  JS_SetPropertyStr(ctx, object, "heapLimit", JS_NewInt64(ctx, static_cast<std::int64_t>(kJsMemoryLimit)));
+  std::size_t used = 0, size = 0, peak = 0;
+  const bool process = host::process_heap != nullptr;
+  if (process) host::process_heap(&used, &size, &peak);
+  const auto bytes = [&](std::size_t value) { return process ? JS_NewInt64(ctx, static_cast<std::int64_t>(value)) : JS_NULL; };
+  JS_SetPropertyStr(ctx, object, "processUsed", bytes(used));
+  JS_SetPropertyStr(ctx, object, "processSize", bytes(size));
+  JS_SetPropertyStr(ctx, object, "processPeak", bytes(peak));
+  if (JS_ToBool(ctx, argv[0])) {
+    JSMemoryUsage usage{};
+    JS_ComputeMemoryUsage(JS_GetRuntime(ctx), &usage);
+    JS_SetPropertyStr(ctx, object, "mallocSize", JS_NewInt64(ctx, usage.malloc_size));
+    JS_SetPropertyStr(ctx, object, "mallocCount", JS_NewInt64(ctx, usage.malloc_count));
+    JS_SetPropertyStr(ctx, object, "objCount", JS_NewInt64(ctx, usage.obj_count));
+    JS_SetPropertyStr(ctx, object, "strCount", JS_NewInt64(ctx, usage.str_count));
+    JS_SetPropertyStr(ctx, object, "arrayCount", JS_NewInt64(ctx, usage.array_count));
+  }
+  return object;
+}
+
 long long days_from_civil(long long y, int m, int d) {
   y -= m <= 2;
   const long long era = (y >= 0 ? y : y - 399) / 400, yoe = y - era * 400;
@@ -688,7 +715,7 @@ constexpr Function kFs[] = {
 constexpr Function kRemovals[] = {{"poll", removals_poll, 0}};
 constexpr Function kCopies[] = {{"poll", copies_poll, 0}, {"cancel", copies_cancel, 1}};
 constexpr Function kDiskProbes[] = {{"poll", disk_probes_poll, 0}, {"cancel", disk_probes_cancel, 1}};
-constexpr Function kDevice[] = {{"info", device_info, 0}, {"utcOffset", device_utc_offset, 1}};
+constexpr Function kDevice[] = {{"info", device_info, 0}, {"utcOffset", device_utc_offset, 1}, {"memory", device_memory, 1}};
 constexpr Function kUsers[] = {{"foreground", users_foreground, 0}, {"loggedIn", users_logged_in, 0}};
 constexpr Function kPad[] = {
   {"setLightBar", pad_set_light_bar, 3}, {"resetLightBar", pad_reset_light_bar, 0},

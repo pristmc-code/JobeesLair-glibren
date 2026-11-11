@@ -4,6 +4,7 @@
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { recordVisit } from './recent.js';
+import { memoryScreen } from './memory-meter.js';
 import { useFocus } from '@ps5-react/core';
 
   var StateContext2 = (0, createContext)(null);
@@ -76,6 +77,11 @@ import { HOMEBREW_ONLY } from '../edition.js';
       };
     });
     const state = (0, useMemo)(() => ({ stack, top: stack[stack.length - 1] }), [stack]);
+    // glibren (medidor de memoria): cada troca de tela mede, depois da tela nova montada (state/memory-meter.js).
+    const topName = state.top?.name ?? "";
+    (0, useEffect)(() => {
+      if (topName) memoryScreen(topName);
+    }, [topName]);
     return /* @__PURE__ */ (0, jsx)(ActionsContext2.Provider, { value: actions, children: /* @__PURE__ */ (0, jsx)(StateContext2.Provider, { value: state, children: /* @__PURE__ */ (0, jsxs)(ImmersiveContext.Provider, { value: immersive > 0, children: [
       children,
       request && /* @__PURE__ */ (0, jsx)(FocusRequest, { target: request.target }, request.n)

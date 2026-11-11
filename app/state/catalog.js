@@ -28,6 +28,7 @@ import { consoleFirmware, firmwareText, ps5FakePackagesLaunch } from './firmware
 import { FileSystem } from '@ps5-react/core';
 import { PS4 } from './ps4.js';
 import { noteRow, warmAtStart } from './cover-warm.js';
+import { memorySample } from './memory-meter.js';
 
   // 0.5.1: "Ready" is for this console's firmware. At 11.60 or lower PS5 fake packages start too, so a PS5 game
   // with one is ready there, and the label names that firmware ("Ready for 9.60"); above, it is 13.60's rule and
@@ -209,8 +210,11 @@ import { noteRow, warmAtStart } from './cover-warm.js';
     countsKept.clear();
     relatedCache.clear();
     genres = [...new Set(games.flatMap((game) => game.genres))].sort();
+    memorySample("loja:trocar");
   }
   var byId = new Map(entries.map((game) => [game.id, game]));
+  // glibren (medidor de memoria): a loja montada (o catalogo embutido com os feeds), state/memory-meter.js.
+  memorySample("loja:montar");
   var getGame = (id) => byId.get(id);
   function listedId(id) {
     const game = byId.get(id);

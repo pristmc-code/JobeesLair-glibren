@@ -37,6 +37,7 @@ import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js'
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
 import { CONVERT_OPTIONS, setConvertOption, useConvertOptions } from '../state/convert-options.js';
 import { exitSummary, leaveApp } from '../state/exit-app.js';
+import { memorySample, memorySnapshot, subscribeMemory } from '../state/memory-meter.js';
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
 import { setScreenSaver, showScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
@@ -882,6 +883,49 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       jsx(Folded, { focusKey: "settings:stats:what", name: t2("settings.online.what"), paragraphs: [tWhole("settings.online.sends"), tWhole("settings.online.never")] })
     ] });
   }
+  // glibren (medidor de memoria, state/memory-meter.js): "Memória: agora X MB · pico Y MB (em <ação>)"; aberta, as
+  // telas e ações que mais usaram, da maior para a menor. Uma amostra ao abrir a página e outra a cada 30 s.
+  var MEMORY_ACTIONS = {
+    "inicio": "start",
+    "loja:montar": "store",
+    "loja:trocar": "storeChange",
+    "loja:abrir": "live",
+    "loja:atualizar": "live",
+    "orbit:abrir": "orbit",
+    "orbit:atualizar": "orbit",
+    "feeds:abrir": "feeds",
+    "feeds:atualizar": "feeds",
+    "biblioteca-torbox:ler": "library",
+    "biblioteca-torbox:montar": "library",
+    "biblioteca-torbox:gravar": "libraryWrite",
+    "descobrir-formatos": "formats",
+    "descobrir-formatos:inicio": "formats",
+    "procurar-torbox": "torboxSearch"
+  };
+  function memoryActionName(t2, action) {
+    const name = String(action ?? "");
+    if (name === "tela:tube") return "YouTube";
+    if (name.startsWith("tela:")) return t2("settings.memory.screen", { name: name.slice(5) });
+    const key = MEMORY_ACTIONS[name];
+    return key ? t2(`settings.memory.action.${key}`) : name;
+  }
+  var memoryMB = (bytes) => formatNumber2(bytes / (1024 * 1024), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  function MemoryRows({ startOpen = false } = {}) {
+    const t2 = useT();
+    const [open, setOpen] = (0, useState)(startOpen === true);
+    const [meter, setMeter] = (0, useState)(() => {
+      memorySample();
+      return memorySnapshot();
+    });
+    (0, useEffect)(() => subscribeMemory(() => setMeter(memorySnapshot())), []);
+    const { last, peak, top } = meter;
+    const detail = last && peak ? t2("settings.memory.detail", { now: memoryMB(last.used), peak: memoryMB(peak.used), action: memoryActionName(t2, peak.action) }) : t2("settings.memory.none");
+    const hint = last?.limit ? t2("settings.memory.hint", { limit: formatNumber2(last.limit / (1024 * 1024), { maximumFractionDigits: 1 }) }) : void 0;
+    return jsxs(Fragment, { children: [
+      jsx(Row, { focusKey: "settings:memory", name: t2("settings.memory.row"), detail, hint, end: top.length ? jsx(Icon, { name: open ? "chevronUp" : "chevronDown", color: colors.muted }) : null, onPress: () => setOpen((value) => !value) }),
+      ...open ? top.map((item, index) => jsx(Text, { style: text(20, colors.muted), children: t2("settings.memory.item", { n: index + 1, action: memoryActionName(t2, item.action), mb: memoryMB(item.used) }) }, item.action)) : []
+    ] });
+  }
   function AboutCard() {
     const t2 = useT();
     const { online: count } = useOnline();
@@ -918,6 +962,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
         focusLater("settings:support");
       } }) : null,
       jsx(ReportRow, {}),
+      jsx(MemoryRows, {}),
       jsx(OnlineRows, {}),
       /* @__PURE__ */ (0, jsx)(Folded, { focusKey: "settings:credits", name: t2("settings.about.creditsRow"), paragraphs: [tWhole("settings.about.origin"), tWhole("settings.about.credits")] })
     ] });
@@ -1070,4 +1115,4 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     ] });
   }
 
-export { SettingsScreen };
+export { MemoryRows, SettingsScreen };
