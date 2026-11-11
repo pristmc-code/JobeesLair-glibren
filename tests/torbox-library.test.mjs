@@ -47,9 +47,12 @@ function fakeApi({ holds = (link) => /\/(\d+)\//.exec(link)?.[1] % 2 === 0, acco
     }
   };
 }
-// Um relógio e um sleep que não esperam de verdade: o tempo anda o que se pediu.
+// Um relógio e um sleep que não esperam de verdade: o tempo anda o que se pediu. Cada relógio começa um dia depois do
+// anterior: o id de uma rodada é o "agora" mais 2 caracteres ao acaso (1 em 1.296), e duas rodadas com o mesmo início
+// colidiam de vez em quando (a 2a achava que os jogos da 1a eram dela: "15 !== 10" no teste do "só os novos" cancelado).
+let clockStart = 1_793_960_000_000;
 function clock() {
-  let at = 1_793_960_000_000;
+  let at = (clockStart += 86_400_000);
   const waits = [];
   return { now: () => at, waits, sleep: async (ms, signal) => {
     if (signal?.aborted) throw Object.assign(new Error('Stopped.'), { name: 'AbortError' });
@@ -425,15 +428,15 @@ test('glibren.25: "show in the store": a catalog turned off leaves the store, th
   delete globalThis.__stubFiles;
 });
 
-test('glibren.26: a TorBox call the console never answers gives up as a network failure, and Cancel stops at once', async () => {
+test('glibren.26: a TorBox call the console never answers gives up as a network failure, and Cancel stops at once', { timeout: 30000 }, async () => {
   const hanging = { ...fakeApi(), myList: () => new Promise(() => {}) };
   await assert.rejects(lib.buildLibrary({ entries: entriesOf([game(2)]), api: hanging, ...quiet, ...clock(), callLimit: 20 }), { code: 'NETWORK' });
   const listeners = new Set();
   const signal = { aborted: false, addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) };
   setTimeout(() => { signal.aborted = true; for (const fn of listeners) fn(); }, 20);
-  const started = Date.now();
+  // Sem limite (callLimit 0) e com a chamada que nunca responde, so o Cancelar encerra: se ele esperasse a chamada, o
+  // teste nao terminaria (sem medir o tempo, que sob carga passava dos 2 s sem nada errado).
   await assert.rejects(lib.buildLibrary({ entries: entriesOf([game(2)]), api: hanging, ...quiet, ...clock(), signal, callLimit: 0, save: () => {} }), { name: 'AbortError' });
-  assert.ok(Date.now() - started < 2000, 'Cancel did not wait for the call');
 });
 
 // glibren.28: no PS5 (glibren.27, lista Orbit carregada) o JSON.stringify do banco inteiro de 3.185 jogos esgotou o heap de

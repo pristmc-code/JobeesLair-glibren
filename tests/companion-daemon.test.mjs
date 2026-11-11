@@ -55,7 +55,9 @@ function start(env, lines) {
       out += chunk;
       if (out.includes('\n')) resolve({ answer: out.split('\n')[0], child });
     });
-    child.on('exit', () => resolve({ answer: out.split('\n')[0], child }));
+    // 'close', nao 'exit': o 'exit' pode chegar antes do que o processo escreveu no stdout (sob carga a resposta
+    // "stopped" de quem sai logo depois de responder virava '').
+    child.on('close', () => resolve({ answer: out.split('\n')[0], child }));
     child.on('error', () => resolve({ answer: '', child }));
   });
 }
@@ -71,6 +73,13 @@ async function http(port, method, route, { body, cookie, jbh = true } = {}) {
   return { status: response.status, cookie: response.headers.get('set-cookie'), text: await response.text() };
 }
 const refused = (port) => fetch(`http://127.0.0.1:${port}/`).then(() => false, () => true);
+// Espera uma condicao (com prazo largo), nao um tempo fixo: com a suite inteira em paralelo o helper demora mais a abrir
+// a porta, a soltar e a retomar.
+async function eventually(check, what, ms = 20000) {
+  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) if (await check()) return;
+  throw new Error(`never: ${what}`);
+}
+const serving = (port) => eventually(async () => !(await refused(port)), 'the helper answers on its port');
 
 test('the closed-app companion signs phones in, launches the app, gives the port up while it runs and runs payloads', { skip, timeout }, async (t) => {
   assert.equal(build().status, 0, build().stderr);
@@ -93,8 +102,11 @@ test('the closed-app companion signs phones in, launches the app, gives the port
   const { answer, child } = await start(env, lines('482913'));
   t.after(() => child.kill());
   assert.equal(answer, 'ready');
-  assert.equal(readFileSync(path.join(payloads, 'helper.txt'), 'utf8'), 'ready\n', 'the answer is also in helper.txt, which the app reads');
-  await wait(300);
+  // O helper responde no stdout e so depois grava o helper.txt (o app le o arquivo segundos depois): espera o arquivo.
+  const helperTxt = () => { try { return readFileSync(path.join(payloads, 'helper.txt'), 'utf8'); } catch { return ''; } };
+  await eventually(() => helperTxt() === 'ready\n', 'helper.txt written');
+  assert.equal(helperTxt(), 'ready\n', 'the answer is also in helper.txt, which the app reads');
+  await serving(web);
 
   const page = await http(web, 'GET', '/', { jbh: false });
   assert.equal(page.status, 200);
@@ -122,16 +134,15 @@ test('the closed-app companion signs phones in, launches the app, gives the port
   assert.equal((await http(web, 'POST', '/api/run', { cookie, body: { path: '/etc/passwd' } })).status, 400);
   assert.equal((await http(web, 'POST', '/api/run', { cookie, body: { path: `${payloads}/../x.elf` } })).status, 400);
   assert.equal((await http(web, 'POST', '/api/run', { cookie, body: { path: path.join(payloads, 'owner__tool', 'tool.elf') } })).status, 200);
-  await wait(200);
+  await eventually(() => received.length > 0, 'the payload reached the loader');
   assert.deepEqual(received, ['\x7fELF-payload-bytes']);
 
   // Launching starts the app, and the port is let go while it runs, then taken again once it closes.
   assert.equal((await http(web, 'POST', '/api/launch', { cookie })).status, 200);
   assert.ok(existsSync(running));
-  await wait(1200);
-  assert.ok(await refused(web), 'the app has the port while it runs');
+  await eventually(() => refused(web), 'the app has the port while it runs');
   rmSync(running);
-  await wait(2800);
+  await serving(web);
   assert.equal((await http(web, 'GET', '/', { jbh: false })).status, 200, 'back once the app closed');
 
   // Wrong PINs: three free, then refused for a moment without stalling anything else.
@@ -145,8 +156,7 @@ test('the closed-app companion signs phones in, launches the app, gives the port
   // A second one hands its settings over: a new PIN and session sign the old session out, and clear the wait.
   const second = await start(env, lines('630417', 'newsessionnewsession2345'));
   assert.equal(second.answer, 'updated');
-  await wait(200);
-  assert.equal((await http(web, 'GET', '/api/status', { cookie })).status, 401);
+  await eventually(async () => (await http(web, 'GET', '/api/status', { cookie })).status === 401, 'the old session signed out');
   assert.equal((await http(web, 'GET', '/api/status', { cookie: 'jbh=newsessionnewsession2345' })).status, 200);
   assert.equal((await http(web, 'POST', '/auth', { body: { pin: '630417' } })).status, 200);
 
@@ -211,7 +221,7 @@ test('the helper answers only to the console by its IP address, and cuts off a r
   const { answer, child } = await start(env, ['CMP2', 'PPSA99471', String(web), '482913', payloads, queue, '-']);
   t.after(() => child.kill());
   assert.equal(answer, 'ready');
-  await wait(300);
+  await serving(web);
   const get = (host) => raw(web, { text: `GET / HTTP/1.1\r\nHost: ${host}\r\n\r\n` }).then((reply) => reply.answer);
   const named = await get('jobees.example:80');
   assert.match(named, /^HTTP\/1\.1 403 /, 'a domain name is refused: a web page could reach the helper through DNS rebinding');
@@ -220,6 +230,7 @@ test('the helper answers only to the console by its IP address, and cuts off a r
   for (const host of ['127.0.0.1.5', '256.1.1.1', '1.2.3', '127.0.0.1:', '127.0.0.1:123456', '[::1]']) assert.match(await get(host), /^HTTP\/1\.1 403 /, host);
   const slow = await raw(web, { trickle: `GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Pad: ${'x'.repeat(40)}\r\n\r\n`, every: 250 });
   assert.match(slow.answer, /^HTTP\/1\.1 400 /, 'cut off');
-  assert.ok(slow.open < 4500, `cut off after ${slow.open} ms, not once the client was done`);
+  // Cortada em ~2 s (COMPANION_TEST_REQUEST_S); o cliente so terminaria em ~15 s. A folga e para maquina carregada.
+  assert.ok(slow.open < 9000, `cut off after ${slow.open} ms, not once the client was done`);
   assert.match(await get('127.0.0.1'), /^HTTP\/1\.1 200 /, 'and the next phone is served at once');
 });

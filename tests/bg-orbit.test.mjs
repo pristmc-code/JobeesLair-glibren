@@ -91,19 +91,35 @@ function start(base, env = {}) {
   child.on('exit', () => children.delete(child));
   return child;
 }
+// Um GET (sem efeito) que falha na conexao e repetido por ate 10 s: depois de matar e subir o payload de novo na mesma
+// porta, o fetch pode reaproveitar uma conexao keep-alive do processo morto ("fetch failed"), mais sob carga.
+async function retryGet(method, ask) {
+  for (let attempt = 0, end = Date.now() + 10000; ; attempt++) {
+    try { return await ask(); } catch (problem) {
+      if (method !== 'GET' || Date.now() >= end) throw new Error(`${problem.message}: ${problem.cause?.code || problem.cause?.message || ''}`, { cause: problem });
+      await wait(Math.min(50 * 2 ** attempt, 1000));
+    }
+  }
+}
 async function call(base, method, route, body, token) {
   const tok = token ?? readFileSync(path.join(base, 'state/token'), 'utf8').trim();
-  const res = await fetch(`http://127.0.0.1:${api}${route}`, { method, headers: { 'X-Jobe-Token': tok, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const res = await retryGet(method, () => fetch(`http://127.0.0.1:${api}${route}`, { method, headers: { 'X-Jobe-Token': tok, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }));
   return { status: res.status, data: await res.json().catch(() => ({})) };
 }
-async function up(base) {
-  for (let i = 0; i < 100; i++) {
+// Com prazo largo (nao 100 voltas de 50 ms): com a suite inteira em paralelo o payload demora mais a subir.
+async function up(base, ms = 30000) {
+  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call(base, 'GET', '/health')).status === 200) return; } catch {}
-    await wait(50);
   }
   throw new Error('payload did not start');
 }
-async function until(base, check, ms = 15000) {
+// Mata os payloads e espera cada um sair de fato (nao 200 ms fixos) antes de subir o seguinte.
+async function killAll() {
+  const left = [...children];
+  for (const child of left) child.kill('SIGKILL');
+  await Promise.all(left.map((child) => (child.exitCode !== null || child.signalCode ? null : new Promise((resolve) => child.once('exit', resolve)))));
+}
+async function until(base, check, ms = 30000) {
   for (const end = Date.now() + ms; Date.now() < end; await wait(100)) {
     const state = (await call(base, 'GET', '/orbit')).data;
     if (check(state)) return state;
@@ -176,8 +192,7 @@ test('the same revision does not rewrite the feed; a new one does; a refresh rig
   assert.equal(srv.hits, hits, 'a refresh within a minute of the last try is ignored');
   // A minute later (the status says so), the same revision: read again, file untouched.
   writeFileSync(path.join(base, 'orbit/orbit-store-status.json'), JSON.stringify({ ...first, lastTry: first.lastTry - 120, lastOk: first.lastOk - 120 }));
-  for (const child of [...children]) child.kill('SIGKILL');
-  await wait(200);
+  await killAll();
   start(base);
   await up(base);
   await call(base, 'POST', '/orbit', { refresh: true });
@@ -185,13 +200,14 @@ test('the same revision does not rewrite the feed; a new one does; a refresh rig
   assert.equal(statSync(file).mtimeMs, written, 'revision 95 again: the file the app reads keeps its stamp');
   srv.body = seal(catalogue(96));
   writeFileSync(path.join(base, 'orbit/orbit-store-status.json'), JSON.stringify({ ...(await call(base, 'GET', '/orbit')).data, lastTry: 1 }));
-  for (const child of [...children]) child.kill('SIGKILL');
-  await wait(200);
+  await killAll();
   start(base);
   await up(base);
   const next = await until(base, (s) => s.revision === 96);
   assert.ok(next.revisionSince >= first.revisionSince);
-  assert.ok(statSync(file).mtimeMs >= written);
+  // Regravado: conferido pelo conteudo, nao pelo mtime (o relogio do WSL pode andar para tras sob carga e o mtime novo
+  // ficava menor que o antigo).
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).orbitRevision, 96, 'the feed was rewritten with revision 96');
 });
 
 test('a catalogue sealed with another key is "broken" at once, with a PS5 notification; a good one brings it back', { skip }, async () => {
@@ -211,8 +227,7 @@ test('a catalogue sealed with another key is "broken" at once, with a PS5 notifi
   // Fixed upstream: the next try (a minute later) works and says so.
   srv.body = seal(catalogue(95));
   writeFileSync(path.join(base, 'orbit/orbit-store-status.json'), JSON.stringify({ ...(await call(base, 'GET', '/orbit')).data, lastTry: 1 }));
-  for (const child of [...children]) child.kill('SIGKILL');
-  await wait(200);
+  await killAll();
   start(base);
   await up(base);
   await until(base, (s) => s.lastOk > 0 && s.said === '');
@@ -287,8 +302,7 @@ test('known titles: written with the links only, kept across restarts, and a new
   // Restarted (a minute later, as the status says): the list comes back from the file, the feed is not rewritten...
   const now = (await call(base, 'GET', '/orbit')).data;
   writeFileSync(path.join(base, 'orbit/orbit-store-status.json'), JSON.stringify({ ...now, lastTry: now.lastTry - 120, lastOk: now.lastOk - 120 }));
-  for (const child of [...children]) child.kill('SIGKILL');
-  await wait(200);
+  await killAll();
   start(base);
   await up(base);
   const back = (await call(base, 'GET', '/orbit')).data;

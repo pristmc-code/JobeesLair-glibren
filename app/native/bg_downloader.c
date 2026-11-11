@@ -4075,6 +4075,21 @@ static void load_token(void) {
 
 static int g_monitor_port = MONITOR_PORT;
 static int64_t g_session_seconds = 30LL * 24 * 3600; // glibren.19: 30 dias, renovados a cada uso
+// O relogio das sessoes do PIN. So nos testes do PC: BGDL_TEST_CLOCK_FILE aponta um arquivo com os segundos de "agora"
+// (o teste anda o tempo sem dormir: a validade nao depende da carga da maquina nem de ajustes no relogio do sistema).
+static int64_t session_now(void) {
+#ifndef __PROSPERO__
+  const char* path = getenv("BGDL_TEST_CLOCK_FILE");
+  FILE* file = path ? fopen(path, "r") : NULL;
+  if (file) {
+    long long at = 0;
+    const int got = fscanf(file, "%lld", &at);
+    fclose(file);
+    if (got == 1 && at > 0) return (int64_t)at;
+  }
+#endif
+  return now_s();
+}
 static volatile int g_reopen_monitor;
 static pthread_mutex_t g_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_monitor_clients;
@@ -4093,7 +4108,7 @@ static int g_monitor_port_now(void) { return g_monitor_port; }
 static void save_sessions_locked(void) { // com g_monitor_lock
   char path[600];
   snprintf(path, sizeof path, "%s/sessions.json", g_dir);
-  const int64_t now = now_s();
+  const int64_t now = session_now();
   Buf b = {0};
   buf_str(&b, "{\"pin\":");
   buf_json(&b, g_sessions_pin);
@@ -4135,7 +4150,7 @@ static int session_item(JP* jp, void* ctx) {
   Session s;
   memset(&s, 0, sizeof s);
   if (!jp_object(jp, session_item_field, &s)) return 0;
-  if (f->count < MONITOR_SESSIONS && is_hex64(s.hash) && s.expires > now_s()) {
+  if (f->count < MONITOR_SESSIONS && is_hex64(s.hash) && s.expires > session_now()) {
     s.saved = s.expires;
     g_sessions[f->count++] = s;
   }
@@ -4206,7 +4221,7 @@ static void new_session(char out[33]) {
   out[32] = 0;
   char hash[65];
   session_hash(out, hash);
-  const int64_t now = now_s();
+  const int64_t now = session_now();
   pthread_mutex_lock(&g_monitor_lock);
   // Limite de MONITOR_SESSIONS: uma vencida, ou sai a que vence antes (a usada ha mais tempo).
   int slot = 0;
@@ -4227,7 +4242,7 @@ static int session_ok(const char* given) {
   char hash[65];
   session_hash(given, hash);
   if (!hash[0]) return 0;
-  const int64_t now = now_s();
+  const int64_t now = session_now();
   int ok = 0;
   pthread_mutex_lock(&g_monitor_lock);
   for (int i = 0; i < MONITOR_SESSIONS; ++i)
@@ -4595,6 +4610,15 @@ static void monitor_config(int fd, Request* r) {
 // que corta sem avisar o sistema. So com a sessao do PIN. A pagina recebe 200 antes: o main desliga POWER_DELAY_MS
 // depois, gravando antes a fila (jobs.json) e o disco (sync). Downloads param e retomam da parcial na proxima vez.
 #define POWER_DELAY_MS 2500
+// So nos testes do PC: BGDL_POWER_DELAY_MS alarga o atraso (o teste confere o "um pedido por vez" com folga, mesmo com
+// a maquina carregada). No console e sempre POWER_DELAY_MS.
+static int64_t power_delay_ms(void) {
+#ifndef __PROSPERO__
+  const long long ms = atoll(env_or("BGDL_POWER_DELAY_MS", "0"));
+  if (ms > 0) return (int64_t)ms;
+#endif
+  return POWER_DELAY_MS;
+}
 #ifdef __PROSPERO__
 int sceSystemStateMgrTurnOff(void) __attribute__((weak));
 int sceSystemStateMgrEnterStandby(void) __attribute__((weak));
@@ -4653,7 +4677,7 @@ static void monitor_power(int fd, Request* r) {
   if (!action) { monitor_json(fd, 400, "{\"error\":\"action\"}"); return; }
   pthread_mutex_lock(&g_monitor_lock);
   const int busy = g_power_action != 0;
-  if (!busy) { g_power_action = action; g_power_at = mono_ms() + POWER_DELAY_MS; }
+  if (!busy) { g_power_action = action; g_power_at = mono_ms() + power_delay_ms(); }
   pthread_mutex_unlock(&g_monitor_lock);
   if (busy) { monitor_json(fd, 409, "{\"error\":\"busy\"}"); return; }
   logf_("celular: pedido de energia: %s", action == 2 ? "modo de repouso" : "desligar");
