@@ -6,6 +6,9 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.35** (fork): the glibren payload's YouTube button opens Jobee'sLair straight on its YouTube screen
+  (/data/JobeesLair/tube/abrir.txt: search, voltar=, auto=1; Jobee'sLair advertises it in jobe-tube.txt), and
+  Circle or "Back to glibren" switches back to glibren through the background payload.
 - **glibren.34** (fork): tube-service.elf (YouTube inside the app) on youtubei.js 18.3.0 (was 18.1.0): fixes for
   results without a title and the duration of very long videos; a video without the duration overlay is no longer
   taken for a live one.
