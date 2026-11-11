@@ -84,13 +84,17 @@ import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
     const all = filesOf(item);
     const backport = all.filter(isBackportFile);
     const rows = all.filter((file) => !isBackportFile(file) && worthShowing(file) && accept(file)).map((file) => entry({ ...fields, fileId: file.id, name: file.name, size: file.size }));
-    if (backport.length) {
-      const folder = /(?:^|\/)(backports?\/[^/]+)/i.exec(backport[0].path)?.[1] ?? "backports";
-      rows.push({ ...entry({ ...fields, fileId: `backport:${folder}`, name: folder, size: backport.reduce((sum, file) => sum + file.size, 0) }), name: folder, type: "BACKPORT", format: null, backport: true, count: backport.length });
+    // glibren.29: uma entrada lida com a lista cortada (services/torbox.js cachedEntry) traz o resumo do que ficou de
+    // fora: `backport` ({ path, count, size }) e `total` (quantos arquivos o item tem).
+    const folderOf = item?.backport ?? (backport.length ? { path: backport[0].path, count: backport.length, size: backport.reduce((sum, file) => sum + file.size, 0) } : null);
+    if (folderOf) {
+      const folder = /(?:^|\/)(backports?\/[^/]+)/i.exec(folderOf.path)?.[1] ?? "backports";
+      rows.push({ ...entry({ ...fields, fileId: `backport:${folder}`, name: folder, size: folderOf.size }), name: folder, type: "BACKPORT", format: null, backport: true, count: folderOf.count });
     }
-    if (torrent && all.length > 1) {
+    const count = Number(item?.total) || all.length;
+    if (torrent && count > 1) {
       const total = Number(item?.size) || all.reduce((sum, file) => sum + file.size, 0);
-      rows.push({ ...entry({ ...fields, fileId: "all", name: item?.name || fields.title || "torrent", size: total }), type: "ZIP", format: "zip", whole: true, count: all.length });
+      rows.push({ ...entry({ ...fields, fileId: "all", name: item?.name || fields.title || "torrent", size: total }), type: "ZIP", format: "zip", whole: true, count });
     }
     return rows;
   }
@@ -435,4 +439,4 @@ import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
   var fakePackageWarning = (file, game, launches) => (file.format === "pkg" || file.format === "fpkg") && /^PPSA/i.test(String(game?.id || "")) && launches !== true;
 
 // glibren.9: the TorBox library builder (state/torbox-library.js) matches every game the same way, in one pass.
-export { FORMAT_RANK, baseName, catalogLinks, catalogReleases, catalogSets, fetchRow, setHolding, setRow, codePattern, downloadFile, fakePackageWarning, filesOf, hashListPaths, isBackportFile, isPiece, magnetOf, matchesGame, parseHashList, plain, readHashList, releaseFor, searchTexts, searchTorBox, sortFiles, titleWords, typeLabel, worthShowing };
+export { FORMAT_RANK, rowsOf, baseName, catalogLinks, catalogReleases, catalogSets, fetchRow, setHolding, setRow, codePattern, downloadFile, fakePackageWarning, filesOf, hashListPaths, isBackportFile, isPiece, magnetOf, matchesGame, parseHashList, plain, readHashList, releaseFor, searchTexts, searchTorBox, sortFiles, titleWords, typeLabel, worthShowing };

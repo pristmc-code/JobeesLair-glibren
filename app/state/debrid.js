@@ -465,11 +465,13 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
       // glibren.13: with the files (cachedEntries, the same checkcached with list_files), a copy that is only TorBox's
       // broken one (an error page kept as the file, state/broken-copy.js) is not instant: it is marked broken.
       const api = torbox();
-      const entries = typeof api.cachedEntries === "function" ? await api.cachedEntries(links, { signal: run.signal }) : null;
+      // glibren.29: de cada link so se a copia e quebrada (pick), nao a lista de arquivos (milhares num dump de pasta).
+      const entries = typeof api.cachedEntries === "function" ? await api.cachedEntries(links, { signal: run.signal, pick: (entry) => ({ broken: brokenEntry(entry) }) }) : null;
       const held = entries ? new Set(entries.keys()) : await api.checkCachedLinks(links, { signal: run.signal });
       const at = Date.now();
       for (const link of links) {
-        const broken = Boolean(entries?.has(link) && brokenEntry(entries.get(link)));
+        const entry = entries?.get(link);
+        const broken = Boolean(entry && (typeof entry.broken === "boolean" ? entry.broken : brokenEntry(entry)));
         instant.set(link, { held: held.has(link) && !broken, broken, at });
       }
       notify();

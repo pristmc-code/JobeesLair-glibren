@@ -78,6 +78,8 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.29**: asking TorBox about a game's links (Find formats, Find via TorBox, Instant, the library) no longer runs
+> the app out of memory: smaller batches, answers read piece by piece, only the useful file names kept.
 > **glibren.28**: no more freeze when a download turns into a conversion with its game page open (and a failing screen
 > shows a notice instead of freezing the app), and the TorBox library saves without running out of memory.
 > **glibren.27**: catalogs are read without running out of memory (the live catalog and the console's feed files one

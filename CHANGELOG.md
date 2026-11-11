@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.29** (fork): asking TorBox about a game's links no longer runs the app out of memory ("Find formats" closed
+  it with Orbit Store on): links are asked 10 at a time instead of 100, each answer is read one entry at a time, and
+  only what is used is kept (name, size and id of the files that matter; a long backport list as a summary). The same
+  goes for "Find via TorBox", TorBox Instant and the TorBox library. Measured in QuickJS with the store loaded: about
+  24 MB at the peak instead of 34 MB (over the 32 MB the app has).
 - **glibren.28** (fork): a game's page no longer freezes the app when its download turns into a conversion (the
   download button had no "converting" state and threw while drawing); an unknown state now shows its name, and a screen
   that fails to draw shows a notice that Back leaves instead of freezing everything. The TorBox library is written one

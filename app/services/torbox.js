@@ -26,6 +26,8 @@
 // engine has only Date.now() (state/clock.js parseStamp reads TorBox's ISO times).
 
 import { parseStamp } from '../state/clock.js';
+import { jsonMembers } from '../state/json-scan.js';
+import { formatFromName } from '../state/link-formats.js';
 
   var BASE = "https://api.torbox.app/v1/api";
   // glibren.6: TorBox's search API (torrents by name), a service of its own.
@@ -147,10 +149,101 @@ import { parseStamp } from '../state/clock.js';
     signal?.addEventListener?.("abort", stop);
   });
   /** glibren: an item's (or checkcached entry's) file names, the largest first, then its own name. */
-  function fileNamesOf(entry) {
+  // glibren.29: `limit`: so os `limit` maiores (cachedFiles guarda NAMES_KEPT por link, nao os milhares de um dump).
+  function fileNamesOf(entry, limit = Infinity) {
     if (!entry || typeof entry !== "object") return [];
-    const files = Array.isArray(entry.files) ? [...entry.files].sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0)).map((file) => file?.short_name || file?.name) : [];
+    const files = Array.isArray(entry.files) ? [...entry.files].sort((a, b) => (Number(b?.size) || 0) - (Number(a?.size) || 0)).slice(0, limit).map((file) => file?.short_name || file?.name) : [];
     return [...files, entry.name].filter((name) => typeof name === "string" && name);
+  }
+  // glibren.29: checkcached com list_files. No PS5 (glibren.28, lista Orbit Store ligada: heap perto do limite de 32 MiB)
+  // "Find formats" fechou o app logo depois de /webdl/hosters: 100 hashes por chamada (ate 4 MiB de texto; um dump de
+  // pasta lista milhares de arquivos por link), o JSON.parse da resposta inteira ao lado do texto, a copia ordenada de
+  // cada lista e, em cachedFiles, todos os nomes de todos os links guardados ate o fim. Agora: LIST_GROUP hashes por
+  // chamada (10: no qjs com 20 MB ja ocupados, 30 links com dumps de 2000 arquivos subiam o pico de +14 MB para +3,8 MB),
+  // a resposta lida uma entrada por vez (state/json-scan.js; o texto sai de cena ao fim da chamada), de cada
+  // arquivo so nome, tamanho e id (cachedFile), e de cada link so os NAMES_KEPT maiores nomes (cachedFiles).
+  var LIST_GROUP = 10;
+  var NAMES_KEPT = 32;
+  var cachedFile = (file) => {
+    const kept = { name: file.name, size: Number(file.size) || 0 };
+    if (file.id !== void 0 && file.id !== null) kept.id = file.id;
+    if (file.short_name && file.short_name !== file.name) kept.short_name = file.short_name;
+    return kept;
+  };
+  // glibren.29: o maximo de arquivos guardados de uma entrada (um dump de pasta lista milhares; quem usa a lista quer as
+  // linhas que valem: torbox-search.js worthShowing = um formato no nome ou >= ENTRY_SMALL; a Biblioteca guarda 40).
+  var ENTRY_FILES = 100;
+  var ENTRY_SMALL = 1e6;
+  var BACKPORT_PATH = (path) => /(?:^|\/)backports?\//i.test(path) || /backport/i.test(path) && /\.(?:bin|prx|sprx)$/i.test(path);
+  var baseOf = (name) => String(name || "").replace(/^.*[\\/]/, "");
+  /**
+   * glibren.29: uma entrada do checkcached como o app a usa: { name, size, files: [{ name, size, id?, short_name? }] }, e
+   * so os arquivos que valem: os de nome com formato (imagem, pacote, compactado e suas partes) primeiro, depois os
+   * maiores, ate ENTRY_FILES, na ordem original; sem nenhum que valha, o maior. O que fica de fora vira resumo: `total`
+   * (quantos arquivos a entrada lista; a linha "All" de torbox-search.js rowsOf) e `backport` ({ path, count, size }:
+   * a linha da pasta de backport), so quando algo foi cortado.
+   */
+  function cachedEntry(entry) {
+    const raw = Array.isArray(entry.files) ? entry.files.filter((file) => file && typeof file === "object") : [];
+    const out = { name: entry.name || "", size: Number(entry.size) || 0, files: [] };
+    if (!raw.length) return out;
+    const worth = [];
+    let backport = null, largest = -1;
+    for (let i = 0; i < raw.length; i++) {
+      const file = raw[i];
+      const size = Number(file.size) || 0;
+      if (largest < 0 || size > (Number(raw[largest].size) || 0)) largest = i;
+      const path = String(file.name || file.short_name || "");
+      if (BACKPORT_PATH(path)) {
+        if (!backport) backport = { path, count: 0, size: 0, first: i };
+        backport.count++;
+        backport.size += size;
+        continue;
+      }
+      const named = Boolean(formatFromName(baseOf(file.short_name || file.name)));
+      if (named || size >= ENTRY_SMALL) worth.push({ i, named, size });
+    }
+    const kept = worth.sort((a, b) => Number(b.named) - Number(a.named) || b.size - a.size).slice(0, ENTRY_FILES).map((item) => item.i);
+    if (backport) kept.push(backport.first);
+    if (!worth.length && !kept.includes(largest)) kept.push(largest);
+    kept.sort((a, b) => a - b);
+    out.files = kept.map((i) => cachedFile(raw[i]));
+    if (out.files.length < raw.length) {
+      out.total = raw.length;
+      if (backport && backport.count > 1) out.backport = { path: backport.path, count: backport.count, size: backport.size };
+    }
+    return out;
+  }
+  /**
+   * glibren.29: { success, error, detail, data } de uma resposta do TorBox lida do texto sem a arvore inteira: cada membro
+   * de `data` passa por `each(chave, valor)` um por vez (JSON.parse so dele), e so quando success e true; `data` volta
+   * null. Um texto que nao e JSON: null.
+   */
+  function scanAnswer(text, each) {
+    const answer = { success: false, error: null, detail: null, data: null };
+    let data = null;
+    try {
+      for (const member of jsonMembers(text)) {
+        if (member.key === "data") data = member;
+        else if (member.key === "success" || member.key === "error" || member.key === "detail") answer[member.key] = JSON.parse(text.slice(member.start, member.end));
+      }
+      if (!data) return answer;
+      if (!answer.success) {
+        answer.data = JSON.parse(text.slice(data.start, data.end));
+        return answer;
+      }
+      const open = text.charCodeAt(data.start);
+      if (open === 123) {
+        for (const member of jsonMembers(text, data.start, data.end)) each(member.key, JSON.parse(text.slice(member.start, member.end)));
+      } else if (open === 91) {
+        const list = JSON.parse(text.slice(data.start, data.end));
+        for (const item of list) if (item && typeof item === "object" && item.hash) each(String(item.hash), item);
+      }
+    } catch (error) {
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+    return answer;
   }
   // The file of an item to download: the one named like the release's file, else the largest.
   function pickFile(files, wanted) {
@@ -207,7 +300,8 @@ import { parseStamp } from '../state/clock.js';
     };
     // Whatever a failure says, never the key (a transport error can quote the URL it was asked for).
     const scrub = (message, value) => value ? String(message).split(value).join("…") : String(message);
-    async function call(path, { method = "GET", params, form, multipart, json, signal, token = false, auth = true, base = BASE } = {}) {
+    // glibren.29: `each(chave, valor)`: os membros de `data` um por vez (scanAnswer), sem a resposta inteira na memoria.
+    async function call(path, { method = "GET", params, form, multipart, json, signal, token = false, auth = true, base = BASE, each = null } = {}) {
       const value = auth || token ? secret() : null;
       const url = `${base}${path}${params || token ? `?${query({ ...token ? { token: value } : {}, ...params })}` : ""}`;
       const headers = {};
@@ -236,9 +330,27 @@ import { parseStamp } from '../state/clock.js';
       log(`${method} ${path} -> HTTP ${response.status} in ${now() - started} ms`);
       if (response.status === 429) throw new TorBoxError("RATE_LIMITED", MESSAGES.RATE_LIMITED);
       let answer = null;
-      try {
-        answer = await response.json();
-      } catch {
+      if (each && typeof response.text === "function") {
+        let text = null;
+        try {
+          text = await response.text();
+        } catch {
+        }
+        response = { status: response.status };
+        answer = typeof text === "string" ? scanAnswer(text, each) : null;
+        text = null;
+      } else {
+        try {
+          answer = await response.json();
+        } catch {
+        }
+        if (each && answer?.success && answer.data && typeof answer.data === "object") {
+          const data = answer.data;
+          answer = { ...answer, data: null };
+          if (Array.isArray(data)) {
+            for (const item of data) if (item && typeof item === "object" && item.hash) each(String(item.hash), item);
+          } else for (const [hash, entry] of Object.entries(data)) each(hash, entry);
+        }
       }
       // 0.5.2: a page instead of an answer, on a redirect or a server error, is TorBox having trouble (on 2026-10-25 every
       // request got a 307 for a while, then a 502): it says so, rather than a bare status.
@@ -319,16 +431,16 @@ import { parseStamp } from '../state/clock.js';
        */
       async cachedFiles(links, { signal } = {}) {
         const found = /* @__PURE__ */ new Map();
-        const namesOf = fileNamesOf;
+        // glibren.29: LIST_GROUP hashes por chamada, a resposta lida uma entrada por vez e so os NAMES_KEPT maiores nomes.
         const ask = async (path, byHash) => {
           const hashes = [...byHash.keys()];
-          for (let i = 0; i < hashes.length; i += 100) {
-            const data = await call(path, { params: { hash: hashes.slice(i, i + 100).join(","), format: "object", list_files: true }, signal });
-            for (const [hash, entry] of Object.entries(data || {})) {
+          for (let i = 0; i < hashes.length; i += LIST_GROUP) {
+            await call(path, { params: { hash: hashes.slice(i, i + LIST_GROUP).join(","), format: "object", list_files: true }, signal, each: (hash, entry) => {
               const link = byHash.get(hash.toLowerCase());
-              const names = namesOf(entry);
-              if (link && names.length && !found.has(link)) found.set(link, names);
-            }
+              if (!link || found.has(link)) return;
+              const names = fileNamesOf(entry, NAMES_KEPT);
+              if (names.length) found.set(link, names);
+            } });
           }
         };
         const web = links.filter((link) => !isMagnet(link));
@@ -468,16 +580,17 @@ import { parseStamp } from '../state/clock.js';
        * glibren.6: what TorBox holds of `links` (file host URLs or magnets), with its files: a Map of link -> { name,
        * size, files: [{ id, name, size }] }. Like cachedFiles, nothing is added to the account.
        */
-      async cachedEntries(links, { signal } = {}) {
+      // glibren.29: `pick(entrada)`: o que guardar de cada link (askInstant so quer saber se a copia e quebrada), em vez da
+      // lista de arquivos; LIST_GROUP hashes por chamada, lidos uma entrada por vez, de cada arquivo so cachedFile.
+      async cachedEntries(links, { signal, pick = (entry) => entry } = {}) {
         const found = /* @__PURE__ */ new Map();
         const ask = async (path, byHash) => {
           const hashes = [...byHash.keys()];
-          for (let i = 0; i < hashes.length; i += 100) {
-            const data = await call(path, { params: { hash: hashes.slice(i, i + 100).join(","), format: "object", list_files: true }, signal });
-            for (const [hash, entry] of Object.entries(data || {})) {
+          for (let i = 0; i < hashes.length; i += LIST_GROUP) {
+            await call(path, { params: { hash: hashes.slice(i, i + LIST_GROUP).join(","), format: "object", list_files: true }, signal, each: (hash, entry) => {
               const link = byHash.get(hash.toLowerCase());
-              if (link && entry && typeof entry === "object" && !found.has(link)) found.set(link, { name: entry.name || "", size: Number(entry.size) || 0, files: Array.isArray(entry.files) ? entry.files : [] });
-            }
+              if (link && entry && typeof entry === "object" && !found.has(link)) found.set(link, pick(cachedEntry(entry)));
+            } });
           }
         };
         const web = links.filter((link) => !isMagnet(link));
@@ -495,9 +608,11 @@ import { parseStamp } from '../state/clock.js';
       async cachedByHash(hashes, { signal } = {}) {
         const list = [...new Set(hashes.map((hash) => String(hash).toLowerCase()))].filter(Boolean);
         const found = [];
-        for (let i = 0; i < list.length; i += 100) {
-          const data = await call("/webdl/checkcached", { params: { hash: list.slice(i, i + 100).join(","), format: "object", list_files: true }, signal });
-          for (const [hash, entry] of Object.entries(data || {})) if (entry && typeof entry === "object") found.push({ hash: hash.toLowerCase(), name: entry.name || "", size: Number(entry.size) || 0, files: Array.isArray(entry.files) ? entry.files : [] });
+        // glibren.29: LIST_GROUP hashes por chamada, lidos uma entrada por vez (cachedEntry).
+        for (let i = 0; i < list.length; i += LIST_GROUP) {
+          await call("/webdl/checkcached", { params: { hash: list.slice(i, i + LIST_GROUP).join(","), format: "object", list_files: true }, signal, each: (hash, entry) => {
+            if (entry && typeof entry === "object") found.push({ hash: hash.toLowerCase(), ...cachedEntry(entry) });
+          } });
         }
         return found;
       },
@@ -588,4 +703,4 @@ import { parseStamp } from '../state/clock.js';
     });
   }
 
-export { fileNamesOf, MESSAGES, PLANS, TorBoxError, chooseFiles, createTorBox, hostSupported, quotaLeft, isMagnet, linkHashes, magnetHash, md5, pickFile, validKey };
+export { LIST_GROUP, NAMES_KEPT, fileNamesOf, MESSAGES, PLANS, TorBoxError, chooseFiles, createTorBox, hostSupported, quotaLeft, isMagnet, linkHashes, magnetHash, md5, pickFile, validKey };

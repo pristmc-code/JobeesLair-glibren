@@ -331,3 +331,143 @@ test('glibren.26: a link already in the account is looked for page by page, and 
   assert.equal(await api.findWebDownload('https://nowhere.example/x'), null);
   assert.deepEqual(asked, [0, 250, 500]);
 });
+
+// glibren.29: checkcached com list_files ("Find formats", Instant, Search TorBox, Biblioteca). No PS5 (glibren.28, lista Orbit
+// Store ligada) o app fechou logo depois de /webdl/hosters: 100 hashes por chamada, a resposta inteira (ate 4 MiB) num
+// JSON.parse e todos os nomes de todos os links guardados. Estes testes travam o lote, os campos guardados e a leitura
+// por partes.
+const { LIST_GROUP, NAMES_KEPT } = await load('app/services/torbox.js');
+const { rowsOf } = await load('app/state/torbox-search.js');
+// Um TorBox que so responde texto (como o runtime: response.text()), com `filesFor(hash)` arquivos por hash pedido.
+function textApi(filesFor, extra = {}) {
+  const calls = [];
+  const http = {
+    async request(url, options = {}) {
+      const hashes = new URL(url).searchParams.get('hash').split(',');
+      calls.push({ url, hashes, ...options });
+      const data = {};
+      for (const hash of hashes) {
+        const count = filesFor(hash);
+        if (!count) continue;
+        data[hash] = { name: `Dump.${hash.slice(0, 6)}`, size: count * 1000, hash, files: Array.from({ length: count }, (_, i) => ({ id: i, name: `Dump.${hash.slice(0, 6)}/sce_module/f${i}.bin`, size: 1000 + i, mimetype: 'application/octet-stream', md5: 'f'.repeat(32), s3_path: `x/${hash}/${i}`, ...extra })) };
+      }
+      const text = JSON.stringify({ success: true, error: null, detail: 'Found cached items.', data });
+      return { status: 200, ok: true, text: async () => text };
+    }
+  };
+  return { http, calls };
+}
+const someLinks = (count) => Array.from({ length: count }, (_, i) => `https://host.example/f/file${i}`);
+
+test('glibren.29: checkcached com list_files vai em lotes de no maximo 10 hashes (cachedFiles, cachedEntries, cachedByHash)', async () => {
+  assert.ok(LIST_GROUP <= 10 && LIST_GROUP >= 5, `LIST_GROUP = ${LIST_GROUP}`);
+  const links = someLinks(45);
+  for (const ask of [(api) => api.cachedFiles(links), (api) => api.cachedEntries(links), (api) => api.cachedByHash(links.map(md5))]) {
+    const { http, calls } = textApi(() => 3);
+    await ask(createTorBox({ http, key: () => KEY }));
+    assert.equal(calls.length, Math.ceil(45 / LIST_GROUP));
+    assert.ok(calls.every((call) => call.hashes.length <= LIST_GROUP && call.url.includes('list_files=true')));
+    assert.deepEqual(calls.flatMap((call) => call.hashes).sort(), links.map(md5).sort(), 'todos os hashes, cada um uma vez');
+  }
+});
+
+test('glibren.29: de cada arquivo so nome, tamanho e id; cachedFiles guarda so os maiores nomes de cada link', async () => {
+  const links = someLinks(3);
+  const { http } = textApi(() => 500, { short_name: undefined });
+  const api = createTorBox({ http, key: () => KEY });
+  const entries = await api.cachedEntries(links);
+  assert.equal(entries.size, 3);
+  for (const entry of entries.values()) {
+    // 500 arquivos pequenos sem formato: fica so o maior (e quantos eram).
+    assert.equal(entry.files.length, 1);
+    assert.equal(entry.total, 500);
+    assert.deepEqual(Object.keys(entry.files[0]).sort(), ['id', 'name', 'size'], 'sem mimetype, md5, s3_path');
+    assert.match(entry.files[0].name, /\/f499\.bin$/);
+  }
+  const byHash = await api.cachedByHash(links.map(md5));
+  assert.deepEqual(Object.keys(byHash[0].files[0]).sort(), ['id', 'name', 'size']);
+  const names = await api.cachedFiles(links);
+  for (const list of names.values()) {
+    assert.equal(list.length, NAMES_KEPT + 1, 'os NAMES_KEPT maiores e o nome do item');
+    assert.match(list[0], /\/f499\.bin$/, 'o maior primeiro');
+    assert.match(list.at(-1), /^Dump\./);
+  }
+  // pick: o que guardar de cada link (askInstant guarda so se a copia e quebrada).
+  const picked = await api.cachedEntries(links, { pick: (entry) => ({ count: entry.files.length, total: entry.total }) });
+  assert.deepEqual([...picked.values()], [{ count: 1, total: 500 }, { count: 1, total: 500 }, { count: 1, total: 500 }]);
+});
+
+test('glibren.29: uma resposta grande e lida uma entrada por vez, sem JSON.parse do texto inteiro', async () => {
+  // 20 hashes, 4 deles com 6000 arquivos: perto de 3 MB de texto.
+  const links = someLinks(20);
+  const big = new Set(links.slice(0, 4).map(md5));
+  const { http } = textApi((hash) => big.has(hash) ? 6000 : 40);
+  let longest = 0;
+  let biggest = 0;
+  const parse = JSON.parse;
+  JSON.parse = (text, ...rest) => {
+    longest = Math.max(longest, String(text).length);
+    return parse(text, ...rest);
+  };
+  const request = http.request;
+  http.request = async (...args) => {
+    const response = await request(...args);
+    const text = await response.text();
+    biggest = Math.max(biggest, text.length);
+    return { ...response, text: async () => text };
+  };
+  let names;
+  try {
+    names = await createTorBox({ http, key: () => KEY }).cachedFiles(links);
+  } finally {
+    JSON.parse = parse;
+  }
+  assert.equal(names.size, 20);
+  assert.ok(biggest > 2e6, `resposta de ${biggest} bytes`);
+  assert.ok(longest < biggest / 3, `o maior JSON.parse foi de ${longest} de ${biggest} bytes: so uma entrada`);
+});
+
+test('glibren.29: lida do texto, uma recusa ainda e um TorBoxError e um texto que nao e JSON e erro de HTTP', async () => {
+  const answer = (text, status = 200) => ({ http: { request: async () => ({ status, ok: status < 300, text: async () => text }) } });
+  const refused = createTorBox({ ...answer(JSON.stringify({ success: false, error: 'BAD_TOKEN', detail: 'no', data: null })), key: () => KEY });
+  await assert.rejects(refused.cachedFiles(someLinks(2)), (error) => error.code === 'BAD_TOKEN');
+  const page = createTorBox({ ...answer('<html>bad gateway</html>', 502), key: () => KEY });
+  await assert.rejects(page.cachedEntries(someLinks(2)), (error) => error.code === 'HTTP_502');
+  const empty = createTorBox({ ...answer(JSON.stringify({ success: true, error: null, detail: 'none', data: {} })), key: () => KEY });
+  assert.equal((await empty.cachedFiles(someLinks(2))).size, 0);
+});
+
+test('glibren.29: de uma entrada com milhares de arquivos ficam no maximo 100, os de jogo primeiro, e as linhas sao as mesmas', async () => {
+  const dir = 'Big.Game.PPSA01234-GRP';
+  const raw = [
+    ...Array.from({ length: 1800 }, (_, i) => ({ id: i, name: `${dir}/sce_module/f${i}.bin`, size: 5000 + i, mimetype: 'x' })),
+    ...Array.from({ length: 60 }, (_, i) => ({ id: 2000 + i, name: `${dir}/${dir}.part${i + 1}.rar`, size: 2e9 - i })),
+    ...Array.from({ length: 40 }, (_, i) => ({ id: 3000 + i, name: `${dir}/backports/v1.02/eboot${i}.bin`, size: 1000 })),
+    { id: 4000, name: `${dir}/Big.Game.exfat`, size: 50e9 },
+    { id: 4001, name: `${dir}/movie.mp4`, size: 3e9 }
+  ];
+  const magnet = 'magnet:?xt=urn:btih:c12fe1c06bba254a9dc9f519b335aa7c1367a88a';
+  const http = { request: async () => ({ status: 200, ok: true, text: async () => JSON.stringify({ success: true, data: { c12fe1c06bba254a9dc9f519b335aa7c1367a88a: { name: dir, size: 9e11, files: raw } } }) }) };
+  const entry = (await createTorBox({ http, key: () => KEY }).cachedEntries([magnet])).get(magnet);
+  assert.equal(entry.files.length, 63, '60 partes, a imagem, o video e o 1o arquivo do backport');
+  assert.equal(entry.total, raw.length);
+  assert.deepEqual(entry.backport, { path: `${dir}/backports/v1.02/eboot0.bin`, count: 40, size: 40000 });
+  const names = entry.files.map((file) => file.name);
+  assert.ok(names.includes(`${dir}/Big.Game.exfat`) && names.includes(`${dir}/${dir}.part1.rar`), 'a imagem e as partes ficam');
+  assert.ok(!names.some((name) => /sce_module/.test(name)), 'os pequenos sem formato saem');
+  assert.ok(entry.files.every((file) => !('mimetype' in file)));
+  // As linhas de "Procurar no TorBox": a pasta de backport e a linha "All" com as contagens de antes.
+  const fields = { origin: 'search', link: magnet, title: dir };
+  const cut = rowsOf(entry, fields, { torrent: true });
+  const full = rowsOf({ name: dir, size: 9e11, files: raw }, fields, { torrent: true });
+  const pick = (rows) => rows.filter((row) => row.backport || row.whole).map(({ name, size, count, type }) => ({ name, size, count, type }));
+  assert.deepEqual(pick(cut), pick(full));
+  assert.deepEqual(cut.filter((row) => !row.backport && !row.whole).map((row) => row.name), full.filter((row) => !row.backport && !row.whole).map((row) => row.name));
+  // O teto: 300 imagens viram as 100 maiores.
+  const many = Array.from({ length: 300 }, (_, i) => ({ name: `d/g${i}.exfat`, size: 1e9 + i }));
+  const http2 = { request: async () => ({ status: 200, ok: true, text: async () => JSON.stringify({ success: true, data: { c12fe1c06bba254a9dc9f519b335aa7c1367a88a: { name: 'd', size: 1, files: many } } }) }) };
+  const capped = (await createTorBox({ http: http2, key: () => KEY }).cachedEntries([magnet])).get(magnet);
+  assert.equal(capped.files.length, 100);
+  assert.equal(capped.total, 300);
+  assert.equal(Math.min(...capped.files.map((file) => file.size)), 1e9 + 200);
+});
