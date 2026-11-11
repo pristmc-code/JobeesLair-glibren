@@ -18,6 +18,7 @@ import { rememberDrive } from './last-drive.js';
 import { formatFromName } from './link-formats.js';
 import { brokenFile } from './broken-copy.js';
 import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
+import { memorySample } from './memory-meter.js';
 
   // The order the list is shown in: disk images first (exFAT before the rest), then packages, then archives.
   var FORMAT_RANK = ["exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip", "tar"];
@@ -224,7 +225,11 @@ import { isMagnet, linkHashes, magnetHash } from '../services/torbox.js';
   async function searchTorBox(game, { api = torBoxApi(), signal, onUpdate = () => {}, hashList = null, textSearch = false, supports = debridSupports } = {}) {
     const found = [];
     const sources = { account: { state: "searching", count: 0 }, catalog: { state: "searching", count: 0 }, search: { state: textSearch ? "searching" : "absent", count: 0 }, list: { state: hashList?.files ? "searching" : "absent", count: 0 } };
-    const report = () => onUpdate({ files: unique(found), sources: { ...sources } });
+    // glibren (medidor de memoria): cada parte que chega mede (state/memory-meter.js).
+    const report = () => {
+      onUpdate({ files: unique(found), sources: { ...sources } });
+      memorySample("procurar-torbox");
+    };
     const run = async (name, work) => {
       try {
         const files = await work();

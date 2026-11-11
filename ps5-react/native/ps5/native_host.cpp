@@ -433,6 +433,12 @@ bool run_proof() {
       hui_heap_capacity(&heap.size, nullptr, nullptr);
       return heap;
     });
+    // glibren: device.memory() reports the title heap beside the script heap (host_api.hpp).
+    host::process_heap = [](std::size_t* used, std::size_t* size, std::size_t* peak) {
+      std::size_t blocks = 0, failures = 0;
+      hui_heap_stats(used, peak, &blocks, &failures);
+      hui_heap_capacity(size, nullptr, nullptr);
+    };
     if (network::start()) ps5_react_start_images();
     async_log::write("[PS5-REACT] sound=%d at %lldms", ps5_react_start_sound(), since_launch_ms());
     ErRuntimeConfig config = {};

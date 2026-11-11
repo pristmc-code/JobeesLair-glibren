@@ -25,6 +25,7 @@ import { webURL } from './download-sources.js';
 import { checkLocalPath, isLocalFeed } from './local-feed.js';
 import { ORBIT_FEED, onOrbitFeed, orbitFeedOn, orbitFeedReady, requestOrbitRefresh } from './orbit-feed.js';
 import { savedList } from './saved.js';
+import { memorySample } from './memory-meter.js';
 import { FileSystem, Http } from '@ps5-react/core';
 
   // The JS heap is 32 MiB for everything: a few modest feeds, each read whole. glibren.14: no longer three of the
@@ -267,8 +268,13 @@ import { FileSystem, Http } from '@ps5-react/core';
       } catch (error2) {
         console.log(`feeds: cached ${url} unreadable: ${error2.message}`);
       }
+      memorySample(memoryAction(url, "abrir"));
     }
     return out;
+  }
+  // glibren (medidor de memoria): o nome da acao de cada feed (state/memory-meter.js).
+  function memoryAction(url, step) {
+    return `${url === ORBIT_FEED ? "orbit" : url === LIVE_FEED ? "loja" : "feeds"}:${step}`;
   }
   // Refresh state per URL: { state: "refreshing" | "ok" | "failed", error, changed }.
   var status = /* @__PURE__ */ new Map();
@@ -454,6 +460,7 @@ import { FileSystem, Http } from '@ps5-react/core';
       setIndex(url, feed.games);
       setStatus(url, { state: "ok", changed: loaded.get(url) !== hash });
       console.log(`feeds: ${url}${from === url ? "" : ` (via ${hostOf(from)})`}: ${feed.games.length} games, ${feed.skipped} skipped`);
+      memorySample(memoryAction(url, "atualizar"));
     } catch (error2) {
       console.log(`feeds: ${url} failed: ${error2.message}`);
       if (listed(url)) setStatus(url, { state: "failed", error: error2.message });

@@ -46,6 +46,7 @@ import { startOnline, watchInstalls } from './state/online.js';
 import { startSharedLinks } from './state/links.js';
 import { applySpeedLimit } from './state/speed-limit.js';
 import { installLogger } from './services/logger.js';
+import { startMemoryMeter } from './state/memory-meter.js';
 import { VERSION } from './version.js';
 import { HOMEBREW_ONLY } from './edition.js';
 import { deviceFacts } from './state/device.js';
@@ -142,6 +143,8 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
       return () => clearTimeout(id);
     }, []);
     (0, useEffect)(() => HOMEBREW_ONLY ? void 0 : startCompanionIfEnabled(), []);
+    // glibren (medidor de memoria): uma amostra a cada 30 s com a tela da vez (state/memory-meter.js).
+    (0, useEffect)(() => startMemoryMeter(), []);
     // The drives and their space are read once at launch, on the probe worker, so the first screen that
     // wants them finds them in the cache.
     (0, useEffect)(() => {

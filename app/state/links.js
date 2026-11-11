@@ -15,6 +15,7 @@ import { activeService, heldByTorBox, torBoxFileNames, torBoxFormatNames } from 
 import { refreshShared, reportShared, sharedDead, subscribeShared } from './shared-links.js';
 import { downloadQueue } from './downloads.js';
 import { savedList } from './saved.js';
+import { memorySample } from './memory-meter.js';
 import { Http } from '@ps5-react/core';
 
   var SETTLE_MS = 2e3;
@@ -111,7 +112,15 @@ import { Http } from '@ps5-react/core';
     }, [key]);
     return progress;
   }
-  var findFormatsNow = (key, releases) => linkFormats().discover(key, releases);
+  // glibren (medidor de memoria): mede no fim (state/memory-meter.js); o que discover devolve passa como veio.
+  function findFormatsNow(key, releases) {
+    memorySample("descobrir-formatos:inicio");
+    const done = () => memorySample("descobrir-formatos");
+    const result = linkFormats().discover(key, releases);
+    if (result && typeof result.then === "function") result.then(done, done);
+    else done();
+    return result;
+  }
   /** What a game's links are known to be now (format-probe.js summaryOf), re-read when a format is found. */
   function useFormatSummary(releases) {
     const { version } = useLinkFormats();

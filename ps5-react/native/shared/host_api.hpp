@@ -45,6 +45,12 @@
 //                                   cpuFrequency, freeMemory, processTime, language}; unknown = null
 //                                  language: the system language as a BCP 47 tag ('pt-BR')
 //   device.utcOffset(ms)           ABI v14; minutes east of UTC at that instant in the system time zone
+//   device.memory(detail)          glibren; {heapUsed, heapLimit, processUsed, processSize, processPeak}: the
+//                                  script heap's bytes (js_heap.hpp's count, O(1)) and its limit, and the
+//                                  process heap where the host knows it (PS5; null elsewhere). detail true adds
+//                                  {mallocSize, mallocCount, objCount, strCount, arrayCount} from
+//                                  JS_ComputeMemoryUsage, which walks every object (milliseconds): not per frame.
+//                                  Absent from older hosts: DeviceInfo.memory() then answers null.
 //   users.foreground()             {id, name} | null
 //   users.loggedIn()               [{id, name}]
 //   notify(message, subMessage)    boolean
@@ -272,6 +278,9 @@ struct DeviceInfo {
   char language[16] = "";          // system language, BCP 47 ("en-US", "zh-Hans")
 };
 void device_info(DeviceInfo& info);
+// glibren: the process heap's bytes in use, capacity and peak, for device.memory(). A host that knows them sets
+// this before the runtime starts (PS5: the title heap); left null, the fields are null.
+extern void (*process_heap)(std::size_t* used, std::size_t* size, std::size_t* peak);
 
 struct User {
   int id = -1;

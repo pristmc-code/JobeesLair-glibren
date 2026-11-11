@@ -13,6 +13,7 @@ import { LIVE_FEED, feedName } from './feeds.js';
 import { libraryChanged } from './store-mode.js';
 import { brokenOnly, buildLibrary, libraryPaths, readLibrary, stillConfirmed, uncheckedCount, writeLibrary, writeList } from './torbox-library.js';
 import { hashListPaths, readHashList } from './torbox-search.js';
+import { memorySample } from './memory-meter.js';
 import { FileSystem, Platform } from '@ps5-react/core';
 
   var IDLE = { state: "idle", phase: null, total: 0, done: 0, found: 0, broken: 0, errors: 0, calls: 0, etaMs: null, waitingUntil: null, error: "", resumed: false };
@@ -74,6 +75,7 @@ import { FileSystem, Platform } from '@ps5-react/core';
       return Promise.resolve();
     }
     set({ ...IDLE, state: "running", phase: "account" });
+    memorySample("biblioteca-torbox:ler");
     const entries = catalogEntries();
     // As fichas do celular (torbox-fichas.json) saem dos jogos do catálogo: capa, fotos, texto e detalhes da loja.
     const byId = new Map(entries.map(({ game }) => [game.id, game]));
@@ -83,6 +85,7 @@ import { FileSystem, Platform } from '@ps5-react/core';
       } catch (error) {
         log(`not saved: ${error?.message || error}`);
       }
+      memorySample("biblioteca-torbox:gravar");
       // glibren.28: a lista, os ids da loja e as fichas (so na gravacao final; as parciais gravam so o banco) mesmo
       // quando o banco nao grava: antes a falha do banco levava a lista junto e a loja ficava com a lista antiga.
       if (!final) return;
@@ -91,6 +94,7 @@ import { FileSystem, Platform } from '@ps5-react/core';
       } catch (error) {
         log(`list not saved: ${error?.message || error}`);
       }
+      memorySample("biblioteca-torbox:gravar");
     };
     const promise = buildLibrary({
       entries,
@@ -103,7 +107,10 @@ import { FileSystem, Platform } from '@ps5-react/core';
       onlyNew,
       signal: controller.signal,
       log,
-      onProgress: (next) => set({ ...progress, ...next, state: "running", error: "" })
+      onProgress: (next) => {
+        set({ ...progress, ...next, state: "running", error: "" });
+        memorySample("biblioteca-torbox:montar");
+      }
     }).then(
       ({ progress: last }) => {
         log(`done: ${last.found} of ${last.total} games confirmed, ${last.calls} calls`);

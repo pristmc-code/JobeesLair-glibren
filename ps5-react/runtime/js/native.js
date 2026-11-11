@@ -57,6 +57,19 @@ export const DeviceInfo = {
    * @param {number} [time] milliseconds since the epoch @returns {number}
    */
   utcOffset: (time = Date.now()) => host().device.utcOffset(time),
+  /**
+   * glibren: the script heap's bytes in use and its limit, and the process heap where the host knows it (PS5),
+   * read from counters (cheap enough for every screen change). `detail` adds object counts from a walk of the
+   * heap (milliseconds). null on a host without it.
+   * @param {boolean} [detail]
+   * @returns {{heapUsed: number, heapLimit: number, processUsed: number | null, processSize: number | null,
+   *   processPeak: number | null, mallocSize?: number, mallocCount?: number, objCount?: number, strCount?: number,
+   *   arrayCount?: number} | null}
+   */
+  memory(detail = false) {
+    const device = host().device;
+    return typeof device.memory === 'function' ? device.memory(Boolean(detail)) : null;
+  },
 };
 
 // The title is sandboxed: paths are app paths such as /app0 (read-only) and /download0.
