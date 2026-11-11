@@ -30,6 +30,7 @@ import { debridStatus, refreshTorBoxHosts, setAllDebridKey, setTorBoxKey, setTor
 import { HOMEBREW_ONLY } from '../edition.js';
 import { MAX_SPEED_LIMIT, setSpeedLimit, stepSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
+import { setAutoPlayFirst, useAutoPlayFirst } from '../state/auto-play-first.js';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
@@ -196,6 +197,15 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       /* @__PURE__ */ (0, jsx)(CardHead, { icon: "disc", title: t2("settings.card.screenSaver") }),
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:screenSaver", name: t2("settings.screenSaver"), hint: t2("settings.screenSaverDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on }), onPress: () => setScreenSaver(!on) }),
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:screenSaverNow", name: t2("settings.screenSaverNow"), hint: t2("settings.screenSaverNowDetail"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "play", color: colors.muted }), onPress: showScreenSaver })
+    ] });
+  }
+  // glibren.32: the game page's Videos (game/VideosSheet.jsx): play the first result at once instead of the list.
+  function VideosCard() {
+    const t2 = useT();
+    const on = useAutoPlayFirst();
+    return jsxs(View, { scrollAnchor: true, style: CARD, children: [
+      jsx(CardHead, { icon: "play", title: t2("videos.title") }),
+      jsx(Row, { focusKey: "settings:autoPlayFirst", name: t2("settings.autoPlayFirst"), hint: t2("settings.autoPlayFirstDetail"), end: jsx(Switch, { on }), onPress: () => setAutoPlayFirst(!on) })
     ] });
   }
   // One swatch per preset: its accent filled, the accent frame when focused, a check on the chosen one.
@@ -948,7 +958,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onAddFile: () => setPickingFile(true), onMirror: setMirrorOf }, "feeds")],
       debrid: [/* @__PURE__ */ (0, jsx)(DebridCard, { onKey: () => setKeying(true), onAllDebridKey: () => setKeyingAll(true) }, "debrid")],
       torboxLibrary: [jsx(TorBoxLibraryCard, {}, "torboxLibrary")],
-      look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver")],
+      look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver"), jsx(VideosCard, {}, "videos")],
       guide: [/* @__PURE__ */ (0, jsx)(GuideCard, {}, "guide")],
       about: [/* @__PURE__ */ (0, jsx)(AboutCard, {}, "about"), /* @__PURE__ */ (0, jsx)(NoticeCard, {}, "notice")]
     };

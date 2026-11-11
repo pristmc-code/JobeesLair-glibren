@@ -946,6 +946,8 @@
   "settings.screenSaverDetail": "Após 10 minutos sem apertar nenhum botão, uma apresentação de jogos populares. Qualquer botão traz você de volta.",
   "settings.screenSaverNow": "Mostrar agora",
   "settings.screenSaverNowDetail": "Sem esperar 10 minutos",
+  "settings.autoPlayFirst": "Tocar o primeiro vídeo automaticamente",
+  "settings.autoPlayFirstDetail": "Trailer e Gameplay abrem direto o primeiro vídeo encontrado, sem mostrar a lista.",
   "settings.sounds": "Um clique a cada movimento. Um sinal quando um download termina.",
   "settings.speedLimit": "Limite de velocidade de download",
   "settings.speedLimitDetail": "Deixa banda para outros dispositivos e jogos online. Vale também para os downloads em segundo plano e pode ser mudado pela página do celular. As atualizações do app nunca são limitadas.",

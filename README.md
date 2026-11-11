@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.32**: optional "Play the first video automatically" for Trailer/Gameplay (with YouTube Max'd glibren4).
 > **glibren.31**: "Videos" closes Jobee'sLair and the background payload opens the video app (no more opening one app
 > over another); coming back from YouTube Max'd glibren3 reopens on the same screen.
 > **glibren.30**: the app update no longer fails when ShadowMount+ is busy (it uses the image path it already knows),

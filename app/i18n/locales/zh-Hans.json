@@ -946,6 +946,8 @@
   "settings.screenSaverDetail": "10 分钟未按任何按钮后，显示热门游戏的幻灯片。按任意按钮即可返回。",
   "settings.screenSaverNow": "立即显示",
   "settings.screenSaverNowDetail": "无需等待 10 分钟",
+  "settings.autoPlayFirst": "自动播放第一个视频",
+  "settings.autoPlayFirstDetail": "预告片和游戏实况会直接打开找到的第一个视频，不显示列表。",
   "settings.sounds": "每次移动都有点击声。下载完成时有提示音。",
   "settings.speedLimit": "下载速度限制",
   "settings.speedLimitDetail": "为其他设备和在线游戏留出带宽。也适用于后台下载，并可在手机页面上更改。应用更新从不受限。",

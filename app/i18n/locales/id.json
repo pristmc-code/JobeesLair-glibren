@@ -946,6 +946,8 @@
   "settings.screenSaverDetail": "Setelah 10 menit tanpa menekan tombol, tayangan slide game populer. Tombol apa pun membawa Anda kembali.",
   "settings.screenSaverNow": "Tampilkan sekarang",
   "settings.screenSaverNowDetail": "Lihat tanpa menunggu 10 menit",
+  "settings.autoPlayFirst": "Putar video pertama secara otomatis",
+  "settings.autoPlayFirstDetail": "Trailer dan Gameplay langsung membuka video pertama yang ditemukan, tanpa menampilkan daftar.",
   "settings.sounds": "Bunyi klik pada setiap gerakan. Dering saat unduhan selesai.",
   "settings.speedLimit": "Batas kecepatan unduh",
   "settings.speedLimitDetail": "Menyisakan bandwidth untuk perangkat lain dan permainan online. Berlaku juga untuk unduhan di latar belakang dan bisa diubah dari halaman ponsel. Pembaruan aplikasi tidak pernah dibatasi.",

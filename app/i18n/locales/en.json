@@ -946,6 +946,8 @@
     "settings.screenSaverDetail": "After 10 minutes without a button press, a slideshow of popular games. Any button brings you back.",
     "settings.screenSaverNow": "Show it now",
     "settings.screenSaverNowDetail": "See it without waiting 10 minutes",
+    "settings.autoPlayFirst": "Play the first video automatically",
+    "settings.autoPlayFirstDetail": "Trailer and Gameplay open the first video found right away, without showing the list.",
     "settings.sounds": "Click on every move. Chime when a download finishes.",
     "settings.speedLimit": "Download speed limit",
     "settings.speedLimitDetail": "Leaves bandwidth for other devices and online play. Also applies to background downloads and can be changed from the phone page. App updates are never limited.",

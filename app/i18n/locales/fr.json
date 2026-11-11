@@ -946,6 +946,8 @@
   "settings.screenSaverDetail": "Après 10 minutes sans appuyer sur un bouton, un diaporama de jeux populaires. N'importe quel bouton vous ramène.",
   "settings.screenSaverNow": "Afficher maintenant",
   "settings.screenSaverNowDetail": "Sans attendre 10 minutes",
+  "settings.autoPlayFirst": "Lire la première vidéo automatiquement",
+  "settings.autoPlayFirstDetail": "Bande-annonce et Gameplay ouvrent directement la première vidéo trouvée, sans afficher la liste.",
   "settings.sounds": "Un clic à chaque déplacement. Une sonnerie quand un téléchargement se termine.",
   "settings.speedLimit": "Limite de vitesse de téléchargement",
   "settings.speedLimitDetail": "Laisse de la bande passante aux autres appareils et au jeu en ligne. S'applique aussi aux téléchargements en arrière-plan et se modifie depuis la page du téléphone. Les mises à jour de l'app ne sont jamais limitées.",

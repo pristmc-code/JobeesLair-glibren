@@ -946,6 +946,8 @@
   "settings.screenSaverDetail": "Nach 10 Minuten ohne Tastendruck eine Diashow beliebter Spiele. Jede Taste bringt dich zurück.",
   "settings.screenSaverNow": "Jetzt zeigen",
   "settings.screenSaverNowDetail": "Ohne 10 Minuten zu warten",
+  "settings.autoPlayFirst": "Erstes Video automatisch abspielen",
+  "settings.autoPlayFirstDetail": "Trailer und Gameplay öffnen direkt das erste gefundene Video, ohne die Liste anzuzeigen.",
   "settings.sounds": "Klick bei jeder Bewegung. Signalton, wenn ein Download fertig ist.",
   "settings.speedLimit": "Download-Geschwindigkeitslimit",
   "settings.speedLimitDetail": "Lässt Bandbreite für andere Geräte und Online-Spiele übrig. Gilt auch für Downloads im Hintergrund und lässt sich auf der Handy-Seite ändern. App-Updates werden nie begrenzt.",

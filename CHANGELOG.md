@@ -6,6 +6,9 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.32** (fork): Settings > Look > "Play the first video automatically" (off by default): Trailer and
+  Gameplay ask the video app to play the first result straight away, no list (`auto=1` in glibren_busca.txt; YouTube
+  Max'd glibren4 reads it).
 - **glibren.31** (fork): "Videos" no longer asks the console to open the video app over Jobee'sLair (it was refused,
   0x80940011, and a console shut down soon after one of those tries). Jobee'sLair now asks its background payload to
   switch (POST /switch, payload API 23) and closes; the payload waits for it to close, then opens the video app. The

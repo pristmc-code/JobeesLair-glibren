@@ -6,13 +6,15 @@
 // (state/return-screen-run.js: the app comes back on this game's page), the background payload is asked to open the
 // video app once this one closed (POST /switch, state/background-downloads.js switchAppVia), and the app closes the way
 // the update's restart does (the queue marked to carry on, state/exit-app.js leaveForSwitch). Without the background
-// payload nothing closes and the sheet says why.
+// payload nothing closes and the sheet says why. glibren.32: with Settings > "Play the first video automatically" on
+// (state/auto-play-first.js) the search file also says auto=1: the app plays the first result instead of the list.
 
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useRef, useState } from 'react';
 import { tWhole, useT } from '../i18n/index.js';
 import { findVideoApp, openVideos, searchText } from '../state/youtube.js';
+import { autoPlayFirst } from '../state/auto-play-first.js';
 import { useNavState } from '../state/nav.jsx';
 import { forgetScreen, rememberScreen } from '../state/return-screen-run.js';
 import { switchAppVia } from '../state/background-downloads.js';
@@ -52,7 +54,7 @@ import { FileSystem, Text, View } from '@ps5-react/core';
       clearTimeout(timer.current);
       // A frame first, so "Opening" shows before the payload is asked.
       timer.current = setTimeout(async () => {
-        const sent = await openVideos({ fs: FileSystem, name: title, kind, returnTo: TITLE_ID, switchApp: switchAppVia, leave, beforeSwitch: () => rememberScreen(nav?.stack), afterFailure: forgetScreen });
+        const sent = await openVideos({ fs: FileSystem, name: title, kind, returnTo: TITLE_ID, autoPlay: autoPlayFirst(), switchApp: switchAppVia, leave, beforeSwitch: () => rememberScreen(nav?.stack), afterFailure: forgetScreen });
         console.log(`videos: ${app.titleId} ${sent.ok ? "switching" : `${sent.reason} ${sent.error ?? ""}`}`);
         if (sent.ok) return;
         const key = sent.reason === "write" ? "videos.writeFailed" : "videos.noPayload";

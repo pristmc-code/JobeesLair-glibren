@@ -141,6 +141,11 @@ const settingsDownloads = await screen('Settings (Downloads)', { type: SettingsS
 assert.ok(settingsDownloads.includes('Pause when the app closes'), settingsDownloads.join('|'));
 for (const label of ['Off', '5 s', '10 s', '15 s', '20 s', '25 s', '30 s']) assert.ok(settingsDownloads.includes(label), label);
 assert.ok(settingsHome.includes("Exit Jobee'sLair"), settingsHome.join('|'));
+// glibren.32: Settings > Look has the Videos card with "Play the first video automatically" (off by default).
+const settingsLook = await screen('Settings (Look, glibren.32)', { type: SettingsScreen, props: { onBack() {}, start: 'look' } });
+assert.ok(settingsLook.includes('Play the first video automatically'), settingsLook.join('|'));
+assert.ok(settingsLook.includes('Trailer and Gameplay open the first video found right away, without showing the list.'), settingsLook.join('|'));
+assert.equal((await load('app/state/auto-play-first.js')).autoPlayFirst(), false, 'off by default');
 const { ExitSheet } = await load('app/ui/ExitSheet.jsx');
 const exitSheet = await screen('Exit (glibren.5)', { type: ExitSheet, props: { summary: { app: 1, background: 2 }, onClose() {}, onExit() {} } });
 assert.ok(exitSheet.includes("Exit Jobee'sLair?") && exitSheet.includes('Exit') && exitSheet.includes('Stay'), exitSheet.join('|'));

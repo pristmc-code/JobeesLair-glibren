@@ -108,6 +108,24 @@ test('glibren.31: the search file\'s second line is voltar=<title>; the search a
   assert.deepEqual(rest, [], 'two lines, no trailing new line');
 });
 
+test('glibren.32: "Play the first video automatically" adds auto=1 as the last line; off, no such line', async () => {
+  assert.equal(yt.searchFileText('ASTRO BOT trailer', 'PPSA99471', true), 'ASTRO BOT trailer\nvoltar=PPSA99471\nauto=1');
+  assert.equal(yt.searchFileText('ASTRO BOT trailer', 'PPSA99471', false), 'ASTRO BOT trailer\nvoltar=PPSA99471');
+  assert.equal(yt.searchFileText('ASTRO BOT trailer', 'PPSA99471'), 'ASTRO BOT trailer\nvoltar=PPSA99471', 'off by default');
+  assert.equal(yt.searchFileText('A gameplay', null, true), 'A gameplay\nauto=1', 'no voltar=: the search, then auto=1');
+  for (const notTrue of [1, 'true', 'auto=1', {}]) assert.ok(!yt.searchFileText('A', 'PPSA99471', notTrue).includes('auto='), `only true turns it on (${JSON.stringify(notTrue)})`);
+  const long = yt.searchText('漢'.repeat(300), 'trailer');
+  const lines = yt.searchFileText(long, 'PPSA99471', true).split('\n');
+  assert.deepEqual(lines, [long, 'voltar=PPSA99471', 'auto=1'], 'the search uncut, three lines, no trailing new line');
+  const leave = async () => {};
+  const on = memoryFs(['/data/homebrew/PPSA99991/eboot.bin']);
+  assert.equal((await yt.openVideos({ fs: on, name: 'Returnal™', kind: 'gameplay', returnTo: 'PPSA99471', autoPlay: true, switchApp: async () => ({ ok: true }), leave })).ok, true);
+  assert.equal(on.files.get('/data/homebrew/PPSA99991/glibren_busca.txt'), 'Returnal gameplay\nvoltar=PPSA99471\nauto=1');
+  const off = memoryFs(['/data/homebrew/PPSA99350/eboot.bin']);
+  await yt.openVideos({ fs: off, name: 'Returnal', kind: 'trailer', returnTo: 'PPSA99471', switchApp: async () => ({ ok: true }), leave });
+  assert.equal(off.files.get('/data/homebrew/PPSA99350/glibren_busca.txt'), 'Returnal trailer\nvoltar=PPSA99471', 'without autoPlay: as before');
+});
+
 test('glibren.31 openVideos: search (with voltar=) in place, screen saved, payload asked to switch, then the app leaves', async () => {
   const order = [];
   const switchApp = async (to, from) => (order.push(`switch:${to}<-${from}`), { ok: true });

@@ -23,6 +23,9 @@ export const HELPER = "/app0/companion-daemon.elf";
 export const KINDS = Object.freeze(["gameplay", "trailer"]);
 // glibren.31: the second line of SEARCH_FILE (the search stays within MAX_SEARCH_BYTES; this line is apart from it).
 export const RETURN_KEY = "voltar";
+// glibren.32: "auto=1" after it when Settings > "Play the first video automatically" is on (state/auto-play-first.js):
+// the app plays the first result at once instead of showing the list. ytps5 reads only the first line.
+export const AUTO_LINE = "auto=1";
 const TITLE_ID_FORM = /^[A-Z]{4}\d{5}$/;
 
 export const appFolder = (titleId) => `/data/homebrew/${titleId}`;
@@ -115,9 +118,13 @@ export function writeSearch(fs, app, text) {
   return path;
 }
 
-// What SEARCH_FILE holds: the search, then "voltar=<returnTo>" when returnTo is a title ID (else the search alone).
-export function searchFileText(text, returnTo) {
-  return typeof returnTo === "string" && TITLE_ID_FORM.test(returnTo) ? `${text}\n${RETURN_KEY}=${returnTo}` : text;
+// What SEARCH_FILE holds: the search, then "voltar=<returnTo>" when returnTo is a title ID, then "auto=1" when
+// autoPlay is true; one line each, no new line at the end.
+export function searchFileText(text, returnTo, autoPlay = false) {
+  const lines = [text];
+  if (typeof returnTo === "string" && TITLE_ID_FORM.test(returnTo)) lines.push(`${RETURN_KEY}=${returnTo}`);
+  if (autoPlay === true) lines.push(AUTO_LINE);
+  return lines.join("\n");
 }
 
 // The companion helper's request (native/companion_daemon.c "LNC1"). glibren.31: no longer sent for Videos: a launch
@@ -130,15 +137,15 @@ export const launchRequest = (titleId, payloadDir) => `LNC1\n${titleId}\n${paylo
 // (`switchApp(to, from)`, POST /switch: it waits for `from` to close, then ~15 s, then launches `to`), and this app
 // closes (`leave()`). Resolves to { ok: true, app, text } once leave() was called, or { ok: false, reason:
 // 'missing' | 'name' | 'write' | 'switch', error, app? }: nothing closes then, the search file and the saved screen are
-// taken back (`afterFailure`), and the sheet says why.
-export async function openVideos({ fs, name, kind = "gameplay", returnTo = null, switchApp = null, leave = null, beforeSwitch = null, afterFailure = null }) {
+// taken back (`afterFailure`), and the sheet says why. glibren.32: `autoPlay` adds the "auto=1" line.
+export async function openVideos({ fs, name, kind = "gameplay", returnTo = null, autoPlay = false, switchApp = null, leave = null, beforeSwitch = null, afterFailure = null }) {
   const app = findVideoApp(fs);
   if (!app) return { ok: false, reason: "missing", error: "" };
   const text = searchText(name, kind);
   if (!text) return { ok: false, reason: "name", error: "" };
   let path;
   try {
-    path = writeSearch(fs, app, searchFileText(text, returnTo));
+    path = writeSearch(fs, app, searchFileText(text, returnTo, autoPlay));
   } catch (error) {
     return { ok: false, reason: "write", error: error?.message ?? String(error), app };
   }
