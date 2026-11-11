@@ -62,6 +62,8 @@ import { UpdateDialog } from './ui/UpdateDialog.jsx';
 import { ScreenGuard } from './ui/ScreenGuard.jsx';
 import { AutoReportAsk } from './ui/AutoReportAsk.jsx';
 import { Ps5PkgWarning } from './ui/Ps5PkgWarning.jsx';
+import { CrashNotice } from './ui/CrashNotice.jsx';
+import { checkCrash } from './state/crash-notice.js';
 import { startAutoReports } from './state/bug-report.js';
 import { ScreenSaver } from './ui/ScreenSaver.jsx';
 import { WhatsNew } from './ui/WhatsNew.jsx';
@@ -149,8 +151,13 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
     (0, useEffect)(() => watchQueue((listener) => downloadQueue().subscribe(listener)), []);
     // glibren.13: the background payload up at launch (phone page and its TorBox library), without waiting for a
     // download; in the background, never in the way of the first screen.
+    // pac1: and, with it up, whether the console went down last time (state/crash-notice.js): asked once it answers,
+    // and again a while later (a payload sent for a download in the meantime counts too).
     (0, useEffect)(() => {
-      if (!HOMEBREW_ONLY) void startBackgroundAtLaunch();
+      if (HOMEBREW_ONLY) return void 0;
+      void startBackgroundAtLaunch().then(() => checkCrash());
+      const id = setTimeout(() => void checkCrash(), 45e3);
+      return () => clearTimeout(id);
     }, []);
     // Back from rest mode: how long the console slept goes to the debug log, and the downloads that were running
     // and fail on the network after it are tried again by themselves (state/rest-wake.js).
@@ -201,7 +208,9 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
           /* @__PURE__ */ (0, jsx)(UpdateDialog, {}),
           HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(AutoReportAsk, {}),
           // glibren.16: "This PS5 .pkg won't open", asked by Install on a PS5 package (state/ps5-pkg-warning.js).
-          HOMEBREW_ONLY ? null : jsx(Ps5PkgWarning, {})
+          HOMEBREW_ONLY ? null : jsx(Ps5PkgWarning, {}),
+          // pac1: "The console turned off at HH:MM during ...", once per crash (state/crash-notice.js).
+          HOMEBREW_ONLY ? null : jsx(CrashNotice, {})
         ] }),
         // 0.5.0 Pre Release 4: the one-time What's new, and the screen saver over everything.
         HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(WhatsNew, {}),

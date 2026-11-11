@@ -35,6 +35,7 @@ import { setTubeSponsorBlock, useTubeSponsorBlock } from '../state/tube-settings
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
+import { CONVERT_OPTIONS, setConvertOption, useConvertOptions } from '../state/convert-options.js';
 import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
@@ -422,6 +423,31 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       }, value)) })
     ] });
   }
+  // pac1: one of the conversion's options (state/convert-options.js) as the pause's row: "Off" twice as wide, then one
+  // pill per value. `name`: the setting's key (convertPauseSeconds, convertWriteLimit, convertSyncMB).
+  var CONVERT_ROWS = {
+    convertPauseSeconds: { title: "settings.convertPause", detail: "settings.convertPauseDetail", value: "settings.convertPauseValue" },
+    convertWriteLimit: { title: "settings.convertWrite", detail: "settings.convertWriteDetail", value: "units.speed" },
+    convertSyncMB: { title: "settings.convertSync", detail: "settings.convertSyncDetail", value: "settings.convertSyncValue" }
+  };
+  function ConvertOptionRow({ name }) {
+    const t2 = useT();
+    const current = useConvertOptions()[name];
+    const row = CONVERT_ROWS[name];
+    return jsxs(View, { style: { gap: 10 }, children: [
+      jsxs(View, { style: { gap: 3 }, children: [
+        jsx(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2(row.title) }),
+        jsx(Text, { style: text(20, colors.muted), children: t2(row.detail) })
+      ] }),
+      jsx(View, { style: { flexDirection: "row", gap: 12 }, children: CONVERT_OPTIONS[name].map((value) => jsx(View, {
+        focusKey: `settings:${name}:${value}`,
+        focusable: true,
+        onPress: () => setConvertOption(name, value),
+        style: { position: "relative", flex: value ? 1 : 2, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: value === current ? colors.accent : colors.surface2 },
+        children: jsx(SpeedFace, { label: value ? t2(row.value, { n: String(value) }) : t2("settings.convertOptionOff"), chosen: value === current })
+      }, value)) })
+    ] });
+  }
   // glibren.6: the drive every download starts on (state/last-drive.js), as the rows above: "Automatic" (the last
   // drive used, as before) and one pill per drive plugged in. A drive picked and unplugged reads as Automatic.
   function DefaultDriveRow({ roots }) {
@@ -508,6 +534,8 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       background ? jsx(View, { style: { paddingVertical: 8 }, children: jsx(PauseOnCloseRow, {}) }) : null,
       // glibren.12: PS5 games to .exfat (state/exfat-convert.js), and the BACKUP folder with the originals.
       jsx(Row, { focusKey: "settings:convertExfat", name: t2("settings.convertExfat"), hint: t2("settings.convertExfatDetail"), end: jsx(Switch, { on: convertExfat }), onPress: () => setConvertToExfat(!convertExfat) }),
+      // pac1: the conversion's options (the payload converts): pause between conversions, write limit, write in chunks.
+      ...convertExfat ? ["convertPauseSeconds", "convertWriteLimit", "convertSyncMB"].map((name) => jsx(View, { style: { paddingVertical: 8 }, children: jsx(ConvertOptionRow, { name }) }, name)) : [],
       jsx(BackupRow, { roots: drives.roots }),
       // glibren.16: Install on a PS5 .pkg asks first above firmware 11.60 (state/ps5-pkg-warning.js, ui/Ps5PkgWarning.jsx).
       jsx(Row, { focusKey: "settings:warnPs5Pkg", name: t2("settings.warnPs5Pkg"), hint: t2("settings.warnPs5PkgDetail"), end: jsx(Switch, { on: warnPs5Pkg }), onPress: () => setPs5PkgWarning(!warnPs5Pkg) }),

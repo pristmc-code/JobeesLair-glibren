@@ -17,7 +17,7 @@ import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CARD_WIDTH, ConversionCard, DownloadCard, conversionKey, primaryKey } from './DownloadCard.jsx';
-import { cancelPayloadConversion, conversionActive, forgetPayloadConversion, outsideQueue, usePayloadConversions } from '../state/payload-conversions.js';
+import { cancelPayloadConversion, conversionActive, forgetPayloadConversion, outsideQueue, useConversionWait, usePayloadConversions, waitClock } from '../state/payload-conversions.js';
 import { installWithPs5Warning } from '../state/ps5-pkg-warning.js';
 import { FileSystem } from '@ps5-react/core';
 import { Telemetry } from './Telemetry.jsx';
@@ -147,6 +147,8 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
     // glibren.16: the payload's conversions the queue does not know (every job counts, cleared ones too).
     const conversions = usePayloadConversions();
     const outside = useMemo(() => outsideQueue(conversions, everyJob, { exists: (path) => FileSystem.exists(path) }), [conversions, everyJob]);
+    // pac1: a pausa entre conversoes (Configuracoes > Downloads): quanto falta para a proxima comecar.
+    const convertWait = useConversionWait();
     (0, useEffect)(() => {
       try {
         void downloadQueue().syncInstalls();
@@ -263,6 +265,8 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
         fitBytes(t2("downloads.title"), SPAN_MAX),
         /* @__PURE__ */ (0, jsx)(Text, { style: { fontSize: 22, fontWeight: 400, color: colors.subtle }, children: shown ? fitBytes(`   ${summary(jobs, outside)}`, SPAN_MAX) : "" })
       ] }) }),
+      // pac1: "Pausa entre conversoes: a proxima comeca em 1:45", enquanto o payload espera.
+      convertWait > 0 ? jsx(Text, { style: { width: 1800, marginBottom: 12, fontFamily: "Exo2", fontSize: 21, color: "#fbbf24", numberOfLines: 1, ellipsizeMode: "tail", lineHeight: 30 }, children: t2("downloads.convert.waiting", { time: waitClock(convertWait) }) }) : null,
       failure || note ? /* @__PURE__ */ (0, jsx)(Text, { style: { width: 1800, marginBottom: 16, fontFamily: "Exo2", fontSize: 21, color: failure ? "#f87171" : colors.muted, numberOfLines: 2, ellipsizeMode: "tail", lineHeight: 30 }, children: failure || note }) : null,
       // One scroll for the whole page below the title: the library band and the telemetry scroll away
       // with the cards (a fixed band left the cards a strip a card and a half tall, and moving up never

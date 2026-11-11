@@ -825,6 +825,21 @@ int exw_plan_image(const exw_entry* entries, size_t count, const char* label, ex
 
 // ============================== escrita ==============================
 
+// pac1: marcos da escrita para quem usa o writer (o bg-downloader registra no diario com fsync; o harness nao liga).
+// stage: "created" (a = tamanho final da imagem), "data-start" (a = bytes de dados), "data-end" (a = bytes de dados),
+// "sync" (a = tamanho final, antes do ftruncate + fsync), "closed" (b = 1 com erro), "fsync" (so com exw_sync_marked:
+// a = bytes gravados ate ali, b = ms que o fsync levou).
+typedef void (*exw_mark_fn)(void* ctx, const char* stage, uint64_t a, uint64_t b);
+static exw_mark_fn exw_mark_hook;
+static void* exw_mark_ctx;
+// pac1: de quanto em quanto a imagem leva fsync durante a escrita (EXW_SYNC_EVERY, 256 MiB, por padrao) e se cada
+// fsync vira marco. O bg-downloader muda os dois na opcao "Gravar em pedacos" (POST /config "convertSyncMB").
+static uint64_t exw_sync_bytes = EXW_SYNC_EVERY;
+static int exw_sync_marked;
+static void exw_mark(const char* stage, uint64_t a, uint64_t b) {
+  if (exw_mark_hook) exw_mark_hook(exw_mark_ctx, stage, a, b);
+}
+
 typedef struct {
   int fd;
   uint8_t* buf;
@@ -851,8 +866,14 @@ static int exw_out_flush(exw_out* o) {
   }
   o->base += o->fill;
   o->fill = 0;
-  if (o->base - o->synced >= EXW_SYNC_EVERY) {
+  if (o->base - o->synced >= exw_sync_bytes) {
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     if (fsync(o->fd) != 0) return -1;
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    // pac1: "gravar em pedacos" ligado: cada fsync vira um marco, com o tempo que levou (o disco USB engasga?).
+    if (exw_sync_marked)
+      exw_mark("fsync", o->base, (uint64_t)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000));
     EXW_DONTNEED(o->fd, o->synced, o->base - o->synced);
     o->synced = o->base;
   }
@@ -1046,6 +1067,7 @@ static int exw_emit(const exw_layout* L, exw_out* o, exw_read_fn read, void* rea
 
   uint32_t ts = exw_timestamp();
   uint64_t done = 0, total = L->data_bytes;
+  exw_mark("data-start", total, 0);
   if (progress && progress(progress_ctx, 0, total)) return -2;
   for (uint32_t i = 0; i < L->norder; i++) {
     const exw_node* nd = &L->nodes[L->order[i]];
@@ -1104,13 +1126,17 @@ int exw_write(const char* image_path, const exw_entry* entries, size_t count, co
     exw_layout_free(&L);
     return exw_fail(err, errcap, "nao abriu %s: %s", image_path, strerror(e));
   }
+  exw_mark("created", L.image_bytes, 0);
   int rc = exw_emit(&L, &o, read, read_ctx, progress, progress_ctx, err, errcap);
   if (rc == 0) {
+    exw_mark("data-end", L.data_bytes, 0);
+    exw_mark("sync", L.image_bytes, 0);
     // a folga no fim: so estende o arquivo (zeros; esparso onde o sistema de arquivos deixa)
     if (ftruncate(o.fd, (off_t)L.image_bytes) != 0) rc = exw_fail(err, errcap, "nao estendeu a imagem: %s", strerror(errno));
     else if (fsync(o.fd) != 0) rc = exw_fail(err, errcap, "fsync da imagem falhou: %s", strerror(errno));
   }
   if (close(o.fd) != 0 && rc == 0) rc = exw_fail(err, errcap, "erro fechando a imagem: %s", strerror(errno));
+  exw_mark("closed", 0, rc != 0);
   free(o.buf);
   exw_layout_free(&L);
   return rc;

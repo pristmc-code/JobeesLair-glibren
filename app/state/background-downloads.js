@@ -53,7 +53,8 @@
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
 import { originOf } from './link-formats.js';
-import { setBackupSource, setConversionSource } from './payload-conversions.js';
+import { noteConversionWait, setBackupSource, setConversionSource } from './payload-conversions.js';
+import { setCrashSource } from './crash-notice.js';
 import { setOrbitSource } from './orbit-feed.js';
 
   var SETTINGS = "settings.json";
@@ -71,7 +72,9 @@ import { setOrbitSource } from './orbit-feed.js';
   // glibren.27: 22, a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"): o jogo conhecido vai so com
   // os links.
   // glibren.31: 23, a troca de app (POST /switch): o app de videos abre depois que a Jobe fecha, e volta por ela.
-  var PAYLOAD_API = 23;
+  // pac1: 24, a pausa entre conversoes e o limite de escrita da conversao (POST /config "convertPauseSeconds",
+  // "convertWriteLimit"; GET /convert "waitSeconds") e a queda da sessao anterior (GET /crash, last-crash.json).
+  var PAYLOAD_API = 24;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -228,6 +231,9 @@ import { setOrbitSource } from './orbit-feed.js';
     // glibren.18: o disco padrao e a conversao ({ root, convert }) que vao no POST /config ("autoRoot", "autoConvert"):
     // com eles o payload comeca sozinho, com o app fechado, um pedido da Biblioteca TorBox feito no celular. null: nada.
     autoStart = () => null,
+    // pac1: as opcoes da conversao ({ convertPauseSeconds, convertWriteLimit, convertSyncMB }, state/convert-options.js)
+    // que vao no POST /config; null nao manda nada.
+    convertOptions = () => null,
     // glibren.13: a "api" minima do payload no ar; um mais antigo e trocado pelo ELF deste app (ensurePayloadNow).
     payloadApi = PAYLOAD_API,
     // glibren: poe na fila um pedido da Biblioteca TorBox feito no celular ({ id, hash, file, whole, code, platform,
@@ -405,7 +411,10 @@ import { setOrbitSource } from './orbit-feed.js';
       const cap = speedLimit(); // glibren.13
       const auto = autoStart(); // glibren.18
       const autoFields = auto && typeof auto.root === "string" && /^\/[^\u0000\\]*[^/]$/.test(auto.root) && !auto.root.split("/").includes("..") ? { autoRoot: auto.root, autoConvert: auto.convert !== false } : {};
-      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...Number.isInteger(cap) && cap >= 0 ? { speedLimit: cap } : {}, ...autoFields, ...monitor() ?? {} };
+      // pac1: so os campos validos das opcoes da conversao.
+      const conv = convertOptions() ?? {};
+      const convFields = Object.fromEntries(["convertPauseSeconds", "convertWriteLimit", "convertSyncMB"].filter((key) => Number.isInteger(conv[key]) && conv[key] >= 0).map((key) => [key, conv[key]]));
+      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...Number.isInteger(cap) && cap >= 0 ? { speedLimit: cap } : {}, ...autoFields, ...convFields, ...monitor() ?? {} };
       const key = `${state?.pid}:${JSON.stringify(body)}`;
       if (!state || configFor === key) return;
       const answer = await call(token, "POST", "/config", body);
@@ -1018,8 +1027,19 @@ import { setOrbitSource } from './orbit-feed.js';
       const token = readToken();
       if (!token) return null;
       const answer = await call(token, "GET", "/convert");
+      // pac1: a pausa entre conversoes (quanto falta para a proxima comecar), para a tela de Downloads.
+      if (answer.status === 200) noteConversionWait(answer.data?.waitSeconds);
       return answer.status === 200 && Array.isArray(answer.data?.conversions) ? answer.data.conversions : null;
     };
+    // pac1: a queda da sessao anterior do payload (GET /crash -> last-crash.json), para o aviso ao abrir (crash-notice.js).
+    // So pergunta a um payload no ar; null sem payload ou sem queda.
+    wrapper.crash = async () => {
+      const token = readToken();
+      if (!token) return null;
+      const answer = await call(token, "GET", "/crash");
+      return answer.status === 200 && answer.data?.crash && typeof answer.data.crash === "object" ? answer.data.crash : null;
+    };
+    setCrashSource(wrapper.crash);
     wrapper.cancelConversion = async (id) => {
       const token = readToken();
       if (token && id) await call(token, "POST", `/convert/${encodeURIComponent(id)}/cancel`);

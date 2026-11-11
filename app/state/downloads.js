@@ -15,6 +15,7 @@ import { createBackgroundDownloads, onBackgroundDownloads, onPauseOnClose, pause
 import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
 import { adoptSpeedLimit, onSpeedLimit, speedLimitNow } from './speed-limit.js';
+import { convertOptions, onConvertOptions } from './convert-options.js';
 import { recordCapture } from './capture-hosts.js';
 import { libraryRoot, queueLibraryRequest } from './phone-library.js';
 import { onDefaultDrive } from './last-drive.js';
@@ -83,6 +84,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       adoptSpeedLimit,
       // glibren.18: o disco padrao e a conversao, para o payload comecar sozinho (app fechado) um pedido do celular.
       autoStart: () => ({ root: libraryRoot(storageRoots()), convert: convertToExfatOn() }),
+      // pac1: pausa entre conversoes, limite de escrita e gravar em pedacos (Configuracoes > Downloads).
+      convertOptions,
       // glibren: um jogo pedido na Biblioteca TorBox do celular entra nesta fila, pelo TorBox, no disco padrao.
       onLibraryRequest: (request) => queueLibraryRequest(request, { queue: downloadQueue(), roots: storageRoots(), getGame })
     }),
@@ -129,6 +132,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   // glibren.18: o disco padrao ou a conversao mudados chegam ao payload no ar (pedidos do celular com o app fechado).
   onDefaultDrive(() => background?.refreshConfig?.());
   onConvertToExfat(() => background?.refreshConfig?.());
+  // pac1: as opcoes da conversao mudadas chegam ao payload no ar.
+  onConvertOptions(() => background?.refreshConfig?.());
   // glibren.13: the background payload up at launch, for the phone page and its TorBox library/store (only on the PS5,
   // with background downloads and the phone page on: background-downloads.js startAtLaunch). Never throws or blocks.
   function startBackgroundAtLaunch() {

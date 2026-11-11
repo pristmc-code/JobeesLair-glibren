@@ -98,6 +98,36 @@ import { useEffect, useState } from 'react';
     return list;
   }
   var conversionActive = (item) => ACTIVE_CONVERSION.includes(item.state);
+
+  // ---- pac1: a pausa entre conversoes (Configuracoes > Downloads; o payload espera antes da proxima) ----
+  // O payload diz no GET /convert quantos segundos faltam ("waitSeconds", 0 = nada esperando); a tela de Downloads
+  // mostra "Pausa entre conversoes: a proxima comeca em 1:45", contando ate a proxima leitura.
+  var waitUntil = 0; // Date.now() em que a proxima comeca; 0 = nenhuma espera
+  var waitListeners = /* @__PURE__ */ new Set();
+  function noteConversionWait(seconds, now = Date.now()) {
+    const next = Number.isFinite(Number(seconds)) && Number(seconds) > 0 ? now + Number(seconds) * 1e3 : 0;
+    if (next === waitUntil) return;
+    waitUntil = next;
+    for (const listener of [...waitListeners]) listener(waitUntil);
+  }
+  /** Segundos que faltam para a proxima conversao comecar (0 = nenhuma espera). */
+  var conversionWaitSeconds = (now = Date.now()) => waitUntil > now ? Math.ceil((waitUntil - now) / 1e3) : 0;
+  /** "m:ss" de uma espera em segundos. */
+  var waitClock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+  /** Os segundos de espera, redesenhados a cada segundo enquanto houver espera. */
+  function useConversionWait() {
+    const [seconds, setSeconds] = useState(() => conversionWaitSeconds());
+    useEffect(() => {
+      const update = () => setSeconds(conversionWaitSeconds());
+      waitListeners.add(update);
+      const timer = setInterval(update, 1e3);
+      return () => {
+        waitListeners.delete(update);
+        clearInterval(timer);
+      };
+    }, []);
+    return seconds;
+  }
   /**
    * Das conversoes do payload, as que a fila nao conhece: nem pela chave (o id do item da fila) nem pelo .exfat que
    * gravam. Canceladas nunca; terminadas (pronta ou erro) so nas ultimas 24 h, e uma pronta so se o .exfat ainda esta
@@ -203,4 +233,4 @@ import { useEffect, useState } from 'react';
     return { state: "idle" };
   }
 
-export { backupStatus, convertAllBackup, convertBackup, deleteBackup, noteBackup, payloadLog, refreshBackup, setBackupSource, useBackup, cancelPayloadConversion, conversionActive, forgetPayloadConversion, noteConversions, outsideQueue, payloadConversions, refreshConversions, setConversionSource, usePayloadConversions };
+export { conversionWaitSeconds, noteConversionWait, useConversionWait, waitClock, backupStatus, convertAllBackup, convertBackup, deleteBackup, noteBackup, payloadLog, refreshBackup, setBackupSource, useBackup, cancelPayloadConversion, conversionActive, forgetPayloadConversion, noteConversions, outsideQueue, payloadConversions, refreshConversions, setConversionSource, usePayloadConversions };

@@ -28,6 +28,11 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <dirent.h>
+#ifdef __PROSPERO__
+#include <sys/mount.h> // pac1: statfs (f_fstypename)
+#else
+#include <sys/vfs.h>
+#endif
 
 #include "exfat_writer.c"
 #include "pkg_source.c"
@@ -66,6 +71,82 @@ static int g_conv_count;
 static unsigned g_conv_next;
 static char g_smp_base[256] = "http://127.0.0.1:10101/api/v1";
 static int g_conv_delay_ms; // testes: espera por passo de progresso (BGDL_CONVERT_DELAY_MS)
+
+// ---- pac1: marcos da conversao no diario ----
+// Cada passo grande da conversao vira uma linha "conversao <id> [marco] <passo>" gravada com fsync na hora (logk_),
+// para sobreviver a uma queda do console: inicio (jogo, origem, destino), origem aberta, plano (tamanho), arquivo .exfat
+// criado, inicio da escrita, progresso a cada g_conv_mark_bytes (1 GiB; BGDL_MARK_BYTES nos testes) com MB/s, fim da
+// escrita, fsync/fechamento, conferencia, rename, pedido ao ShadowMount+ (rota e resposta) e fim. So os marcos levam
+// fsync (as outras linhas seguem a regra de sempre, no maximo a cada 2 s). O last-crash.json traz o ultimo marco.
+#define MARK_TAG "[marco] "
+static uint64_t g_conv_mark_bytes = 1024ull * 1024 * 1024;
+static void conv_mark(const Conv* c, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+static void conv_mark(const Conv* c, const char* fmt, ...) {
+  char text[900];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(text, sizeof text, fmt, args);
+  va_end(args);
+  logk_("conversao %s " MARK_TAG "%s", c->id, text);
+}
+static double conv_gb(uint64_t bytes) { return (double)bytes / 1e9; }
+// Os marcos de dentro do exw_write (exfat_writer.c chama exw_mark_hook; o harness de teste nao liga).
+static void conv_writer_mark(void* ctx, const char* stage, uint64_t a, uint64_t b) {
+  const Conv* c = ctx;
+  if (!strcmp(stage, "created")) conv_mark(c, "arquivo .exfat criado: %s.part (tamanho final %.2f GB, estendido no fim)", c->output, conv_gb(a));
+  else if (!strcmp(stage, "data-start")) conv_mark(c, "escrita do exFAT: inicio dos dados (0 de %.2f GB)", conv_gb(a));
+  else if (!strcmp(stage, "data-end")) conv_mark(c, "escrita do exFAT: fim dos dados (%.2f GB)", conv_gb(a));
+  else if (!strcmp(stage, "sync")) conv_mark(c, "fsync da imagem (%.2f GB)", conv_gb(a));
+  else if (!strcmp(stage, "closed")) conv_mark(c, "imagem fechada%s", b ? " (com erro)" : "");
+  else if (!strcmp(stage, "fsync")) conv_mark(c, "gravar em pedacos: fsync em %.2f GB levou %llu ms", conv_gb(a), (unsigned long long)b);
+}
+// pac1: o disco de um caminho para os marcos: tipo do sistema de arquivos (statfs: f_fstypename no PS5/FreeBSD, o
+// numero magico no Linux), livre e total.
+static void conv_disk_info(const char* path, char* out, size_t cap) {
+  char fstype[32] = "?";
+  uint64_t free_bytes = 0, total_bytes = 0;
+  struct statfs sf;
+  if (!statfs(path, &sf)) {
+#ifdef __PROSPERO__
+    size_t n = strnlen(sf.f_fstypename, sizeof sf.f_fstypename);
+    if (n >= sizeof fstype) n = sizeof fstype - 1;
+    memcpy(fstype, sf.f_fstypename, n);
+    fstype[n] = 0;
+#else
+    const unsigned long magic = (unsigned long)sf.f_type;
+    const char* name = magic == 0x2011BAB0UL ? "exfat" : magic == 0xEF53UL ? "ext4" : magic == 0x01021994UL ? "tmpfs" :
+                       magic == 0x4D44UL ? "msdos" : magic == 0x5346544EUL ? "ntfs" : magic == 0x9123683EUL ? "btrfs" :
+                       magic == 0x58465342UL ? "xfs" : magic == 0x794C7630UL ? "overlay" : magic == 0x65735546UL ? "fuse" : NULL;
+    if (name) memcpy(fstype, name, strlen(name) + 1); // todos bem menores que fstype
+    else snprintf(fstype, sizeof fstype, "0x%lx", magic);
+#endif
+    free_bytes = (uint64_t)sf.f_bavail * (uint64_t)sf.f_bsize;
+    total_bytes = (uint64_t)sf.f_blocks * (uint64_t)sf.f_bsize;
+    snprintf(out, cap, "%s, livre %.1f GB de %.1f GB", fstype, conv_gb(free_bytes), conv_gb(total_bytes));
+  } else {
+    snprintf(out, cap, "statfs falhou: %s", strerror(errno));
+  }
+}
+
+// ---- pac1: pausa entre conversoes ----
+// g_conv_pause_s (bg_downloader.c, POST /config "convertPauseSeconds"; 0 = desligada): depois de uma conversao que
+// trabalhou (pronta, falhou depois de gravar, ou extraida), a PROXIMA conversao diferente so comeca depois desse tempo,
+// contado do fim. Mudar a opcao vale na hora. GET /convert e /api/status levam "waitSeconds" (o que falta, com uma na fila).
+static int64_t g_conv_last_end_ms; // mono_ms do fim da ultima que trabalhou; 0 = nenhuma
+static char g_conv_last_id[24];
+static int64_t conv_wait_left_ms_locked(const Conv* next) {
+  if (g_conv_pause_s <= 0 || !g_conv_last_end_ms) return 0;
+  if (next && !strcmp(next->id, g_conv_last_id)) return 0; // a mesma (extraida agora, converte em seguida)
+  const int64_t left = g_conv_last_end_ms + (int64_t)g_conv_pause_s * 1000 - mono_ms();
+  return left > 0 ? left : 0;
+}
+static int conv_wait_seconds_locked(void) {
+  Conv* next = NULL;
+  for (int i = 0; i < g_conv_count && !next; ++i) if (!strcmp(g_convs[i]->state, "queued")) next = g_convs[i];
+  if (!next) return 0;
+  const int64_t left = conv_wait_left_ms_locked(next);
+  return (int)((left + 999) / 1000);
+}
 
 static int conv_terminal(const char* state) { return !strcmp(state, "done") || !strcmp(state, "failed") || !strcmp(state, "cancelled"); }
 
@@ -204,6 +285,7 @@ static void conv_load(void) {
       } else {
         // Parada no meio: recomeca limpa (o .part some quando ela rodar de novo).
         if (!strcmp(c->state, "converting") || !strcmp(c->state, "verifying") || !strcmp(c->state, "extracting") || !c->state[0]) {
+          if (!g_crash_conv[0] && c->state[0]) copy_text(g_crash_conv, sizeof g_crash_conv, c->name[0] ? c->name : c->id); // pac1
           snprintf(c->state, sizeof c->state, "queued");
           c->written = 0;
           logf_("conversao %s (%s): parada no meio; recomeca do zero", c->id, c->name);
@@ -278,12 +360,13 @@ static size_t conv_discard(char* data, size_t size, size_t count, void* opaque) 
   (void)opaque;
   return size * count;
 }
-static void conv_ask_scan(void) {
+static void conv_ask_scan(const Conv* c) {
   if (!g_smp_base[0]) return;
   CURL* curl = curl_easy_init();
   if (!curl) return;
   char url[300];
   snprintf(url, sizeof url, "%s/scan", g_smp_base);
+  conv_mark(c, "ShadowMount+: POST %s", url); // pac1
   struct curl_slist* headers = curl_slist_append(NULL, "Content-Type: application/json");
   curl_easy_setopt(curl, CURLOPT_URL, url);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -294,12 +377,39 @@ static void conv_ask_scan(void) {
   const CURLcode result = curl_easy_perform(curl);
   long status = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-  logf_("ShadowMount+: varredura pedida (%s, HTTP %ld)", result == CURLE_OK ? "ok" : curl_easy_strerror(result), status);
+  conv_mark(c, "ShadowMount+: resposta %s, HTTP %ld", result == CURLE_OK ? "ok" : curl_easy_strerror(result), status);
   curl_slist_free_all(headers);
   curl_easy_cleanup(curl);
 }
 
-typedef struct { Conv* c; int64_t last_save; } ConvProgress;
+typedef struct {
+  Conv* c;
+  int64_t last_save;
+  // pac1: o proximo marco de progresso e o anterior (para os MB/s), e a janela do limite de escrita.
+  uint64_t mark_next, mark_done;
+  int64_t mark_ms;
+  int win_limit;
+  uint64_t win_bytes;
+  int64_t win_ms;
+} ConvProgress;
+// pac1: o limite de escrita da conversao (g_conv_write_limit MB/s; 0 = sem limite): uma janela de tempo comeca num
+// ponto (bytes, hora); se os bytes gravados desde ela passaram do que o limite deixa no tempo decorrido, espera a
+// diferenca (em fatias de 100 ms, atento a cancelar/parar). A janela recomeca a cada ~2 s e quando o limite muda, para
+// uma folga (o disco lento por um tempo) nao virar rajada depois.
+static void conv_throttle(ConvProgress* p, uint64_t done) {
+  const int limit = g_conv_write_limit;
+  int64_t now = mono_ms();
+  if (limit <= 0) { p->win_limit = 0; return; }
+  if (p->win_limit != limit || !p->win_ms || done < p->win_bytes) { p->win_limit = limit; p->win_bytes = done; p->win_ms = now; return; }
+  const double rate = (double)limit * 1024.0 * 1024.0; // bytes por segundo (MB/s como o app mostra: MiB)
+  const int64_t due = p->win_ms + (int64_t)((double)(done - p->win_bytes) * 1000.0 / rate);
+  while (now < due && !p->c->cancel && !g_stop && g_conv_write_limit == limit) {
+    const int64_t step = due - now;
+    sleep_ms(step > 100 ? 100 : (int)step);
+    now = mono_ms();
+  }
+  if (now - p->win_ms >= 2000) { p->win_bytes = done; p->win_ms = now; }
+}
 static int conv_progress(void* ctx, uint64_t done, uint64_t total) {
   ConvProgress* p = ctx;
   pthread_mutex_lock(&g_conv_lock);
@@ -308,6 +418,19 @@ static int conv_progress(void* ctx, uint64_t done, uint64_t total) {
   const int64_t now = mono_ms();
   if (now - p->last_save >= 15000) { p->last_save = now; p->c->updated = now_s(); conv_save_locked(); }
   pthread_mutex_unlock(&g_conv_lock);
+  if (done == 0 && !p->mark_ms) { // o exw_write comeca os dados
+    p->mark_ms = now;
+    p->mark_done = 0;
+    p->mark_next = g_conv_mark_bytes;
+  } else if (g_conv_mark_bytes && done >= p->mark_next && done < total) {
+    const double secs = (double)(now - p->mark_ms) / 1000.0;
+    const double mbps = secs > 0 ? (double)(done - p->mark_done) / (1024.0 * 1024.0) / secs : 0;
+    conv_mark(p->c, "escrita do exFAT: %.2f GB de %.2f GB (%.1f MB/s)", conv_gb(done), conv_gb(total), mbps);
+    p->mark_ms = now;
+    p->mark_done = done;
+    while (p->mark_next <= done) p->mark_next += g_conv_mark_bytes;
+  }
+  conv_throttle(p, done);
   if (g_conv_delay_ms) sleep_ms(g_conv_delay_ms);
   return p->c->cancel || g_stop ? 1 : 0;
 }
@@ -538,6 +661,16 @@ static void conv_run(Conv* c) {
   unlink(part); // recomeca limpa
   conv_set_state(c, "converting");
   logk_("conversao %s: %s (%s) -> %s", c->id, c->name, c->kind, c->output);
+  conv_mark(c, "inicio: %s (%s); origem %s; destino %s", c->name, c->kind, c->source, c->output);
+  {
+    char disk[200];
+    conv_disk_info(c->root, disk, sizeof disk);
+    conv_mark(c, "disco de destino: %s (%s)", c->root, disk);
+    conv_disk_info(c->source, disk, sizeof disk);
+    conv_mark(c, "disco de origem: %s (%s)", c->source, disk);
+    if (g_conv_sync_mb > 0) conv_mark(c, "gravar em pedacos: fsync a cada %d MB", g_conv_sync_mb);
+    if (g_conv_write_limit > 0) conv_mark(c, "limite de escrita: %d MB/s", g_conv_write_limit);
+  }
   struct stat st;
   exw_entry* listed = NULL;
   size_t count = 0;
@@ -578,8 +711,10 @@ static void conv_run(Conv* c) {
     reader = pkgsrc_read;
     reader_ctx = pkg;
   }
+  conv_mark(c, "origem aberta (%s): %zu entradas", !strcmp(c->kind, "dir") ? "pasta" : !strcmp(c->kind, "archive") ? "RAR/7z/zip" : "pkg", count);
   exw_plan plan;
   if (exw_plan_image(entries, count, c->label, &plan, err, sizeof err)) { snprintf(message, sizeof message, "source: %s", err); goto end; }
+  conv_mark(c, "plano: imagem %.2f GB, dados %.2f GB", conv_gb(plan.image_bytes), conv_gb(plan.data_bytes));
   {
     const uint64_t free_bytes = conv_free_bytes(c->root), need = plan.image_bytes + CONV_MARGIN;
     pthread_mutex_lock(&g_conv_lock);
@@ -593,9 +728,21 @@ static void conv_run(Conv* c) {
     }
   }
   {
-    ConvProgress progress = {c, mono_ms()};
+    ConvProgress progress;
+    memset(&progress, 0, sizeof progress);
+    progress.c = c;
+    progress.last_save = mono_ms();
     err[0] = 0;
+    exw_mark_hook = conv_writer_mark; // pac1: os marcos de dentro da escrita
+    exw_mark_ctx = c;
+    // pac1: "Gravar em pedacos": fsync a cada N MB (MiB, como o app mostra), cada um com marco; desligado, o de sempre.
+    exw_sync_marked = g_conv_sync_mb > 0;
+    exw_sync_bytes = exw_sync_marked ? (uint64_t)g_conv_sync_mb * 1024 * 1024 : EXW_SYNC_EVERY;
     const int written = exw_write(part, entries, count, c->label, reader, reader_ctx, conv_progress, &progress, err, sizeof err);
+    exw_mark_hook = NULL;
+    exw_mark_ctx = NULL;
+    exw_sync_marked = 0;
+    exw_sync_bytes = EXW_SYNC_EVERY;
     if (written == -2) {
       unlink(part);
       if (g_stop && !c->cancel) {
@@ -619,6 +766,7 @@ static void conv_run(Conv* c) {
     if (written) { snprintf(message, sizeof message, "write: %s", err[0] ? err : "the image was not written"); goto end; }
   }
   conv_set_state(c, "verifying");
+  conv_mark(c, "conferindo a imagem");
   err[0] = 0;
   // O compactado e lido em fluxo (os CRC do RAR/7z/zip ja conferem cada arquivo na leitura): so nomes e tamanhos.
   if (exw_verify(part, entries, count, reader, reader_ctx, arc ? 0 : 1, err, sizeof err)) { snprintf(message, sizeof message, "verify: %s", err); goto end; }
@@ -627,6 +775,7 @@ static void conv_run(Conv* c) {
     goto end;
   }
   sync_parent(c->output);
+  conv_mark(c, "renomeada: %s", c->output);
   if (c->work[0] && conv_remove_tree(c->work, 0)) logf_("conversao %s: pasta de trabalho %s nao apagada inteira", c->id, c->work);
   outcome = "done";
   logk_("conversao %s: pronta, %s (%llu bytes)", c->id, c->output, (unsigned long long)c->image_bytes);
@@ -656,8 +805,13 @@ end:
     char text[400];
     snprintf(text, sizeof text, "%s: pronto (EXFAT)", c->name);
     notify(text);
-    conv_ask_scan();
-  } else if (!strcmp(outcome, "failed")) {
+    conv_ask_scan(c);
+    conv_mark(c, "fim: pronta");
+  } else {
+    conv_mark(c, "fim: %s%s%.300s", !strcmp(outcome, "queued") ? "interrompida (payload parando)" : outcome, !strcmp(outcome, "failed") ? ": " : "",
+              !strcmp(outcome, "failed") ? message : "");
+  }
+  if (!strcmp(outcome, "failed")) {
     // glibren.20: nao chega aqui com "not-direct" (conv_run passa a "extracting" antes); fica para outras falhas.
     const int extracting = !strncmp(c->error, "not-direct:", 11) && !strcmp(c->kind, "archive") && (!strncmp(c->key, "auto-", 5) || !strncmp(c->key, "backup-", 7));
     char text[400];
@@ -670,14 +824,26 @@ static void conv_extract_in_place(Conv* c); // glibren.20 (abaixo)
 static int conv_temp_work(const Conv* c) { return c->work[0] && strstr(c->work, "/BACKUP/_temp/") != NULL; }
 static void* conv_loop(void* arg) {
   (void)arg;
+  int64_t waited_for = -1; // pac1: o fim (g_conv_last_end_ms) cuja pausa ja foi registrada no diario
   while (!g_stop) {
     pthread_mutex_lock(&g_conv_lock);
     Conv* next = NULL;
     for (int i = 0; i < g_conv_count && !next; ++i) if (!strcmp(g_convs[i]->state, "queued")) next = g_convs[i];
-    if (!next) {
+    // pac1: a pausa entre conversoes (so antes de uma conversao diferente da ultima).
+    const int64_t left = next ? conv_wait_left_ms_locked(next) : 0;
+    if (!next || left > 0) {
+      if (next && waited_for != g_conv_last_end_ms) {
+        waited_for = g_conv_last_end_ms;
+        logk_("pausa entre conversoes: %s comeca em %lld s", next->name, (long long)((left + 999) / 1000));
+      }
       struct timespec until;
       clock_gettime(CLOCK_REALTIME, &until);
-      until.tv_sec += 1;
+      if (next && left < 1000) {
+        until.tv_nsec += (long)(left * 1000000);
+        if (until.tv_nsec >= 1000000000L) { until.tv_sec += 1; until.tv_nsec -= 1000000000L; }
+      } else {
+        until.tv_sec += 1;
+      }
       pthread_cond_timedwait(&g_conv_wake, &g_conv_lock, &until);
       pthread_mutex_unlock(&g_conv_lock);
       continue;
@@ -691,11 +857,19 @@ static void* conv_loop(void* arg) {
     // glibren.20: qualquer conversao que nao deu direto (do app, do payload ou "Converter agora") e extraida aqui.
     const int extract = !strcmp(next->state, "extracting");
     const int leftover = (!strcmp(next->state, "failed") || !strcmp(next->state, "cancelled")) && conv_temp_work(next);
+    // pac1: trabalhou (pronta, extraindo, ou falhou depois de gravar): a proxima espera a pausa.
+    const int worked = !strcmp(next->state, "done") || extract || (!strcmp(next->state, "failed") && next->written > 0);
     char work[1024];
     copy_text(work, sizeof work, next->work);
     pthread_mutex_unlock(&g_conv_lock);
     if (extract) conv_extract_in_place(next);
     else if (leftover && conv_remove_tree(work, 0)) logf_("conversao %s: pasta temporaria %s nao apagada inteira", next->id, work);
+    if (worked) {
+      pthread_mutex_lock(&g_conv_lock);
+      g_conv_last_end_ms = mono_ms();
+      copy_text(g_conv_last_id, sizeof g_conv_last_id, next->id);
+      pthread_mutex_unlock(&g_conv_lock);
+    }
   }
   return NULL;
 }
@@ -703,6 +877,10 @@ static void* conv_loop(void* arg) {
 static void conv_start(void) {
   snprintf(g_smp_base, sizeof g_smp_base, "%s", env_or("BGDL_SMP_BASE", g_smp_base));
   g_conv_delay_ms = atoi(env_or("BGDL_CONVERT_DELAY_MS", "0"));
+  {
+    const unsigned long long mark = strtoull(env_or("BGDL_MARK_BYTES", "0"), NULL, 10); // pac1: testes
+    if (mark) g_conv_mark_bytes = mark;
+  }
   pthread_mutex_lock(&g_conv_lock);
   conv_load();
   // glibren.20: as que falharam por "not-direct" antes (ficavam esperando a Jobe extrair) voltam para a fila: agora o
@@ -801,7 +979,8 @@ static int conv_route(int fd, Request* r) {
       if (i) buf_str(&b, ",");
       conv_json(&b, g_convs[i], 0);
     }
-    buf_str(&b, "]}");
+    // pac1: a pausa entre conversoes (o que falta para a proxima comecar; 0 = nenhuma espera) e as opcoes.
+    buf_fmt(&b, "],\"waitSeconds\":%d,\"pauseSeconds\":%d,\"writeLimit\":%d}", conv_wait_seconds_locked(), g_conv_pause_s, g_conv_write_limit);
     pthread_mutex_unlock(&g_conv_lock);
     respond(fd, 200, b.failed || !b.data ? "{\"conversions\":[]}" : b.data);
     free(b.data);
@@ -859,7 +1038,7 @@ static void conv_status_json(Buf* b) {
     first = 0;
     conv_json(b, g_convs[i], 1);
   }
-  buf_str(b, "]");
+  buf_fmt(b, "],\"convertWaitSeconds\":%d", conv_wait_seconds_locked()); // pac1: a pausa entre conversoes
   pthread_mutex_unlock(&g_conv_lock);
 }
 
@@ -1426,7 +1605,7 @@ static void conv_extract_in_place(Conv* c) {
   c->running = 1;
   c->written = c->total = 0;
   pthread_mutex_unlock(&g_conv_lock);
-  logk_("conversao %s: extraindo %s em %s", c->id, base_name(c->source), work);
+  conv_mark(c, "extraindo %s em %s", base_name(c->source), work);
   // glibren.20b: RAR vai ao rar-extract (abre os cifrados); sem ele (ELF ou carregador ausentes), a libarchive.
   int extracted;
   if (rar_name(c->source)) {
@@ -1494,7 +1673,7 @@ static void conv_extract_in_place(Conv* c) {
   conv_save_locked();
   pthread_cond_broadcast(&g_conv_wake);
   pthread_mutex_unlock(&g_conv_lock);
-  logk_("conversao %s: extraido; converte agora %s (%s)", c->id, source, kind);
+  conv_mark(c, "extraido; converte agora %s (%s)", source, kind);
 }
 
 // POST /api/backup/convert {root, name} (com o PIN): "Converter agora" na lista do BACKUP.

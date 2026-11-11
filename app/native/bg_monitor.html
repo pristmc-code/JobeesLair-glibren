@@ -831,7 +831,7 @@ pinOnOpen();
 "use strict";
 (() => {
   const C = {
-    pt: { converting: "Convertendo para EXFAT", verifying: "Conferindo o EXFAT", queued: "Na fila para EXFAT", done: "Pronto (EXFAT)", failed: "Conversão falhou",
+    pt: { converting: "Convertendo para EXFAT", verifying: "Conferindo o EXFAT", queued: "Na fila para EXFAT", waiting: "Pausa entre conversões: começa em {t}", done: "Pronto (EXFAT)", failed: "Conversão falhou",
       extracting: "Descompactando para converter",
       errors: { space: "Falta espaço no disco para o .exfat.", "not-direct": "Não deu para converter direto do arquivo compactado: o payload descompacta em BACKUP/_temp e converte.",
         "not-a-game": "Não é o jogo (atualização ou DLC): fica como veio.", source: "Não deu para ler os arquivos do jogo.", write: "Não deu para gravar o .exfat.", verify: "O .exfat gravado não conferiu." },
@@ -846,7 +846,7 @@ pinOnOpen();
       convertNow: "Converter agora", convertAsked: "Conversão pedida: o payload converte sozinho (aparece em Convertendo).",
       convQueuedAt: "Na fila de conversão (posição {n}): o payload converte um de cada vez.", convRunning: "Convertendo agora.", convAlready: "Já está na fila de conversão.", convDone: "Já convertido: {f}",
       convertNo: { ps4: "Jogo de PS4: não vira .exfat.", converted: "Já convertido.", nothing: "Nada aqui que dê para converter." } },
-    en: { converting: "Converting to EXFAT", verifying: "Checking the EXFAT", queued: "Queued for EXFAT", done: "Ready (EXFAT)", failed: "Conversion failed",
+    en: { converting: "Converting to EXFAT", verifying: "Checking the EXFAT", queued: "Queued for EXFAT", waiting: "Pause between conversions: starts in {t}", done: "Ready (EXFAT)", failed: "Conversion failed",
       extracting: "Extracting to convert",
       errors: { space: "Not enough space on the drive for the .exfat.", "not-direct": "It could not be converted straight from the archive: the payload extracts it in BACKUP/_temp and converts it.",
         "not-a-game": "Not the game (an update or DLC): it stays as it came.", source: "The game's files could not be read.", write: "The .exfat could not be written.", verify: "The written .exfat did not check out." },
@@ -892,15 +892,19 @@ pinOnOpen();
     const code = /^([a-z-]+):/.exec(error || "")?.[1];
     return code && C.errors[code] ? C.errors[code] : error || "";
   }
-  function renderConversions(items) {
+  // pac1: `wait` = segundos ate a proxima conversao comecar (a pausa entre conversoes; /api/status convertWaitSeconds).
+  function renderConversions(items, wait = 0) {
     list.textContent = "";
+    let first = true;
     for (const c of items) {
       const pct = c.total ? Math.min(100, c.written / c.total * 100) : 0;
       const el = document.createElement("article"); el.className = `job conv ${c.state}`;
       const label = C[c.state] || c.state;
       el.innerHTML = `<div class="top"><div class="name"></div><span class="tag"></span></div><div class="bar"><i style="width:${c.state === "done" ? 100 : pct}%"></i></div><div class="nums"></div>`;
       el.querySelector(".name").textContent = c.name;
-      el.querySelector(".tag").textContent = c.state === "converting" ? `${label} ${nf(pct, 0)}%` : label;
+      const waiting = c.state === "queued" && first && wait > 0;
+      if (c.state === "queued") first = false;
+      el.querySelector(".tag").textContent = c.state === "converting" ? `${label} ${nf(pct, 0)}%` : waiting ? fill(C.waiting, { t: `${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, "0")}` }) : label;
       el.querySelector(".nums").textContent = c.total ? `${size(c.written || 0)} ${L.of} ${size(c.total)}` : "";
       el.querySelector(".top").after(originRow({ format: "exfat" })); // glibren.12: o formato que sai da conversao
       if (c.state === "failed") { const e = document.createElement("div"); e.className = "err"; e.textContent = `${why(c.error)} ${C.openApp}`; el.append(e); }
@@ -1037,7 +1041,7 @@ pinOnOpen();
   // A pagina chama a cada atualizacao (refresh) com o que o /api/status trouxe.
   let ticks = 0;
   window.convHook = (data, sectionOnly) => {
-    renderConversions((DEMO ? demoConv : (data?.conversions || [])).filter((c) => c.state !== "cancelled" && shows(sectionOfConv(c))));
+    renderConversions((DEMO ? demoConv : (data?.conversions || [])).filter((c) => c.state !== "cancelled" && shows(sectionOfConv(c))), DEMO ? 0 : Number(data?.convertWaitSeconds) || 0);
     panel.hidden = section !== "backup";
     row.hidden = section === "backup";
     if (!sectionOnly && ticks++ % 15 === 0) loadBackup(); // o BACKUP muda pouco: a cada ~30 s (e ao abrir a secao)

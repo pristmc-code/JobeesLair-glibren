@@ -32,6 +32,10 @@
 //     POST /api/library/add        {id, file?} com a sessao: o jogo entra na fila (pedido que o app poe na fila dele)
 //     POST /jobs/<id>/refuse       glibren: {error} o app nao conseguiu por na fila um pedido do celular (fica "failed")
 //     POST /secret                {service:"torbox", key} -> chave so em memoria (nunca gravada nem registrada)
+//     GET  /crash                  pac1: {crash: last-crash.json | null}, a queda da sessao anterior (ver crash_record)
+//     POST /config                 pac1: e "convertPauseSeconds" (0..3600), "convertWriteLimit" (MB/s, 0..2000) e
+//                                  "convertSyncMB" (0..4096): pausa entre conversoes, limite de escrita e gravar em
+//                                  pedacos (todas 0 = desligadas por padrao), em config.json; ver bg_convert.c
 //     POST /quit                   encerra limpo (checkpoint gravado)
 //     POST /bye                    glibren.5: o app avisa que vai fechar (botao "Sair"): conta como fechado ja, sem
 //                                  esperar o silencio, e aplica a pausa ao fechar conforme a opcao
@@ -93,7 +97,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 23 // glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#define BG_API 24 // pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -229,17 +233,27 @@ static void logk_(const char* fmt, ...) {
 // do console, falta de energia...): a ultima linha diz onde estava. Lida antes de este processo escrever no diario.
 static char g_previous_last[320];
 static int g_previous_seen;
+// pac1: o fim do diario da sessao anterior (para o last-crash.json: as ultimas linhas e o ultimo marco da conversao) e o
+// que ela fazia, visto no jobs.json/conversions.json antes de voltarem para a fila (load_jobs, conv_load).
+#define PREVIOUS_TAIL 16384
+static char g_previous_tail[PREVIOUS_TAIL];
+static char g_crash_conv[256], g_crash_job[256];
+static char g_crash_id[24]; // o id da queda registrada nesta subida ("" = nenhuma)
 static void read_previous_session(void) {
   int fd = open(g_log_path, O_RDONLY);
   if (fd < 0) return;
   struct stat st;
   if (fstat(fd, &st) || st.st_size <= 0) { close(fd); return; }
-  char tail[512];
-  off_t from = st.st_size > (off_t)sizeof tail - 1 ? st.st_size - (off_t)(sizeof tail - 1) : 0;
-  ssize_t n = pread(fd, tail, sizeof tail - 1, from);
+  char* tail = g_previous_tail;
+  off_t from = st.st_size > (off_t)PREVIOUS_TAIL - 1 ? st.st_size - (off_t)(PREVIOUS_TAIL - 1) : 0;
+  ssize_t n = pread(fd, tail, PREVIOUS_TAIL - 1, from);
   close(fd);
-  if (n <= 0) return;
+  if (n <= 0) { tail[0] = 0; return; }
   tail[n] = 0;
+  if (from > 0) { // a primeira linha veio cortada
+    char* nl = strchr(tail, '\n');
+    if (nl) { memmove(tail, nl + 1, strlen(nl + 1) + 1); n = (ssize_t)strlen(tail); }
+  }
   while (n > 0 && (tail[n - 1] == '\n' || tail[n - 1] == '\r')) tail[--n] = 0;
   const char* last = strrchr(tail, '\n');
   copy_text(g_previous_last, sizeof g_previous_last, last ? last + 1 : tail);
@@ -880,6 +894,17 @@ static void rate_set(int megabytes);
 // downloads do app ("autoRoot", POST /config) e se a conversao para .exfat esta ligada ("autoConvert"). Em config.json.
 static char g_auto_root[1024];
 static int g_auto_convert = 1;
+// pac1: a pausa entre uma conversao para .exfat e a proxima ("convertPauseSeconds", 0..MAX_CONVERT_PAUSE; 0 = desligada,
+// o padrao) e o limite da velocidade de escrita da conversao em MB/s ("convertWriteLimit", 0..MAX_CONVERT_WRITE; 0 = sem
+// limite, o padrao). Do POST /config (Configuracoes do app), em config.json; usados por bg_convert.c.
+#define MAX_CONVERT_PAUSE 3600
+#define MAX_CONVERT_WRITE 2000
+static volatile int g_conv_pause_s;
+static volatile int g_conv_write_limit;
+// pac1: "Gravar em pedacos": fsync do .exfat a cada N MB gravados na conversao ("convertSyncMB", 0..MAX_CONVERT_SYNC;
+// 0 = desligado, o padrao: o writer segue com o fsync dele a cada 256 MiB, sem marco), cada fsync um marco com o tempo.
+#define MAX_CONVERT_SYNC 4096
+static volatile int g_conv_sync_mb;
 static int g_running_count;
 static int g_dirty;
 // A pagina do celular (porta 34201): ligada por padrao; o PIN chega do app so como sal + SHA-256 (hex), e o texto
@@ -1403,8 +1428,10 @@ static int load_jobs_field(JP* jp, const char* key, void* ctx) {
     char error[200];
     if (g_job_count < MAX_JOBS && j->id[0] && validate_job(j, error, sizeof error)) {
       // Um job que estava baixando quando o processo parou volta para a fila e continua.
-      if (!strcmp(j->state, "connecting") || !strcmp(j->state, "downloading") || !strcmp(j->state, "verifying") || !j->state[0])
+      if (!strcmp(j->state, "connecting") || !strcmp(j->state, "downloading") || !strcmp(j->state, "verifying") || !j->state[0]) {
+        if (!g_crash_job[0] && j->state[0]) copy_text(g_crash_job, sizeof g_crash_job, j->name[0] ? j->name : j->id); // pac1
         snprintf(j->state, sizeof j->state, "queued");
+      }
       g_jobs[g_job_count++] = j;
     } else {
       free(j);
@@ -2939,6 +2966,9 @@ typedef struct {
   int has_auto_root, has_auto_convert, auto_convert;
   char auto_root[1024];
   uint64_t stamp, speed_stamp;
+  // pac1: a pausa entre conversoes (s) e o limite de escrita da conversao (MB/s).
+  int has_conv_pause, has_conv_write, has_conv_sync;
+  uint64_t conv_pause, conv_write, conv_sync;
 } ConfigBody;
 static int config_field(JP* jp, const char* key, void* ctx) {
   ConfigBody* c = ctx;
@@ -2955,6 +2985,9 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "autoConvert")) { c->found = c->has_auto_convert = 1; return jp_bool(jp, &c->auto_convert) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "speedLimitBy")) { c->has_speed_by = 1; return jp_text(jp, c->speed_by, sizeof c->speed_by) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "speedLimitStamp")) return jp_uint(jp, &c->speed_stamp) ? 1 : -1;
+  if (!strcmp(key, "convertPauseSeconds")) { c->found = c->has_conv_pause = 1; return jp_uint(jp, &c->conv_pause) ? 1 : -1; }
+  if (!strcmp(key, "convertWriteLimit")) { c->found = c->has_conv_write = 1; return jp_uint(jp, &c->conv_write) ? 1 : -1; }
+  if (!strcmp(key, "convertSyncMB")) { c->found = c->has_conv_sync = 1; return jp_uint(jp, &c->conv_sync) ? 1 : -1; }
   if (!strcmp(key, "pauseOnCloseSeconds")) {
     // So um inteiro (nem null, nem fracao, nem negativo); o limite e conferido em config_valid.
     double d;
@@ -2971,6 +3004,9 @@ static int config_valid(const ConfigBody* c) {
   if (c->has_concurrency && (c->concurrency < 1 || c->concurrency > MAX_WORKERS)) return 0;
   if (c->has_pause && c->pause_seconds > MAX_PAUSE_SECONDS) return 0;
   if (c->has_speed && c->speed > MAX_SPEED_LIMIT) return 0;
+  if (c->has_conv_pause && c->conv_pause > MAX_CONVERT_PAUSE) return 0;
+  if (c->has_conv_write && c->conv_write > MAX_CONVERT_WRITE) return 0;
+  if (c->has_conv_sync && c->conv_sync > MAX_CONVERT_SYNC) return 0;
   if (c->has_auto_root && c->auto_root[0] && !safe_path(c->auto_root)) return 0;
   if (c->has_pin_salt != c->has_pin_hash) return 0;
   if (c->has_pin_hash && !((is_hex64(c->pin_salt) && is_hex64(c->pin_hash)) || (!c->pin_salt[0] && !c->pin_hash[0]))) return 0;
@@ -3008,6 +3044,22 @@ static int config_apply_locked(const ConfigBody* c) {
     changed = 1;
   }
   if (c->has_auto_convert && g_auto_convert != (c->auto_convert ? 1 : 0)) { g_auto_convert = c->auto_convert ? 1 : 0; changed = 1; }
+  // pac1: valem na hora (a espera em andamento e contada do fim da ultima conversao com o tempo novo).
+  if (c->has_conv_pause && g_conv_pause_s != (int)c->conv_pause) {
+    logk_("pausa entre conversoes: %d -> %d s%s", g_conv_pause_s, (int)c->conv_pause, c->conv_pause ? "" : " (desligada)");
+    g_conv_pause_s = (int)c->conv_pause;
+    changed = 1;
+  }
+  if (c->has_conv_write && g_conv_write_limit != (int)c->conv_write) {
+    logk_("limite de escrita da conversao: %d -> %d MB/s (0 = sem limite)", g_conv_write_limit, (int)c->conv_write);
+    g_conv_write_limit = (int)c->conv_write;
+    changed = 1;
+  }
+  if (c->has_conv_sync && g_conv_sync_mb != (int)c->conv_sync) {
+    logk_("gravar em pedacos (fsync da conversao): %d -> %d MB (0 = desligado)", g_conv_sync_mb, (int)c->conv_sync);
+    g_conv_sync_mb = (int)c->conv_sync;
+    changed = 1;
+  }
   if (c->has_monitor && g_monitor_on != (c->monitor ? 1 : 0)) {
     g_monitor_on = c->monitor ? 1 : 0;
     logf_("pagina do celular: %s", g_monitor_on ? "ligada" : "desligada");
@@ -3077,6 +3129,7 @@ static void save_config_locked(void) {
   buf_str(&b, ",\"autoRoot\":");
   buf_json(&b, g_auto_root);
   buf_fmt(&b, ",\"autoConvert\":%s", g_auto_convert ? "true" : "false");
+  buf_fmt(&b, ",\"convertPauseSeconds\":%d,\"convertWriteLimit\":%d,\"convertSyncMB\":%d", g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb); // pac1
   // glibren.5: so quando o app mandou o tempo (sem ele, vale o padrao de quem roda: 30 s, ou BGDL_QUIET_MS nos testes).
   if (g_pause_seconds >= 0) buf_fmt(&b, ",\"pauseOnCloseSeconds\":%d", g_pause_seconds);
   buf_str(&b, "}\n");
@@ -3606,6 +3659,121 @@ static int refuse_field(JP* jp, const char* key, void* ctx) {
 // glibren.20: o catalogo do Orbit Store como feed da Jobe (GET/POST /orbit).
 #include "bg_orbit.c"
 
+// ---- pac1: a queda da sessao anterior (last-crash.json, GET /crash) ---------------------------------------
+// Quando a sessao anterior NAO terminou limpa (sem a marca de saida limpa na ultima linha do diario e sem outra copia
+// viva), o payload grava <dir>/last-crash.json, no maximo CRASH_MAX bytes:
+//   {"id","upAt" (epoch desta subida),"lastTime" ("AAAA-MM-DD HH:MM:SS" do relogio do console, a ultima linha),"lastAt",
+//    "activity":"convert"|"download"|"none","name","milestone" (o ultimo marco da conversao, so em "convert"),
+//    "lastLine","lines":[as ultimas ate CRASH_LINES linhas do diario]}
+// O que fazia vem do jobs.json/conversions.json (o que estava rodando quando o processo morreu). O arquivo fica ate a
+// proxima queda; o app le por GET /crash e avisa uma vez por "id" (guarda o visto nas configuracoes dele).
+#define CRASH_MAX 4096
+#define CRASH_LINES 20
+#define CRASH_LINE_MAX 200
+static int64_t crash_line_epoch(const char* line, char* when, size_t cap) {
+  int Y, M, D, h, m, s;
+  when[0] = 0;
+  if (sscanf(line, "%4d-%2d-%2d %2d:%2d:%2d", &Y, &M, &D, &h, &m, &s) == 6) {
+    struct tm tm;
+    memset(&tm, 0, sizeof tm);
+    tm.tm_year = Y - 1900; tm.tm_mon = M - 1; tm.tm_mday = D; tm.tm_hour = h; tm.tm_min = m; tm.tm_sec = s; tm.tm_isdst = -1;
+    snprintf(when, cap, "%04d-%02d-%02d %02d:%02d:%02d", Y, M, D, h, m, s);
+    return (int64_t)mktime(&tm);
+  }
+  long long epoch = 0;
+  if (sscanf(line, "(epoch %lld)", &epoch) == 1 && epoch > 0) { // a linha do sinal fatal (on_fatal)
+    const time_t t = (time_t)epoch;
+    struct tm tm;
+    localtime_r(&t, &tm);
+    strftime(when, cap, "%Y-%m-%d %H:%M:%S", &tm);
+    return epoch;
+  }
+  return 0;
+}
+static void crash_json(Buf* b, int64_t up, const char* when, int64_t at, const char* activity, const char* name,
+                       const char* milestone, char** lines, int from, int count) {
+  buf_fmt(b, "{\"id\":\"%lld\",\"upAt\":%lld,\"lastTime\":", (long long)up, (long long)up);
+  buf_json(b, when);
+  buf_fmt(b, ",\"lastAt\":%lld,\"activity\":\"%s\",\"name\":", (long long)at, activity);
+  buf_json(b, name);
+  buf_str(b, ",\"milestone\":");
+  buf_json(b, milestone);
+  buf_str(b, ",\"lastLine\":");
+  buf_json(b, count ? lines[count - 1] : "");
+  buf_str(b, ",\"lines\":[");
+  for (int i = from; i < count; ++i) {
+    if (i > from) buf_str(b, ",");
+    buf_json(b, lines[i]);
+  }
+  buf_str(b, "]}\n");
+}
+static void crash_record(int contended) {
+  if (!g_previous_seen || contended || strstr(g_previous_last, CLEAN_EXIT_MARK)) return;
+  // As linhas do fim do diario anterior (cada uma cortada em CRASH_LINE_MAX bytes, sem quebrar um caractere UTF-8).
+  static char cut[CRASH_LINES][CRASH_LINE_MAX];
+  char* lines[CRASH_LINES];
+  int count = 0;
+  char milestone[CRASH_LINE_MAX] = "";
+  char* p = g_previous_tail;
+  while (*p) {
+    char* end = strchr(p, '\n');
+    if (end) *end = 0;
+    size_t len = strlen(p);
+    if (len && p[len - 1] == '\r') p[--len] = 0;
+    if (len) {
+      const char* tag = strstr(p, MARK_TAG);
+      if (tag) copy_utf8(milestone, sizeof milestone, tag + strlen(MARK_TAG));
+      if (count == CRASH_LINES) {
+        memmove(cut[0], cut[1], sizeof cut[0] * (CRASH_LINES - 1));
+        --count;
+      }
+      copy_utf8(cut[count], sizeof cut[count], p);
+      ++count;
+    }
+    if (!end) break;
+    p = end + 1;
+  }
+  for (int i = 0; i < count; ++i) lines[i] = cut[i];
+  char when[24] = "";
+  int64_t at = 0;
+  for (int i = count - 1; i >= 0 && !at; --i) at = crash_line_epoch(lines[i], when, sizeof when);
+  const char* activity = g_crash_conv[0] ? "convert" : g_crash_job[0] ? "download" : "none";
+  const char* name = g_crash_conv[0] ? g_crash_conv : g_crash_job;
+  const int64_t up = now_s();
+  Buf b = {0};
+  for (int from = 0; from <= count; ++from) {
+    free(b.data);
+    memset(&b, 0, sizeof b);
+    crash_json(&b, up, when, at, activity, name, g_crash_conv[0] ? milestone : "", lines, from, count);
+    if (!b.failed && b.size <= CRASH_MAX) break;
+  }
+  char path[600];
+  snprintf(path, sizeof path, "%s/last-crash.json", g_dir);
+  if (b.failed || !b.data || b.size > CRASH_MAX || !save_atomic(path, b.data, b.size, 0600)) {
+    logk_("queda anterior: last-crash.json nao gravado");
+  } else {
+    snprintf(g_crash_id, sizeof g_crash_id, "%lld", (long long)up);
+    logk_("queda anterior registrada em last-crash.json: %s%s%s%s%s", activity, name[0] ? " de " : "", name,
+          g_crash_conv[0] && milestone[0] ? "; ultimo marco: " : "", g_crash_conv[0] ? milestone : "");
+  }
+  free(b.data);
+}
+// GET /crash: {"crash": <o last-crash.json> | null}.
+static void crash_route(int fd) {
+  char path[600];
+  snprintf(path, sizeof path, "%s/last-crash.json", g_dir);
+  size_t size = 0;
+  char* text = read_text(path, CRASH_MAX * 2, &size);
+  Buf b = {0};
+  buf_str(&b, "{\"crash\":");
+  if (text && size) buf_add(&b, text, size);
+  else buf_str(&b, "null");
+  buf_str(&b, "}");
+  respond(fd, 200, b.failed || !b.data ? "{\"crash\":null}" : b.data);
+  free(b.data);
+  free(text);
+}
+
 // ---- glibren.31: troca de app (POST /switch) -------------------------------------------------------------
 // O PS5 so tem um app em primeiro plano: abrir outro (sceLncUtilLaunchApp) com a Jobe aberta foi recusado
 // (0x80940011, 0x80940031 nos logs de 11/11/2026) e o console caiu minutos depois de uma dessas tentativas. Agora quem
@@ -3776,18 +3944,21 @@ static void route(int fd, Request* r) {
     auto_plan_route(fd, r->path[10] ? r->path + 11 : "");
     return;
   }
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/crash")) { crash_route(fd); return; } // pac1
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
-    char body[700], ip[64];
+    char body[900], ip[64];
     current_ip(ip, sizeof ip);
     pthread_mutex_lock(&g_lock);
     const Job* active = first_running_locked();
     snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"api\":%d,\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
              "\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u,"
-             "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s}",
+             "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s,"
+             "\"convertPauseSeconds\":%d,\"convertWriteLimit\":%d,\"convertSyncMB\":%d,\"crash\":%s}",
              BG_VERSION, BG_API, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
              g_running_count, g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
              g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp, ip, g_monitor_on ? "true" : "false",
-             g_monitor_port_now(), g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false");
+             g_monitor_port_now(), g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false",
+             g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb, g_crash_id[0] ? "true" : "false");
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
     return;
@@ -3815,18 +3986,22 @@ static void route(int fd, Request* r) {
     memset(&c, 0, sizeof c);
     JP jp = {r->body, r->body + r->content_length, 0};
     if (!jp_object(&jp, config_field, &c) || !config_valid(&c)) {
-      respond_error(fd, 400, "expected {concurrency: 1..4, monitor, pinSalt + pinHash, monitorText, pauseOnCloseSeconds: 0..30, speedLimit: 0..1000}");
+      respond_error(fd, 400, "expected {concurrency: 1..4, monitor, pinSalt + pinHash, monitorText, pauseOnCloseSeconds: 0..30, speedLimit: 0..1000, convertPauseSeconds: 0..3600, convertWriteLimit: 0..2000, convertSyncMB: 0..4096}");
       return;
     }
-    char body[400];
+    char body[500];
     pthread_mutex_lock(&g_lock);
     if (config_apply_locked(&c)) save_config_locked();
     snprintf(body, sizeof body, "{\"ok\":true,\"concurrency\":%d,\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"monitor\":%s,\"pinSet\":%s,"
-             "\"pauseOnCloseSeconds\":%lld,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u}", g_max_running,
+             "\"pauseOnCloseSeconds\":%lld,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u,\"convertPauseSeconds\":%d,"
+             "\"convertWriteLimit\":%d,\"convertSyncMB\":%d}", g_max_running,
              g_concurrency_remote ? "remote" : "app", g_concurrency_stamp, g_monitor_on ? "true" : "false", g_pin_hash[0] ? "true" : "false",
-             (long long)(g_quiet_ms / 1000), g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp);
+             (long long)(g_quiet_ms / 1000), g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp, g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb);
     pthread_cond_broadcast(&g_wake_downloader);
     pthread_mutex_unlock(&g_lock);
+    pthread_mutex_lock(&g_conv_lock);
+    pthread_cond_broadcast(&g_conv_wake); // pac1: uma pausa entre conversoes desligada solta a proxima na hora
+    pthread_mutex_unlock(&g_conv_lock);
     respond(fd, 200, body);
     return;
   }
@@ -6530,6 +6705,7 @@ int main(void) {
   load_sessions_locked(); // glibren.19: as sessoes do PIN guardadas (depois do config: precisam do pinHash)
   pthread_mutex_unlock(&g_lock);
   conv_start(); // glibren.12: conversions.json (uma parada no meio recomeca limpa)
+  crash_record(g_lock_contended); // pac1: depois de ler a fila e as conversoes (o que estava rodando quando caiu)
   logk_("downloads simultaneos: %d; ate %d conexoes somadas; modo quieto ao fechar o app: %lld s; powerTick: %s; %d job(s) no jobs.json",
         g_max_running, CONN_BUDGET, (long long)(g_quiet_ms / 1000), g_power_tick ? "ligado" : "desligado", g_job_count);
   pthread_t server, monitor, workers[MAX_WORKERS];
