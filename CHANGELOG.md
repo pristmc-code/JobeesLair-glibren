@@ -6,6 +6,9 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.34** (fork): tube-service.elf (YouTube inside the app) on youtubei.js 18.3.0 (was 18.1.0): fixes for
+  results without a title and the duration of very long videos; a video without the duration overlay is no longer
+  taken for a live one.
 - **glibren.33** (fork): YouTube inside Jobee'sLair. Trailer/Gameplay (and a search screen with filters) use a new
   on-demand payload, tube-service.elf (YouTube's built-in service from YouTube Max'd: QuickJS-NG + youtubei.js, loopback
   only), and play in the app's own player (HLS of video+audio, quality, captions, SponsorBlock); Circle goes back to the
