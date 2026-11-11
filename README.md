@@ -78,6 +78,10 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.25**: the Orbit Store list now reaches the app on the PS5 (it read the wrong folder), "Check only the new
+> games" in the TorBox library, a "Show in the store" switch per catalog in Settings > Catalog feeds (one left on shows
+> only its games, in the full and the TorBox store), and Convert always says what happened (queue position, converting
+> now, already queued, or already converted under another name).
 > **glibren.23**: TorBox the way Orbit Store uses it: a quick check (Settings > TorBox, on by default) marks "TorBox
 > ready" from the hosts TorBox has working with quota left today, without asking about each link (off: link by link, as
 > before); the hosts' daily quota (links and data) is shown in Settings and a host out of it is not offered; the hosts

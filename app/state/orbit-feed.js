@@ -14,12 +14,15 @@
 // alem do texto nas Configuracoes.
 
 import { useEffect, useState } from 'react';
-import { FileSystem, Notifications } from '@ps5-react/core';
+import { FileSystem, Notifications, Platform } from '@ps5-react/core';
 import { DATA_DIR } from './data-dir.js';
 import { loadList, saveList } from './saved.js';
 
   var SETTINGS = "settings.json";
-  var ORBIT_DIR = `${DATA_DIR}/orbit`;
+  // glibren.25: no PS5 a pasta que o payload grava (bg_orbit.c: /data/JobeesLair/orbit). Ate a .24 o app lia da sua
+  // pasta de dados (/download0 ou /data/ps5-react/<ID>), onde o arquivo nunca aparece: a lista ficava em "Baixando o
+  // catalogo pela primeira vez" para sempre e nao entrava na loja nem nas fontes da Biblioteca TorBox.
+  var ORBIT_DIR = Platform.OS === "ps5" ? "/data/JobeesLair/orbit" : `${DATA_DIR}/orbit`;
   var ORBIT_FEED = `${ORBIT_DIR}/orbit-store.json`;
   var ORBIT_STATUS = `${ORBIT_DIR}/orbit-store-status.json`;
   var STALE_S = 24 * 3600, QUIET_S = 14 * 24 * 3600;

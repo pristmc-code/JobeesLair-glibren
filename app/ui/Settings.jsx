@@ -47,7 +47,7 @@ import { setOrbitFeed, useOrbitFeed, useOrbitStatus } from '../state/orbit-feed.
 import { isoStamp, parseStamp } from '../state/clock.js';
 import { FeedFilePicker } from './FeedFilePicker.jsx';
 import { formatBytes } from '../state/size.js';
-import { applyStoreMode, useStoreMode } from '../state/store-mode.js';
+import { applyStoreMode, setSourceShown, sourceShown, useStoreMode } from '../state/store-mode.js';
 import { cancelLibrary, librarySources, librarySummary, startLibrary, useLibraryProgress } from '../state/torbox-library-run.js';
 import { canInstall, checkForUpdate, openUpdateDialog, setAutoInstall, updateDetail, useAutoInstall, useInstall, useUpdate } from '../state/update.js';
 import { REPO, VERSION_LABEL } from '../version.js';
@@ -532,6 +532,25 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       feed?.restart ? /* @__PURE__ */ (0, jsx)(Callout, { children: t2("settings.feeds.restart") }) : null
     ] });
   }
+  // glibren.25: "Show in the store": one switch per catalog the store has games from (the bundled one, the live one,
+  // each feed, the Orbit Store list). Off, its games leave the store (both versions) but the feed stays included and
+  // updated; with only one on, the store shows only that catalog. The last one shown cannot be turned off.
+  function ShownCatalogs() {
+    const t2 = useT();
+    const store = useStoreMode();
+    const [sources] = (0, useState)(() => librarySources());
+    const [notice, setNotice] = (0, useState)("");
+    if (sources.length < 2) return null;
+    return jsxs(Fragment, { children: [
+      jsx(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
+      jsx(Text, { style: text(20, colors.muted, { fontWeight: 600, letterSpacing: 1 }), children: t2("settings.feeds.shown") }),
+      notice ? jsx(Callout, { tone: "warn", children: notice }) : null,
+      ...sources.map((source) => jsx(Row, { focusKey: `settings:feeds:shown:${source.id}`, name: sourceLabel(t2, source), detail: t2("tblib.sourceGames", { count: source.count }), hint: t2("settings.feeds.shownHint"), end: jsx(Switch, { on: sourceShown(source.id) }), onPress: () => {
+        const { ok, reason } = setSourceShown(source.id, !sourceShown(source.id));
+        setNotice(ok ? "" : reason === "last" ? t2("settings.feeds.shownLast") : reason === "empty" ? t2("storeMode.empty") : t2("storeMode.never"));
+      } }, `${source.id}:${store.epoch}`))
+    ] });
+  }
   // glibren.14: no limit of three feeds any more (MAX_FEEDS is only a safety ceiling), and "Add a file from the PS5".
   function FeedsCard({ onAdd, onAddFile, onMirror }) {
     const t2 = useT();
@@ -544,7 +563,8 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       feeds.length < MAX_FEEDS ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:feeds:add", name: t2("settings.feeds.add"), hint: t2("settings.feeds.detail"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "external", color: colors.muted }), onPress: onAdd }) : null,
       feeds.length < MAX_FEEDS ? jsx(Row, { focusKey: "settings:feeds:addFile", name: t2("settings.feeds.addFile"), hint: t2("settings.feeds.addFileHint"), end: jsx(Icon, { name: "folder", color: colors.muted }), onPress: onAddFile }) : null,
       feeds.length || orbitOn ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:feeds:refresh", name: t2("settings.feeds.refresh"), detail: feeds.some((feed) => feed.state === "refreshing") ? t2("settings.feeds.refreshing") : null, hint: t2("settings.feeds.refreshHint"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "restart", color: colors.muted }), onPress: () => void refreshFeedsNow() }) : null,
-      feeds.some((feed) => feed.restart) ? /* @__PURE__ */ (0, jsx)(Callout, { children: t2("settings.feeds.restart") }) : null
+      feeds.some((feed) => feed.restart) ? /* @__PURE__ */ (0, jsx)(Callout, { children: t2("settings.feeds.restart") }) : null,
+      jsx(ShownCatalogs, {})
     ] });
   }
   // Debrid providers: the TorBox API key (typed in, kept as its last four characters on screen), a
@@ -662,13 +682,16 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     const running = run.state === "running";
     const picked = sources.filter((source) => !off.includes(source.id)).map((source) => source.id);
     const chosen = off.length ? picked : null;
-    const start = (fresh) => {
+    const start = (fresh, onlyNew = false) => {
       if (!debrid.configured) return setNotice(t2("tblib.needKey"));
       if (!picked.length) return setNotice(t2("tblib.noSource"));
       setNotice("");
-      void startLibrary({ sources: fresh ? chosen : summary.open?.sources ?? chosen, fresh });
+      void startLibrary({ sources: fresh || onlyNew ? chosen : summary.open?.sources ?? chosen, fresh, onlyNew: onlyNew || !fresh && Boolean(summary.open?.onlyNew) });
     };
     const resumable = !running && summary.open;
+    // glibren.25: jogos que chegaram depois da última montagem (a lista Orbit Store ligada depois, um feed novo):
+    // um botão verifica só eles, sem refazer os já verificados.
+    const fresher = !running && !resumable && summary.unchecked > 0;
     const fraction = run.total ? run.done / run.total : 0;
     // glibren.13: the games TorBox holds only as a broken copy (an error page kept as the file), left out of the store.
     const broken = run.state === "idle" ? summary.broken : run.broken || 0;
@@ -676,12 +699,14 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       jsx(CardHead, { icon: "grid", title: t2("settings.card.torboxLibrary") }),
       jsx(Callout, { children: libraryDetail(t2, run, summary) }),
       broken ? jsx(Callout, { tone: "warn", children: t2("tblib.broken", { count: broken }) }) : null,
+      fresher ? jsx(Callout, { tone: "warn", children: t2("tblib.unchecked", { count: summary.unchecked }) }) : null,
       running ? jsx(ProgressBar, { fraction, width: 760, active: true }) : null,
       !debrid.configured ? jsx(Callout, { tone: "warn", children: t2("tblib.needKey") }) : null,
       notice ? jsx(Callout, { tone: "warn", children: notice }) : null,
       running
         ? jsx(Row, { focusKey: "settings:tblib:build", name: t2("tblib.cancel"), hint: t2("tblib.cancelHint"), end: jsx(Icon, { name: "x", color: colors.muted }), onPress: cancelLibrary })
         : jsx(Row, { focusKey: "settings:tblib:build", name: resumable ? t2("tblib.continue", { done: formatNumber2(summary.open.done), total: formatNumber2(summary.open.total) }) : t2("tblib.build"), hint: t2("tblib.hint"), end: jsx(Icon, { name: "play", color: colors.muted }), onPress: () => start(false) }),
+      fresher ? jsx(Row, { focusKey: "settings:tblib:new", name: t2("tblib.checkNew", { count: formatNumber2(summary.unchecked) }), hint: t2("tblib.checkNewHint"), end: jsx(Icon, { name: "play", color: colors.muted }), onPress: () => start(false, true) }) : null,
       resumable ? jsx(Row, { focusKey: "settings:tblib:fresh", name: t2("tblib.rebuild"), hint: t2("tblib.rebuildHint"), end: jsx(Icon, { name: "restart", color: colors.muted }), onPress: () => start(true) }) : null,
       jsx(Row, { focusKey: "settings:tblib:store", name: t2("tblib.useStore"), detail: store.count ? t2("tblib.storeCount", { count: formatNumber2(store.count) }) : null, hint: t2("tblib.useStoreHint"), end: jsx(Switch, { on: store.mode === "torbox" }), onPress: () => {
         const { ok, reason } = applyStoreMode(store.mode === "torbox" ? "full" : "torbox");

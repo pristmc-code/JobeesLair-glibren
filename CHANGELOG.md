@@ -6,6 +6,17 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.25** (fork): the Orbit Store list now shows up on the PS5: the app read it from its own data folder
+  (`/download0` or `/data/ps5-react/<ID>`) while the background payload writes it to `/data/JobeesLair/orbit`, so it
+  stayed on "Downloading the catalog for the first time" forever and never reached the store or the TorBox library's
+  sources; the line now reads "Updating" while the payload downloads. TorBox library: games that arrived after the last
+  build (a list turned on later, like Orbit Store) are counted and "Check only the N new games" checks just those,
+  keeping what was already checked. Settings > Catalog feeds > **Show in the store**: one switch per catalog (Jobee'sLair,
+  live, each feed, Orbit Store); off, its games leave the store (full and TorBox) while the feed stays included, so one
+  left on shows only its games. Convert (app and phone) always answers: "In the conversion queue (position N)",
+  "Converting now", "Already in the queue" or "Already converted: <file>" (an image of the same title ID found under
+  any name in a drive's `homebrew/`, e.g. renamed and already in ShadowMount, is not converted again); a finished
+  conversion whose image is gone anywhere goes back to the queue. Background payload API 20.
 - **Closing the app with the background payload running is gentler** (a console froze once when the app was closed
   with "keep downloading" on; the cause is not confirmed yet). When the app closes, the background payload goes
   quiet for 30 seconds (no network, no disk, nothing started, no image moved into `homebrew/`) while the system takes

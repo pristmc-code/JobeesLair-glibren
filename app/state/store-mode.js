@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { games } from '../data/catalog-index.js';
-import { allListed, editionsOf, refreshDerived } from './catalog.js';
+import { allListed, catalogSources, editionsOf, refreshDerived, sourcesOfGame } from './catalog.js';
 import { DATA_DIR } from './data-dir.js';
 import { loadList, saveList } from './saved.js';
 import { libraryPaths, readConfirmedIds } from './torbox-library.js';
@@ -22,6 +22,18 @@ import { FileSystem, Platform } from '@ps5-react/core';
   var confirmedCount = null;
   var rebuilders = [];
   var listeners = /* @__PURE__ */ new Set();
+  // glibren.25: os catálogos escondidos da loja (Configurações > Feeds, "Mostrar na loja"; settings.json
+  // `hiddenSources`: "bundled", o endereço do feed ao vivo ou de um feed, o arquivo da lista Orbit Store). O feed
+  // continua incluído e atualizado; só os jogos que vêm apenas de catálogos escondidos saem da loja (as duas versões).
+  var hidden = /* @__PURE__ */ new Set();
+  try {
+    const saved = loadList(SETTINGS, "settings").hiddenSources;
+    if (Array.isArray(saved)) for (const id of saved) if (typeof id === "string") hidden.add(id);
+  } catch {
+  }
+  /** Os jogos listados dos catálogos que a loja mostra. */
+  var shownListed = () => hidden.size ? allListed.filter((game) => sourcesOfGame(game).some((source) => !hidden.has(source))) : allListed;
+  var sourceShown = (id) => !hidden.has(id);
   var paths = () => libraryPaths(DATA_DIR, Platform.OS === "ps5");
   /** Os ids confirmados gravados (null: a biblioteca nunca foi montada). */
   function confirmedIds() {
@@ -44,11 +56,11 @@ import { FileSystem, Platform } from '@ps5-react/core';
    */
   function applyStoreMode(next, { save = true } = {}) {
     if (!MODES.includes(next)) return { ok: false, reason: "unknown" };
-    let list = allListed;
+    let list = shownListed();
     if (next === "torbox") {
       const ids = confirmedIds();
       if (!ids) return { ok: false, reason: "never" };
-      list = torBoxGames(ids);
+      list = torBoxGames(ids, list);
       if (!list.length) return { ok: false, reason: "empty" };
     }
     confirmedCount = next === "torbox" ? list.length : confirmedCount;
@@ -67,6 +79,31 @@ import { FileSystem, Platform } from '@ps5-react/core';
     console.log(`[store-mode] ${next}: ${list.length} games`);
     notify();
     return { ok: true, reason: "" };
+  }
+  /**
+   * glibren.25: mostra ou esconde da loja os jogos de um catálogo (`id` de catalogSources) e refaz a loja na versão
+   * de agora. -> { ok, reason } ("last": seria o último catálogo mostrado; "empty": a loja TorBox ficaria vazia).
+   */
+  function setSourceShown(id, on) {
+    const before = new Set(hidden);
+    if (on) hidden.delete(id);
+    else {
+      if (!catalogSources().some((source) => source.id !== id && !hidden.has(source.id))) return { ok: false, reason: "last" };
+      hidden.add(id);
+    }
+    let result = applyStoreMode(mode, { save: false });
+    if (!result.ok && mode === "torbox") {
+      hidden.clear();
+      for (const kept of before) hidden.add(kept);
+      applyStoreMode(mode, { save: false });
+      return result;
+    }
+    try {
+      saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), hiddenSources: [...hidden] });
+    } catch (error) {
+      console.log(`[store-mode] hidden catalogs not saved: ${error?.message || error}`);
+    }
+    return result;
   }
   /**
    * glibren.14: o atalho R3 (ui/StoreKey.jsx): a outra versão da loja. -> { ok, reason, mode, count } (mode: a versão
@@ -90,7 +127,7 @@ import { FileSystem, Platform } from '@ps5-react/core';
   function torBoxStoreCount() {
     if (confirmedCount === null) {
       const ids = confirmedIds();
-      confirmedCount = ids ? torBoxGames(ids).length : 0;
+      confirmedCount = ids ? torBoxGames(ids, shownListed()).length : 0;
     }
     return confirmedCount;
   }
@@ -115,8 +152,13 @@ import { FileSystem, Platform } from '@ps5-react/core';
   try {
     const saved = loadList(SETTINGS, "settings").storeMode;
     if (saved === "torbox" && !applyStoreMode("torbox", { save: false }).ok) console.log("[store-mode] the TorBox store has no games; the full store is shown");
+    // glibren.25: com catálogos escondidos, a loja completa já sai sem eles (todos escondidos não acontece: o último fica).
+    if (mode === "full" && hidden.size) {
+      if (!catalogSources().some((source) => !hidden.has(source.id))) hidden.clear();
+      applyStoreMode("full", { save: false });
+    }
   } catch (error) {
     console.log(`[store-mode] saved choice not read: ${error?.message || error}`);
   }
 
-export { MODES, applyStoreMode, libraryChanged, onStoreMode, storeEpoch, storeMode, toggleStoreMode, torBoxGames, torBoxStoreCount, useStoreMode };
+export { MODES, applyStoreMode, setSourceShown, sourceShown, libraryChanged, onStoreMode, storeEpoch, storeMode, toggleStoreMode, torBoxGames, torBoxStoreCount, useStoreMode };

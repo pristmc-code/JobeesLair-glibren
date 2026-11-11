@@ -432,12 +432,18 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
    * `sources`: as fontes escolhidas (null: todas). -> { library, progress }. Cancelar (`signal`) grava o que já
    * foi feito e rejeita com AbortError.
    */
-  async function buildLibrary({ entries, api, hashList = null, library = emptyLibrary(), save = () => {}, onProgress = () => {}, signal, sources = null, fresh = false, sleep = defaultSleep, now = Date.now, pace = PACE_MS, rateWait = RATE_WAIT_MS, chunk = CHUNK, saveEvery = SAVE_EVERY_MS, log = () => {} }) {
+  /** glibren.25: um jogo do catálogo que o banco ainda não verificou (nenhuma montagem passou por ele). */
+  var unchecked = (library, game) => !library.games[game.id]?.torbox;
+  /** glibren.25: quantos jogos de `entries` ([{ game }]) o banco ainda não verificou. */
+  var uncheckedCount = (library, entries) => entries.filter((entry) => unchecked(library, entry.game)).length;
+  async function buildLibrary({ entries, api, hashList = null, library = emptyLibrary(), save = () => {}, onProgress = () => {}, signal, sources = null, fresh = false, onlyNew = false, sleep = defaultSleep, now = Date.now, pace = PACE_MS, rateWait = RATE_WAIT_MS, chunk = CHUNK, saveEvery = SAVE_EVERY_MS, log = () => {} }) {
     const wanted = sources ? new Set(sources) : null;
-    const picked = entries.filter((entry) => !wanted || entry.sources.some((source) => wanted.has(source)));
     const sourceList = sources ? [...sources].sort() : null;
-    const open = library.run && !library.run.finishedAt && !fresh && JSON.stringify(library.run.sources) === JSON.stringify(sourceList);
-    const run = open ? library.run : { id: `${now().toString(36)}${Math.floor(Math.random() * 1296).toString(36).padStart(2, "0")}`, startedAt: isoStamp(now()), finishedAt: null, sources: sourceList, total: 0, done: 0, found: 0, known: 0, errors: 0, calls: 0 };
+    const open = library.run && !library.run.finishedAt && !fresh && JSON.stringify(library.run.sources) === JSON.stringify(sourceList) && Boolean(library.run.onlyNew) === Boolean(onlyNew);
+    const run = open ? library.run : { id: `${now().toString(36)}${Math.floor(Math.random() * 1296).toString(36).padStart(2, "0")}`, startedAt: isoStamp(now()), finishedAt: null, sources: sourceList, ...onlyNew ? { onlyNew: true } : {}, total: 0, done: 0, found: 0, known: 0, errors: 0, calls: 0 };
+    // glibren.25: `onlyNew` passa só pelos jogos que o banco ainda não tem (os de uma lista ligada depois da última
+    // montagem, como a Orbit Store); os já verificados ficam como estão. Retomada, a rodada guarda os que já são dela.
+    const picked = entries.filter((entry) => (!wanted || entry.sources.some((source) => wanted.has(source))) && (!onlyNew || unchecked(library, entry.game) || library.games[entry.game.id].torbox.run === run.id));
     library.run = run;
     run.total = picked.length;
     const pending = picked.filter((entry) => library.games[entry.game.id]?.torbox?.run !== run.id);
@@ -618,4 +624,4 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     return { library, progress: progress() };
   }
 
-export { BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };
+export { BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };

@@ -11,7 +11,7 @@ import { torBoxApi } from './debrid.js';
 import { storageRoots } from './drives.js';
 import { LIVE_FEED, feedName } from './feeds.js';
 import { libraryChanged } from './store-mode.js';
-import { brokenOnly, buildLibrary, libraryPaths, readLibrary, stillConfirmed, writeLibrary, writeList } from './torbox-library.js';
+import { brokenOnly, buildLibrary, libraryPaths, readLibrary, stillConfirmed, uncheckedCount, writeLibrary, writeList } from './torbox-library.js';
 import { hashListPaths, readHashList } from './torbox-search.js';
 import { FileSystem, Platform } from '@ps5-react/core';
 
@@ -37,10 +37,12 @@ import { FileSystem, Platform } from '@ps5-react/core';
         confirmed: records.filter(stillConfirmed).length,
         // glibren.13: os jogos que o TorBox so tem como copia quebrada (uma pagina de erro), fora da loja.
         broken: records.filter(brokenOnly).length,
-        open: run && !run.finishedAt ? { done: run.done, total: run.total, sources: run.sources } : null
+        // glibren.25: os jogos do catálogo que nenhuma montagem verificou (uma lista ligada depois, como a Orbit Store).
+        unchecked: library.builtAt ? uncheckedCount(library, catalogEntries()) : 0,
+        open: run && !run.finishedAt ? { done: run.done, total: run.total, sources: run.sources, onlyNew: Boolean(run.onlyNew) } : null
       };
     } catch {
-      return { builtAt: null, games: 0, confirmed: 0, broken: 0, open: null };
+      return { builtAt: null, games: 0, confirmed: 0, broken: 0, unchecked: 0, open: null };
     }
   }
   /** As fontes que o jogador pode escolher: o catálogo embutido, o ao vivo e cada feed incluído, com seus jogos. */
@@ -49,9 +51,9 @@ import { FileSystem, Platform } from '@ps5-react/core';
   }
   /**
    * Começa (ou continua) a montagem. `sources`: as fontes escolhidas (null: todas); `fresh`: uma rodada nova mesmo
-   * com uma aberta. Uma montagem já andando é a que volta.
+   * com uma aberta; `onlyNew` (glibren.25): só os jogos que o banco ainda não tem. Uma montagem já andando é a que volta.
    */
-  function startLibrary({ sources = null, fresh = false } = {}) {
+  function startLibrary({ sources = null, fresh = false, onlyNew = false } = {}) {
     if (current) return current.promise;
     // O motor JS do console não tem AbortController: o sinal de cancelamento é o do app (download-sources.js).
     const controller = cancellation();
@@ -82,6 +84,7 @@ import { FileSystem, Platform } from '@ps5-react/core';
       save,
       sources,
       fresh,
+      onlyNew,
       signal: controller.signal,
       log,
       onProgress: (next) => set({ ...progress, ...next, state: "running", error: "" })

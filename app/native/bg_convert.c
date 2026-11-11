@@ -947,9 +947,44 @@ static int backup_marker_field(JP* jp, const char* key, void* ctx) {
   }
   return jp_skip(jp) ? 1 : -1;
 }
-static void backup_info(const char* root, const char* path, const char* name, BackupInfo* info, char* converted, size_t cap) {
+// glibren.25: um .exfat do mesmo codigo (PPSA/CUSA) ja feito em algum <disco>/homebrew/ (os discos de conv_backup_roots,
+// so o primeiro nivel): o de sempre (<root>/homebrew/<codigo>.exfat) primeiro; senao qualquer nome com o codigo ("Pinball_FX-
+// PPSA08755-US-PS5.exfat", renomeado ou movido pelo gamer depois de pronto). `where` = o caminho; 0 = nao achou.
+static int name_has_code(const char* name, const char* code) {
+  const size_t n = strlen(code);
+  for (const char* p = name; *p; ++p)
+    if (!strncasecmp(p, code, n) && !isdigit((unsigned char)p[n]) && (p == name || !isalnum((unsigned char)p[-1]))) return 1;
+  return 0;
+}
+static int exfat_of_code(const char* root, const char* code, char* where, size_t cap) {
+  struct stat st;
+  snprintf(where, cap, "%.255s/homebrew/%s.exfat", root, code);
+  if (!stat(where, &st) && S_ISREG(st.st_mode)) return 1;
+  char roots[24][256];
+  const int count = conv_backup_roots(roots, 24);
+  for (int i = 0; i < count; ++i) {
+    char dir[300];
+    snprintf(dir, sizeof dir, "%.255s/homebrew", roots[i]);
+    DIR* d = opendir(dir);
+    if (!d) continue;
+    int found = 0;
+    for (struct dirent* it; !found && (it = readdir(d));) {
+      const size_t n = strlen(it->d_name);
+      if (it->d_name[0] == '.' || n < 7 || strcasecmp(it->d_name + n - 6, ".exfat") || !name_has_code(it->d_name, code)) continue;
+      snprintf(where, cap, "%s/%s", dir, it->d_name);
+      found = !stat(where, &st) && S_ISREG(st.st_mode);
+    }
+    closedir(d);
+    if (found) return 1;
+  }
+  where[0] = 0;
+  return 0;
+}
+// glibren.25: `where` (pode ser NULL) recebe o caminho inteiro do .exfat achado; `converted`, so o nome dele.
+static void backup_info(const char* root, const char* path, const char* name, BackupInfo* info, char* converted, size_t cap, char* where, size_t where_cap) {
   memset(info, 0, sizeof *info);
   converted[0] = 0;
+  if (where) where[0] = 0;
   char marker[700];
   snprintf(marker, sizeof marker, "%.599s/.jobe-backup.json", path);
   FILE* f = fopen(marker, "rb");
@@ -978,8 +1013,10 @@ static void backup_info(const char* root, const char* path, const char* name, Ba
   }
   if (info->code[0]) {
     char image[700];
-    snprintf(image, sizeof image, "%.255s/homebrew/%s.exfat", root, info->code);
-    if (!stat(image, &st) && S_ISREG(st.st_mode)) snprintf(converted, cap, "%s.exfat", info->code);
+    if (exfat_of_code(root, info->code, image, sizeof image)) { // glibren.25: tambem o renomeado/movido
+      copy_text(converted, cap, base_name(image));
+      if (where) copy_text(where, where_cap, image);
+    }
   }
 }
 static unsigned backup_parts(const BackupInfo* info) {
@@ -1047,8 +1084,8 @@ static void conv_backup_list(int fd, int app) {
       buf_fmt(&b, ",\"bytes\":%llu,\"files\":%u", (unsigned long long)bytes, files);
       // glibren.12: de que jogo e, o formato e os nomes (sem caminho) e o .exfat convertido.
       BackupInfo info;
-      char converted[32];
-      backup_info(roots[i], path, it->d_name, &info, converted, sizeof converted);
+      char converted[256], where[700];
+      backup_info(roots[i], path, it->d_name, &info, converted, sizeof converted, where, sizeof where);
       buf_str(&b, ",\"platform\":"); buf_json(&b, info.platform);
       buf_str(&b, ",\"code\":"); buf_json(&b, info.code);
       buf_str(&b, ",\"format\":"); buf_json(&b, info.format);
@@ -1056,7 +1093,8 @@ static void conv_backup_list(int fd, int app) {
       for (int k = 0; k < info.named; ++k) { if (k) buf_str(&b, ","); buf_json(&b, info.names[k]); }
       buf_fmt(&b, "],\"moreFiles\":%d,\"converted\":", info.more);
       buf_json(&b, converted);
-      if (app) { // glibren.22
+      if (where[0]) { buf_str(&b, ",\"convertedPath\":"); buf_json(&b, where); } // glibren.25
+      { // glibren.22; glibren.25: tambem para o celular (o item mostra "Na fila"/"Convertendo" no lugar do botao)
         char key[128];
         backup_key(key, sizeof key, it->d_name);
         backup_conv_json(&b, path, key);
@@ -1127,10 +1165,38 @@ static Conv* conv_by_source_locked(const char* source) {
   return NULL;
 }
 
+// glibren.25: o que conv_add_auto fez com o pedido, para a resposta do "Converter" (antes o duplicado sumia sem nada):
+// o id, a posicao na fila (0 = convertendo agora) e, se ja existia, o estado dela ("" = entrou na fila agora).
+typedef struct { char id[24]; char already[16]; int position; } ConvAdded;
+// Quantas conversoes passam antes de `c`: a que esta rodando ou extraindo e as "queued" antes dela na lista (conv_loop
+// pega a primeira "queued").
+static int conv_position_locked(const Conv* c) {
+  if (c->running || strcmp(c->state, "queued")) return 0;
+  int ahead = 0, before = 1;
+  for (int i = 0; i < g_conv_count; ++i) {
+    const Conv* o = g_convs[i];
+    if (o == c) { before = 0; continue; }
+    if (o->running || (!conv_terminal(o->state) && strcmp(o->state, "queued"))) ++ahead;
+    else if (before && !strcmp(o->state, "queued")) ++ahead;
+  }
+  return ahead;
+}
+static void conv_added_locked(ConvAdded* out, const Conv* c, const char* already) {
+  if (!out) return;
+  copy_text(out->id, sizeof out->id, c->id);
+  copy_text(out->already, sizeof out->already, already);
+  out->position = conv_position_locked(c);
+}
+// glibren.25: "pronta" mas o .exfat de saida nao existe mais (apagado, disco trocado): conta como falhou.
+static int conv_done_gone(const Conv* c) {
+  struct stat st;
+  return !strcmp(c->state, "done") && stat(c->output, &st);
+}
+
 // Uma conversao pedida pelo proprio payload, como o POST /convert do app, sem a resposta. 1 = na fila (ou ja existia com
-// a mesma chave ou a mesma fonte).
+// a mesma chave ou a mesma fonte). glibren.25: `out` (pode ser NULL) diz qual e onde esta na fila.
 static int conv_add_auto(const char* key, const char* name, const char* kind, const char* const* sources, int nsources,
-                         const char* output, const char* root, const char* label, const char* work) {
+                         const char* output, const char* root, const char* label, const char* work, ConvAdded* out) {
   Conv* body = calloc(1, sizeof *body);
   if (!body) return 0;
   copy_text(body->key, sizeof body->key, key);
@@ -1150,8 +1216,9 @@ static int conv_add_auto(const char* key, const char* name, const char* kind, co
   if (!conv_validate(body, error, sizeof error)) { logf_("conversao automatica recusada: %s", error); free(body); return 0; }
   pthread_mutex_lock(&g_conv_lock);
   // glibren.20: a mesma chave que falhou ou foi cancelada (um "Converter agora" de novo) volta para a fila, do comeco.
+  // glibren.25: e tambem a "pronta" cujo .exfat sumiu.
   Conv* again = conv_by_key_locked(body->key);
-  if (again && (!strcmp(again->state, "failed") || !strcmp(again->state, "cancelled")) && !again->running) {
+  if (again && (!strcmp(again->state, "failed") || !strcmp(again->state, "cancelled") || conv_done_gone(again)) && !again->running) {
     char id[sizeof again->id];
     const __typeof__(again->created) created = again->created;
     copy_text(id, sizeof id, again->id);
@@ -1162,12 +1229,23 @@ static int conv_add_auto(const char* key, const char* name, const char* kind, co
     snprintf(again->state, sizeof again->state, "queued");
     conv_save_locked();
     logf_("conversao %s pedida de novo pelo payload: %s (%s)", again->id, again->name, again->kind);
+    conv_added_locked(out, again, "");
     pthread_cond_broadcast(&g_conv_wake);
     pthread_mutex_unlock(&g_conv_lock);
     free(body);
     return 1;
   }
-  if (again || conv_by_source_locked(body->source)) { pthread_mutex_unlock(&g_conv_lock); free(body); return 1; }
+  // glibren.25: o duplicado (mesma chave, ou a mesma fonte em andamento/pronta) nao some mais calado: vai para o log e
+  // para a resposta. A pronta de outra chave cujo .exfat sumiu nao segura o pedido.
+  const Conv* same = again ? again : conv_by_source_locked(body->source);
+  if (same && same != again && conv_done_gone(same)) same = NULL;
+  if (same) {
+    logf_("conversao %s ja pedida (%s): %s", same->id, same->state, body->name);
+    conv_added_locked(out, same, same->state);
+    pthread_mutex_unlock(&g_conv_lock);
+    free(body);
+    return 1;
+  }
   for (int i = 0; g_conv_count >= MAX_CONVS && i < g_conv_count; ++i) {
     if (!conv_terminal(g_convs[i]->state) || g_convs[i]->running) continue;
     free(g_convs[i]);
@@ -1181,6 +1259,7 @@ static int conv_add_auto(const char* key, const char* name, const char* kind, co
   g_convs[g_conv_count++] = body;
   conv_save_locked();
   logf_("conversao %s pedida pelo payload: %s (%s)", body->id, body->name, body->kind);
+  conv_added_locked(out, body, "");
   pthread_cond_broadcast(&g_conv_wake);
   pthread_mutex_unlock(&g_conv_lock);
   return 1;
@@ -1218,12 +1297,14 @@ static void auto_output(const char* root, const char* code, const char* fallback
 
 // Converte o que esta em <root>/BACKUP/<name>: o .pkg de PS5 (o maior), senao o compactado (os volumes juntos, o
 // primeiro primeiro). -> 1 pedida (ou ja pedida), 0 nada para converter, -1 jogo de PS4, -2 ja convertido.
-static int backup_convert(const char* root, const char* name, const char* key) {
+// glibren.25: `out` (pode ser NULL), como em conv_add_auto.
+// glibren.25: `where` (pode ser NULL) recebe o .exfat achado quando da -2.
+static int backup_convert(const char* root, const char* name, const char* key, ConvAdded* out, char* where, size_t where_cap) {
   char dir[600];
   snprintf(dir, sizeof dir, "%.255s/BACKUP/%.255s", root, name);
   BackupInfo info;
-  char converted[64];
-  backup_info(root, dir, name, &info, converted, sizeof converted);
+  char converted[256];
+  backup_info(root, dir, name, &info, converted, sizeof converted, where, where_cap);
   if (!strcmp(info.platform, "ps4")) return -1;
   if (converted[0]) return -2;
   DIR* d = opendir(dir);
@@ -1262,7 +1343,7 @@ static int backup_convert(const char* root, const char* name, const char* key) {
   auto_output(root, info.code, pkg[0] ? pkg : archives[0], output, sizeof output, label, sizeof label);
   char conv_key[128];
   snprintf(conv_key, sizeof conv_key, "%.120s", key);
-  return conv_add_auto(conv_key, name, pkg[0] ? "pkg" : "archive", list, n, output, root, label, NULL) ? 1 : 0;
+  return conv_add_auto(conv_key, name, pkg[0] ? "pkg" : "archive", list, n, output, root, label, NULL, out) ? 1 : 0;
 }
 
 // A pasta do jogo de PS5 dentro do que foi extraido (a que tem sce_sys/param.json), ate 4 niveis; e um .pkg achado.
@@ -1429,9 +1510,50 @@ static void conv_backup_convert(int fd, Request* r, int app) {
   if (!known || !d.name[0] || d.name[0] == '.' || !strcmp(d.name, "_temp") || strchr(d.name, '/') || strchr(d.name, '\\')) { backup_reply(fd, app, 400, "{\"error\":\"invalid backup\"}"); return; }
   char key[128];
   backup_key(key, sizeof key, d.name);
-  const int rc = backup_convert(d.root, d.name, key);
-  logk_("%s: converter agora %s/BACKUP/%s -> %d", backup_who(app), d.root, d.name, rc);
-  backup_reply(fd, app, rc == 1 ? 200 : 400, rc == 1 ? "{\"ok\":true}" : rc == -1 ? "{\"error\":\"ps4\"}" : rc == -2 ? "{\"error\":\"converted\"}" : "{\"error\":\"nothing\"}");
+  ConvAdded added = {"", "", 0};
+  char where[700] = "";
+  const int rc = backup_convert(d.root, d.name, key, &added, where, sizeof where);
+  // glibren.25: ja convertido, mas o .exfat nao esta onde a conversao o pos (o gamer renomeou ou moveu: "Pinball_FX-
+  // PPSA08755-US-PS5.exfat" em /data/homebrew): nao converte de novo; diz onde esta. No lugar de sempre segue o
+  // {error:"converted"} de antes.
+  if (rc == -2 && where[0]) {
+    char usual[700];
+    BackupInfo info;
+    char name_only[256];
+    char dir[600];
+    snprintf(dir, sizeof dir, "%.255s/BACKUP/%.255s", d.root, d.name);
+    backup_info(d.root, dir, d.name, &info, name_only, sizeof name_only, NULL, 0);
+    snprintf(usual, sizeof usual, "%.255s/homebrew/%s.exfat", d.root, info.code);
+    if (strcmp(usual, where)) {
+      pthread_mutex_lock(&g_conv_lock);
+      const Conv* had = conv_by_key_locked(key);
+      char id[24] = "";
+      if (had) copy_text(id, sizeof id, had->id);
+      pthread_mutex_unlock(&g_conv_lock);
+      if (id[0]) logk_("conversao %s: ja convertido em %s", id, where);
+      else logk_("%s: BACKUP %s ja convertido em %s", backup_who(app), d.name, where);
+      Buf b = {0};
+      buf_str(&b, "{\"ok\":true,\"already\":\"converted\",\"path\":"); buf_json(&b, where);
+      if (id[0]) { buf_str(&b, ",\"id\":"); buf_json(&b, id); }
+      buf_str(&b, "}");
+      if (b.failed || !b.data) backup_reply(fd, app, 500, "{\"error\":\"out of memory\"}");
+      else backup_reply(fd, app, 200, b.data);
+      free(b.data);
+      return;
+    }
+  }
+  // glibren.25: diz onde ficou: {ok, state:"queued", position, id} (0 = convertendo agora) ou {ok, already:<estado>, id,
+  // position} se ja estava pedida. Antes era so {ok:true} e o app/celular ficavam sem retorno nenhum.
+  char reply[160];
+  if (rc == 1 && added.already[0])
+    snprintf(reply, sizeof reply, "{\"ok\":true,\"already\":\"%s\",\"id\":\"%s\",\"position\":%d}", added.already, added.id, added.position);
+  else if (rc == 1)
+    snprintf(reply, sizeof reply, "{\"ok\":true,\"state\":\"queued\",\"position\":%d,\"id\":\"%s\"}", added.position, added.id);
+  else
+    snprintf(reply, sizeof reply, "%s", rc == -1 ? "{\"error\":\"ps4\"}" : rc == -2 ? "{\"error\":\"converted\"}" : "{\"error\":\"nothing\"}");
+  if (rc == 1) logk_("%s: converter agora %s/BACKUP/%s -> %s %s (posicao %d)", backup_who(app), d.root, d.name, added.id, added.already[0] ? added.already : "na fila", added.position);
+  else logk_("%s: converter agora %s/BACKUP/%s -> %d", backup_who(app), d.root, d.name, rc);
+  backup_reply(fd, app, rc == 1 ? 200 : 400, reply);
 }
 
 // glibren.20: POST /api/backup/convert-all (com o PIN): "Converter todos" na lista do BACKUP: cada jogo de PS5 ainda nao
@@ -1456,7 +1578,7 @@ static void conv_backup_convert_all(int fd, Request* r, int app) {
     for (int k = 0; k < n; ++k) {
       char key[128];
       backup_key(key, sizeof key, names[k]);
-      const int rc = backup_convert(roots[i], names[k], key);
+      const int rc = backup_convert(roots[i], names[k], key, NULL, NULL, 0);
       if (rc == 1) ++queued; else if (rc == -1) ++ps4; else if (rc == -2) ++converted; else ++nothing;
     }
   }

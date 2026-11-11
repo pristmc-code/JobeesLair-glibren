@@ -844,6 +844,7 @@ pinOnOpen();
       back: "Fechar", busy: "Esse original ainda está sendo convertido.", fail: "Não deu para apagar. Tente de novo.", files: "{n} arquivo(s)",
       converted: "Convertido: {f}", notConverted: "Não convertido", more: "e mais {n}",
       convertNow: "Converter agora", convertAsked: "Conversão pedida: o payload converte sozinho (aparece em Convertendo).",
+      convQueuedAt: "Na fila de conversão (posição {n}): o payload converte um de cada vez.", convRunning: "Convertendo agora.", convAlready: "Já está na fila de conversão.", convDone: "Já convertido: {f}",
       convertNo: { ps4: "Jogo de PS4: não vira .exfat.", converted: "Já convertido.", nothing: "Nada aqui que dê para converter." } },
     en: { converting: "Converting to EXFAT", verifying: "Checking the EXFAT", queued: "Queued for EXFAT", done: "Ready (EXFAT)", failed: "Conversion failed",
       extracting: "Extracting to convert",
@@ -858,9 +859,16 @@ pinOnOpen();
       back: "Close", busy: "That original is still being converted.", fail: "It could not be deleted. Try again.", files: "{n} file(s)",
       converted: "Converted: {f}", notConverted: "Not converted", more: "and {n} more",
       convertNow: "Convert now", convertAsked: "Conversion requested: the payload converts it by itself (see Converting).",
+      convQueuedAt: "Queued for conversion (position {n}): the payload converts one at a time.", convRunning: "Converting now.", convAlready: "Already in the conversion queue.", convDone: "Already converted: {f}",
       convertNo: { ps4: "A PS4 game: it does not become an .exfat.", converted: "Already converted.", nothing: "Nothing here that can be converted." } }
   }[L === T.pt ? "pt" : "en"];
   const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+  const ACTIVE_CONV = ["queued", "extracting", "converting", "verifying"]; // glibren.25
+  // glibren.25: mostra a mensagem do painel (fica no topo dele) e rola ate ela.
+  const bkSay = (text) => { const m = $("bkMsg"); m.textContent = text; if (text && m.scrollIntoView) m.scrollIntoView({ block: "center", behavior: "smooth" }); };
+  // glibren.25: a resposta do POST /api/backup/convert: {state:"queued", position} (0 = convertendo agora) ou {already}.
+  const convAnswer = (d) => d.already === "converted" ? fill(C.convDone, { f: String(d.path || "").slice(String(d.path || "").lastIndexOf("/") + 1) }) : d.already ? (["extracting", "converting", "verifying"].includes(d.already) ? C.convRunning : C.convAlready)
+    : d.position ? fill(C.convQueuedAt, { n: d.position }) : d.state === "queued" ? C.convRunning : C.convertAsked;
   const demoConv = [{ id: "c1", name: "Astro Bot", state: "converting", written: 18.2 * GB, total: 41.7 * GB, error: "" }, { id: "c2", name: "Stellar Blade", state: "done", written: 33.4 * GB, total: 33.4 * GB, error: "" }];
   window.demoConversions = demoConv;
   let demoBackup = [
@@ -876,7 +884,8 @@ pinOnOpen();
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>';
   $("foot").before(row);
   const panel = document.createElement("section"); panel.className = "bkpanel dlonly"; panel.hidden = true;
-  panel.append($("bkTitle"), $("bkText"), $("bkList"), $("bkMsg"));
+  // glibren.25: a mensagem (resposta do Converter agora, ...) no topo do painel; no fim ficava fora da tela.
+  panel.append($("bkTitle"), $("bkText"), $("bkMsg"), $("bkList"));
   row.before(panel);
   $("bkTitle").textContent = C.title; $("bkText").textContent = C.text; $("bkBack").textContent = C.back;
   function why(error) {
@@ -941,10 +950,14 @@ pinOnOpen();
         item.append(f);
       }
       const cv = document.createElement("div"); cv.className = `bk-conv${g.converted ? " ok" : ""}`;
-      cv.textContent = g.converted ? fill(C.converted, { f: g.converted }) : C.notConverted;
+      // glibren.25: o /api/backup agora traz a conversao do item tambem para o celular: na fila / convertendo aparece
+      // aqui, no lugar do botao (antes seguia "Nao convertido" + "Converter agora" e o toque parecia nao fazer nada).
+      const conv = g.conversion && ACTIVE_CONV.includes(g.conversion.state) ? g.conversion : null;
+      const pct = conv && conv.total ? ` ${Math.min(100, Math.floor(conv.written / conv.total * 100))}%` : "";
+      cv.textContent = g.converted ? fill(C.converted, { f: g.converted }) : conv ? (C[conv.state] || C.queued) + pct : C.notConverted;
       item.append(cv);
       // glibren.18: "Converter agora" (com o PIN): o payload converte sozinho, sem a Jobee'sLair.
-      if (!g.converted && g.platform !== "ps4") {
+      if (!g.converted && !conv && g.platform !== "ps4") {
         const go = document.createElement("button"); go.type = "button"; go.className = "btn"; go.textContent = C.convertNow;
         go.onclick = () => guarded(() => convertNow(g));
         item.append(go);
@@ -997,15 +1010,15 @@ pinOnOpen();
     $("bkMsg").textContent = "";
     const r = DEMO ? { status: 200, data: { ok: true, queued: 1 } } : await api("POST", "/api/backup/convert-all", {}).catch(() => ({ status: 0, data: {} }));
     if (r.status === 401) { session = ""; lockButton(); pending = () => convertAll(); openPin(); return; }
-    $("bkMsg").textContent = r.status === 200 ? (r.data.queued ? fill(C.convertAllDone, { n: r.data.queued }) : C.convertAllNone) : C.fail;
+    bkSay(r.status === 200 ? (r.data.queued ? fill(C.convertAllDone, { n: r.data.queued }) : C.convertAllNone) : C.fail);
     await loadBackup();
     await refresh();
   }
   async function convertNow(g) {
     $("bkMsg").textContent = "";
-    const r = DEMO ? { status: 200, data: { ok: true } } : await api("POST", "/api/backup/convert", { root: g.root, name: g.name }).catch(() => ({ status: 0, data: {} }));
+    const r = DEMO ? { status: 200, data: { ok: true, state: "queued", position: 1, id: "c9" } } : await api("POST", "/api/backup/convert", { root: g.root, name: g.name }).catch(() => ({ status: 0, data: {} }));
     if (r.status === 401) { session = ""; lockButton(); pending = () => convertNow(g); openPin(); return; }
-    $("bkMsg").textContent = r.status === 200 ? C.convertAsked : C.convertNo[r.data?.error] || C.fail;
+    bkSay(r.status === 200 ? convAnswer(r.data || {}) : C.convertNo[r.data?.error] || C.fail);
     await loadBackup();
     await refresh();
   }

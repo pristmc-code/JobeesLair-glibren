@@ -190,6 +190,8 @@ import { noteRow, warmAtStart } from './cover-warm.js';
   var catalogEntries = () => entries.map((game) => ({ game, sources: sourcesById.get(game.id) ?? [BUNDLED] }));
   /** The sources the catalog has games from: [{ id: "bundled" | "<feed url>", count }]. */
   var catalogSources = () => [...sourceCounts].map(([id, count]) => ({ id, count }));
+  /** glibren.25: where a listed game comes from: ["bundled" | "<feed url>", ...] (the store's "show this catalog"). */
+  var sourcesOfGame = (game) => sourcesById.get(game.id) ?? [BUNDLED];
   /**
    * glibren.9: after the store's list changed (state/store-mode.js): the filters' and related games' kept answers
    * go, and the genres are the list's.
@@ -433,4 +435,4 @@ import { noteRow, warmAtStart } from './cover-warm.js';
   }
   var formatDate3 = (iso) => iso ? formatDate2(iso) : "\u2014";
 
-export { BUNDLED, allListed, catalogEntries, catalogSources, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };
+export { BUNDLED, allListed, catalogEntries, catalogSources, sourcesOfGame, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };

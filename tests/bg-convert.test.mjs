@@ -8,7 +8,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -623,6 +623,100 @@ test('glibren.18: "Converter agora" na lista do BACKUP (com o PIN): .pkg de PS5 
     const list = Object.fromEntries((await page('/api/backup')).data.games.map((g) => [g.name, g]));
     assert.equal(list['Jogo Pkg'].converted, 'PPSA01234.exfat');
     assert.deepEqual((await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo Pkg' }, session })).data, { error: 'converted' });
+  } finally {
+    await stop(child);
+  }
+});
+
+// glibren.25: com uma conversao em andamento, "Converter" de outro jogo dizia so {ok:true} (e o duplicado sumia calado):
+// agora a resposta diz a posicao na fila ou que ja estava pedida, o celular ve o estado do item e uma "pronta" cujo .exfat
+// sumiu volta para a fila.
+test('glibren.25: Converter com outra em andamento: posicao na fila, duplicado avisado e no log, estado no /api/backup do celular, pronta sem .exfat volta a fila', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const disk = path.join(base, 'disk');
+  for (const [name, code] of [['Jogo A', 'PPSA01234'], ['Jogo B', 'PPSA05678']]) {
+    const dir = path.join(disk, 'BACKUP', name);
+    mkdirSync(dir, { recursive: true });
+    await gunzipTo('jogo_fast', path.join(dir, 'jogo_fast.pkg'));
+    writeFileSync(path.join(dir, '.jobe-backup.json'), JSON.stringify({ titleId: code, platform: 'ps5', format: 'pkg', source: 'torbox' }));
+  }
+  const child = start(base, { BGDL_CONVERT_DELAY_MS: '150' });
+  try {
+    await up(base);
+    const session = await phoneSession(base);
+    const a = (await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo A' }, session })).data;
+    assert.equal(a.ok, true);
+    assert.equal(a.state, 'queued', JSON.stringify(a));
+    assert.equal(a.position, 0, 'nada antes: converte agora');
+    assert.match(a.id, /^c\d+$/);
+    const b = (await call(base, 'POST', '/backup/convert', { root: disk, name: 'Jogo B' })).data;
+    assert.equal(b.state, 'queued', JSON.stringify(b));
+    assert.equal(b.position, 1, 'o Jogo A passa antes');
+    const twice = (await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo B' }, session })).data;
+    assert.deepEqual(twice, { ok: true, already: 'queued', id: b.id, position: 1 });
+    const first = (await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo A' }, session })).data;
+    assert.equal(first.id, a.id);
+    assert.ok(['queued', 'converting', 'verifying'].includes(first.already), JSON.stringify(first));
+    // O celular (sem app=1) tambem recebe o estado da conversao de cada item.
+    const phone = Object.fromEntries((await page('/api/backup')).data.games.map((g) => [g.name, g]));
+    assert.equal(phone['Jogo B'].conversion?.id, b.id, JSON.stringify(phone['Jogo B']));
+    assert.equal(phone['Jogo B'].conversion.state, 'queued');
+    const log = await call(base, 'GET', '/log');
+    assert.match(log.data.text, new RegExp(`conversao ${b.id} ja pedida \\(queued\\): Jogo B`));
+    assert.match(log.data.text, new RegExp(`celular: converter agora .*Jogo B -> ${b.id} queued \\(posicao 1\\)`));
+    let list = await convUntil(base, (l) => l.length === 2 && l.every((c) => ['done', 'failed'].includes(c.state)));
+    for (const c of list) assert.equal(c.state, 'done', `${c.name}: ${c.error}`);
+    // "Pronta" mas o .exfat foi apagado: Converter de novo poe a MESMA conversao na fila (antes era engolido).
+    const output = list.find((c) => c.id === a.id).output;
+    rmSync(output);
+    const redo = (await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Jogo A' }, session })).data;
+    assert.equal(redo.state, 'queued', JSON.stringify(redo));
+    assert.equal(redo.id, a.id);
+    list = await convUntil(base, (l) => ['done', 'failed'].includes(l.find((c) => c.id === a.id).state) && existsSync(output));
+    assert.equal(list.length, 2, 'sem uma segunda conversao');
+    readImage(output);
+  } finally {
+    await stop(child);
+  }
+});
+
+// glibren.25: no PS5 real o gamer renomeou/moveu o .exfat pronto (Pinball FX: /data/homebrew/Pinball_FX-PPSA08755-US-PS5.exfat)
+// e o "Converter" era engolido. Achando um .exfat do mesmo codigo em algum <disco>/homebrew, nao converte de novo.
+test('glibren.25: pronto e depois renomeado/movido para o homebrew de outro disco: a lista diz convertido (com o caminho) e Converter responde already converted, sem reconverter', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const disk = path.join(base, 'disk');
+  const other = path.join(base, 'data');
+  const dir = path.join(disk, 'BACKUP/Pinball FX');
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(path.join(other, 'homebrew'), { recursive: true });
+  await gunzipTo('jogo_fast', path.join(dir, 'jogo_fast.pkg'));
+  writeFileSync(path.join(dir, '.jobe-backup.json'), JSON.stringify({ titleId: 'PPSA08755', platform: 'ps5', format: 'pkg', source: 'torbox' }));
+  const child = start(base, { BGDL_BACKUP_ROOTS: `${disk}:${other}` });
+  try {
+    await up(base);
+    const session = await phoneSession(base);
+    const asked = (await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Pinball FX' }, session })).data;
+    const [done] = await convUntil(base, (l) => l.length === 1 && ['done', 'failed'].includes(l[0].state));
+    assert.equal(done.state, 'done', done.error);
+    assert.equal(done.id, asked.id);
+    const moved = path.join(other, 'homebrew/Pinball_FX-PPSA08755-US-PS5.exfat');
+    renameSync(done.output, moved);
+    const listed = (await page('/api/backup')).data.games.find((g) => g.name === 'Pinball FX');
+    assert.equal(listed.converted, 'Pinball_FX-PPSA08755-US-PS5.exfat', JSON.stringify(listed));
+    assert.equal(listed.convertedPath, moved);
+    assert.equal((await call(base, 'GET', '/backup')).data.games.find((g) => g.name === 'Pinball FX').convertedPath, moved, 'o app tambem');
+    const again = await page('/api/backup/convert', { method: 'POST', body: { root: disk, name: 'Pinball FX' }, session });
+    assert.equal(again.status, 200);
+    assert.deepEqual(again.data, { ok: true, already: 'converted', path: moved, id: done.id });
+    assert.equal((await call(base, 'POST', '/backup/convert', { root: disk, name: 'Pinball FX' })).data.already, 'converted');
+    const log = await call(base, 'GET', '/log');
+    assert.ok(log.data.text.includes(`conversao ${done.id}: ja convertido em ${moved}`), log.data.text.slice(-2000));
+    const list = await conversions(base);
+    assert.equal(list.length, 1);
+    assert.equal(list[0].state, 'done', 'nao converteu de novo');
+    assert.ok(!existsSync(done.output), 'nada novo no lugar de antes');
   } finally {
     await stop(child);
   }

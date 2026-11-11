@@ -242,6 +242,46 @@ test('only the sources picked are checked, and each game keeps where it comes fr
   assert.deepEqual(library.run.sources, [feed]);
 });
 
+test('glibren.25: "only the new games": a list turned on after the build (Orbit Store) is checked alone, the rest kept', async () => {
+  const orbit = '/data/JobeesLair/orbit/orbit-store.json';
+  const first = entriesOf([game(2), game(4), game(5)]);
+  const { library } = await lib.buildLibrary({ entries: first, api: fakeApi(), ...quiet, ...clock() });
+  assert.equal(lib.uncheckedCount(library, first), 0);
+  const later = [...first, ...entriesOf([game(6), game(8), game(9)], [orbit])];
+  assert.equal(lib.uncheckedCount(library, later), 3);
+  const oldRun = library.run.id;
+  const api = fakeApi();
+  const { library: after, progress } = await lib.buildLibrary({ entries: later, api, library, onlyNew: true, ...quiet, ...clock() });
+  const asked = api.calls.filter((call) => call.kind === 'cachedEntries').flatMap((call) => call.links);
+  assert.equal(asked.length, 3, 'only the three new games asked');
+  assert.ok(asked.every((link) => /\/(6|8|9)\//.test(link)));
+  assert.equal(progress.total, 3);
+  assert.equal(progress.found, 2);
+  assert.equal(after.games.PPSA00002.torbox.run, oldRun, 'the checked ones kept as they were');
+  assert.equal(after.games.PPSA00008.torbox.confirmed, true);
+  assert.equal(lib.uncheckedCount(after, later), 0);
+  assert.equal(after.run.onlyNew, true);
+});
+
+test('glibren.25: an "only new" run cancelled halfway continues with the rest of the new ones', async () => {
+  const base = entriesOf(Array.from({ length: 5 }, (_, i) => game(i + 1)));
+  const { library } = await lib.buildLibrary({ entries: base, api: fakeApi(), ...quiet, ...clock() });
+  const later = [...base, ...entriesOf(Array.from({ length: 30 }, (_, i) => game(i + 11)), ['orbit'])];
+  const listeners = new Set();
+  const signal = { aborted: false, addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) };
+  let saved = null;
+  await assert.rejects(lib.buildLibrary({ entries: later, api: fakeApi(), library, onlyNew: true, ...quiet, ...clock(), signal, save: (v) => { saved = JSON.parse(JSON.stringify(v)); }, onProgress: (p) => {
+    if (p.done >= 10 && !signal.aborted) { signal.aborted = true; for (const fn of listeners) fn(); }
+  } }), { name: 'AbortError' });
+  assert.equal(saved.run.done, 10);
+  const again = fakeApi();
+  const { progress } = await lib.buildLibrary({ entries: later, api: again, library: saved, onlyNew: true, ...quiet, ...clock() });
+  assert.equal(progress.resumed, true);
+  assert.equal(progress.total, 30);
+  assert.equal(progress.done, 30);
+  assert.equal(again.calls.filter((call) => call.kind === 'cachedEntries').flatMap((call) => call.links).length, 20);
+});
+
 test('the library and the payload list are written and read back; the list has only what TorBox confirmed', async () => {
   const files = new Map();
   const fs = { exists: (p) => files.has(p), readFile: (p) => files.get(p), writeFile: (p, text) => files.set(p, String(text)), mkdir() {}, rename: (a, b) => { files.set(b, files.get(a)); files.delete(a); } };
@@ -357,5 +397,30 @@ test('the TorBox store: the store list narrowed in place, the rows and search wo
   assert.deepEqual(mode.applyStoreMode('torbox'), { ok: false, reason: 'empty' });
   assert.equal(mode.storeMode(), 'full');
   assert.equal(games.length, full);
+  delete globalThis.__stubFiles;
+});
+
+test('glibren.25: "show in the store": a catalog turned off leaves the store, the last one shown cannot be', async () => {
+  const { games } = await load('app/data/catalog-index.js');
+  const catalog = await load('app/state/catalog.js');
+  globalThis.__stubFiles = new Map();
+  const mode = await load('app/state/store-mode.js');
+  const full = games.length;
+  const only = catalog.catalogSources().map((source) => source.id);
+  assert.ok(only.includes('bundled'));
+  if (only.length === 1) {
+    assert.deepEqual(mode.setSourceShown('bundled', false), { ok: false, reason: 'last' });
+    assert.equal(mode.sourceShown('bundled'), true);
+    assert.equal(games.length, full);
+  }
+  // A catalog the store has no games from: hiding it changes nothing and is kept in settings.json.
+  const feed = 'https://feeds.example/other.json';
+  assert.deepEqual(mode.setSourceShown(feed, false), { ok: true, reason: '' });
+  assert.equal(mode.sourceShown(feed), false);
+  assert.equal(games.length, full);
+  assert.deepEqual(JSON.parse(globalThis.__stubFiles.get('/download0/JobeesLair/settings.json')).hiddenSources, [feed]);
+  assert.deepEqual(mode.setSourceShown(feed, true), { ok: true, reason: '' });
+  assert.deepEqual(JSON.parse(globalThis.__stubFiles.get('/download0/JobeesLair/settings.json')).hiddenSources, []);
+  assert.equal(catalog.sourcesOfGame(games[0])[0], 'bundled');
   delete globalThis.__stubFiles;
 });

@@ -484,6 +484,7 @@ static void* orbit_loop(void* unused) {
     if (g_orbit.enabled && (g_orbit.kick || now >= g_orbit.next_try)) {
       g_orbit.kick = 0;
       g_orbit.busy = 1;
+      orbit_save_locked(); // glibren.25: o app (Configuracoes) mostra "Atualizando..." enquanto baixa
       pthread_mutex_unlock(&g_orbit_lock);
       orbit_check();
       pthread_mutex_lock(&g_orbit_lock);

@@ -128,3 +128,17 @@ test('at launch: the setting goes to the payload, and a stopped list notifies on
   orbit.setOrbitFeed(false);
   orbit.setOrbitSource(null);
 });
+
+// glibren.25: no PS5 o app le a pasta que o payload grava (/data/JobeesLair/orbit), nao a sua pasta de dados
+// (/download0 ou /data/ps5-react/<ID>): ate a .24 a lista nunca aparecia no console.
+test('on the PS5 the list is read where the payload writes it (/data/JobeesLair/orbit)', async () => {
+  const before = core.Platform.OS;
+  core.Platform.OS = 'ps5';
+  try {
+    const ps5 = await import(`${href('app/state/orbit-feed.js')}?ps5`);
+    assert.equal(ps5.ORBIT_FEED, '/data/JobeesLair/orbit/orbit-store.json');
+    assert.equal(ps5.ORBIT_STATUS, '/data/JobeesLair/orbit/orbit-store-status.json');
+  } finally {
+    core.Platform.OS = before;
+  }
+});

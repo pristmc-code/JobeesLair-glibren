@@ -93,7 +93,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 19
+#define BG_API 20 // glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -6144,7 +6144,7 @@ static void auto_after_download(Job* j) {
   if (!slash || (size_t)(slash - rest) >= sizeof name || strchr(slash + 1, '/')) return;
   memcpy(name, rest, (size_t)(slash - rest));
   name[slash - rest] = 0;
-  const int rc = backup_convert(root, name, key);
+  const int rc = backup_convert(root, name, key, NULL, NULL, 0);
   logf_("job %s: terminou no BACKUP com o app fechado; conversao pelo payload: %s", j->id, rc == 1 ? "pedida" : rc == -1 ? "jogo de PS4 (nao)" : rc == -2 ? "ja convertido" : "nada a converter");
 }
 
