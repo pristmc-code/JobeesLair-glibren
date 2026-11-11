@@ -11,6 +11,9 @@
 //     mesmo item focado. Aberta com `auto` (Trailer/Gameplay com "Tocar o primeiro video automaticamente"), toca
 //     direto o primeiro video normal (state/tube-service.js pickFirstVideo) e o Circulo no player volta para a
 //     pagina do jogo (onBack).
+//   - glibren-fast: o item focado por um instante (PREFETCH_DWELL_MS) e resolvido em segundo plano
+//     (service.prefetch); sair dele cancela. No modo auto, o primeiro video comeca a ser resolvido assim que a busca
+//     responde, antes do player montar. Ao abrir, o player usa o resolve pronto (ou o em andamento).
 //   - glibren-a: aberta pelo pedido do glibren (state/tube-request.js) com `ensure` (sobe o servico antes; sem ele, o
 //     erro na tela) e `back` (o title ID de voltar=): o botao "Voltar ao glibren" no topo, e o Circulo na raiz (ou ao
 //     fechar o video no modo auto) pede ao payload a troca de volta e fecha o app; se a troca falhar, um aviso curto e
@@ -19,6 +22,7 @@
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useRef, useState } from 'react';
+import { getLocale } from '../i18n/core.js';
 import { useT } from '../i18n/index.js';
 import { FIRST_KEY, KeyboardSheet } from '../search/DockKeyboard.jsx';
 import { useNavActions } from '../state/nav.jsx';
@@ -36,6 +40,9 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
   // Quanto o aviso "nao deu para voltar ao glibren" fica antes de ir ao inicio da Jobe.
   var LEAVE_FAILED_MS = 2500;
   var COLUMNS = 4;
+  // Quanto o foco fica num video antes de resolver em segundo plano (passar rapido pela grade nao pede nada).
+  var PREFETCH_DWELL_MS = 300;
+  var localeNow = () => getLocale?.() ?? "en";
   var CARD_W = 438, THUMB_H = 246;
   var HINTS = [HINT.select, { button: "triangle", label: "hints.type" }, HINT.back];
   var text = (size, color, extra) => ({ fontFamily: "Exo2", fontSize: size, lineHeight: Math.round(size * 1.4), color, ...extra });
@@ -68,10 +75,10 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
   function Badge({ label, tone }) {
     return jsx(View, { style: { borderRadius: radius.xs, backgroundColor: tone, paddingHorizontal: 8, paddingVertical: 2 }, children: jsx(Text, { style: text(17, "#ffffff", { fontWeight: 700 }), children: label }) });
   }
-  function VideoCard({ item, onPress }) {
+  function VideoCard({ item, onPress, onFocus, onBlur }) {
     const t2 = useT();
     const corner = item.live ? jsx(Badge, { label: t2("tube.live"), tone: "#dc2626" }) : item.upcoming ? jsx(Badge, { label: t2("tube.upcoming"), tone: colors.surface3 }) : item.seconds ? jsx(Badge, { label: clockText(item.seconds), tone: "#000000cc" }) : null;
-    return jsxs(View, { focusKey: itemKey(item.id), onPress, style: (state) => [{ position: "relative", width: CARD_W, gap: 8, borderRadius: radius.md, padding: 8, marginHorizontal: -8 }, state.focused ? { backgroundColor: colors.surface2 } : null], children: [
+    return jsxs(View, { focusKey: itemKey(item.id), onPress, onFocus, onBlur, style: (state) => [{ position: "relative", width: CARD_W, gap: 8, borderRadius: radius.md, padding: 8, marginHorizontal: -8 }, state.focused ? { backgroundColor: colors.surface2 } : null], children: [
       jsx(FocusRing, { round: "md" }),
       jsxs(View, { style: { width: CARD_W - 16, height: THUMB_H - 9, borderRadius: radius.sm, roundedClip: true, backgroundColor: colors.surface2 }, children: [
         jsx(Image, { source: { uri: thumb(item.id) }, style: { width: CARD_W - 16, height: THUMB_H - 9 }, resizeMode: "cover" }),
@@ -121,9 +128,24 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
     typed.current = query;
     const cursors = useRef([""]); // cursors.current[n]: o cursor que leva a pagina n ("" na 0)
     const run = useRef({ n: 0, abort: null, autoDone: !(auto && initialQuery) });
+    // glibren-fast: o pre-resolve do item focado (o timer do instante de foco e o video sendo aberto, que um onBlur
+    // na troca de tela nao deve cancelar).
+    const prefetchTimer = useRef(null);
+    const opening = useRef("");
+    const focusItem = (item) => {
+      clearTimeout(prefetchTimer.current);
+      if (item.upcoming) return;
+      prefetchTimer.current = setTimeout(() => service.prefetch?.(item.id, { locale: localeNow() }), PREFETCH_DWELL_MS);
+    };
+    const blurItem = (item) => {
+      clearTimeout(prefetchTimer.current);
+      if (opening.current !== item.id) service.cancelPrefetch?.(opening.current);
+    };
     const load = (q, f, index) => {
       const state = run.current;
       state.abort?.();
+      clearTimeout(prefetchTimer.current);
+      service.cancelPrefetch?.();
       const n = ++state.n;
       const listeners = /* @__PURE__ */ new Set();
       const signal = { aborted: false, addEventListener: (type, listener) => listeners.add(listener), removeEventListener: (type, listener) => listeners.delete(listener) };
@@ -143,6 +165,8 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
           const first = pickFirstVideo(result.items);
           if (first) {
             console.log(`tube: auto-play ${first.id} for "${q}"`);
+            opening.current = first.id;
+            service.prefetch?.(first.id, { locale: localeNow() });
             setPlaying({ item: first, back: true });
             return;
           }
@@ -187,6 +211,8 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
         run.current.abort?.();
         ++run.current.n;
         clearTimeout(leaveTimer.current);
+        clearTimeout(prefetchTimer.current);
+        service.cancelPrefetch?.();
       };
     }, []);
     // glibren-a: o Circulo na raiz. Com `back`, volta ao glibren (troca pelo payload e fecha o app); se a troca falhar,
@@ -234,9 +260,14 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
       setFilters(next);
       if (query) load(query, next, 0);
     };
-    const open = (item) => setPlaying({ item, back: false });
+    const open = (item) => {
+      clearTimeout(prefetchTimer.current);
+      opening.current = item.id;
+      setPlaying({ item, back: false });
+    };
     const closePlayer = () => {
       const was = playing;
+      opening.current = "";
       setPlaying(null);
       if (was?.back) {
         leaveRoot();
@@ -265,7 +296,7 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
       : page.state === "idle" ? jsx(Message, { icon: "search", title: t2("tube.searchPlaceholder") })
       : !page.items.length ? jsx(Message, { icon: "searchX", title: t2("tube.none", { query }) })
       : jsxs(View, { style: { gap: 18 }, children: [
-        ...rows.map((row, index) => jsx(View, { style: { flexDirection: "row", gap: 24 }, children: row.map((item) => jsx(VideoCard, { item, onPress: () => open(item) }, item.id)) }, `row:${index}`)),
+        ...rows.map((row, index) => jsx(View, { style: { flexDirection: "row", gap: 24 }, children: row.map((item) => jsx(VideoCard, { item, onPress: () => open(item), onFocus: () => focusItem(item), onBlur: () => blurItem(item) }, item.id)) }, `row:${index}`)),
         page.index > 0 || page.cursor ? jsxs(View, { style: { flexDirection: "row", gap: 16, justifyContent: "center", paddingTop: 8 }, children: [
           page.index > 0 ? jsx(PageButton, { id: "previous", icon: "chevronLeft", label: t2("tube.previous"), onPress: () => load(query, filters, page.index - 1) }) : null,
           jsx(Text, { style: text(21, colors.muted, { alignSelf: "center" }), children: t2("tube.page", { page: page.index + 1 }) }),

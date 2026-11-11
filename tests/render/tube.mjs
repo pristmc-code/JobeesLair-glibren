@@ -27,6 +27,7 @@ const pressable = new Map();
 const videos = [];
 const backs = [];
 const players = [];
+const images = [];
 function walk(node) {
   if (node == null || typeof node !== 'object') return;
   if (Array.isArray(node)) return node.forEach(walk);
@@ -34,6 +35,7 @@ function walk(node) {
   if (typeof props.style === 'function') props.style({ focused: true, pressed: false });
   if (props.focusKey && props.onPress) pressable.set(props.focusKey, props);
   if (type === 'Video') videos.push(props);
+  if (type === 'Image') images.push(props.source?.uri);
   if (type === 'FocusScope' && props.onBack) backs.push(props.onBack);
   if (typeof type === 'function' && type.name === 'TubePlayer') players.push(props);
   if (typeof type === 'function') return walk(type(props));
@@ -49,6 +51,7 @@ const screen = (name, element) => {
   videos.length = 0;
   backs.length = 0;
   players.length = 0;
+  images.length = 0;
   pressable.clear();
   walk(element);
   console.log(`--- ${name}\n${[...new Set(texts)].join('\n')}`);
@@ -89,6 +92,15 @@ for (const label of ['ASTRO BOT trailer', 'Results for "ASTRO BOT trailer"', 'Re
 for (const key of ['tube:field', 'tube:filter:order', 'tube:filter:duration', 'tube:filter:upload_date', 'tube:filter:type', 'tube:item:normal00001', 'tube:item:normal00002', 'tube:page:next', 'tube:page:previous']) {
   assert.ok(pressable.has(key), key);
 }
+// glibren-fast: um instante de foco num card resolve aquele video em segundo plano; sair dele cancela.
+const asks = [];
+const prefetching = { ...fake, prefetch: (id, options) => (asks.push(['prefetch', id, options.locale]), true), cancelPrefetch: (except) => asks.push(['cancel', except]) };
+screen('Tube (results, prefetch on focus)', { type: TubeScreen, props: { query: 'ASTRO BOT trailer', service: prefetching, onBack() {}, start: { page: { state: 'ready', items, cursor: '', index: 0, error: '' } } } });
+pressable.get('tube:item:normal00001').onFocus();
+pressable.get('tube:item:normal00001').onBlur();
+pressable.get('tube:item:normal00002').onFocus();
+await new Promise((resolve) => setTimeout(resolve, 400));
+assert.deepEqual(asks, [['cancel', ''], ['prefetch', 'normal00002', 'en']], 'passing by quickly asks nothing; staying resolves');
 const loading = screen('Tube (searching)', { type: TubeScreen, props: { query: 'ASTRO BOT gameplay', service: fake, onBack() {}, start: { page: { state: 'loading', items: [], cursor: '', index: 0, error: '' } } } });
 assert.ok(loading.includes('Searching…'), loading.join('|'));
 const failed = screen('Tube (service failed)', { type: TubeScreen, props: { query: 'x', service: fake, onBack() {}, start: { page: { state: 'error', items: [], cursor: '', index: 0, error: 'timeout' } } } });
@@ -99,11 +111,22 @@ assert.ok(empty.includes('No videos found for "zzzz".'), empty.join('|'));
 // The player: the screen with a video open is the player.
 const playing = screen('Tube (a video open)', { type: TubeScreen, props: { query: 'x', service: fake, onBack() {}, start: { page: { state: 'ready', items, cursor: '', index: 0, error: '' }, playing: { item: items[0], back: false } } } });
 assert.ok(playing.includes('Loading the video…'), playing.join('|'));
+// glibren-fast: o player abre na hora, em "carregando": a miniatura do video, o indicador e o titulo; sem <Video> ainda.
+assert.ok(playing.includes('ASTRO BOT - Launch Trailer | PS5 Games'), playing.join('|'));
+assert.deepEqual(images, ['https://i.ytimg.com/vi/normal00001/mqdefault.jpg'], 'the thumbnail the list showed');
+assert.equal(videos.length, 0);
 const { TubePlayer } = await load('app/tube/TubePlayer.jsx');
 const m = (name) => `http://127.0.0.1:34210/media/s/${name}`;
 const info = { title: 'ASTRO BOT - Launch Trailer', channel: 'PlayStation', duration: 125,
   choices: [{ label: '1080p H264 / AAC', height: 1080, url: m('v0.m3u8'), hls: true }, { label: '720p H264 / AAC', height: 720, url: m('v1.m3u8'), hls: true }],
   caption: { uri: `${m('c0.srt')}?format=vtt`, language: 'en', title: 'English' } };
+// glibren-fast: resolvido, o <Video> ja abrindo por baixo e o "carregando" (miniatura) por cima ate o primeiro quadro.
+const opening = screen('Player (resolved, opening: waiting for the first frame)', { type: TubePlayer, props: { item: items[0], service: fake, onClose() {}, start: { info, choice: 0, phase: 'opening' } } });
+assert.ok(opening.includes('Loading the video…') && opening.includes('ASTRO BOT - Launch Trailer'), opening.join('|'));
+assert.equal(videos.length, 1, 'the player is already opening the stream');
+assert.equal(videos[0].source, m('v0.m3u8'));
+assert.equal(typeof videos[0].onLoad, 'function');
+assert.ok(images.includes('https://i.ytimg.com/vi/normal00001/mqdefault.jpg'), 'the thumbnail over it');
 const player = screen('Player (playing, 1080p)', { type: TubePlayer, props: { item: items[0], service: fake, onClose() {}, start: { info, choice: 0, phase: 'playing' } } });
 for (const label of ['ASTRO BOT - Launch Trailer', 'PlayStation  ·  1080p H264 / AAC', '0:00', '2:05', 'Pause / Play', '-10 s / +10 s', 'Subtitles', 'Quality', 'Close']) {
   assert.ok(player.includes(label), `${label}: ${player.join('|')}`);
@@ -112,6 +135,7 @@ assert.equal(videos.length, 1);
 assert.equal(videos[0].source, m('v0.m3u8'), 'the master HLS of the chosen quality, a plain URL (no headers)');
 assert.deepEqual(videos[0].subtitles, [info.caption], 'WebVTT from the service');
 assert.equal(videos[0].subtitleTrack, -1, 'subtitles off by default');
+assert.ok(!player.includes('Loading the video…') && images.length === 0, 'playing: no loading cover');
 const broken = screen('Player (failed)', { type: TubePlayer, props: { item: items[0], service: fake, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'unsupported_media' } } });
 assert.ok(broken.includes('This video didn\'t play (unsupported_media).'), broken.join('|'));
 assert.equal(videos.length, 0);

@@ -21,6 +21,7 @@ function fakeService({ up = true, api = TUBE_API, pending = 1, results = {}, fai
       if (!url.startsWith(BASE)) throw new Error('wrong port');
       if (!state.up) throw new Error("Couldn't connect to server");
       if (method === 'GET' && path === '/v1/health') return respond(200, { api_version: 1, api: state.api, version: '0.1.0', service: 'tube-service', pid: 42 });
+      if (method === 'HEAD' && path.startsWith('/media/')) return respond(200, null);
       if (headers.Authorization !== `Bearer ${TOKEN}`) return respond(401, { error: { code: 'unauthorized' } });
       if (method === 'POST' && path === '/v1/jobs') {
         const id = `j${++state.next}`;
@@ -248,4 +249,102 @@ test('resolve: the playable choices and the caption; fresh links on request; spo
   const down = fakeService();
   down.up = false;
   assert.deepEqual(await make(down).sponsor('normal00001'), []);
+});
+
+// glibren-fast: o pre-resolve (o item focado resolvido em segundo plano), o cancelamento, o cache curto e a validade.
+const RESOLVED = (m) => ({ resolve: {
+  title: 'ASTRO BOT', channel: 'PlayStation', duration_sec: 125,
+  choices: [
+    { label: '2160p VP9 / OPUS', container: 'dash', video_codec: 'vp9', height: 2160, url: m('d0.mpd'), hls_url: m('v0.m3u8') },
+    { label: '1080p H264 / AAC', container: 'dash', video_codec: 'h264', height: 1080, url: m('d2.mpd'), hls_url: m('v2.m3u8') }
+  ],
+  captions: []
+} });
+const media = (name) => `${BASE}/media/s${'x'.repeat(31)}/${name}`;
+const posts = (service) => service.calls.filter((call) => call.method === 'POST' && call.path === '/v1/jobs').length;
+const settle = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('prefetch: the focused video is resolved in the background; the player then uses it (no second job) and the default quality is warmed with HEAD', async () => {
+  const service = fakeService({ results: RESOLVED(media) });
+  const client = make(service);
+  assert.equal(client.prefetch('normal00001'), false, 'service not up yet: nothing');
+  await client.ensure();
+  assert.equal(client.prefetch('bad id'), false);
+  assert.equal(client.prefetch('normal00001', { locale: 'pt-BR' }), true);
+  await settle();
+  assert.equal(posts(service), 1);
+  const heads = service.calls.filter((call) => call.method === 'HEAD').map((call) => call.path);
+  assert.deepEqual(heads, [`/media/s${'x'.repeat(31)}/v2v.m3u8`, `/media/s${'x'.repeat(31)}/v2a.m3u8`], 'the 1080p playlists (the service already reads v0 by itself); no token');
+  assert.ok(service.calls.filter((call) => call.method === 'HEAD').every((call) => !call.auth));
+  const info = await client.resolve('normal00001', { locale: 'pt-BR' });
+  assert.equal(info.choices[1].url, media('v2.m3u8'));
+  assert.equal(posts(service), 1, 'the ready resolve, no new job');
+  assert.equal(client.prefetch('normal00001', { locale: 'pt-BR' }), true, 'already there');
+  assert.equal(posts(service), 1);
+  await client.resolve('normal00001', { locale: 'de' });
+  assert.equal(posts(service), 2, 'another caption language: its own resolve');
+  await client.resolve('normal00001', { locale: 'pt-BR', fresh: true });
+  assert.equal(posts(service), 3, 'fresh links always ask the service');
+});
+
+test('prefetch: the player joins a resolve still running; a new focus cancels the old one (DELETE), never the one the player waits for', async () => {
+  const service = fakeService({ pending: 6, results: RESOLVED(media) });
+  const client = make(service);
+  await client.ensure();
+  client.prefetch('normal00001');
+  await settle(10);
+  const playing = client.resolve('normal00001');
+  client.prefetch('normal00002');
+  await settle(10);
+  assert.equal(service.cancelled ?? 0, 0, 'the one the player waits for goes on');
+  client.prefetch('normal00003');
+  await settle(30);
+  assert.equal(service.cancelled, 1, 'normal00002 lost the focus: given up');
+  assert.equal((await playing).title, 'ASTRO BOT');
+  assert.equal(posts(service), 3, 'one job each, the player\'s included');
+  client.cancelPrefetch();
+  await settle(30);
+  assert.equal(service.cancelled, 2, 'cancelPrefetch gives up normal00003 too');
+});
+
+test('prefetch: at most two running (with the ones the player waits for); a cancelled player wait does not stop the resolve', async () => {
+  const service = fakeService({ pending: 8, results: RESOLVED(media) });
+  const client = make(service);
+  await client.ensure();
+  client.prefetch('normal00001');
+  const a = client.resolve('normal00001');
+  client.prefetch('normal00002');
+  const listeners = new Set();
+  const signal = { aborted: false, addEventListener: (type, fn) => listeners.add(fn), removeEventListener: (type, fn) => listeners.delete(fn) };
+  const b = client.resolve('normal00002', { signal });
+  assert.equal(client.prefetch('normal00003'), false, 'two running already');
+  signal.aborted = true;
+  for (const fn of listeners) fn();
+  await assert.rejects(b, (error) => error.code === 'cancelled');
+  await a;
+  await settle(60);
+  assert.equal(service.cancelled ?? 0, 0);
+  assert.equal(posts(service), 2);
+  await client.resolve('normal00002');
+  assert.equal(posts(service), 2, 'normal00002 finished in the background and was kept');
+});
+
+test('prefetch cache: only the last three, and only for a short while (well before the links run out)', async () => {
+  let clock = 1000;
+  const service = fakeService({ results: RESOLVED(media) });
+  const client = make(service, { now: () => clock });
+  await client.ensure();
+  for (const id of ['normal00001', 'normal00002', 'normal00003', 'normal00004']) {
+    client.prefetch(id);
+    await settle();
+  }
+  assert.equal(posts(service), 4);
+  await client.resolve('normal00004');
+  await client.resolve('normal00002');
+  assert.equal(posts(service), 4, 'kept');
+  await client.resolve('normal00001');
+  assert.equal(posts(service), 5, 'the oldest was dropped (three kept)');
+  clock += 6e5 + 1;
+  await client.resolve('normal00001');
+  assert.equal(posts(service), 6, 'after 10 min: resolved again');
 });

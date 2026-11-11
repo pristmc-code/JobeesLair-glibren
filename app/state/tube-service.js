@@ -163,7 +163,8 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
 
   /**
    * `http`: Http; `fs`: FileSystem; `payloads`: Payloads; `platform`: Platform.OS. `startWaitMs`: quanto esperar o
-   * payload responder depois de enviado; `jobPollMs`/`jobTimeoutMs`: o acompanhamento de um job.
+   * payload responder depois de enviado; `jobPollMs`/`jobTimeoutMs`: o acompanhamento de um job. glibren-fast:
+   * `prefetchMax`/`cacheKeep`/`cacheMs`: o pre-resolve (em andamento ao mesmo tempo, guardados, validade); `now`: o relogio.
    */
   function createTubeService({
     http,
@@ -179,7 +180,11 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
     startPollMs = 400,
     jobPollMs = 400,
     jobTimeoutMs = 9e4,
-    requestMs = 1e4
+    requestMs = 1e4,
+    prefetchMax = 2,
+    cacheKeep = 3,
+    cacheMs = 6e5,
+    now = () => Date.now()
   }) {
     const base = `http://127.0.0.1:${port}`;
     let ready = false;
@@ -336,12 +341,12 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
       const result = await job({ action: "library", library: { action: "continue", cursor } }, options);
       return { items: pageItems(result), cursor: result?.has_more && typeof result.cursor === "string" ? result.cursor : "" };
     }
-    /** O que tocar de um video: { title, channel, duration, choices (playableChoices), caption (pickCaption) }. `fresh`:
-     *  links novos (depois de um erro do player: os do YouTube vencem em ~6 h). */
-    async function resolve(id, { locale = "en", maxHeight = 2160, fresh = false, signal } = {}) {
-      if (!VIDEO_ID.test(id)) throw new TubeError("invalid_video", id);
-      const language = String(locale).split(/[-_]/)[0].toLowerCase() || "en";
-      const result = await job({ action: "resolve", playback: { id, max_height: maxHeight, codec: "auto", caption_language: /^[a-z]{2,3}$/.test(language) ? language : "en", automatic_captions: true, ...fresh ? { fresh: true } : {} } }, { signal });
+    const languageOf = (locale) => {
+      const language = String(locale ?? "").split(/[-_]/)[0].toLowerCase();
+      return /^[a-z]{2,3}$/.test(language) ? language : "en";
+    };
+    async function resolveNow(id, { locale, maxHeight, fresh, signal }) {
+      const result = await job({ action: "resolve", playback: { id, max_height: maxHeight, codec: "auto", caption_language: languageOf(locale), automatic_captions: true, ...fresh ? { fresh: true } : {} } }, { signal });
       const choices = playableChoices(result?.choices);
       if (!choices.length) throw new TubeError("unsupported_media", "no playable stream");
       return {
@@ -351,6 +356,111 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
         choices,
         caption: pickCaption(result.captions, locale)
       };
+    }
+
+    // ---- glibren-fast: o pre-resolve ----
+    // Enquanto o jogador olha um resultado, o app ja resolve aquele video (prefetch) e guarda a resposta pouco tempo:
+    // ao apertar X, o player usa o resolve pronto (ou o que esta em andamento) em vez de comecar do zero. So os
+    // ultimos `cacheKeep` (3) resolves, so os campos que o player usa, e por `cacheMs` (10 min): bem antes das ~6 h
+    // dos links e dos 30 min sem uso em que o servico esquece a sessao /media. No maximo `prefetchMax` (2) em
+    // andamento; um novo foco cancela os outros (DELETE /v1/jobs/<id>), menos o que o player ja esta esperando.
+    const cache = /* @__PURE__ */ new Map(); // chave -> { at, info } (a ordem do Map e a da chegada)
+    const pending = /* @__PURE__ */ new Map(); // chave -> { id, promise, abort, adopted }
+    const keyOf = (id, locale, maxHeight) => `${id}|${languageOf(locale)}|${maxHeight}`;
+    function remember(key, info) {
+      cache.delete(key);
+      cache.set(key, { at: now(), info });
+      while (cache.size > cacheKeep) cache.delete(cache.keys().next().value);
+    }
+    function cached(key) {
+      const hit = cache.get(key);
+      if (!hit) return null;
+      if (now() - hit.at > cacheMs) {
+        cache.delete(key);
+        return null;
+      }
+      return hit.info;
+    }
+    // Espera o pre-resolve em andamento, mas desiste (so quem espera) se `signal` cancelar.
+    function follow(promise, signal) {
+      if (!signal) return promise;
+      if (signal.aborted) return Promise.reject(new TubeError("cancelled", "cancelled"));
+      return new Promise((done, fail) => {
+        const stop = () => fail(new TubeError("cancelled", "cancelled"));
+        signal.addEventListener?.("abort", stop);
+        promise.then(done, fail).finally(() => signal.removeEventListener?.("abort", stop));
+      });
+    }
+    // As playlists de midia da qualidade padrao (vNv/vNa ao lado da master vN.m3u8): um HEAD faz o servico ler os
+    // indices do arquivo agora (ele so le os da primeira escolha sozinho), sem trazer o texto para o heap.
+    function warm(info) {
+      const index = defaultChoice(info.choices);
+      const url = index >= 0 ? info.choices[index].url : "";
+      const match = /^http:\/\/127\.0\.0\.1:\d+(\/media\/[^/?#]+\/v)(\d+)\.m3u8$/.exec(url);
+      if (!match || match[2] === "0") return;
+      for (const kind of ["v", "a"]) void call("HEAD", `${match[1]}${match[2]}${kind}.m3u8`, { auth: false, timeoutMs: 15e3 }).catch(() => {
+      });
+    }
+    /** Resolve em segundo plano (o item focado; o primeiro video do modo auto). Cancela os outros pre-resolves que o
+     *  player nao esta esperando. Devolve false quando nao comecou (servico fora, id ruim, ja no limite). */
+    function prefetch(id, { locale = "en", maxHeight = 2160 } = {}) {
+      if (!ready || !VIDEO_ID.test(String(id ?? ""))) return false;
+      const key = keyOf(id, locale, maxHeight);
+      if (cached(key) || pending.has(key)) return true;
+      cancelPrefetch();
+      if (pending.size >= prefetchMax) return false;
+      const listeners = /* @__PURE__ */ new Set();
+      const signal = { aborted: false, addEventListener: (type, listener) => listeners.add(listener), removeEventListener: (type, listener) => listeners.delete(listener) };
+      const entry = { id, adopted: false, abort: () => {
+        signal.aborted = true;
+        for (const listener of [...listeners]) listener();
+      } };
+      const started = now();
+      entry.promise = resolveNow(id, { locale, maxHeight, fresh: false, signal }).then((info) => {
+        remember(key, info);
+        log(`prefetch ${id} ready in ${now() - started} ms`);
+        warm(info);
+        return info;
+      }).finally(() => {
+        if (pending.get(key) === entry) pending.delete(key);
+      });
+      entry.promise.catch(() => {
+      });
+      pending.set(key, entry);
+      return true;
+    }
+    /** Cancela os pre-resolves em andamento (menos `except` e o que o player espera). */
+    function cancelPrefetch(except = "") {
+      for (const [key, entry] of pending) {
+        if (entry.adopted || entry.id === except) continue;
+        pending.delete(key);
+        entry.abort();
+      }
+    }
+    /** O que tocar de um video: { title, channel, duration, choices (playableChoices), caption (pickCaption) }. `fresh`:
+     *  links novos (depois de um erro do player: os do YouTube vencem em ~6 h). Sem `fresh`, usa o pre-resolve pronto
+     *  (ou espera o que esta em andamento). */
+    async function resolve(id, { locale = "en", maxHeight = 2160, fresh = false, signal } = {}) {
+      if (!VIDEO_ID.test(id)) throw new TubeError("invalid_video", id);
+      const key = keyOf(id, locale, maxHeight);
+      if (fresh) cache.delete(key);
+      else {
+        const hit = cached(key);
+        if (hit) return hit;
+        const running = pending.get(key);
+        if (running) {
+          running.adopted = true;
+          try {
+            return await follow(running.promise, signal);
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            // O pre-resolve falhou: um resolve normal (pode ter sido algo passageiro).
+          }
+        }
+      }
+      const info = await resolveNow(id, { locale, maxHeight, fresh, signal });
+      remember(key, info);
+      return info;
     }
     /** Os trechos do SponsorBlock de um video ([] quando falha: nunca atrapalha o video). */
     async function sponsor(id, { signal } = {}) {
@@ -362,7 +472,7 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
         return [];
       }
     }
-    return { ensure, offered, elfPath, health, readToken, job, search, more, resolve, sponsor, isReady: () => ready };
+    return { ensure, offered, elfPath, health, readToken, job, search, more, resolve, prefetch, cancelPrefetch, sponsor, isReady: () => ready };
   }
 
   // O servico do app (o Http, o FileSystem e os Payloads do ps5-react), criado no primeiro uso.
