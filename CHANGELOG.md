@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.33** (fork): YouTube inside Jobee'sLair. Trailer/Gameplay (and a search screen with filters) use a new
+  on-demand payload, tube-service.elf (YouTube's built-in service from YouTube Max'd: QuickJS-NG + youtubei.js, loopback
+  only), and play in the app's own player (HLS of video+audio, quality, captions, SponsorBlock); Circle goes back to the
+  results. If the service does not start, the old way (YouTube Max'd/ytps5) is used. YouTube/Google names fall back to
+  a public DNS (8.8.8.8, 1.1.1.1) when the console's DNS blocks them; Sony names never.
 - **glibren.32** (fork): Settings > Look > "Play the first video automatically" (off by default): Trailer and
   Gameplay ask the video app to play the first result straight away, no list (`auto=1` in glibren_busca.txt; YouTube
   Max'd glibren4 reads it).
