@@ -60,11 +60,14 @@ if (!skip) {
   server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     // glibren.18: o TorBox falso dos pedidos do celular comecados pelo payload (createtorrent, createwebdownload, mylist,
-    // requestdl por item), com um 429 de vez em quando e o registro de cada chamada (hora, chave, corpo).
+    // requestdl por item), com um 429 de vez em quando e o registro de cada chamada (hora, chave, corpo). A hora e a do
+    // relogio monotonico: o do sistema (Date.now) andou para tras sob carga no WSL e o ritmo saiu negativo (-507 ms).
     if (srv.tb && /\/(torrents|webdl)\/(createtorrent|createwebdownload|mylist|requestdl)$/.test(url.pathname)) {
       const [, kind, op] = /\/(torrents|webdl)\/(\w+)$/.exec(url.pathname);
-      const body = await new Promise((resolve) => { const chunks = []; req.on('data', (c) => chunks.push(c)); req.on('end', () => resolve(Buffer.concat(chunks).toString())); });
-      srv.tb.calls.push({ at: Date.now(), kind, op, auth: req.headers.authorization || '', token: url.searchParams.get('token') || '', body, query: url.search });
+      // Registrada na chegada, antes de ler o corpo: sob carga os corpos chegam fora de ordem e o ritmo medido mentia.
+      const entry = { at: performance.now(), kind, op, auth: req.headers.authorization || '', token: url.searchParams.get('token') || '', body: '', query: url.search };
+      srv.tb.calls.push(entry);
+      const body = entry.body = await new Promise((resolve) => { const chunks = []; req.on('data', (c) => chunks.push(c)); req.on('end', () => resolve(Buffer.concat(chunks).toString())); });
       const json = (status, data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
       if (srv.tb.limit > 0 && op.startsWith('create')) { srv.tb.limit--; return json(429, { success: false, error: 'RATE_LIMITED' }); }
       const authed = op === 'requestdl' ? url.searchParams.get('token') === KEY : req.headers.authorization === `Bearer ${KEY}`;
@@ -136,15 +139,29 @@ function start(base, env = {}) {
   child.on('exit', () => children.delete(child));
   return child;
 }
+// Um GET (sem efeito) que falha na conexao e repetido por ate 10 s: uma conexao keep-alive que o payload ja fechou, ou,
+// com a maquina carregada (3 suites em paralelo), o payload que fecha a conexao por nao conseguir abrir a thread dela
+// (spawn_thread) por um momento. A causa vai junto no erro final.
+async function retryGet(method, ask) {
+  for (let attempt = 0, end = Date.now() + 10000; ; attempt++) {
+    try { return await ask(); } catch (problem) {
+      if (method !== 'GET' || Date.now() >= end) throw new Error(`${problem.message}: ${problem.cause?.code || problem.cause?.message || ''}`, { cause: problem });
+      await wait(Math.min(50 * 2 ** attempt, 1000));
+    }
+  }
+}
 async function call(base, method, route, body, token) {
   const tok = token ?? readFileSync(path.join(base, 'state/token'), 'utf8').trim();
-  const res = await fetch(`http://127.0.0.1:${api}${route}`, { method, headers: { 'X-Jobe-Token': tok, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const ask = () => fetch(`http://127.0.0.1:${api}${route}`, { method, headers: { 'X-Jobe-Token': tok, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  // Como em page(): uma conexao keep-alive que o payload ja fechou faz o fetch falhar ("fetch failed") de vez em quando,
+  // mais com a maquina carregada; so o GET (sem efeito) e repetido.
+  const res = await retryGet(method, ask);
   return { status: res.status, data: await res.json().catch(() => ({})) };
 }
-async function up(base) {
-  for (let i = 0; i < 100; i++) {
+// Espera por condicao, com prazo largo: com a suite inteira em paralelo (maquina carregada) subir leva mais que 5 s.
+async function up(base, ms = 30000) {
+  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call(base, 'GET', '/health')).status === 200) return; } catch {}
-    await wait(50);
   }
   throw new Error('payload did not start');
 }
@@ -232,7 +249,8 @@ test('retomada por Range depois de matar o processo no meio: a fila volta e so o
   const dest = path.join(base, 'disk/downloads/r.bin');
   const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 16 * MiB, connections: 2, sha256: sha(files['a.bin']) });
   await until(base, data.id, ['downloading'], (job) => job.written > 33 * MiB);
-  await wait(5500); // um checkpoint (a cada 5 s)
+  // Um checkpoint (a cada 5 s) com alguma faixa pronta: esperado pelo arquivo, nao por um tempo fixo (maquina carregada).
+  await eventually(() => { try { return readFileSync(`${dest}.resume`).subarray(96).some((done) => done); } catch { return false; } }, 'um checkpoint com faixa pronta', 30000);
   child.kill('SIGKILL');
   await new Promise((resolve) => child.once('exit', resolve));
   srv.rate = 0;
@@ -285,7 +303,7 @@ test('glibren.13: TorBox com redirecionamento e limite de velocidade baixo: cone
     const asked = srv.requestdl;
     const dest = path.join(base, 'disk/downloads/tl.bin');
     const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/r/limited/tl.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 8, sha256: sha(files['tl.bin']), source: { provider: 'torbox', kind: 'webdl', id: 1, fileId: 'a' } });
-    const job = await until(base, data.id, ['completed', 'failed', 'needs-app'], () => true, 30000);
+    const job = await until(base, data.id, ['completed', 'failed', 'needs-app']);
     assert.equal(job.state, 'completed', job.error);
     assert.equal(job.renewals, 0, 'nenhuma renovacao');
     assert.equal(srv.requestdl, asked, 'nao pediu link novo ao TorBox');
@@ -311,7 +329,7 @@ test('glibren.13: copia quebrada no TorBox (pagina de erro 500 de 170 bytes serv
     const asked = srv.requestdl;
     const dest = path.join(base, 'disk/downloads/broken.pkg');
     const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/t/brok/broken.pkg?token=${KEY}`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 4, rejectHtml: true, source: { provider: 'torbox', kind: 'webdl', id: 7, fileId: '0' } });
-    const job = await until(base, data.id, ['completed', 'failed', 'needs-app'], () => true, 20000);
+    const job = await until(base, data.id, ['completed', 'failed', 'needs-app']);
     assert.equal(job.state, 'failed');
     assert.match(job.error, /^broken-file: TorBox has a broken copy of this file: it holds a web page \(an error from the original site, 170 bytes\) instead of the game\. Delete it in TorBox and add it again\.$/);
     assert.equal(job.renewals, 0, 'nao pediu link novo');
@@ -401,16 +419,31 @@ const pinConfig = (pin = PIN) => { const salt = randomBytes(32).toString('hex');
 async function page(route, { method = 'GET', body, session } = {}) {
   const ask = () => fetch(`http://127.0.0.1:${monitorPort}${route}`, { method, headers: { 'Content-Type': 'application/json', ...(session ? { 'X-Session': session } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   // glibren.13: um GET logo depois de uma espera pode cair numa conexao keep-alive que o servidor ja fechou (o fetch do
-  // node a reaproveita e falha com "fetch failed", de vez em quando, desde a .12): so o GET e repetido, uma vez.
-  const res = await ask().catch((problem) => { if (method !== 'GET') throw problem; return wait(50).then(ask); });
+  // node a reaproveita e falha com "fetch failed", de vez em quando, desde a .12): so o GET e repetido (algumas vezes,
+  // com a maquina carregada a pagina pode demorar a aceitar a conexao seguinte).
+  const res = await retryGet(method, ask);
   const text = await res.text();
   let data = {};
   try { data = JSON.parse(text); } catch {}
   return { status: res.status, data, text, type: res.headers.get('content-type'), length: Number(res.headers.get('content-length')), csp: res.headers.get('content-security-policy') || '', referrer: res.headers.get('referrer-policy') || '' };
 }
-async function pageUp() {
-  for (let i = 0; i < 100; i++) { try { if ((await page('/api/status')).status === 200) return; } catch {} await wait(50); }
+async function pageUp(ms = 30000) {
+  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) { try { if ((await page('/api/status')).status === 200) return; } catch {} }
   throw new Error('monitor did not start');
+}
+// glibren.19: o relogio das sessoes do PIN (BGDL_TEST_CLOCK_FILE): o teste anda o tempo, sem dormir. A validade da
+// sessao nao depende da carga da maquina (uma espera fixa de 2 s, 4 s...) nem de ajustes no relogio do WSL.
+const CLOCK_START = 1_800_000_000;
+function sessionClock(base) {
+  const file = path.join(base, 'clock');
+  let at = CLOCK_START;
+  writeFileSync(file, String(at));
+  return { file, env: { BGDL_TEST_CLOCK_FILE: file }, advance: (seconds) => { at += seconds; writeFileSync(file, String(at)); } };
+}
+// Espera uma condicao (sincrona ou nao), com prazo largo.
+async function eventually(check, what, ms = 20000) {
+  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) if (await check()) return;
+  throw new Error(`never: ${what}`);
 }
 // Le a resposta devagar, 512 bytes de cada vez, como um celular numa Wi-Fi ruim: tem de chegar inteira.
 const slowRead = () => new Promise((resolve, reject) => {
@@ -426,7 +459,8 @@ test('pagina do celular: a tela embutida inteira (leitura lenta), status sem seg
   monitorPort = await freePort();
   const base = workspace();
   srv.rate = 2 * MiB;
-  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_SESSION_SECONDS: '2', BGDL_NOTIFY_FILE: path.join(base, 'notify.txt') });
+  const clock = sessionClock(base);
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_SESSION_SECONDS: '2', BGDL_NOTIFY_FILE: path.join(base, 'notify.txt'), ...clock.env });
   await up(base);
   await pageUp();
   const html = await slowRead();
@@ -465,13 +499,12 @@ test('pagina do celular: a tela embutida inteira (leitura lenta), status sem seg
   assert.equal((await page(`/api/jobs/${data.id}/cancel`, { method: 'POST', session: ok.data.session })).status, 200);
   job = await until(base, data.id, ['cancelled']);
   assert.equal(job.by, 'remote');
-  for (let i = 0; i < 50 && existsSync(`${dest}.part`); i++) await wait(100);
-  assert.ok(!existsSync(`${dest}.part`), 'cancelar pelo celular apaga a parcial');
+  await eventually(() => !existsSync(`${dest}.part`), 'cancelar pelo celular apaga a parcial');
   assert.ok(!(await page('/api/status')).data.jobs.some((item) => item.id === data.id), 'um cancelado sai da pagina');
   assert.equal((await page('/api/jobs/b999/pause', { method: 'POST', session: ok.data.session })).status, 404);
   assert.equal((await page(`/api/jobs/${data.id}/forget`, { method: 'POST', session: ok.data.session })).status, 404, 'o celular so pausa, retoma e cancela');
-  // A sessao vence sem uso (2 s neste teste; 30 dias de verdade, renovados a cada uso).
-  await wait(2200);
+  // A sessao vence sem uso (2 s neste teste, no relogio do teste; 30 dias de verdade, renovados a cada uso).
+  clock.advance(2);
   assert.equal((await page(`/api/jobs/${data.id}/resume`, { method: 'POST', session: ok.data.session })).status, 401);
   // PIN errado: 4 tentativas livres, a 5a bloqueia por 30 s, e nem o certo passa enquanto isso.
   for (let i = 1; i <= 4; i++) assert.deepEqual((await page('/api/unlock', { method: 'POST', body: { pin: '111111' } })).data, { retryIn: 0 });
@@ -500,8 +533,7 @@ test('pagina do celular desligada: a porta fecha; ligada de novo, volta; um PIN 
   assert.equal((await call(base, 'POST', '/config', pinConfig('135792'))).status, 200);
   assert.equal((await page('/api/jobs/b1/pause', { method: 'POST', session })).status, 401, 'PIN trocado: a sessao antiga nao vale');
   assert.equal((await call(base, 'POST', '/config', { monitor: false })).data.monitor, false);
-  await wait(800);
-  await assert.rejects(page('/api/status'), 'porta fechada');
+  await eventually(() => fetch(`http://127.0.0.1:${monitorPort}/api/status`).then(() => false, () => true), 'porta fechada'); // sem as repeticoes do page()
   assert.equal((await call(base, 'POST', '/config', { monitor: true })).status, 200);
   await pageUp();
   const health = (await call(base, 'GET', '/health')).data;
@@ -519,7 +551,9 @@ test('pagina do celular desligada: a porta fecha; ligada de novo, volta; um PIN 
 test('glibren.19: sessao do PIN em disco (so o hash): sobrevive a reiniciar, renova no uso, vence sem uso, PIN trocado derruba, limite', { skip }, async () => {
   monitorPort = await freePort();
   const base = workspace();
-  const env = { BGDL_MONITOR_PORT: String(monitorPort), BGDL_SESSION_SECONDS: '4' };
+  // A validade (100 s) anda so no relogio do teste: nada aqui depende de quanto a maquina demora.
+  const clock = sessionClock(base);
+  const env = { BGDL_MONITOR_PORT: String(monitorPort), BGDL_SESSION_SECONDS: '100', ...clock.env };
   const restart = async (old) => { await stop(old); const next = start(base, env); await up(base); await pageUp(); return next; };
   let child = start(base, env);
   await up(base);
@@ -537,12 +571,15 @@ test('glibren.19: sessao do PIN em disco (so o hash): sobrevive a reiniciar, ren
   // Reiniciar o payload nao derruba a sessao.
   child = await restart(child);
   assert.equal((await page('/api/session', { session })).status, 200, 'sobrevive a reiniciar');
-  // Renova a cada uso: usada a cada 2 s por 6 s (mais que os 4 s de validade), continua valendo; e a renovacao e gravada.
-  for (let i = 0; i < 3; i++) { await wait(2000); assert.equal((await page('/api/session', { session })).status, 200, `uso ${i + 1}`); }
+  // Renova a cada uso: usada a cada 60 s por 180 s (mais que os 100 s de validade), continua valendo; e a renovacao
+  // e gravada.
+  for (let i = 0; i < 3; i++) { clock.advance(60); assert.equal((await page('/api/session', { session })).status, 200, `uso ${i + 1}`); }
   child = await restart(child);
   assert.equal((await page('/api/session', { session })).status, 200, 'a renovacao foi gravada');
-  // Sem uso, vence.
-  await wait(4300);
+  // Sem uso, vence: vale ate o ultimo segundo da validade e nao depois.
+  clock.advance(99);
+  assert.equal((await page('/api/session', { session })).status, 200, 'ainda vale 1 s antes de vencer (e renova)');
+  clock.advance(100);
   assert.equal((await page('/api/session', { session })).status, 401, 'vence sem uso');
   // Limite: guarda as 16 mais recentes; a mais antiga sai.
   const many = [];
@@ -668,8 +705,10 @@ test('fechar o app: modo quieto sem rede, volta sozinho e termina; diario com fe
   const flag = path.join(base, 'app-running');
   writeFileSync(flag, '');
   small('close.bin', 12 * MiB);
-  srv.rate = 2 * MiB;
-  const env = { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_RUNNING: flag, BGDL_QUIET_MS: '3000', BGDL_APP_SILENCE_MS: '600000' };
+  // 0,5 MiB/s por conexao (1 MiB/s nas duas): o download nao termina antes de o payload notar que o app fechou, mesmo
+  // com a maquina carregada; o modo quieto (6 s) cobre com folga a espera abaixo e a janela de 1 s sem baixar nada.
+  srv.rate = MiB / 2;
+  const env = { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_RUNNING: flag, BGDL_QUIET_MS: '6000', BGDL_APP_SILENCE_MS: '600000' };
   let child = start(base, env);
   await up(base);
   const dest = path.join(base, 'disk/downloads/close.bin');
@@ -677,9 +716,8 @@ test('fechar o app: modo quieto sem rede, volta sozinho e termina; diario com fe
   await until(base, data.id, ['downloading'], (job) => job.written > MiB);
   // O app fecha: em ate ~1 s o payload solta as conexoes e para de baixar.
   rmSync(flag);
-  await wait(1600);
-  const quietJob = (await call(base, 'GET', '/jobs')).data.jobs.find((job) => job.id === data.id);
-  assert.equal(quietJob.connectionsActive, 0, 'sem conexoes no modo quieto');
+  let quietJob;
+  await eventually(async () => (quietJob = (await call(base, 'GET', '/jobs')).data.jobs.find((job) => job.id === data.id)).connectionsActive === 0, 'sem conexoes no modo quieto');
   assert.notEqual(quietJob.state, 'completed', 'ainda nao terminou (estava quieto)');
   const before = srv.served['close.bin'] || 0;
   await wait(1000);
@@ -689,7 +727,7 @@ test('fechar o app: modo quieto sem rede, volta sozinho e termina; diario com fe
   assert.equal(job.state, 'completed', job.error);
   assert.equal(sha(readFileSync(dest)), sha(files['close.bin']));
   let log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
-  for (const line of ['sessao anterior: nenhuma', 'app aberto ao iniciar', 'app FECHOU (sceLncUtilGetAppId): modo quieto por 3 s',
+  for (const line of ['sessao anterior: nenhuma', 'app aberto ao iniciar', 'app FECHOU (sceLncUtilGetAppId): modo quieto por 6 s',
     `job ${data.id}: quieto (o app fechou)`, 'modo quieto terminou', `job ${data.id}: saiu do modo quieto; recomecando com 2 conexao(oes)`, `job ${data.id}: concluido`])
     assert.ok(log.includes(line), `diario sem "${line}":\n${log}`);
   // Saida limpa marcada; a proxima sessao diz que a anterior terminou limpa. Morto com SIGKILL: a seguinte diz que nao.
@@ -771,7 +809,7 @@ test('glibren.8: conexoes de um job mudadas ao vivo pelo celular (sobe, desce se
   const more = await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: 8 }, session });
   assert.equal(more.status, 200);
   assert.deepEqual(more.data, { ok: true, connections: 8, connectionsSet: true });
-  const up8 = await statusUntil((status) => status.jobs.find((item) => item.id === data.id)?.connectionsActive > 2, 10000);
+  const up8 = await statusUntil((status) => status.jobs.find((item) => item.id === data.id)?.connectionsActive > 2, 60000);
   const live = up8.jobs.find((item) => item.id === data.id);
   assert.deepEqual([live.connections, live.connectionsSet, live.state], [8, true, 'downloading']);
   assert.match(readFileSync(path.join(base, 'state/jobs.json'), 'utf8'), /"connectionsSet":8/, 'gravado em jobs.json');
@@ -780,7 +818,7 @@ test('glibren.8: conexoes de um job mudadas ao vivo pelo celular (sobe, desce se
   assert.equal((await call(base, 'GET', '/jobs')).data.jobs.find((item) => item.id === data.id).connectionsSet, 8);
   // Desce para 1: as conexoes que sobram terminam a faixa delas e nao abrem outra.
   assert.equal((await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: 1 }, session })).status, 200);
-  await statusUntil((status) => { const item = status.jobs.find((x) => x.id === data.id); return item.connections === 1 && item.connectionsActive === 1; }, 15000);
+  await statusUntil((status) => { const item = status.jobs.find((x) => x.id === data.id); return item.connections === 1 && item.connectionsActive === 1; }, 60000);
   // null (ou 0) volta ao numero do app.
   const back = await page(`/api/jobs/${data.id}/connections`, { method: 'POST', body: { connections: null }, session });
   assert.deepEqual(back.data, { ok: true, connections: 2, connectionsSet: false });
@@ -851,7 +889,7 @@ test('glibren.8: downloads simultaneos pelo celular: valem na hora, gravados, o 
   assert.equal((await page('/api/config', { method: 'POST', body: { concurrency: 0 }, session })).status, 400);
   const set = await page('/api/config', { method: 'POST', body: { concurrency: 3 }, session });
   assert.deepEqual(set.data, { ok: true, limit: 3, limitSet: true, speedLimit: 0, speedLimitSet: false });
-  await statusUntil((s) => running(s) === 3, 10000);
+  await statusUntil((s) => running(s) === 3, 60000);
   let health = (await call(base, 'GET', '/health')).data;
   assert.deepEqual([health.concurrency, health.concurrencyBy], [3, 'remote']);
   const stamp = health.concurrencyStamp;
@@ -886,7 +924,8 @@ test('glibren.8: downloads simultaneos pelo celular: valem na hora, gravados, o 
 test('glibren.13: limite de velocidade segura a soma de 2 jobs x 8 conexoes, muda ao vivo (celular e app), gravado', { skip }, async (t) => {
   monitorPort = await freePort();
   const base = workspace();
-  ['s1.bin', 's2.bin'].forEach((name) => small(name, 16 * MiB));
+  // 28 MiB cada: sobra arquivo para ate 3 janelas de medida em cada limite sem que um job termine antes da hora.
+  ['s1.bin', 's2.bin'].forEach((name) => small(name, 28 * MiB));
   srv.rate = 0; // o servidor local entrega o mais rapido que der: quem segura e o payload
   let child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
   // Falhou no meio (maquina carregada): o payload nao fica no ar segurando a porta da API dos testes seguintes.
@@ -922,11 +961,18 @@ test('glibren.13: limite de velocidade segura a soma de 2 jobs x 8 conexoes, mud
   }
   const written = async () => (await call(base, 'GET', '/jobs')).data.jobs.reduce((sum, job) => sum + (job.written || 0), 0);
   // A taxa somada (MiB/s) numa janela de `ms`.
-  const rate = async (ms) => { const a = await written(), t = Date.now(); await wait(ms); return (await written() - a) / MiB / ((Date.now() - t) / 1000); };
-  await statusUntil((s) => s.jobs.filter((job) => job.state === 'downloading').length === 2 && s.jobs.every((job) => job.connectionsActive >= 4), 15000);
-  const slow = await rate(4000);
+  const rate = async (ms) => { const a = await written(), t = performance.now(); await wait(ms); return (await written() - a) / MiB / ((performance.now() - t) / 1000); };
+  // Com a maquina carregada (a suite inteira em paralelo) uma janela pode pegar o payload parado por alguns segundos
+  // (0,00 MiB/s): vale a primeira de ate 3 janelas dentro da faixa. Um limite quebrado (sem freio, centenas de MiB/s
+  // no servidor local) nunca cai dentro dela.
+  const within = async (ms, low, high, what) => {
+    const seen = [];
+    for (let i = 0; i < 3; i++) { const value = await rate(ms); seen.push(value.toFixed(2)); if (value > low && value < high) return value; }
+    assert.fail(`${what}: ${seen.join(', ')} MiB/s`);
+  };
+  await statusUntil((s) => s.jobs.filter((job) => job.state === 'downloading').length === 2 && s.jobs.every((job) => job.connectionsActive >= 4), 60000);
   // O teto e o que importa (com folga para a janela de medida); o piso e largo para maquina carregada.
-  assert.ok(slow > 0.3 && slow < 1.5,`1 MB/s para os dois jobs juntos: ${slow.toFixed(2)} MiB/s`);
+  const slow = await within(3000, 0.3, 1.5, '1 MB/s para os dois jobs juntos');
   assert.equal((await page('/api/status')).data.speedLimit, 1);
   // O app manda o mesmo numero (adotou): continua "do celular".
   assert.equal((await call(base, 'POST', '/config', { speedLimit: 1 })).data.speedLimitBy, 'remote');
@@ -934,8 +980,7 @@ test('glibren.13: limite de velocidade segura a soma de 2 jobs x 8 conexoes, mud
   const fromApp = (await call(base, 'POST', '/config', { speedLimit: 4 })).data;
   assert.deepEqual([fromApp.speedLimit, fromApp.speedLimitBy], [4, 'app']);
   await wait(500);
-  const faster = await rate(3000);
-  assert.ok(faster > 1.6 && faster < 5.2,`4 MB/s ao vivo: ${faster.toFixed(2)} MiB/s`);
+  const faster = await within(2000, 1.6, 5.2, '4 MB/s ao vivo');
   t.diagnostic(`limite 1 MB/s: ${slow.toFixed(2)} MiB/s; 4 MB/s: ${faster.toFixed(2)} MiB/s`);
   status = (await page('/api/status')).data;
   assert.deepEqual([status.speedLimit, status.speedLimitSet], [4, false]);
@@ -943,7 +988,7 @@ test('glibren.13: limite de velocidade segura a soma de 2 jobs x 8 conexoes, mud
   // Sem limite pelo celular (null = 0): termina rapido e inteiro.
   assert.equal((await page('/api/config', { method: 'POST', body: { speedLimit: null }, session })).data.speedLimit, 0);
   for (const [i, id] of ids.entries()) {
-    const job = await until(base, id, ['completed', 'failed'], () => true, 20000);
+    const job = await until(base, id, ['completed', 'failed']);
     assert.equal(job.state, 'completed', job.error);
     assert.equal(sha(readFileSync(path.join(base, 'disk/downloads', `s${i + 1}.bin`))), sha(files[`s${i + 1}.bin`]), 'nada se perdeu com as pausas');
   }
@@ -971,7 +1016,8 @@ test('energia pelo celular: sem sessao 401; com sessao desliga/repousa depois de
   monitorPort = await freePort();
   const base = workspace();
   const powerFile = path.join(base, 'power.txt');
-  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_POWER_FILE: powerFile, BGDL_NOTIFY_FILE: path.join(base, 'notify.txt') });
+  // Atraso de 6 s (2,5 s no console): o 409 e o "ainda nao" abaixo nao dependem de a maquina responder em 2,5 s.
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_POWER_FILE: powerFile, BGDL_NOTIFY_FILE: path.join(base, 'notify.txt'), BGDL_POWER_DELAY_MS: '6000' });
   await up(base);
   await pageUp();
   const powered = () => (existsSync(powerFile) ? readFileSync(powerFile, 'utf8').split('\n').filter(Boolean) : []);
@@ -988,12 +1034,15 @@ test('energia pelo celular: sem sessao 401; com sessao desliga/repousa depois de
   assert.equal((await page('/api/power', { method: 'POST', body: { action: 'rest' }, session })).status, 200);
   assert.equal((await page('/api/power', { method: 'POST', body: { action: 'off' }, session })).status, 409, 'um pedido por vez');
   assert.deepEqual(powered(), [], 'ainda nao: espera a resposta sair');
-  for (let i = 0; i < 80 && !powered().length; i++) await wait(100);
+  await eventually(() => powered().length, 'o repouso anotado');
   assert.deepEqual(powered(), ['rest']);
-  // Repouso: o processo segue vivo e aceita outro pedido.
+  // Repouso: o processo segue vivo e aceita outro pedido. O payload anota a chamada e so depois libera o pedido
+  // (g_power_action = 0): ate la a resposta e 409 (um pedido por vez), entao o teste espera a liberacao.
   assert.equal((await page('/api/status')).status, 200);
-  assert.equal((await page('/api/power', { method: 'POST', body: { action: 'off' }, session })).status, 200);
-  for (let i = 0; i < 80 && powered().length < 2; i++) await wait(100);
+  let again;
+  await eventually(async () => (again = (await page('/api/power', { method: 'POST', body: { action: 'off' }, session })).status) !== 409, 'o repouso liberou o pedido seguinte');
+  assert.equal(again, 200);
+  await eventually(() => powered().length >= 2, 'o desligar anotado');
   assert.deepEqual(powered(), ['rest', 'off']);
   const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
   assert.match(log, /celular: pedido de energia: modo de repouso/);
@@ -1023,7 +1072,9 @@ test('glibren.8: app aberto: pausado no app (park) fica na pagina com o progress
   const item = queued(base, 'p1.bin', { rangeBytes: MiB }); // faixas de 1 MiB: a parcial guarda as que vieram
   const { data } = await call(base, 'POST', '/jobs', item.job);
   await call(base, 'POST', `/jobs/${data.id}/follow`);
-  await until(base, data.id, ['downloading'], (job) => job.written > 0);
+  // Pelo menos 2 faixas de 1 MiB prontas antes da pausa: so com bytes da 1a faixa (ainda em andamento, nada gravado na
+  // parcial) a retomada baixava o arquivo inteiro de novo e o "so o que faltava" falhava sob carga.
+  await until(base, data.id, ['downloading'], (job) => job.written >= 2 * MiB);
   // A pausa no app (ou a do celular repetida pelo app): park, e nao release.
   assert.equal((await call(base, 'POST', `/jobs/${data.id}/park`)).status, 200);
   let job = await until(base, data.id, ['paused']);
@@ -1676,14 +1727,14 @@ test('glibren.18: com o app fechado, o payload comeca sozinho os pedidos do celu
     const ids = {};
     for (const id of ['acc', 'tor', 'web', 'old']) ids[id] = (await page('/api/library/add', { method: 'POST', session, body: { id } })).data.id;
     // App fechado (calado) e sem a chave do TorBox: nada comeca; a pagina diz para abrir a Jobe uma vez.
-    let status = await statusUntil((s) => ['acc', 'tor', 'web'].every((k) => s.jobs.find((j) => j.id === ids[k])?.autoNote === 'no-key'), 15000);
+    let status = await statusUntil((s) => ['acc', 'tor', 'web'].every((k) => s.jobs.find((j) => j.id === ids[k])?.autoNote === 'no-key'), 60000);
     assert.equal(status.jobs.find((j) => j.id === ids.acc).state, 'waiting-app');
     assert.equal(srv.tb.calls.length, 0, 'sem chave, nenhuma chamada ao TorBox');
     // O app entrega a chave (POST /secret) e fecha de novo.
     assert.equal((await call(base, 'POST', '/secret', { service: 'torbox', key: KEY })).status, 200);
-    status = await statusUntil((s) => ['acc', 'tor', 'web'].every((k) => s.jobs.find((j) => j.id === ids[k])?.state === 'completed'), 45000);
+    status = await statusUntil((s) => ['acc', 'tor', 'web'].every((k) => s.jobs.find((j) => j.id === ids[k])?.state === 'completed'), 60000);
     for (const k of ['acc', 'tor', 'web']) assert.equal(status.jobs.find((j) => j.id === ids[k]).auto, true, `${k}: comecado pelo payload`);
-    await statusUntil((s) => s.jobs.find((j) => j.id === ids.old)?.autoNote === 'no-link', 10000); // webdl de lista antiga (sem o link): espera o app
+    await statusUntil((s) => s.jobs.find((j) => j.id === ids.old)?.autoNote === 'no-link', 60000); // webdl de lista antiga (sem o link): espera o app
     // Os destinos do app: imagem em homebrew/ (publicada com o app fechado), PS5 compactado no BACKUP, .pkg de PS4 em PS4/.
     assert.equal(sha(readFileSync(path.join(disk, 'homebrew/Conta Jogo.exfat'))), sha(files['auto-conta.exfat']));
     assert.equal(sha(readFileSync(path.join(disk, 'BACKUP/Jogo Torrent/PPSA20010 Tor Game.rar'))), sha(files['auto-tor.rar']));
@@ -1793,10 +1844,12 @@ test('glibren.18: job da fila do app que termina no BACKUP com o app FECHADO vir
     mkdirSync(path.dirname(dest), { recursive: true });
     srv.rate = 400 * 1024; // devagar o bastante para o app ja estar calado (fechado) quando o download termina
     const { data } = await call(base, 'POST', '/jobs', { key: 'PPSA07777/r1', url: `http://127.0.0.1:${port}/f/auto-jogo.7z`, destination: dest, storageRoot: disk, rangeBytes: MiB, connections: 2, code: 'PPSA07777', platform: 'ps5' });
-    await statusUntil((s) => s.jobs.find((j) => j.id === data.id)?.state === 'completed', 30000);
+    await statusUntil((s) => s.jobs.find((j) => j.id === data.id)?.state === 'completed', 60000);
     srv.rate = 0;
-    await wait(1500);
-    let convs = (await call(base, 'GET', '/convert')).data.conversions;
+    let convs = [];
+    await eventually(async () => (convs = (await call(base, 'GET', '/convert')).data.conversions).length > 0, 'a conversao do payload comecou');
+    await wait(500);
+    convs = (await call(base, 'GET', '/convert')).data.conversions;
     assert.equal(convs.length, 1, JSON.stringify(convs));
     assert.deepEqual([convs[0].key, convs[0].kind, convs[0].output], ['PPSA07777/r1', 'archive', path.join(disk, 'homebrew/PPSA07777.exfat')]);
     for (const end = Date.now() + 30000; Date.now() < end && !['done', 'failed'].includes(convs[0].state); await wait(200)) convs = (await call(base, 'GET', '/convert')).data.conversions;
@@ -1840,7 +1893,7 @@ test('glibren.31: POST /switch espera o app fechar, abre o outro (com novas tent
     BGDL_SWITCH_SETTLE_MS: '300', BGDL_SWITCH_PAUSE_MS: '100', BGDL_SWITCH_GIVEUP_MS: '1500', BGDL_APP_SILENCE_MS: '600000' });
   const log = () => readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
   const launches = () => existsSync(launched) ? readFileSync(launched, 'utf8').split('\n').filter(Boolean) : [];
-  const logged = async (text, ms = 8000) => {
+  const logged = async (text, ms = 20000) => {
     for (const end = Date.now() + ms; Date.now() < end; await wait(50)) if (log().includes(text)) return;
     throw new Error(`diario sem "${text}":\n${log()}`);
   };
@@ -1893,7 +1946,7 @@ test('glibren.31: POST /switch espera o app fechar, abre o outro (com novas tent
     // O from que nao fecha: desiste (aqui em 1,5 s; 2 min no console) sem abrir nada.
     writeFileSync(flag, '');
     await ask({ to: 'PPSA99350', from: 'PPSA99471' });
-    await logged('troca: PPSA99471 nao fechou em 1 s; desisti de abrir PPSA99350', 5000);
+    await logged('troca: PPSA99471 nao fechou em 1 s; desisti de abrir PPSA99350', 20000);
     assert.deepEqual(launches().slice(5), []);
   } finally {
     await stop(child);

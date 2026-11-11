@@ -3045,11 +3045,13 @@ function captureQueue({ fs, downloads, http, browserCapture, opened, outcomes = 
   });
 }
 const hosted = { id: 'h', provider: '1fichier.com', url: PAGE, browserUrl: PAGE, requiresBrowser: true, format: 'exfat', filename: 'Game.exfat', sizeBytes: 5e9 };
-async function until(queue, id, check) {
-  for (let i = 0; i < 300; i++) {
+// Waits on the condition with a deadline, not a count of turns: under load (the whole suite at once) 300 turns of the
+// event loop can pass before a timer of the queue fires.
+async function until(queue, id, check, ms = 10000) {
+  for (let i = 0, end = Date.now() + ms; i < 300 || Date.now() < end; i++) {
     const job = queue.snapshot().find((item) => item.id === id);
     if (job && check(job)) return job;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => (i < 300 ? setImmediate(resolve) : setTimeout(resolve, 5)));
   }
   throw new Error(`never: ${JSON.stringify(queue.snapshot().find((item) => item.id === id))}`);
 }
@@ -3062,7 +3064,7 @@ function partsQueue({ fs, browserCapture, notices, autoContinue = () => true }) 
     sources: { resolve: async (release) => {
       if (release.requiresBrowser) throw new BrowserRequired(release.browserUrl);
       return { url: release.url };
-    } }, archives: null, packages: null, wait: async () => {}, autoContinue, autoOpenMs: 20,
+    } }, archives: null, packages: null, wait: async () => {}, autoContinue, autoOpenMs: 500, // the countdown seen even under load
   });
 }
 const browserParts = { id: 'set', provider: 'host', filename: 'Game', parts: [
@@ -3080,7 +3082,6 @@ test('parts: after a part finishes, the next part that needs the browser opens i
   assert.ok(waiting.autoOpenAt > 0, 'it counts down');
   assert.equal(waiting.partIndex, 1);
   assert.equal(notices.length, 1, 'and says so');
-  await new Promise((resolve) => setTimeout(resolve, 60));
   await until(queue, id, (job) => !job.autoOpenAt);
   assert.equal(browserCapture.asked.length, 1, 'the capture for part 2 started without a press');
 });
@@ -3100,9 +3101,10 @@ test('parts: a captured file named for another part is refused, and the capture 
       return { url: release.url };
     } }, archives: null, packages: null, wait: async () => {}, autoContinue: () => true, autoOpenMs: 5,
   });
-  const id = queue.enqueue(game, browserParts, '/data');
-  await until(queue, id, (job) => job.state === 'awaiting-browser');
-  for (let i = 0; i < 40 && !downloads.requests.some((request) => request.url === RIGHT); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  queue.enqueue(game, browserParts, '/data');
+  // Not by way of the "awaiting-browser" state: with a 5 ms countdown it can come and go between two looks (under load
+  // the whole set was done, and failed at extraction, before the first look). The part 2 request is what is waited on.
+  for (const end = Date.now() + 10000; Date.now() < end && !downloads.requests.some((request) => request.url === RIGHT);) await new Promise((resolve) => setTimeout(resolve, 10));
   const urls = downloads.requests.map((request) => request.url);
   assert.ok(urls.includes(RIGHT), urls.join(' '));
   assert.ok(!urls.includes(WRONG), 'part 1 was not downloaded again as part 2');
@@ -3405,7 +3407,7 @@ test('formats: a game is 13.60 ready with a folder dump or any disk image, not w
 });
 
 // A slower until, for flows that wait on timers (the capture-ahead countdown).
-async function untilTimed(queue, id, check, ms = 3000) {
+async function untilTimed(queue, id, check, ms = 10000) { // a deadline wide enough for a loaded machine
   const end = Date.now() + ms;
   while (Date.now() < end) {
     const job = queue.snapshot().find((item) => item.id === id);
@@ -3443,13 +3445,13 @@ test('parts: the next part\'s link is captured while the part before downloads, 
     sources: { resolve: async (release) => {
       if (release.requiresBrowser) throw new BrowserRequired(release.browserUrl);
       return { url: release.url };
-    } }, archives: null, packages: null, wait: async () => {}, autoContinue: () => true, autoOpenMs: 5,
+    } }, archives: null, packages: null, wait: async () => {}, autoContinue: () => true, autoOpenMs: 300, // the countdown seen even under load
   });
   queue.subscribe((jobs) => jobs.forEach((job) => states.add(job.state)));
   const id = queue.enqueue(game, browserParts, '/data');
   const counting = await untilTimed(queue, id, (job) => Boolean(job.aheadAt));
   assert.equal(counting.aheadPart, 1, 'part 2 counts down while part 1 downloads');
-  for (let i = 0; i < 100 && queue.snapshot().find((job) => job.id === id).aheadState !== 'ready'; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  await untilTimed(queue, id, (job) => job.aheadState === 'ready').catch(() => {});
   assert.equal(queue.snapshot().find((job) => job.id === id).aheadState, 'ready', 'its link was captured ahead');
   assert.equal(browserCapture.asked.length, 1);
   release1();
@@ -3553,12 +3555,12 @@ test('parts: "Wait" stops a capture ahead before its browser opens', async () =>
     fs, downloads, http: probe({}), formats: DownloadFormats, dataDir: '/data/app', platform: 'desktop',
     notifications: { show() {} }, power: { keepAwake() {} }, linking: { openURL: () => true }, browserCapture,
     sources: { resolve: async (release) => { if (release.requiresBrowser) throw new BrowserRequired(release.browserUrl); return { url: release.url }; } },
-    archives: null, packages: null, wait: async () => {}, autoContinue: () => true, autoOpenMs: 40,
+    archives: null, packages: null, wait: async () => {}, autoContinue: () => true, autoOpenMs: 400, // seen even under load
   });
   const id = queue.enqueue(game, browserParts, '/data');
   await untilTimed(queue, id, (job) => Boolean(job.aheadAt));
   queue.waitForPart(id);
-  await new Promise((resolve) => setTimeout(resolve, 80));
+  await new Promise((resolve) => setTimeout(resolve, 800)); // twice the countdown: had it not stopped, the browser would be open
   assert.equal(browserCapture.asked.length, 0, 'no browser opened');
   assert.equal(queue.snapshot().find((job) => job.id === id).aheadState, undefined);
   release1();
