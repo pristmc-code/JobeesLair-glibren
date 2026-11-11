@@ -175,6 +175,20 @@ import { parseStamp } from '../state/clock.js';
     return total > 0 && (largest.size || 0) >= total * ZIP_BELOW ? { file: largest } : { zip: true };
   }
   var finished = (item) => Boolean(item?.download_finished && item.download_present !== false);
+  // glibren.26: myList em paginas (TorBox mylist: offset e limit), ate os 1000 itens que ele sempre pediu.
+  var MYLIST_PAGE = 250, MYLIST_MAX = 1e3;
+  // Um item da conta como o app o usa (state/torbox-search.js filesOf, state/torbox-library.js indexAccount).
+  var accountItem = (item) => ({
+    id: item.id,
+    name: item.name,
+    hash: item.hash,
+    size: item.size,
+    download_state: item.download_state,
+    download_finished: item.download_finished,
+    download_present: item.download_present,
+    progress: item.progress,
+    files: Array.isArray(item.files) ? item.files.map((file) => ({ id: file?.id, name: file?.name, short_name: file?.short_name, size: file?.size })) : []
+  });
   var failed = (item) => /error|fail|stalled|dead/i.test(item?.download_state || "") && !finished(item);
 
   /**
@@ -357,10 +371,20 @@ import { parseStamp } from '../state/clock.js';
         }
       },
       /** glibren.23: the account's web download of `link` (mylist, matched by original_url): { kind, id, hash } or null. */
+      // glibren.26: em paginas de MYLIST_PAGE, parando no achado (como myList): era a conta inteira (ate 4 MiB de JSON) a
+      // cada link mandado ao TorBox; no PS5, com a lista Orbit Store ligada, o app fechou logo depois de /webdl/hosters.
       async findWebDownload(link, { signal } = {}) {
-        const data = await call("/webdl/mylist", { params: { bypass_cache: true, limit: 1e3 }, signal });
-        const found = (Array.isArray(data) ? data : []).find((item) => item && item.original_url === link && item.id !== void 0 && item.id !== null);
-        return found ? { kind: "webdl", id: found.id, hash: found.hash ?? md5(link) } : null;
+        const seen = /* @__PURE__ */ new Set();
+        for (let offset = 0; offset < MYLIST_MAX; offset += MYLIST_PAGE) {
+          const data = await call("/webdl/mylist", { params: { bypass_cache: true, offset, limit: MYLIST_PAGE }, signal });
+          const page = Array.isArray(data) ? data : [];
+          const found = page.find((item) => item && item.original_url === link && item.id !== void 0 && item.id !== null);
+          if (found) return { kind: "webdl", id: found.id, hash: found.hash ?? md5(link) };
+          const fresh = page.filter((item) => item?.id != null && !seen.has(item.id));
+          for (const item of fresh) seen.add(item.id);
+          if (page.length < MYLIST_PAGE || !fresh.length) break;
+        }
+        return null;
       },
       /** glibren: removes an item from the account (control…, operation delete); true when TorBox said so. */
       async remove(kind, id, { signal } = {}) {
@@ -412,14 +436,33 @@ import { parseStamp } from '../state/clock.js';
        * the items as TorBox gives them ({ id, name, size, download_finished, files }). An empty account answers 404,
        * read as an empty list.
        */
+      // glibren.26: em paginas de MYLIST_PAGE (offset/limit), ate os mesmos 1000 itens de antes, e de cada item so o que o
+      // app usa: uma conta grande respondia de uma vez ate 4 MiB de JSON (com md5, s3_path, mimetype... de cada arquivo),
+      // texto e objetos juntos no heap de 32 MiB; no PS5, com a lista Orbit Store ligada, a Biblioteca TorBox caiu aqui
+      // com "out of memory". Uma pagina que so repete itens ja vistos (offset ignorado) encerra a leitura.
       async myList(kind, { signal } = {}) {
-        try {
-          const data = await call(kind === "torrent" ? "/torrents/mylist" : "/webdl/mylist", { params: { bypass_cache: true, limit: 1e3 }, signal });
-          return Array.isArray(data) ? data : data ? [data] : [];
-        } catch (error) {
-          if (["ITEM_NOT_FOUND", "HTTP_404"].includes(error.code)) return [];
-          throw error;
+        const out = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (let offset = 0; offset < MYLIST_MAX; offset += MYLIST_PAGE) {
+          let data;
+          try {
+            data = await call(kind === "torrent" ? "/torrents/mylist" : "/webdl/mylist", { params: { bypass_cache: true, offset, limit: MYLIST_PAGE }, signal });
+          } catch (error) {
+            if (["ITEM_NOT_FOUND", "HTTP_404"].includes(error.code)) break;
+            throw error;
+          }
+          const page = Array.isArray(data) ? data : data ? [data] : [];
+          data = null;
+          let fresh = 0;
+          for (const item of page) {
+            if (!item || typeof item !== "object" || item.id != null && seen.has(item.id)) continue;
+            if (item.id != null) seen.add(item.id);
+            out.push(accountItem(item));
+            fresh++;
+          }
+          if (page.length < MYLIST_PAGE || !fresh) break;
         }
+        return out;
       },
       /**
        * glibren.6: what TorBox holds of `links` (file host URLs or magnets), with its files: a Map of link -> { name,

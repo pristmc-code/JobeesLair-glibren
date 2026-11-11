@@ -67,7 +67,8 @@ import { setOrbitSource } from './orbit-feed.js';
   // GET /log); e o antigo e trocado mesmo ocupado (ver ensurePayloadNow).
   // glibren.23: 19, TorBox como o Orbit Store (procura o link na conta antes de criar; um createwebdownload a cada 61 s).
   // glibren.25: 20, Converter responde fila/posicao/ja convertido; a lista Orbit grava "busy" ao baixar.
-  var PAYLOAD_API = 20;
+  // glibren.26: 21, a lista Orbit regravada enxuta (ORBIT_CONV) e a conta TorBox em paginas.
+  var PAYLOAD_API = 21;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 

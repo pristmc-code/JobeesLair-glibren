@@ -54,7 +54,7 @@ const catalogue = (revision) => ({
   releases: [
     { id: 'ppsa04029-ffpfsc', titleId: 'PPSA04029', platform: 'ps5', sourceId: 'archive', provider: 'Archive.org', format: 'FFPFSC', filename: 'PPSA04029 Cyberpunk 2077.ffpfsc', sizeBytes: 156011528192, url: 'https://archive.org/download/x/PPSA04029.ffpfsc', sha256: '', version: null, region: 'EUR', title: 'Cyberpunk 2077', genre: 'Role-playing', tagline: 'Your story.', description: 'Become a mercenary in Night City.', publisher: 'CD PROJEKT RED', releaseDate: '2022-02-15', addedAt: '2026-10-03T19:37:21+05:30', ...art('PPSA04029') },
     { id: 'ppsa04029-vik-rar', titleId: 'PPSA04029', platform: 'ps5', sourceId: 'vikingfile', provider: 'Vikingfile', format: 'Game folder', compression: 'rar', filename: 'PPSA04029.rar', sizeBytes: 90000000000, url: 'https://vikingfile.com/d/abcdefghij/PPSA04029.rar', region: 'EUR', title: 'Cyberpunk 2077', ...art('PPSA04029') },
-    { id: 'cusa00021-pkg', titleId: 'cusa00021', platform: 'ps4', sourceId: 'akirabox', provider: 'AkiraBox', format: 'FPKG', filename: 'WATCH_DOGS.pkg', sizeBytes: 17755209728, url: 'https://akirabox.com/abcdef/file', version: '01.05', region: 'USA', title: 'Watch Dogs', description: 'Hack Chicago.', ...art('CUSA00021') },
+    { id: 'cusa00021-pkg', titleId: 'cusa00021', platform: 'ps4', sourceId: 'akirabox', provider: 'AkiraBox', format: 'FPKG', filename: 'WATCH_DOGS.pkg', sizeBytes: 17755209728, url: 'https://akirabox.com/abcdef/file', version: '01.05', region: 'USA', title: 'Watch Dogs', description: `Hack Chicago. ${'Lorem ipsum dolor sit amet. '.repeat(100)}`, ...art('CUSA00021') },
     { id: 'bad-1', titleId: 'XYZ00001', title: 'Not a console game', url: 'https://example.com/x.pkg' },
     { id: 'bad-2', titleId: 'PPSA00002', title: 'Insecure', url: 'http://example.com/x.pkg' },
   ],
@@ -153,6 +153,9 @@ test('off by default; turned on, it downloads, decrypts and writes the Jobe feed
   assert.equal(cyberpunk.releases[0].sizeBytes, 156011528192);
   assert.equal(feed.games[0].releases[0].format, 'fpkg');
   assert.equal(feed.games[0].releases[0].version, '01.05');
+  // glibren.26: a descricao longa vai cortada numa palavra (no maximo 1500 bytes e "..."), para caber no heap do app.
+  const about = feed.games[0].about[0];
+  assert.ok(about.startsWith('Hack Chicago. Lorem') && about.endsWith('amet....') && about.length <= 1503, about.slice(-40));
   assert.ok(existsSync(path.join(base, 'orbit/orbit-store-status.json')));
   assert.deepEqual(notices(base), [], 'no notification while it is fine');
 });

@@ -537,7 +537,8 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
   // updated; with only one on, the store shows only that catalog. The last one shown cannot be turned off.
   function ShownCatalogs() {
     const t2 = useT();
-    const store = useStoreMode();
+    useStoreMode();
+    const { focusLater } = useNavActions();
     const [sources] = (0, useState)(() => librarySources());
     const [notice, setNotice] = (0, useState)("");
     if (sources.length < 2) return null;
@@ -548,7 +549,9 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       ...sources.map((source) => jsx(Row, { focusKey: `settings:feeds:shown:${source.id}`, name: sourceLabel(t2, source), detail: t2("tblib.sourceGames", { count: source.count }), hint: t2("settings.feeds.shownHint"), end: jsx(Switch, { on: sourceShown(source.id) }), onPress: () => {
         const { ok, reason } = setSourceShown(source.id, !sourceShown(source.id));
         setNotice(ok ? "" : reason === "last" ? t2("settings.feeds.shownLast") : reason === "empty" ? t2("storeMode.empty") : t2("storeMode.never"));
-      } }, `${source.id}:${store.epoch}`))
+        // glibren.26: o foco fica na linha tocada (a .25 refazia as linhas a cada troca e o foco subia para o topo).
+        focusLater(`settings:feeds:shown:${source.id}`);
+      } }, source.id))
     ] });
   }
   // glibren.14: no limit of three feeds any more (MAX_FEEDS is only a safety ceiling), and "Add a file from the PS5".
@@ -680,6 +683,13 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     // Read again whenever the run's state changes (a run that ends writes the file).
     const summary = (0, useMemo)(() => librarySummary(), [run.state]);
     const running = run.state === "running";
+    // glibren.26: a contagem de uma espera do TorBox anda (a tela só se redesenhava quando chegava uma resposta).
+    const [, tick] = (0, useState)(0);
+    (0, useEffect)(() => {
+      if (!run.waitingUntil) return void 0;
+      const timer = setInterval(() => tick((n) => n + 1), 1e3);
+      return () => clearInterval(timer);
+    }, [run.waitingUntil]);
     const picked = sources.filter((source) => !off.includes(source.id)).map((source) => source.id);
     const chosen = off.length ? picked : null;
     const start = (fresh, onlyNew = false) => {

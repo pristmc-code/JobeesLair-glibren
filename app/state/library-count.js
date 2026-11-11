@@ -6,8 +6,9 @@
 // hooks below). It reads only the id lists kept in memory; nothing here opens a file or the network.
 
 import { useEffect, useState } from 'react';
-import { bundledIndex } from './catalog.js';
-import { feedIndexVersion, feedIndexes, subscribeFeeds } from './feeds.js';
+import { BUNDLED, bundledIndex } from './catalog.js';
+import { feedIndexEntries, feedIndexVersion, subscribeFeeds } from './feeds.js';
+import { shownVersion, sourceShown, subscribeStore } from './store-mode.js';
 
   // `lists`: arrays of [id, direct] pairs. { titles, direct } over their union.
   function tally(lists) {
@@ -20,10 +21,11 @@ import { feedIndexVersion, feedIndexes, subscribeFeeds } from './feeds.js';
   var cached = null, cachedAt = -1;
   // The current count, recomputed only when a feed's list changed since the last one.
   function libraryCount() {
-    const version = feedIndexVersion();
+    // glibren.26: só os catálogos que a loja mostra (Configurações > Feeds > Mostrar na loja).
+    const version = `${feedIndexVersion()}:${shownVersion()}`;
     if (!cached || version !== cachedAt) {
-      const feeds = feedIndexes();
-      cached = { ...tally([bundledIndex, ...feeds]), feeds: feeds.length };
+      const feeds = feedIndexEntries().filter(([url]) => sourceShown(url)).map(([, list]) => list);
+      cached = { ...tally([...sourceShown(BUNDLED) ? [bundledIndex] : [], ...feeds]), feeds: feeds.length };
       cachedAt = version;
     }
     return cached;
@@ -33,7 +35,11 @@ import { feedIndexVersion, feedIndexes, subscribeFeeds } from './feeds.js';
     (0, useEffect)(() => {
       const update = () => setCount(libraryCount());
       update();
-      return subscribeFeeds(update);
+      const offFeeds = subscribeFeeds(update), offStore = subscribeStore(update);
+      return () => {
+        offFeeds();
+        offStore();
+      };
     }, []);
     return count;
   }

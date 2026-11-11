@@ -424,3 +424,14 @@ test('glibren.25: "show in the store": a catalog turned off leaves the store, th
   assert.equal(catalog.sourcesOfGame(games[0])[0], 'bundled');
   delete globalThis.__stubFiles;
 });
+
+test('glibren.26: a TorBox call the console never answers gives up as a network failure, and Cancel stops at once', async () => {
+  const hanging = { ...fakeApi(), myList: () => new Promise(() => {}) };
+  await assert.rejects(lib.buildLibrary({ entries: entriesOf([game(2)]), api: hanging, ...quiet, ...clock(), callLimit: 20 }), { code: 'NETWORK' });
+  const listeners = new Set();
+  const signal = { aborted: false, addEventListener: (_, fn) => listeners.add(fn), removeEventListener: (_, fn) => listeners.delete(fn) };
+  setTimeout(() => { signal.aborted = true; for (const fn of listeners) fn(); }, 20);
+  const started = Date.now();
+  await assert.rejects(lib.buildLibrary({ entries: entriesOf([game(2)]), api: hanging, ...quiet, ...clock(), signal, callLimit: 0, save: () => {} }), { name: 'AbortError' });
+  assert.ok(Date.now() - started < 2000, 'Cancel did not wait for the call');
+});

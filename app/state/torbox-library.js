@@ -432,11 +432,41 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
    * `sources`: as fontes escolhidas (null: todas). -> { library, progress }. Cancelar (`signal`) grava o que já
    * foi feito e rejeita com AbortError.
    */
+  // glibren.26: uma chamada que o transporte HTTP do console deixa sem resposta (ficou em "Lendo sua conta TorBox" e o
+  // Cancelar não parava, 10/11/2026) desiste em CALL_LIMIT_MS como falha de rede (tentada de novo como as outras), e
+  // Cancelar para na hora, sem esperar a chamada voltar.
+  var CALL_LIMIT_MS = 90e3;
+  function bounded(promise, signal, limit) {
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const done = () => {
+        if (timer !== null) clearTimeout(timer);
+        signal?.removeEventListener?.("abort", onAbort);
+      };
+      const onAbort = () => {
+        done();
+        reject(stopped());
+      };
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener?.("abort", onAbort);
+      if (limit > 0) timer = setTimeout(() => {
+        done();
+        reject(Object.assign(new Error(`TorBox didn't answer in ${Math.round(limit / 1e3)} s.`), { code: "NETWORK" }));
+      }, limit);
+      promise.then((value) => {
+        done();
+        resolve(value);
+      }, (error) => {
+        done();
+        reject(error);
+      });
+    });
+  }
   /** glibren.25: um jogo do catálogo que o banco ainda não verificou (nenhuma montagem passou por ele). */
   var unchecked = (library, game) => !library.games[game.id]?.torbox;
   /** glibren.25: quantos jogos de `entries` ([{ game }]) o banco ainda não verificou. */
   var uncheckedCount = (library, entries) => entries.filter((entry) => unchecked(library, entry.game)).length;
-  async function buildLibrary({ entries, api, hashList = null, library = emptyLibrary(), save = () => {}, onProgress = () => {}, signal, sources = null, fresh = false, onlyNew = false, sleep = defaultSleep, now = Date.now, pace = PACE_MS, rateWait = RATE_WAIT_MS, chunk = CHUNK, saveEvery = SAVE_EVERY_MS, log = () => {} }) {
+  async function buildLibrary({ entries, api, hashList = null, library = emptyLibrary(), save = () => {}, onProgress = () => {}, signal, sources = null, fresh = false, onlyNew = false, sleep = defaultSleep, now = Date.now, pace = PACE_MS, rateWait = RATE_WAIT_MS, chunk = CHUNK, saveEvery = SAVE_EVERY_MS, callLimit = CALL_LIMIT_MS, log = () => {} }) {
     const wanted = sources ? new Set(sources) : null;
     const sourceList = sources ? [...sources].sort() : null;
     const open = library.run && !library.run.finishedAt && !fresh && JSON.stringify(library.run.sources) === JSON.stringify(sourceList) && Boolean(library.run.onlyNew) === Boolean(onlyNew);
@@ -469,7 +499,7 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
         lastCall = now();
         run.calls++;
         try {
-          return await work();
+          return await bounded(work(), signal, callLimit);
         } catch (error) {
           if (error?.name === "AbortError" || signal?.aborted) throw error.name === "AbortError" ? error : stopped();
           const limited = error?.code === "RATE_LIMITED";
@@ -480,6 +510,7 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
             tell();
             await sleep(ms, signal);
             waitingUntil = null;
+            tell(); // glibren.26: a tela sai do "aguardando" quando a espera acaba (ficava parada em "5 s")
             continue;
           }
           throw error;

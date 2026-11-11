@@ -33,6 +33,11 @@ import { FileSystem, Http } from '@ps5-react/core';
   // jogos chega perto de 7 MB. Pesa no heap do console: testar no PS5 antes de subir mais.
   var MAX_FEEDS = 50, MAX_BYTES = 8 * 1024 * 1024;
   var TOO_BIG = "The file is larger than 8 MiB.";
+  // glibren.26: o transporte HTTP do console recusa maxBytes acima de 4 MiB (ps5-react network_api.cpp:
+  // "invalid method/body/maxBytes/binary"). Da glibren.20 a .25 o pedido de 8 MiB fazia TODO feed da web falhar no
+  // PS5, inclusive o catalogo ao vivo (live.jlx, ~1,8 MB): a loja parou de receber jogos novos. 8 MiB fica so para
+  // arquivos do PS5 (a lista Orbit Store e os .json escolhidos).
+  var NET_MAX_BYTES = 4 * 1024 * 1024;
   // MODIFIED (0.5.1): the live catalog, built every few hours from the public Pegasus catalogs
   // (tools/catalog/live-feed.mjs, .github/workflows/catalog-live.yml): games and links newer than this build's
   // bundled catalog. Every console reads it like a feed the player added, without being listed in Settings,
@@ -109,12 +114,13 @@ import { FileSystem, Http } from '@ps5-react/core';
     }
   }
   // The cache of a file's good read: the same form as a fetched feed's, with the file's stamp.
+  // glibren.26: escrito de uma vez (um texto so de ~4 MB para a lista Orbit Store, nao o documento e depois uma segunda
+  // copia dele emendada ao cabecalho), e o documento por ultimo, como antes (readCacheHead le so o que vem antes dele).
   function saveLocal(url, feed, stamp) {
-    const text2 = JSON.stringify(feedDocument({ ...feed, mirrors: [] }));
     const cache = { url, from: url, hash: `file:${stamp}`, etag: null, stamp, fetchedAt: isoStamp(Date.now()), name: feed.name, games: feed.games.length, skipped: feed.skipped, mirrors: [] };
     try {
       FileSystem.mkdir(DIR, { recursive: true });
-      FileSystem.writeFile(`${cacheFile(url)}.tmp`, `${JSON.stringify(cache).slice(0, -1)},"document":${text2}}`);
+      FileSystem.writeFile(`${cacheFile(url)}.tmp`, JSON.stringify({ ...cache, document: feedDocument({ ...feed, mirrors: [] }) }));
       FileSystem.rename(`${cacheFile(url)}.tmp`, cacheFile(url));
     } catch (error2) {
       console.log(`feeds: copy of ${url} not kept: ${error2.message}`);
@@ -125,14 +131,31 @@ import { FileSystem, Http } from '@ps5-react/core';
   }
   // At launch: the file as it is on the disk now, or (missing, unreadable, not a feed) its last good read, with the
   // reason in its status. The cached copy stands in for the file when its stamp says nothing changed.
+  // glibren.26: so o cabecalho de um cache (o que vem antes de "document"), sem montar o documento: um arquivo do PS5 que
+  // mudou (a lista Orbit Store a cada revisao nova) e lido sem a copia antiga inteira montada ao lado no heap de 32 MiB.
+  function readCacheHead(url) {
+    for (const path of [cacheFile(url), `${LEGACY_DIR}/${stableKey(url)}.json`]) {
+      try {
+        const text2 = FileSystem.readFile(path);
+        const at = typeof text2 === "string" ? text2.indexOf(',"document":') : -1;
+        if (at < 0) continue;
+        const head = JSON.parse(`${text2.slice(0, at)}}`);
+        if (head?.url === url) return head;
+      } catch {
+      }
+    }
+    return null;
+  }
   function loadLocal(url) {
-    const cache = readCache(url);
+    const cache = readCacheHead(url);
+    // O documento do cache so quando ele vale: o arquivo nao mudou, ou nao pode ser lido.
+    const cachedDocument = () => readCache(url)?.document;
     let failure = null;
     try {
       const info = statLocal(url);
       const stamp = stampOf(info);
       if (cache && cache.stamp === stamp) {
-        const feed2 = parseFeed(cache.document, url);
+        const feed2 = parseFeed(cachedDocument(), url);
         loaded.set(url, cache.hash);
         meta.set(url, { ...summary(cache), fetchedAt: isoStamp(Date.now()) });
         setIndex(url, feed2.games);
@@ -150,7 +173,7 @@ import { FileSystem, Http } from '@ps5-react/core';
     console.log(`feeds: ${url} not read: ${failure.message}`);
     status.set(url, { state: "failed", error: failure.message });
     if (!cache) return null;
-    const feed = parseFeed(cache.document, url);
+    const feed = parseFeed(cachedDocument(), url);
     loaded.set(url, cache.hash);
     meta.set(url, summary(cache));
     setIndex(url, feed.games);
@@ -248,7 +271,7 @@ import { FileSystem, Http } from '@ps5-react/core';
   var strongTag = (tag) => typeof tag === "string" && tag !== "" && !tag.startsWith("W/") ? tag : null;
   async function fetchFrom(source, url) {
     // No custom headers: with them the transport will not follow a redirect (raw file hosts redirect).
-    const response = await Http.request(source, { maxBytes: MAX_BYTES });
+    const response = await Http.request(source, { maxBytes: Math.min(MAX_BYTES, NET_MAX_BYTES) });
     if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
     // 0.5.3: the copy the cache holds already, as the server's ETag says: it is not read, checked, hashed or
     // written again. Reading the live catalog (2 MiB at most) and building its copies held the console for
@@ -473,6 +496,8 @@ import { FileSystem, Http } from '@ps5-react/core';
   // that does (a refresh, a mirror answering instead of the feed, a feed removed); `subscribeFeeds` calls
   // back on every change to the feeds or their state.
   var feedIndexes = () => [...indexes.values()];
+  /** glibren.26: [[url do feed, pares [id, direct]]], para o contador respeitar "Mostrar na loja". */
+  var feedIndexEntries = () => [...indexes];
   var feedIndexVersion = () => indexVersion;
   function subscribeFeeds(listener) {
     listeners.add(listener);
@@ -511,4 +536,4 @@ import { FileSystem, Http } from '@ps5-react/core';
 /** glibren.9: a feed's name as its last good copy says (null when none is cached). */
 var feedName = (url) => meta.get(url)?.name ?? null;
 
-export { LIVE_FEED, MAX_FEEDS, orbitFeedSnapshot, refreshOrbitFeed, refreshFeedsNow, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };
+export { LIVE_FEED, MAX_FEEDS, NET_MAX_BYTES, feedIndexEntries, orbitFeedSnapshot, refreshOrbitFeed, refreshFeedsNow, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };

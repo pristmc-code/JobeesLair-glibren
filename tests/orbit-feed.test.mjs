@@ -142,3 +142,22 @@ test('on the PS5 the list is read where the payload writes it (/data/JobeesLair/
     core.Platform.OS = before;
   }
 });
+
+test('glibren.26: a summary that is only the start of the description is kept once, and comes back whole in the cache', async () => {
+  const { feedDocument, pageSummary } = await import(href('app/state/feed-format.js'));
+  const about = 'Become a mercenary in Night City. A long story follows.';
+  const doc = { version: 1, name: 'Orbit Store', games: [
+    { ...game(id(1)), about: [about], summary: 'Become a mercenary in Night City.' },
+    { ...game(id(2)), about: [about], summary: 'Your story.' },
+  ] };
+  const feed = parseFeed(doc, '/x/orbit-store.json');
+  assert.equal(feed.games[0].page.summary, '', 'not stored twice');
+  assert.equal(pageSummary(feed.games[0].page), 'Become a mercenary in Night City.');
+  assert.equal(pageSummary(feed.games[1].page), 'Your story.', 'a tagline of its own stays as it is');
+  const cached = JSON.parse(JSON.stringify(feedDocument(feed)));
+  assert.equal(cached.games[0].summary, 'Become a mercenary in Night City.');
+  assert.ok(!('cut' in cached.games[0]));
+  const again = parseFeed(cached, '/x/orbit-store.json');
+  assert.equal(pageSummary(again.games[0].page), 'Become a mercenary in Night City.');
+  assert.deepEqual(again.games.map((item) => item.releases.map((r) => r.label)), feed.games.map((item) => item.releases.map((r) => r.label)));
+});

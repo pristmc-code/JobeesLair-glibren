@@ -78,6 +78,9 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.26**: the live catalog updates on the PS5 again (broken since glibren.20 by a request size the console
+> refuses), the Orbit Store list and TorBox's account take less memory (the app closed with Orbit on), the TorBox
+> library no longer freezes on a call that never returns, and "Show in the store" keeps focus and the titles counter.
 > **glibren.25**: the Orbit Store list now reaches the app on the PS5 (it read the wrong folder), "Check only the new
 > games" in the TorBox library, a "Show in the store" switch per catalog in Settings > Catalog feeds (one left on shows
 > only its games, in the full and the TorBox store), and Convert always says what happened (queue position, converting

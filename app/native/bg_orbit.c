@@ -25,6 +25,8 @@
 #define ORBIT_TAG 16u
 #define ORBIT_STALE_S (24 * 3600)
 #define ORBIT_QUIET_S (14 * 24 * 3600)
+// glibren.26: versao da conversao; mudou, o feed e regravado mesmo sem revisao nova do Orbit (o corte do about).
+#define ORBIT_CONV 2
 #define ORBIT_MIN_GAP_S 60 // um "Atualizar" logo depois de outra tentativa nao baixa de novo
 
 typedef struct {
@@ -32,6 +34,7 @@ typedef struct {
   int64_t enabled_at, last_try, last_ok, revision_since, retry_until, next_try;
   uint64_t revision;
   int games, releases;
+  int conv; // glibren.26: ORBIT_CONV de quem gravou o feed
   char kind[12];   // "", "network", "broken"
   char error[200];
   char said[12];   // o "stale" que ja foi notificado
@@ -54,10 +57,10 @@ static const char* orbit_stale_locked(int64_t now) {
 
 static void orbit_json_locked(Buf* b, int64_t now) {
   buf_fmt(b, "{\"enabled\":%s,\"busy\":%s,\"enabledAt\":%lld,\"lastTry\":%lld,\"lastOk\":%lld,\"revision\":%llu,"
-          "\"revisionSince\":%lld,\"retryUntil\":%lld,\"games\":%d,\"releases\":%d,\"kind\":",
+          "\"revisionSince\":%lld,\"retryUntil\":%lld,\"games\":%d,\"releases\":%d,\"conv\":%d,\"kind\":",
           g_orbit.enabled ? "true" : "false", g_orbit.busy ? "true" : "false", (long long)g_orbit.enabled_at,
           (long long)g_orbit.last_try, (long long)g_orbit.last_ok, (unsigned long long)g_orbit.revision,
-          (long long)g_orbit.revision_since, (long long)g_orbit.retry_until, g_orbit.games, g_orbit.releases);
+          (long long)g_orbit.revision_since, (long long)g_orbit.retry_until, g_orbit.games, g_orbit.releases, g_orbit.conv);
   buf_json(b, g_orbit.kind);
   buf_str(b, ",\"error\":");
   buf_json(b, g_orbit.error);
@@ -86,6 +89,7 @@ static int orbit_status_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "revision")) { if (!jp_uint(jp, &number)) return -1; s->revision = number; return 1; }
   if (!strcmp(key, "kind")) return jp_text(jp, s->kind, sizeof s->kind) ? 1 : -1;
   if (!strcmp(key, "error")) return lib_text(jp, s->error, sizeof s->error) ? 1 : -1;
+  if (!strcmp(key, "conv")) { if (!jp_uint(jp, &number)) return -1; s->conv = (int)number; return 1; }
   if (!strcmp(key, "said")) return jp_text(jp, s->said, sizeof s->said) ? 1 : -1;
   int64_t* slot = !strcmp(key, "enabledAt") ? &s->enabled_at : !strcmp(key, "lastTry") ? &s->last_try :
                   !strcmp(key, "lastOk") ? &s->last_ok : !strcmp(key, "revisionSince") ? &s->revision_since :
@@ -269,6 +273,7 @@ static void orbit_release_json(Buf* b, const OrbitRel* r) {
   buf_json(b, record);
   buf_str(b, "}");
 }
+#define ORBIT_ABOUT_MAX 1500
 static void orbit_game_json(Buf* b, OrbitRel* first, size_t count) {
   const OrbitRel* g = first;
   buf_str(b, "{\"id\":");
@@ -298,7 +303,22 @@ static void orbit_game_json(Buf* b, OrbitRel* first, size_t count) {
     buf_str(b, ",\"summary\":");
     buf_json(b, cut);
   }
-  if (g->f[OF_DESCRIPTION]) { buf_str(b, ",\"about\":["); buf_json(b, g->f[OF_DESCRIPTION]); buf_str(b, "]"); }
+  // glibren.26: a descricao vai com no maximo ORBIT_ABOUT_MAX bytes (cortada numa palavra, com "..."): o app le a lista
+  // inteira no heap de 32 MiB e, com 2.458 jogos, descricoes de ate 4.000 caracteres pesavam ao lado da Biblioteca
+  // TorBox. A capa, o fundo (hero) e as outras capas ficam todos.
+  if (g->f[OF_DESCRIPTION]) {
+    char about[ORBIT_ABOUT_MAX + 4];
+    copy_utf8(about, ORBIT_ABOUT_MAX + 1, g->f[OF_DESCRIPTION]);
+    size_t n = strlen(about);
+    if (g->f[OF_DESCRIPTION][n]) {
+      while (n > ORBIT_ABOUT_MAX / 2 && about[n - 1] != ' ') --n;
+      while (n > 0 && about[n - 1] == ' ') --n;
+      memcpy(about + n, "...", 4);
+    }
+    buf_str(b, ",\"about\":[");
+    buf_json(b, about);
+    buf_str(b, "]");
+  }
   buf_str(b, ",\"art\":{");
   int comma = 0;
   if (g->f[OF_COVER]) { buf_str(b, "\"cover\":"); buf_json(b, g->f[OF_COVER]); comma = 1; }
@@ -420,7 +440,7 @@ static void orbit_check(void) {
         snprintf(error, sizeof error, "the catalogue opened but its contents changed (no games read)");
       } else {
         pthread_mutex_lock(&g_orbit_lock);
-        same = revision == g_orbit.revision && g_orbit.last_ok;
+        same = revision == g_orbit.revision && g_orbit.last_ok && g_orbit.conv == ORBIT_CONV;
         pthread_mutex_unlock(&g_orbit_lock);
         struct stat st;
         if (same && !stat(g_orbit_feed, &st)) wrote = 1;
@@ -442,6 +462,7 @@ static void orbit_check(void) {
   if (wrote) {
     if (!g_orbit.revision_since || revision != g_orbit.revision) g_orbit.revision_since = now;
     g_orbit.revision = revision;
+    g_orbit.conv = ORBIT_CONV;
     g_orbit.games = games;
     g_orbit.releases = releases;
     g_orbit.last_ok = now;
@@ -477,6 +498,8 @@ static void* orbit_loop(void* unused) {
   // Ao subir, a proxima tentativa conta da ultima (um payload reiniciado nao baixa de novo antes das 6 h).
   g_orbit.next_try = g_orbit.last_try ? g_orbit.last_try + g_orbit_every : 0;
   if (g_orbit.retry_until > g_orbit.next_try) g_orbit.next_try = g_orbit.retry_until;
+  // glibren.26: feed gravado por uma conversao antiga: regrava ja (sem esperar as 6 h).
+  if (g_orbit.last_ok && g_orbit.conv != ORBIT_CONV) g_orbit.next_try = 0;
   while (!g_stop) {
     const int64_t now = now_s();
     // O relogio voltou (PS5 acertou a hora): nao espera anos pela proxima.

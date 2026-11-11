@@ -6,6 +6,14 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.26** (fork): the live catalog updates on the PS5 again: since glibren.20 every web feed was asked with
+  8 MiB while the console transport takes at most 4 MiB, so each request was refused ("invalid
+  method/body/maxBytes/binary") and the store stopped receiving new games. The Orbit Store list weighs less (repeated
+  strings kept once, the cache written in one piece, descriptions cut at 1,500 bytes; the payload rewrites the list
+  at once with the new conversion) and TorBox's account is read in pages of 250 instead of all at once (the app ran out
+  of memory and closed with Orbit Store on). TorBox library: a call the console never answers gives up after 90 s,
+  Cancel stops at once, and a wait counts down. "Show in the store": focus stays on the switch pressed, and the
+  titles counter counts only the catalogs shown. Background payload API 21.
 - **glibren.25** (fork): the Orbit Store list now shows up on the PS5: the app read it from its own data folder
   (`/download0` or `/data/ps5-react/<ID>`) while the background payload writes it to `/data/JobeesLair/orbit`, so it
   stayed on "Downloading the catalog for the first time" forever and never reached the store or the TorBox library's

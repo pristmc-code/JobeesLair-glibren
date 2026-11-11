@@ -34,6 +34,14 @@ import { FileSystem, Platform } from '@ps5-react/core';
   /** Os jogos listados dos catálogos que a loja mostra. */
   var shownListed = () => hidden.size ? allListed.filter((game) => sourcesOfGame(game).some((source) => !hidden.has(source))) : allListed;
   var sourceShown = (id) => !hidden.has(id);
+  // glibren.26: muda a cada catálogo mostrado/escondido (o contador de títulos refaz a conta).
+  var hiddenVersion = 0;
+  var shownVersion = () => hiddenVersion;
+  /** glibren.26: avisa `listener` quando a loja muda (versão ou catálogos mostrados), fora de um componente. */
+  function subscribeStore(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
   var paths = () => libraryPaths(DATA_DIR, Platform.OS === "ps5");
   /** Os ids confirmados gravados (null: a biblioteca nunca foi montada). */
   function confirmedIds() {
@@ -98,6 +106,8 @@ import { FileSystem, Platform } from '@ps5-react/core';
       applyStoreMode(mode, { save: false });
       return result;
     }
+    hiddenVersion++;
+    notify();
     try {
       saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), hiddenSources: [...hidden] });
     } catch (error) {
@@ -161,4 +171,4 @@ import { FileSystem, Platform } from '@ps5-react/core';
     console.log(`[store-mode] saved choice not read: ${error?.message || error}`);
   }
 
-export { MODES, applyStoreMode, setSourceShown, sourceShown, libraryChanged, onStoreMode, storeEpoch, storeMode, toggleStoreMode, torBoxGames, torBoxStoreCount, useStoreMode };
+export { MODES, applyStoreMode, setSourceShown, shownVersion, sourceShown, subscribeStore, libraryChanged, onStoreMode, storeEpoch, storeMode, toggleStoreMode, torBoxGames, torBoxStoreCount, useStoreMode };

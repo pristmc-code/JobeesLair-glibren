@@ -17,6 +17,7 @@ import { formats as bundledFormats } from '../data/formats.js';
 import { formatDate2, t } from '../i18n/core.js';
 import { createPageCache } from './page-cache.js';
 import { feedRatings, loadFeedGames } from './feeds.js';
+import { pageSummary } from './feed-format.js';
 import { ratings as bundledRatings } from '../data/ratings.js';
 import { createReleaseCache } from './release-cache.js';
 import { readJlx } from './jlx.js';
@@ -105,7 +106,8 @@ import { noteRow, warmAtStart } from './cover-warm.js';
       return this.feedPage.videos ?? [];
     } },
     shortDescription: { get() {
-      return this.feedPage.summary;
+      // glibren.26: o resumo que era o comeco da descricao sai dela (state/feed-format.js pageSummary).
+      return pageSummary(this.feedPage);
     } }
   });
   // Feed releases join the catalog game they name (the same id); a game the catalog lacks is listed with

@@ -59,6 +59,17 @@ import { youtubeId } from './youtube.js';
   var stableKey = (value) => finish(hashSteps(value, Infinity));
   var stableKeyAsync = (value, pause) => finishPaced(hashSteps(value, HASH_SLICE), pause);
   var text = (value, max = 200) => typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, max) : "";
+  // glibren.26: os valores que se repetem em todo um feed (provedor, rotulo, formato, versao, genero, editora, datas) uma
+  // vez so na memoria. O JSON.parse do QuickJS cria uma string nova para cada ocorrencia: na lista Orbit Store (2.458
+  // jogos, 5.306 links) sao milhares de copias de "Vikingfile - EUR - Game folder (rar)" no heap de 32 MiB do app.
+  var pool = null;
+  var same = (value) => {
+    if (!pool || typeof value !== "string" || value.length > 120) return value;
+    const kept = pool.get(value);
+    if (kept !== void 0) return kept;
+    pool.set(value, value);
+    return value;
+  };
   var count = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
   function httpURL(value) {
     try {
@@ -107,18 +118,18 @@ import { youtubeId } from './youtube.js';
     const record = {
       // From what the release is, not where it sits: the queue keeps it across launches and feed edits.
       id: `feed-${feedKey}-${gameId}-${stableKey(`${url} ${label}`)}`,
-      format: FORMATS.has(raw.format) ? raw.format : FORMATS.has(extension) ? extension : "binary",
+      format: same(FORMATS.has(raw.format) ? raw.format : FORMATS.has(extension) ? extension : "binary"),
       filename,
       url,
       ...browserUrl ? { browserUrl } : {},
       requiresBrowser: raw.requiresBrowser === true,
       sizeBytes: Number.isSafeInteger(raw.sizeBytes) && raw.sizeBytes > 0 ? raw.sizeBytes : null,
-      version: text(raw.version, 32),
-      category: text(raw.category, 16) || "game",
-      provider,
+      version: same(text(raw.version, 32)),
+      category: same(text(raw.category, 16) || "game"),
+      provider: same(provider),
       source: "feed",
       flow: "feed",
-      label,
+      label: same(label),
       // Volumes of one set share a record (and a label but for "part N"); one per game unless the feed splits them.
       record: text(raw.record, 80) || `feed-${feedKey}-${gameId}`
     };
@@ -160,28 +171,36 @@ import { youtubeId } from './youtube.js';
       id,
       title,
       platform: raw.platform === "ps4" || raw.platform === "ps5" ? raw.platform : id.startsWith("PPSA") ? "ps5" : "ps4",
-      providers: [...new Set(releases.map((item) => isMagnetLink(item.url) ? "torrent" : hostName(item.url)))],
+      providers: [...new Set(releases.map((item) => isMagnetLink(item.url) ? "torrent" : same(hostName(item.url))))],
       direct: releases.some(direct),
-      developer: text(raw.developer, 120),
-      publisher: text(raw.publisher, 120),
-      releaseDate,
-      genres: list(raw.genres, 8, (genre) => text(genre, 40)),
-      features: list(raw.features, 12, (feature) => text(feature, 40)),
+      developer: same(text(raw.developer, 120)),
+      publisher: same(text(raw.publisher, 120)),
+      releaseDate: same(releaseDate),
+      genres: list(raw.genres, 8, (genre) => same(text(genre, 40))),
+      features: list(raw.features, 12, (feature) => same(text(feature, 40))),
       recommendations: count(raw.recommendations, 1e9) ?? 0,
       art: art(raw.art)
     };
     if (releaseDate) record.year = Number(releaseDate.slice(0, 4));
     // 0.5.1: the day the feed first listed the game (the live catalog's "New this week").
-    if (typeof raw.addedAt === "string" && DATE.test(raw.addedAt)) record.addedAt = raw.addedAt;
+    if (typeof raw.addedAt === "string" && DATE.test(raw.addedAt)) record.addedAt = same(raw.addedAt);
     const metacritic = count(raw.metacritic, 100);
     if (metacritic != null) record.metacritic = metacritic;
     const sizeGb = count(raw.sizeGb, 4096) ?? (bytes ? Math.round(bytes / 1e8) / 10 : null);
     if (sizeGb) record.sizeGb = sizeGb;
+    const about = list(raw.about, 20, (paragraph) => text(paragraph, 4e3));
+    const summary = text(raw.summary, 600);
+    // glibren.26: o resumo que e so o comeco da descricao (a lista Orbit Store, num jogo sem frase de efeito) nao fica
+    // guardado duas vezes: fica vazio, com o tamanho em `cut`, e e tirado da descricao quando pedido (catalog.js FeedEntry, feedDocument).
     const page = {
-      about: list(raw.about, 20, (paragraph) => text(paragraph, 4e3)),
+      about,
       shots: list(raw.shots, 12, httpURL),
-      summary: text(raw.summary, 600)
+      summary
     };
+    if (summary && about[0]?.startsWith(summary)) {
+      page.summary = "";
+      page.cut = summary.length;
+    }
     // glibren.9: "videos" (YouTube ids or addresses) for the TorBox library on the phone; kept only when there are some.
     const videos = [...new Set(list(raw.videos, 6, youtubeId))];
     if (videos.length) page.videos = videos;
@@ -260,6 +279,7 @@ import { youtubeId } from './youtube.js';
       throw new Error("Not a catalog feed: expected version 1 with a games list.");
     const key = stableKey(url);
     const games2 = [];
+    pool = /* @__PURE__ */ new Map(); // glibren.26: uma por feed lido; some com ele (as strings ficam nos registros)
     const seen = /* @__PURE__ */ new Set();
     const offered = document2.games.slice(0, MAX_GAMES);
     let releases = 0;
@@ -276,6 +296,7 @@ import { youtubeId } from './youtube.js';
       if (++done % batch === 0) yield;
     }
     // Addresses the publisher says the same feed is also served from, tried when this one is down.
+    pool = null;
     const mirrors = [...new Set(list(document2.mirrors, 16, httpURL))].filter((mirror) => mirror !== url).slice(0, MAX_MIRRORS);
     return { name: text(document2.name, 80) || defaultName(url), games: games2, skipped: offered.length - games2.length, mirrors, ratings: ratingsOf(document2.ratings) };
   }
@@ -302,6 +323,8 @@ import { youtubeId } from './youtube.js';
   // The same, with the screen's frames in between: a refresh while the store or Settings is open.
   var parseFeedAsync = (document2, url, pause) => finishPaced(feedSteps(document2, url, PARSE_BATCH), pause);
   // A parsed feed back in feed form, as the cache stores it: what parseFeed gives for it is the same feed.
+  /** glibren.26: o resumo de uma pagina de feed (o comeco da descricao quando ele nao ficou guardado a parte). */
+  var pageSummary = (page) => page.summary || (page.cut ? (page.about[0] ?? "").slice(0, page.cut) : "");
   function feedDocument({ name, games: games2, mirrors = [], ratings = {} }) {
     return {
       version: 1,
@@ -311,9 +334,11 @@ import { youtubeId } from './youtube.js';
       games: games2.map(({ game: record, page, releases }) => ({
         ...record,
         ...page,
+        // glibren.26: o resumo guardado como um pedaco da descricao volta inteiro para o cache.
+        ...page.cut ? { summary: pageSummary(page), cut: void 0 } : {},
         releases: releases.map(({ id, source: source2, flow, ...rest }) => rest)
       }))
     };
   }
 
-export { MAX_GAMES, MAX_MIRRORS, feedDocument, parseFeed, parseFeedAsync, stableKey, stableKeyAsync };
+export { MAX_GAMES, MAX_MIRRORS, feedDocument, pageSummary, parseFeed, parseFeedAsync, stableKey, stableKeyAsync };

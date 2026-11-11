@@ -294,3 +294,40 @@ test('glibren.23: the hosts list keeps each host\'s daily quota; a host out of i
   assert.equal(hostSupported(list, 'https://www.mediafire.com/file/x'), true);
   assert.equal(hostSupported(list, 'https://down.example/x'), false);
 });
+
+test('glibren.26: myList reads the account in pages of 250 (up to 1000) and keeps only what the app uses of each item', async () => {
+  const asked = [];
+  const item = (n) => ({ id: n, name: `PPSA${String(n).padStart(5, '0')}.rar`, hash: `h${n}`, size: 5e9, download_finished: true, md5: 'x'.repeat(32), s3_path: 'big/path', files: [{ id: 1, name: `dir/PPSA${n}.rar`, short_name: `PPSA${n}.rar`, size: 5e9, mimetype: 'application/x-rar', md5: 'y', s3_path: 'z' }] });
+  const { http } = fakeApi({
+    'GET /webdl/mylist': (url) => {
+      const offset = Number(url.searchParams.get('offset')), limit = Number(url.searchParams.get('limit'));
+      asked.push([offset, limit]);
+      return ok(Array.from({ length: Math.max(0, Math.min(limit, 600 - offset)) }, (_, i) => item(offset + i)));
+    },
+    // A TorBox that ignores the offset: the same page again ends the reading.
+    'GET /torrents/mylist': () => ok(Array.from({ length: 250 }, (_, i) => item(i))),
+  });
+  const api = createTorBox({ http, key: () => KEY });
+  const web = await api.myList('webdl');
+  assert.deepEqual(asked, [[0, 250], [250, 250], [500, 250]]);
+  assert.equal(web.length, 600);
+  assert.deepEqual(web[3], { id: 3, name: 'PPSA00003.rar', hash: 'h3', size: 5e9, download_state: undefined, download_finished: true, download_present: undefined, progress: undefined, files: [{ id: 1, name: 'dir/PPSA3.rar', short_name: 'PPSA3.rar', size: 5e9 }] });
+  assert.equal((await api.myList('torrent')).length, 250);
+});
+
+test('glibren.26: a link already in the account is looked for page by page, and found on a later page', async () => {
+  const asked = [];
+  const { http } = fakeApi({
+    'GET /webdl/mylist': (url) => {
+      const offset = Number(url.searchParams.get('offset'));
+      asked.push(offset);
+      return ok(Array.from({ length: offset < 500 ? 250 : 10 }, (_, i) => ({ id: offset + i, original_url: offset + i === 300 ? FICHIER : `https://other.example/${offset + i}` })));
+    },
+  });
+  const api = createTorBox({ http, key: () => KEY });
+  assert.deepEqual(await api.findWebDownload(FICHIER), { kind: 'webdl', id: 300, hash: md5(FICHIER) });
+  assert.deepEqual(asked, [0, 250], 'stops at the page that has it');
+  asked.length = 0;
+  assert.equal(await api.findWebDownload('https://nowhere.example/x'), null);
+  assert.deepEqual(asked, [0, 250, 500]);
+});
