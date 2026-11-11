@@ -6,6 +6,12 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.28** (fork): a game's page no longer freezes the app when its download turns into a conversion (the
+  download button had no "converting" state and threw while drawing); an unknown state now shows its name, and a screen
+  that fails to draw shows a notice that Back leaves instead of freezing everything. The TorBox library is written one
+  game at a time (the files are byte for byte the same) and no longer runs out of memory with Orbit Store on (every save
+  failed and the TorBox store kept the old list); the payload list is saved even if the library file is not, and a
+  library that cannot be read (out of memory) stops the build instead of starting over and writing over it.
 - **glibren.27** (fork): the app no longer runs out of memory reading its catalogs on the PS5. The live catalog (now
   actually downloaded since glibren.26) and the console's own feed files are read one game at a time from the text
   instead of as one big tree, and their caches are written in pieces (a live catalog refresh went from ~24 MB to ~6 MB

@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "BACKUP 文件夹里没有内容。",
   "downloads.backup.loading": "正在读取…",
   "downloads.backup.noPayload": "后台 payload 没有运行。请在设置中打开“关闭应用后继续下载”，然后重新打开下载。",
+  "app.screenFailed": "此页面出现问题，已停止以便应用的其他部分继续工作。请返回后重新打开。",
   "downloads.backup.parts": "{count} 个分卷",
   "downloads.backup.pending": "{count} 个尚未转换",
   "downloads.backup.busy": "仍在转换中：请先取消转换再删除。",

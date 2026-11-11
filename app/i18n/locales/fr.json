@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "Rien dans le dossier BACKUP.",
   "downloads.backup.loading": "Lecture…",
   "downloads.backup.noPayload": "Le payload en arrière-plan ne tourne pas. Activez « Continuer à télécharger quand je ferme l’app » dans les Réglages et rouvrez Téléchargements.",
+  "app.screenFailed": "Cet écran a rencontré un problème et a été arrêté pour que le reste de l’app continue de fonctionner. Revenez en arrière et rouvrez-le.",
   "downloads.backup.parts": "{count} parties",
   "downloads.backup.pending": "{count} pas encore convertis",
   "downloads.backup.busy": "Conversion en cours : annulez-la avant de supprimer.",

@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "لا شيء في مجلد BACKUP.",
   "downloads.backup.loading": "جارٍ القراءة…",
   "downloads.backup.noPayload": "الحمولة في الخلفية لا تعمل. فعّل \"متابعة التنزيل عند إغلاق التطبيق\" في الإعدادات ثم افتح التنزيلات مجددًا.",
+  "app.screenFailed": "واجهت هذه الشاشة مشكلة وتم إيقافها كي يستمر باقي التطبيق في العمل. ارجع وافتحها مرة أخرى.",
   "downloads.backup.parts": "{count} أجزاء",
   "downloads.backup.pending": "{count} لم تُحوَّل بعد",
   "downloads.backup.busy": "لا يزال قيد التحويل: ألغِ التحويل قبل الحذف.",

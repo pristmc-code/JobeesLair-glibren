@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "BACKUP फ़ोल्डर में कुछ नहीं है।",
   "downloads.backup.loading": "पढ़ा जा रहा है…",
   "downloads.backup.noPayload": "बैकग्राउंड payload नहीं चल रहा है। सेटिंग्स में \"ऐप बंद करने पर भी डाउनलोड जारी रखें\" चालू करें और डाउनलोड फिर से खोलें।",
+  "app.screenFailed": "इस स्क्रीन में समस्या आई और उसे रोक दिया गया ताकि बाकी ऐप चलता रहे। वापस जाएँ और इसे फिर से खोलें।",
   "downloads.backup.parts": "{count} भाग",
   "downloads.backup.pending": "{count} अभी बदले नहीं गए",
   "downloads.backup.busy": "अभी बदला जा रहा है: हटाने से पहले रूपांतरण रद्द करें।",

@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "Nada na pasta BACKUP.",
   "downloads.backup.loading": "Lendo…",
   "downloads.backup.noPayload": "O payload de segundo plano não está rodando. Ligue \"Continuar baixando quando eu fechar o app\" nas Configurações e abra os Downloads de novo.",
+  "app.screenFailed": "Esta tela encontrou um problema e foi parada para o resto do app continuar funcionando. Volte e abra de novo.",
   "downloads.backup.parts": "{count} partes",
   "downloads.backup.pending": "{count} ainda sem converter",
   "downloads.backup.busy": "Ainda está sendo convertido: cancele a conversão antes de apagar.",

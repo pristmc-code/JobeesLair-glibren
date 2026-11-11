@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "Folder BACKUP kosong.",
   "downloads.backup.loading": "Membaca…",
   "downloads.backup.noPayload": "Payload latar belakang tidak berjalan. Aktifkan \"Tetap mengunduh saat aplikasi ditutup\" di Pengaturan lalu buka Unduhan lagi.",
+  "app.screenFailed": "Layar ini mengalami masalah dan dihentikan agar bagian lain aplikasi tetap berjalan. Kembali lalu buka lagi.",
   "downloads.backup.parts": "{count} bagian",
   "downloads.backup.pending": "{count} belum dikonversi",
   "downloads.backup.busy": "Masih dikonversi: batalkan konversi sebelum menghapus.",

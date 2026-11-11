@@ -58,6 +58,7 @@ import { Reveal } from './ui/Reveal.jsx';
 import { laterReady } from './ui/later.js';
 import { Disclaimer } from './ui/Disclaimer.jsx';
 import { UpdateDialog } from './ui/UpdateDialog.jsx';
+import { ScreenGuard } from './ui/ScreenGuard.jsx';
 import { AutoReportAsk } from './ui/AutoReportAsk.jsx';
 import { Ps5PkgWarning } from './ui/Ps5PkgWarning.jsx';
 import { startAutoReports } from './state/bug-report.js';
@@ -186,7 +187,8 @@ import './state/picture-route.js';
           onBrowse ? null : (
             // No background of its own: the root's canvas shows through, so a screen change does not
             // fill the whole screen twice. `screen` lets the header's Down return to where it was left.
-            jsx(ScreenFrame, { immersive, children: /* @__PURE__ */ (0, jsx)(FocusScope, { focusKey: "screen", children: /* @__PURE__ */ (0, jsx)(Screen, { screen: top }) }) }, key)
+            // glibren.28: ScreenGuard: uma excecao ao desenhar a tela vira um aviso nela, sem congelar o app inteiro.
+            jsx(ScreenFrame, { immersive, children: /* @__PURE__ */ (0, jsx)(FocusScope, { focusKey: "screen", children: jsx(ScreenGuard, { children: /* @__PURE__ */ (0, jsx)(Screen, { screen: top }) }) }) }, key)
           ),
           immersive ? null : /* @__PURE__ */ (0, jsx)(Legend, { screen: top.name }),
           immersive ? null : jsx(AnnouncementBar, {}),

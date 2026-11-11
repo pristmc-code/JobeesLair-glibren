@@ -78,6 +78,8 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.28**: no more freeze when a download turns into a conversion with its game page open (and a failing screen
+> shows a notice instead of freezing the app), and the TorBox library saves without running out of memory.
 > **glibren.27**: catalogs are read without running out of memory (the live catalog and the console's feed files one
 > game at a time), the Orbit Store list carries only links for games the app already has, and feeds show the date and
 > time of their last download.

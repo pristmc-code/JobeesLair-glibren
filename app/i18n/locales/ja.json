@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "BACKUPフォルダーには何もありません。",
   "downloads.backup.loading": "読み込み中…",
   "downloads.backup.noPayload": "バックグラウンドのペイロードが動いていません。設定で「アプリを閉じてもダウンロードを続ける」をオンにして、ダウンロードを開き直してください。",
+  "app.screenFailed": "この画面で問題が起きたため、アプリの他の部分が動き続けるよう停止しました。戻ってもう一度開いてください。",
   "downloads.backup.parts": "{count} パート",
   "downloads.backup.pending": "未変換 {count} 件",
   "downloads.backup.busy": "まだ変換中です。削除する前に変換をキャンセルしてください。",

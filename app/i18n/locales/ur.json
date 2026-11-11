@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "BACKUP فولڈر میں کچھ نہیں ہے۔",
   "downloads.backup.loading": "پڑھا جا رہا ہے…",
   "downloads.backup.noPayload": "بیک گراؤنڈ payload نہیں چل رہا۔ سیٹنگز میں \"ایپ بند کرنے پر بھی ڈاؤن لوڈ جاری رکھیں\" آن کریں اور ڈاؤن لوڈز دوبارہ کھولیں۔",
+  "app.screenFailed": "اس اسکرین میں مسئلہ آیا اور اسے روک دیا گیا تاکہ باقی ایپ چلتی رہے۔ واپس جائیں اور اسے دوبارہ کھولیں۔",
   "downloads.backup.parts": "{count} حصے",
   "downloads.backup.pending": "{count} ابھی تبدیل نہیں ہوئے",
   "downloads.backup.busy": "ابھی تبدیل ہو رہا ہے: حذف کرنے سے پہلے تبدیلی منسوخ کریں۔",

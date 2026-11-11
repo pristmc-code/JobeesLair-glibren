@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "Niente nella cartella BACKUP.",
   "downloads.backup.loading": "Lettura…",
   "downloads.backup.noPayload": "Il payload in background non è attivo. Attiva \"Continua a scaricare quando chiudo l’app\" nelle Impostazioni e riapri Download.",
+  "app.screenFailed": "Questa schermata ha avuto un problema ed è stata fermata perché il resto dell’app continui a funzionare. Torna indietro e riaprila.",
   "downloads.backup.parts": "{count} parti",
   "downloads.backup.pending": "{count} non ancora convertiti",
   "downloads.backup.busy": "Conversione in corso: annullala prima di eliminare.",

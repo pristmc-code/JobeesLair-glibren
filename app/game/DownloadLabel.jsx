@@ -12,7 +12,9 @@ import { Icon } from '../ui/Icon.jsx';
 import { colors } from '../ui/colors.js';
 import { Text, View } from '@ps5-react/core';
 
-  var DISABLED = ["unavailable", "no-space", "removing"];
+  // glibren.28: "converting" (a conversao para .exfat, glibren.12) nao tinha entrada em CONTENT: a pagina do jogo travava o
+  // app inteiro ("Cannot convert undefined or null to object") quando o download virava conversao. Sem botao: nao pausa.
+  var DISABLED = ["unavailable", "no-space", "removing", "converting"];
   var CONTENT = {
     idle: { icon: "download", text: "download.button.idle" },
     unavailable: { icon: "download", text: "download.button.unavailable" },
@@ -45,8 +47,12 @@ import { Text, View } from '@ps5-react/core';
     // ShadowMount installed it but reports a real problem (its files out of reach): pressing checks again.
     attention: { icon: "alert", text: "download.button.attention" },
     "extraction-required": { icon: "circleCheck", text: "download.button.extraction-required" },
-    removing: { icon: "delete", text: "download.button.removing" }
+    removing: { icon: "delete", text: "download.button.removing" },
+    // glibren.28: convertendo para .exfat no payload (ou esperando a vez dele).
+    converting: { icon: "settings", text: "downloadState.converting" }
   };
+  // glibren.28: um estado da fila que esta tabela ainda nao conhece mostra o nome do estado em vez de derrubar a tela.
+  var contentOf = (status) => CONTENT[status] ?? { icon: "settings", text: hasStateLabel(status) ? `downloadState.${status}` : "download.status.ready" };
   var INK = { dark: { color: "#ffffff" }, light: { color: colors.fg }, disabled: { color: colors.muted } };
   function statusLine(status, progress, sizeGb) {
     if (status === "unavailable") return [t("download.status.unavailable"), null];
@@ -60,7 +66,7 @@ import { Text, View } from '@ps5-react/core';
   }
   function DownloadLabel({ status, amount, dark }) {
     const t2 = useT();
-    const { icon, text } = CONTENT[status];
+    const { icon, text } = contentOf(status);
     const inProgress = BUSY.includes(status) || status === "paused";
     const disabled = DISABLED.includes(status);
     const ink2 = dark ? INK.dark : disabled ? INK.disabled : INK.light;

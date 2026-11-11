@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "BACKUP ফোল্ডারে কিছু নেই।",
   "downloads.backup.loading": "পড়া হচ্ছে…",
   "downloads.backup.noPayload": "ব্যাকগ্রাউন্ড payload চলছে না। সেটিংসে \"অ্যাপ বন্ধ করলেও ডাউনলোড চালিয়ে যান\" চালু করে আবার ডাউনলোড খুলুন।",
+  "app.screenFailed": "এই স্ক্রিনে একটি সমস্যা হয়েছে এবং বাকি অ্যাপ চালু রাখতে এটি থামানো হয়েছে। ফিরে যান এবং আবার খুলুন।",
   "downloads.backup.parts": "{count}টি অংশ",
   "downloads.backup.pending": "{count}টি এখনও রূপান্তরিত হয়নি",
   "downloads.backup.busy": "এখনও রূপান্তর হচ্ছে: মোছার আগে রূপান্তর বাতিল করুন।",

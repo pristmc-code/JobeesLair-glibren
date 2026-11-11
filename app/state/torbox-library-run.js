@@ -63,7 +63,16 @@ import { FileSystem, Platform } from '@ps5-react/core';
       hashList = readHashList(FileSystem, hashListPaths(DATA_DIR, storageRoots()));
     } catch {
     }
-    const library = readLibrary(FileSystem, where);
+    // glibren.28: o banco gravado que nao deu para ler (sem memoria, por exemplo) para a montagem com o erro, sem comecar
+    // do zero nem gravar nada por cima dele.
+    let library;
+    try {
+      library = readLibrary(FileSystem, where);
+    } catch (error) {
+      log(`not started: library not read: ${error?.cause?.message || error?.message || error}`);
+      set({ ...IDLE, state: "failed", error: error?.message || String(error) });
+      return Promise.resolve();
+    }
     set({ ...IDLE, state: "running", phase: "account" });
     const entries = catalogEntries();
     // As fichas do celular (torbox-fichas.json) saem dos jogos do catálogo: capa, fotos, texto e detalhes da loja.
@@ -71,9 +80,16 @@ import { FileSystem, Platform } from '@ps5-react/core';
     const save = (value, { final }) => {
       try {
         writeLibrary(FileSystem, where, value, { backup: final });
-        if (final) writeList(FileSystem, where, value, void 0, (id) => byId.get(id) ?? null);
       } catch (error) {
         log(`not saved: ${error?.message || error}`);
+      }
+      // glibren.28: a lista, os ids da loja e as fichas (so na gravacao final; as parciais gravam so o banco) mesmo
+      // quando o banco nao grava: antes a falha do banco levava a lista junto e a loja ficava com a lista antiga.
+      if (!final) return;
+      try {
+        writeList(FileSystem, where, value, void 0, (id) => byId.get(id) ?? null);
+      } catch (error) {
+        log(`list not saved: ${error?.message || error}`);
       }
     };
     const promise = buildLibrary({

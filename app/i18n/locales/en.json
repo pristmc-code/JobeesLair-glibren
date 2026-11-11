@@ -1650,6 +1650,7 @@
     "downloads.backup.empty": "Nothing in the BACKUP folder.",
     "downloads.backup.loading": "Reading…",
     "downloads.backup.noPayload": "The background payload is not running. Turn on \"Keep downloading when I close the app\" in Settings and open Downloads again.",
+    "app.screenFailed": "This screen ran into a problem and was stopped so the rest of the app keeps working. Press Back and open it again.",
     "downloads.backup.parts": "{count} parts",
     "downloads.backup.pending": "{count} not converted yet",
     "downloads.backup.busy": "Still being converted: cancel the conversion before deleting.",

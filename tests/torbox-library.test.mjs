@@ -435,3 +435,142 @@ test('glibren.26: a TorBox call the console never answers gives up as a network 
   await assert.rejects(lib.buildLibrary({ entries: entriesOf([game(2)]), api: hanging, ...quiet, ...clock(), signal, callLimit: 0, save: () => {} }), { name: 'AbortError' });
   assert.ok(Date.now() - started < 2000, 'Cancel did not wait for the call');
 });
+
+// glibren.28: no PS5 (glibren.27, lista Orbit carregada) o JSON.stringify do banco inteiro de 3.185 jogos esgotou o heap de
+// 32 MiB em todas as gravacoes; agora banco, lista e fichas saem em pedacos (appendFile), com o mesmo texto de antes.
+function memoryFs({ append = true } = {}) {
+  const files = new Map();
+  const log = { writes: 0, appends: 0 };
+  const fs = { files, log, exists: (p) => files.has(p), readFile: (p) => files.get(p), writeFile: (p, text) => { log.writes++; files.set(p, String(text)); }, mkdir() {}, rename: (a, b) => { files.set(b, files.get(a)); files.delete(a); } };
+  if (append) fs.appendFile = (p, text) => { log.appends++; files.set(p, (files.get(p) ?? '') + text); };
+  return fs;
+}
+// Um banco grande (mais de um pedaco de 256 K caracteres), com titulos acentuados, para comparar com o JSON.stringify inteiro.
+function bigLibrary(total = 900) {
+  const games = {};
+  for (let n = 1; n <= total; n++) {
+    const id = `PPSA${String(100000 + n).slice(1)}`;
+    const confirmed = n % 2 === 0;
+    const files = confirmed ? [{ name: `Café Pokémon ${n}.exfat`, size: n * 1e9, format: 'exfat', via: 'webdl', hash: md5(`h${n}`), release: `r${n}`, link: `https://host.example/file/${n}/game-${n}.exfat` }] : [];
+    games[id] = { id, title: `Jogo Ñandú ${String(total - n).padStart(4, '0')}`, code: id, platform: 'ps5', sources: ['bundled'], genres: ['Action'], cover: n % 3 ? `https://img/${n}.png` : null, sizeBytes: n * 1e9, formats: ['exfat'],
+      torbox: { confirmed, checkedAt: '2026-11-10T12:00:00.000Z', run: 'r1', hash: confirmed ? files[0].hash : null, name: confirmed ? `Café ${n}` : null, files, ...n % 5 === 1 ? { known: [{ name: `${id}.exfat`, size: 1, format: 'exfat', via: 'code', hash: 'x' }] } : {} } };
+  }
+  return { version: 1, builtAt: '2026-11-10T12:30:00.000Z', run: { id: 'r1', startedAt: 'a', finishedAt: 'b', sources: null, total, done: total, found: total / 2, known: 0, errors: 0, calls: 9 }, games };
+}
+const catalogGame = (id) => ({ id, shortDescription: 'Resumo do jogo.', about: ['Parágrafo um, com acentuação.', 'Dois.'], shots: [{ url: `https://shots.example/${id}.jpg` }], videos: ['dQw4w9WgXcQ'], art: { cover: `https://img/${id}.png` }, developer: 'Estúdio' });
+
+test('glibren.28: the library, the list, the ids and the details are written in pieces, the same text as one JSON.stringify', () => {
+  const library = bigLibrary();
+  const ps5 = lib.libraryPaths('/download0/JobeesLair', true);
+  for (const append of [true, false]) {
+    const fs = memoryFs({ append });
+    lib.writeLibrary(fs, ps5, library, { backup: true });
+    lib.writeList(fs, ps5, library, undefined, (id) => (id.endsWith('4') ? null : catalogGame(id)));
+    const list = lib.exportList(library);
+    assert.equal(fs.files.get(ps5.library), JSON.stringify(library), `the library (appendFile: ${append})`);
+    assert.equal(fs.files.get(ps5.backup), JSON.stringify(library), 'its copy on /data');
+    assert.equal(fs.files.get(ps5.list), JSON.stringify(list), 'the payload list');
+    assert.equal(fs.files.get(ps5.ids), JSON.stringify({ version: 1, builtAt: library.builtAt, rules: ['broken'], ids: list.games.map((g) => g.id) }), 'the store ids');
+    assert.equal(fs.files.get(ps5.details), JSON.stringify(lib.exportDetails(list, (id) => (id.endsWith('4') ? null : catalogGame(id)))), 'the phone details');
+    assert.ok(![...fs.files.keys()].some((p) => p.endsWith('.tmp')), 'no .tmp left');
+    if (append) assert.ok(fs.log.appends > 4, `in pieces (${fs.log.appends} appends)`);
+    else assert.equal(fs.log.writes, 5, 'without appendFile (an old runtime): each file at once, as before');
+    assert.deepEqual(lib.readLibrary(fs, ps5), library, 'read back game by game');
+  }
+  // Um banco vazio e um sem rodada: o mesmo texto tambem.
+  const fs = memoryFs();
+  for (const value of [lib.emptyLibrary(), { ...lib.emptyLibrary(), builtAt: 'x', extra: undefined }]) {
+    lib.writeLibrary(fs, ps5, value);
+    assert.equal(fs.files.get(ps5.library), JSON.stringify(value));
+    lib.writeList(fs, ps5, value, 0, () => null);
+    assert.equal(fs.files.get(ps5.list), JSON.stringify(lib.exportList(value, 0)));
+    assert.equal(fs.files.get(ps5.details), JSON.stringify(lib.exportDetails(lib.exportList(value, 0), () => null)));
+  }
+});
+
+test('glibren.28: a write that fails halfway keeps the previous file; the library is read even pretty-printed, else the copy', () => {
+  const ps5 = lib.libraryPaths('/download0/JobeesLair', true);
+  const fs = memoryFs();
+  const old = bigLibrary(10);
+  lib.writeLibrary(fs, ps5, old, { backup: true });
+  let left = 1;
+  fs.appendFile = (p, text) => { if (left-- <= 0) throw new Error('out of memory'); fs.files.set(p, (fs.files.get(p) ?? '') + text); };
+  assert.throws(() => lib.writeLibrary(fs, ps5, bigLibrary(900)), /out of memory/);
+  assert.equal(fs.files.get(ps5.library), JSON.stringify(old), 'the previous library stays');
+  fs.files.set(ps5.library, JSON.stringify(old, null, 2));
+  assert.deepEqual(lib.readLibrary(fs, ps5), old, 'spaces and new lines');
+  fs.files.set(ps5.library, JSON.stringify(old).slice(0, -40));
+  assert.deepEqual(lib.readLibrary(fs, ps5), old, 'cut short: the copy on /data');
+  fs.files.set(ps5.backup, '{"version":1,"games":[]}');
+  assert.deepEqual(lib.readLibrary(fs, ps5), lib.emptyLibrary(), 'not a library: an empty one');
+});
+
+test('glibren.28: the partial saves of a run write only the library; the final one also the list and the details', async () => {
+  const fs = memoryFs();
+  const ps5 = lib.libraryPaths('/download0/JobeesLair', true);
+  const games = Array.from({ length: 30 }, (_, i) => game(i + 1));
+  const byId = new Map(games.map((g) => [g.id, g]));
+  const saved = [];
+  // O mesmo `save` de state/torbox-library-run.js (startLibrary).
+  const save = (value, { final }) => {
+    lib.writeLibrary(fs, ps5, value, { backup: final });
+    saved.push([final, fs.files.has(ps5.list), fs.files.has(ps5.details), fs.files.has(ps5.backup)]);
+    if (final) lib.writeList(fs, ps5, value, undefined, (id) => byId.get(id) ?? null);
+  };
+  const { library } = await lib.buildLibrary({ entries: entriesOf(games), api: fakeApi(), ...quiet, ...clock(), save });
+  assert.ok(saved.length >= 3 && saved.slice(0, -1).every(([final]) => !final), 'partial saves along the run');
+  assert.ok(saved.slice(0, -1).every(([, list, details, backup]) => !list && !details && !backup), 'partial: no list, no details, no copy');
+  assert.equal(saved.at(-1)[0], true);
+  const details = JSON.parse(fs.files.get(ps5.details));
+  assert.deepEqual(details.games.map((g) => g.id), JSON.parse(fs.files.get(ps5.list)).games.map((g) => g.id));
+  assert.equal(details.games.length, 15);
+  assert.equal(fs.files.get(ps5.library), JSON.stringify(library));
+});
+
+test('glibren.28: a library on the disk that fails to read (out of memory) is never taken as an empty one', () => {
+  const ps5 = lib.libraryPaths('/download0/JobeesLair', true);
+  const fs = memoryFs();
+  const old = bigLibrary(10);
+  lib.writeLibrary(fs, ps5, old, { backup: true });
+  const readFile = fs.readFile;
+  fs.readFile = (p) => { if (p === ps5.library) throw Object.assign(new Error('out of memory'), { name: 'InternalError' }); return readFile(p); };
+  assert.throws(() => lib.readLibrary(fs, ps5), (error) => error.code === 'LIBRARY_UNREADABLE' && error.message === lib.UNREADABLE && /out of memory/.test(error.cause.message));
+  // Montando em cima do erro (o que startLibrary deixava acontecer): nada e gravado, os arquivos ficam como estavam.
+  const before = new Map(fs.files);
+  let library = null;
+  try {
+    library = lib.readLibrary(fs, ps5);
+  } catch {}
+  assert.equal(library, null);
+  assert.deepEqual(fs.files, before);
+  // A loja (readConfirmedIds sem a lista de ids): o erro sobe (store-mode.js trata), sem refazer a lista a partir de um vazio.
+  fs.files.delete(ps5.ids);
+  assert.throws(() => lib.readConfirmedIds(fs, ps5), { code: 'LIBRARY_UNREADABLE' });
+  assert.ok(!fs.files.has(ps5.ids), 'nothing written');
+  // Cortado ou JSON invalido: a copia, como antes.
+  fs.readFile = readFile;
+  fs.files.set(ps5.library, '{"version":1,"games":{"PPSA');
+  assert.deepEqual(lib.readLibrary(fs, ps5), old);
+});
+
+test('glibren.28: startLibrary stops with a clear error when the saved library cannot be read, and writes nothing', async () => {
+  const run = await load('app/state/torbox-library-run.js');
+  const path = '/download0/JobeesLair/torbox-biblioteca.json';
+  const text = JSON.stringify(bigLibrary(10));
+  globalThis.__stubFiles = new (class extends Map {
+    get(p) {
+      if (p === path) throw Object.assign(new Error('out of memory'), { name: 'InternalError' });
+      return super.get(p);
+    }
+  })([[path, text]]);
+  try {
+    await run.startLibrary();
+    const progress = run.libraryProgress();
+    assert.equal(progress.state, 'failed');
+    assert.equal(progress.error, lib.UNREADABLE);
+    assert.deepEqual([...globalThis.__stubFiles.keys()], [path], 'no library, list or ids written over it');
+    assert.equal(Map.prototype.get.call(globalThis.__stubFiles, path), text);
+  } finally {
+    delete globalThis.__stubFiles;
+  }
+});

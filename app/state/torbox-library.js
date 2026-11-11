@@ -38,6 +38,7 @@ import { isoStamp } from './clock.js';
 import { youtubeId } from './youtube.js';
 import { formatFromName } from './link-formats.js';
 import { BROKEN_BYTES, brokenFile } from './broken-copy.js';
+import { jsonMembers } from './json-scan.js';
 import { isMagnet, linkHashes, magnetHash, md5 } from '../services/torbox.js';
 import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePattern, filesOf, isBackportFile, isPiece, magnetOf, matchesGame, plain, titleWords, worthShowing } from './torbox-search.js';
 
@@ -124,6 +125,72 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     fs.writeFile(`${path}.tmp`, text);
     fs.rename(`${path}.tmp`, path);
   }
+  // glibren.28: os arquivos grandes (banco, lista e fichas) gravados em pedacos, um jogo por vez (JSON.stringify de cada
+  // um, juntados e mandados com FileSystem.appendFile a cada WRITE_SLICE), como o cache dos feeds (state/feeds.js
+  // writeCacheText). No PS5 (glibren.27, lista Orbit carregada) o JSON.stringify do banco inteiro de 3.185 jogos (um texto
+  // de varios MB, que o QuickJS ainda realoca ao crescer) acabava com o heap de 32 MiB: "torbox-library not saved: out of
+  // memory" em todas as gravacoes, e a loja seguia com os arquivos antigos. O texto gravado e o mesmo de antes, byte a
+  // byte; o .tmp so troca de nome no fim (uma gravacao que falha no meio deixa o arquivo anterior). Sem appendFile (um
+  // runtime antigo), os pedacos juntados e gravados de uma vez, como antes.
+  var WRITE_SLICE = 256 * 1024;
+  function writeAtomicParts(fs, path, parts) {
+    const dir = path.slice(0, path.lastIndexOf("/"));
+    if (dir) fs.mkdir(dir, { recursive: true });
+    const tmp = `${path}.tmp`;
+    if (typeof fs.appendFile !== "function") {
+      fs.writeFile(tmp, [...parts].join(""));
+    } else {
+      fs.writeFile(tmp, "");
+      let pending = [], size = 0;
+      for (const part of parts) {
+        pending.push(part);
+        size += part.length;
+        if (size < WRITE_SLICE) continue;
+        fs.appendFile(tmp, pending.join(""));
+        pending = [];
+        size = 0;
+      }
+      if (pending.length) fs.appendFile(tmp, pending.join(""));
+    }
+    fs.rename(tmp, path);
+  }
+  // glibren.28: o texto de JSON.stringify(value) em pedacos: o membro `key` (uma lista ou um objeto) um elemento por vez,
+  // cada um trocado antes por `itemOf(elemento)` (o que se grava no lugar dele: a lista e as fichas saem do banco assim,
+  // sem montar a lista inteira de novos objetos).
+  function* jsonParts(value, key, itemOf = (item) => item) {
+    let first = true;
+    yield "{";
+    for (const name of Object.keys(value)) {
+      const member = value[name];
+      const comma = first ? "" : ",";
+      if (name === key && member && typeof member === "object") {
+        first = false;
+        const list = Array.isArray(member);
+        yield `${comma}${JSON.stringify(name)}:${list ? "[" : "{"}`;
+        let firstItem = true;
+        if (list) {
+          for (let at = 0; at < member.length; at++) {
+            yield `${firstItem ? "" : ","}${JSON.stringify(itemOf(member[at])) ?? "null"}`;
+            firstItem = false;
+          }
+        } else {
+          for (const id of Object.keys(member)) {
+            const text = JSON.stringify(itemOf(member[id]));
+            if (text === void 0) continue;
+            yield `${firstItem ? "" : ","}${JSON.stringify(id)}:${text}`;
+            firstItem = false;
+          }
+        }
+        yield list ? "]" : "}";
+        continue;
+      }
+      const text = JSON.stringify(member);
+      if (text === void 0) continue;
+      first = false;
+      yield `${comma}${JSON.stringify(name)}:${text}`;
+    }
+    yield "}";
+  }
   function readJson(fs, path) {
     try {
       if (!path || !fs.exists(path)) return null;
@@ -132,20 +199,49 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
       return null;
     }
   }
+  // glibren.28: o banco lido um jogo por vez (state/json-scan.js: os limites de cada valor, e um JSON.parse por jogo), sem
+  // o JSON.parse do texto inteiro, que no QuickJS ainda faz uma copia UTF-8 do texto todo (alguns MB) ao lado do texto e
+  // da arvore. Texto que nao e JSON: SyntaxError (o readLibrary passa para a copia, como antes).
+  function parseLibrary(text) {
+    const library = {};
+    for (const part of jsonMembers(text, 0, text.length)) {
+      if (part.key !== "games" || text.charCodeAt(part.start) !== 123) {
+        library[part.key] = JSON.parse(text.slice(part.start, part.end));
+        continue;
+      }
+      const games = {};
+      for (const game of jsonMembers(text, part.start, part.end)) {
+        if (game.key !== "__proto__") games[game.key] = JSON.parse(text.slice(game.start, game.end));
+      }
+      library.games = games;
+    }
+    return library;
+  }
+  // glibren.28: um banco que existe mas nao deu para ler por outro motivo que nao JSON invalido (no PS5, "out of memory"
+  // com o heap cheio) nao vira um banco vazio: a montagem comecaria do zero e gravaria por cima do bom. readLibrary lanca
+  // este erro (code LIBRARY_UNREADABLE, `cause` o original); startLibrary para com ele, sem gravar nada.
+  var UNREADABLE = "Não deu para ler a biblioteca gravada; feche e abra o app.";
+  var unreadable = (cause) => Object.assign(new Error(UNREADABLE), { code: "LIBRARY_UNREADABLE", cause });
   /** O banco gravado (o da pasta do app, senão a cópia em /data), ou um vazio. */
   function readLibrary(fs, paths) {
     for (const path of [paths.library, paths.backup]) {
-      const value = readJson(fs, path);
+      let value = null;
+      try {
+        if (path && fs.exists(path)) value = parseLibrary(String(fs.readFile(path)));
+      } catch (error) {
+        // glibren.28: so o arquivo cortado ou que nao e JSON (SyntaxError) passa para a copia, como antes.
+        if (!(error instanceof SyntaxError)) throw unreadable(error);
+        value = null;
+      }
       if (validLibrary(value)) return value;
     }
     return emptyLibrary();
   }
   function writeLibrary(fs, paths, library, { backup = false } = {}) {
-    const text = JSON.stringify(library);
-    writeAtomic(fs, paths.library, text);
+    writeAtomicParts(fs, paths.library, jsonParts(library, "games")); // glibren.28: um jogo por vez
     if (backup && paths.backup) {
       try {
-        writeAtomic(fs, paths.backup, text);
+        writeAtomicParts(fs, paths.backup, jsonParts(library, "games"));
       } catch (error) {
         console.log(`[torbox-library] copy not written to ${paths.backup}: ${error?.message || error}`);
       }
@@ -158,20 +254,23 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
   // A marca, na lista de ids, de que ela ja segue a regra das copias quebradas (uma antiga e refeita uma vez do banco).
   var IDS_RULES = ["broken"];
   /** A lista do payload a partir do banco: só os confirmados, em ordem de título. */
+  // glibren.28: os registros da lista (os do banco, sem copiar) e o jogo da lista de um registro, separados para a
+  // gravacao em pedacos (writeList) montar um jogo por vez.
+  var listRecords = (library) => Object.values(library.games).filter(stillConfirmed).sort((a, b) => a.title.localeCompare(b.title));
+  var listGame = (record) => ({
+    id: record.id,
+    title: record.title,
+    code: record.code,
+    platform: record.platform,
+    genres: record.genres,
+    sizeBytes: record.sizeBytes,
+    formats: record.formats,
+    hash: record.torbox.hash,
+    files: record.torbox.files,
+    ...record.cover ? { cover: record.cover } : {}
+  });
   function exportList(library, now = Date.now()) {
-    const games = Object.values(library.games).filter(stillConfirmed).sort((a, b) => a.title.localeCompare(b.title)).map((record) => ({
-      id: record.id,
-      title: record.title,
-      code: record.code,
-      platform: record.platform,
-      genres: record.genres,
-      sizeBytes: record.sizeBytes,
-      formats: record.formats,
-      hash: record.torbox.hash,
-      files: record.torbox.files,
-      ...record.cover ? { cover: record.cover } : {}
-    }));
-    return { version: LIST_FORMAT, builtAt: library.builtAt ?? isoStamp(now), games };
+    return { version: LIST_FORMAT, builtAt: library.builtAt ?? isoStamp(now), games: listRecords(library).map(listGame) };
   }
   // ---- As fichas (torbox-fichas.json) ----
   var httpsURL = (value) => typeof value === "string" && value.length <= 600 && /^https:\/\/[^\s"'<>\\]+$/i.test(value) ? value : null;
@@ -234,14 +333,17 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
    * Grava a lista do payload e os ids da loja; com `gameOf(id)` (o jogo do catálogo), também as fichas do celular.
    * Uma ficha que falha não impede a lista.
    */
-  function writeList(fs, paths, library, now, gameOf = null) {
-    const list = exportList(library, now);
-    writeAtomic(fs, paths.list, JSON.stringify(list));
+  // glibren.28: a lista e as fichas gravadas um jogo por vez (writeAtomicParts), no mesmo formato de exportList e
+  // exportDetails: nem a lista inteira, nem todas as fichas (texto, fotos e videos de ~1.800 jogos) montadas de uma vez.
+  function writeList(fs, paths, library, now = Date.now(), gameOf = null) {
+    const records = listRecords(library);
+    const builtAt = library.builtAt ?? isoStamp(now);
+    writeAtomicParts(fs, paths.list, jsonParts({ version: LIST_FORMAT, builtAt, games: records }, "games", listGame));
     // { version: 1, builtAt, ids: ["PPSA01234", ...] }
-    writeAtomic(fs, paths.ids, JSON.stringify({ version: LIST_FORMAT, builtAt: list.builtAt, rules: IDS_RULES, ids: list.games.map((game) => game.id) }));
+    writeAtomic(fs, paths.ids, JSON.stringify({ version: LIST_FORMAT, builtAt, rules: IDS_RULES, ids: records.map((record) => record.id) }));
     if (gameOf && paths.details) {
       try {
-        writeAtomic(fs, paths.details, JSON.stringify(exportDetails(list, gameOf)));
+        writeAtomicParts(fs, paths.details, jsonParts({ version: DETAILS_FORMAT, builtAt, games: records }, "games", (record) => ({ id: record.id, ...gameDetails(gameOf(record.id)) })));
       } catch (error) {
         console.log(`[torbox-library] details not written to ${paths.details}: ${error?.message || error}`);
       }
@@ -655,4 +757,4 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     return { library, progress: progress() };
   }
 
-export { BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };
+export { UNREADABLE, BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };

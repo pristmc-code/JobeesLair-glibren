@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "No hay nada en la carpeta BACKUP.",
   "downloads.backup.loading": "Leyendo…",
   "downloads.backup.noPayload": "El payload en segundo plano no está en marcha. Activa \"Seguir descargando cuando cierre la app\" en Ajustes y vuelve a abrir Descargas.",
+  "app.screenFailed": "Esta pantalla tuvo un problema y se detuvo para que el resto de la app siga funcionando. Vuelve atrás y ábrela de nuevo.",
   "downloads.backup.parts": "{count} partes",
   "downloads.backup.pending": "{count} aún sin convertir",
   "downloads.backup.busy": "Todavía se está convirtiendo: cancela la conversión antes de borrar.",

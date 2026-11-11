@@ -1650,6 +1650,7 @@
   "downloads.backup.empty": "Der BACKUP-Ordner ist leer.",
   "downloads.backup.loading": "Wird gelesen…",
   "downloads.backup.noPayload": "Der Hintergrund-Payload läuft nicht. Schalte „Weiterladen, wenn ich die App schließe“ in den Einstellungen ein und öffne Downloads erneut.",
+  "app.screenFailed": "Dieser Bildschirm hatte ein Problem und wurde angehalten, damit der Rest der App weiterläuft. Geh zurück und öffne ihn erneut.",
   "downloads.backup.parts": "{count} Teile",
   "downloads.backup.pending": "{count} noch nicht umgewandelt",
   "downloads.backup.busy": "Wird noch umgewandelt: Brich die Umwandlung vor dem Löschen ab.",

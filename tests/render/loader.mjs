@@ -15,6 +15,8 @@ export const memo = (component) => component;
 export const createContext = (value) => ({ value });
 export const useContext = (context) => context?.value ?? new Proxy({}, { get: () => () => {} });
 export const createElement = (type, props, ...children) => ({ type, props: { ...props, children } });
+// glibren.28: classes (ui/ScreenGuard.jsx, o error boundary das telas).
+export class Component { constructor(props) { this.props = props; this.state = null; } setState() {} }
 export default {};
 `;
 const jsx = `
