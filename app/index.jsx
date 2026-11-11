@@ -29,6 +29,7 @@ import { startHomebrewRefresh } from './state/homebrew-store.js';
 import { GameScreen } from './game/index.jsx';
 import { LocaleProvider, useLocale } from './i18n/index.js';
 import { SearchScreen } from './search/index.jsx';
+import { TubeScreen } from './tube/TubeScreen.jsx';
 import { getGame, warmCovers } from './state/catalog.js';
 import { refreshFeeds } from './state/feeds.js';
 import { startOrbitFeed } from './state/orbit-feed.js';
@@ -83,6 +84,8 @@ import { takeStartStack } from './state/return-screen-run.js';
     if (screen2.name === "homebrew-app") return /* @__PURE__ */ (0, jsx)(HomebrewApp, { id: screen2.id, onBack: pop });
     // Settings, a section since 0.5.0 Pre Release 3.
     // glibren.9: a screen can open Settings on a category (the TorBox store's "build the library first").
+    // glibren-tube: YouTube inside the app (game/VideosSheet.jsx opens it with the game's search).
+    if (screen2.name === "tube") return jsx(TubeScreen, { query: screen2.query ?? "", auto: screen2.auto === true, onBack: pop });
     if (screen2.name === "settings") return /* @__PURE__ */ (0, jsx)(SettingsScreen, { onBack: pop, ...screen2.start ? { start: screen2.start } : {} });
     return /* @__PURE__ */ (0, jsx)(SearchScreen, { onBack: pop, onOpenGame: openCard });
   }

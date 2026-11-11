@@ -55,6 +55,9 @@ export const ReleaseImages = {};
 export const BrowserCapture = {};
 export const DownloadFormats = {};
 export const Linking = {};
+// glibren-tube: o player de video (app/tube/TubePlayer.jsx) e os eventos do controle.
+export const Video = 'Video';
+export const useControllerEvents = () => {};
 export default {};
 `;
 const app = new URL('../app/', import.meta.url).pathname;

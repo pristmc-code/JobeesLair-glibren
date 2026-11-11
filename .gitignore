@@ -12,3 +12,6 @@ app/data/private/*
 # wrangler state of the Workers (tools/report-relay, tools/online): its cache names the Cloudflare account
 tools/*/.wrangler/
 tools/*/.dev.vars
+
+# glibren-tube: the YouTube service payload (built by the tube-service project), copied in for a build
+app/native/tube-service.elf

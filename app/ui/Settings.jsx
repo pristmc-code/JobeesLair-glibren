@@ -31,6 +31,7 @@ import { HOMEBREW_ONLY } from '../edition.js';
 import { MAX_SPEED_LIMIT, setSpeedLimit, stepSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
 import { setAutoPlayFirst, useAutoPlayFirst } from '../state/auto-play-first.js';
+import { setTubeSponsorBlock, useTubeSponsorBlock } from '../state/tube-settings.js';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
@@ -203,9 +204,12 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
   function VideosCard() {
     const t2 = useT();
     const on = useAutoPlayFirst();
+    // glibren-tube: SponsorBlock in the videos played inside the app (tube/TubePlayer.jsx).
+    const sponsor = useTubeSponsorBlock();
     return jsxs(View, { scrollAnchor: true, style: CARD, children: [
       jsx(CardHead, { icon: "play", title: t2("videos.title") }),
-      jsx(Row, { focusKey: "settings:autoPlayFirst", name: t2("settings.autoPlayFirst"), hint: t2("settings.autoPlayFirstDetail"), end: jsx(Switch, { on }), onPress: () => setAutoPlayFirst(!on) })
+      jsx(Row, { focusKey: "settings:autoPlayFirst", name: t2("settings.autoPlayFirst"), hint: t2("settings.autoPlayFirstDetail"), end: jsx(Switch, { on }), onPress: () => setAutoPlayFirst(!on) }),
+      jsx(Row, { focusKey: "settings:tubeSponsorBlock", name: t2("settings.tubeSponsorBlock"), hint: t2("settings.tubeSponsorBlockDetail"), end: jsx(Switch, { on: sponsor }), onPress: () => setTubeSponsorBlock(!sponsor) })
     ] });
   }
   // One swatch per preset: its accent filled, the accent frame when focused, a check on the chosen one.

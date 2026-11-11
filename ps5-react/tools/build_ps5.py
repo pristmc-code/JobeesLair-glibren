@@ -184,6 +184,9 @@ def main():
     sources.append(compatibility_client / "examples/pacbrew-curl/compat.c")
     if network_ports:
         sources.extend(access_client / "examples/pacbrew-curl" / name for name in ("netdb.c",))
+        # glibren-tube: YouTube/Google names the console's DNS blocks (0.0.0.0) are looked up at 8.8.8.8 / 1.1.1.1
+        # (native/ps5/dns_getaddrinfo.c, through --wrap=getaddrinfo below); never Sony/PlayStation names.
+        sources.extend([ROOT / "native/ps5/dns_fallback.c", ROOT / "native/ps5/dns_getaddrinfo.c"])
         includes.append(network_ports / "include")
     else:
         # OpenSSL names getaddrinfo and its family, which titles are not given: lookups that fail instead.
@@ -232,6 +235,8 @@ def main():
              "lzma_raw_decoder"]
     if access_client:
         wraps += ["sceNetSocket", "sceNetSetsockopt", "sceNetConnect", "sceNetSend", "sceNetRecv"]
+    if network_ports:
+        wraps += ["getaddrinfo"]  # glibren-tube: native/ps5/dns_getaddrinfo.c
     run([sdk / "bin/prospero-lld", "-L", libs, "-T", native / "ps5-pie.ld", "--eh-frame-hdr",
          "--version-script", native / "app-symbols.map", "-e", "_start", "-o", pie,
          *[f"--wrap={symbol}" for symbol in wraps], "--undefined=ps5_agc_gate2_run", *objects,
@@ -293,6 +298,18 @@ def main():
     shutil.copy2(runtime, app / "sce_module/libc.prx")
     shutil.copy2(installer, app / "pkg-installer.elf")
     run([sdk / "bin/prospero-strip", "-o", app / "rar-extract.elf", rar_extract], env=env)
+    # glibren-tube: tube-service.elf, the YouTube service the app sends to the loader when the player opens videos
+    # (app state/tube-service.js). Built by the tube-service project and shipped ready-made, like rar-extract.elf:
+    # JL_TUBE_SERVICE_ELF, else app/native/tube-service.elf, else ../tube-service/build/ps5/ beside the app's checkout.
+    # Optional: without it the app keeps opening the homebrew video app instead.
+    tube_candidates = [Path(os.environ["JL_TUBE_SERVICE_ELF"])] if os.environ.get("JL_TUBE_SERVICE_ELF") else []
+    tube_candidates += [app_dir / "native/tube-service.elf", app_dir.resolve().parent.parent / "tube-service/build/ps5/tube-service.elf"]
+    tube_elf = next((path for path in tube_candidates if path.is_file()), None)
+    if tube_elf and tube_elf.read_bytes()[:4] == b"ELF":
+        shutil.copy2(tube_elf, app / "tube-service.elf")
+        print(f"tube-service.elf: {tube_elf}")
+    else:
+        print("tube-service.elf: not found (optional; videos open in the homebrew video app)")
     shutil.copy2(relauncher, app / "relauncher.elf")
     shutil.copy2(updater, app / "updater.elf")
     shutil.copy2(capture, app / "browser-capture.elf")

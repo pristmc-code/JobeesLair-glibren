@@ -48,6 +48,8 @@ export const Controller = { setLightBar() {}, resetLightBar() {} };
 export const useControllerEvents = (handler) => { if (globalThis.__fake) globalThis.__fake.controller = handler; };
 export const AppRegistry = {}, Archives = {}, LayoutAnimation = {}, Linking = {}, LocalServer = {}, Notifications = { show() {} }, Packages = {}, Payloads = { send: () => ({ ok: false, error: 'desktop' }) }, Power = {}, Sound = {}, Users = {}, transitions = {};
 export const VirtualList = 'VirtualList', ReleaseImages = 'ReleaseImages';
+// glibren-tube: o player (tube/TubePlayer.jsx); o teste le as props do elemento.
+export const Video = 'Video';
 // 0.5.4: no console keyboard here, so search and the link dialog use the store's own keys.
 export const Keyboard = { available: false, isOpen: false, open: () => Promise.resolve(null), close() {} };
 export const useFocus = () => ({});

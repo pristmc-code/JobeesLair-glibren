@@ -1,0 +1,251 @@
+// glibren-tube: o cliente do tube-service.elf (app/state/tube-service.js) com um servico, um Http, um FileSystem e um
+// loader de mentira: subir sob demanda, health, token, jobs (busca, resolve), SponsorBlock, o fallback quando nao sobe,
+// e a escolha do primeiro video / da qualidade / da legenda. Run: npm test
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+const tube = await import('../app/state/tube-service.js');
+const { createTubeService, pageItems, pickFirstVideo, playableChoices, defaultChoice, pickCaption, sponsorSkipTo, searchRequest, clockText, TUBE_API } = tube;
+
+const TOKEN = 'c'.repeat(64);
+const BASE = 'http://127.0.0.1:34210';
+
+// O servico falso: /v1/health sem token; /v1/jobs, /v1/sponsor com "Authorization: Bearer <token>".
+function fakeService({ up = true, api = TUBE_API, pending = 1, results = {}, failWith = null } = {}) {
+  const state = { up, api, calls: [], jobs: new Map(), next: 0, sends: [], token: up ? TOKEN : '', elfs: new Set(['/app0/tube-service.elf']) };
+  const respond = (status, data) => ({ status, ok: status < 300, json: async () => data });
+  state.http = {
+    async request(url, { method = 'GET', headers = {}, body } = {}) {
+      const path = url.slice(BASE.length);
+      state.calls.push({ method, path, body: body ? JSON.parse(body) : undefined, auth: headers.Authorization });
+      if (!url.startsWith(BASE)) throw new Error('wrong port');
+      if (!state.up) throw new Error("Couldn't connect to server");
+      if (method === 'GET' && path === '/v1/health') return respond(200, { api_version: 1, api: state.api, version: '0.1.0', service: 'tube-service', pid: 42 });
+      if (headers.Authorization !== `Bearer ${TOKEN}`) return respond(401, { error: { code: 'unauthorized' } });
+      if (method === 'POST' && path === '/v1/jobs') {
+        const id = `j${++state.next}`;
+        state.jobs.set(id, { payload: JSON.parse(body), polls: 0 });
+        return respond(200, { api_version: 1, job: id, state: 'pending' });
+      }
+      const poll = /^\/v1\/jobs\/(\w+)$/.exec(path);
+      if (poll && method === 'DELETE') { state.jobs.delete(poll[1]); state.cancelled = (state.cancelled ?? 0) + 1; return respond(200, { state: 'cancelled' }); }
+      if (poll) {
+        const job = state.jobs.get(poll[1]);
+        if (!job) return respond(410, { error: { code: 'expired_job' } });
+        if (job.polls++ < pending) return respond(200, { api_version: 1, state: 'pending' });
+        if (failWith) return respond(200, { api_version: 1, state: 'failed', error: failWith });
+        const action = job.payload.action === 'library' ? job.payload.library.action : job.payload.action;
+        return respond(200, { api_version: 1, state: 'done', result: results[action] ?? {} });
+      }
+      const sponsor = /^\/v1\/sponsor\/([\w-]{11})\?categories=sponsor,selfpromo$/.exec(path);
+      if (sponsor) return respond(200, { segments: [{ start: 10, end: 30, category: 'sponsor' }, { start: 5, end: 5, category: 'poi_highlight' }, { start: 'x' }], enabled: true });
+      return respond(404, {});
+    }
+  };
+  state.fs = {
+    readFile: (path) => path === '/data/JobeesLair/tube/token' && state.token ? `${state.token}\n` : '',
+    exists: (path) => state.elfs.has(path)
+  };
+  state.payloads = {
+    send(path, options) {
+      state.sends.push({ path, options });
+      if (state.refuse) return { ok: false, error: 'loader refused' };
+      // O payload sobe um pouco depois e grava o token.
+      setTimeout(() => { state.up = true; state.api = TUBE_API; state.token = TOKEN; }, 20);
+      return { ok: true };
+    }
+  };
+  return state;
+}
+const make = (service, extra = {}) => createTubeService({ http: service.http, fs: service.fs, payloads: service.payloads, platform: 'ps5', log: () => {}, startWaitMs: 600, startPollMs: 10, jobPollMs: 5, jobTimeoutMs: 2000, ...extra });
+
+const ITEMS = [
+  { kind: 'channel', id: 'channel:UCabcdefghijklmnopqrstuv', title: 'A channel', is_folder: true },
+  { kind: 'playlist', id: 'PLxxxxxxxxxxxx', title: 'A playlist', is_folder: true },
+  { kind: 'video', id: 'upcoming001', title: 'Premiere', subtitle: 'Studio', duration_sec: 0, is_upcoming: true },
+  { kind: 'video', id: 'livelive001', title: 'Live now', subtitle: 'Studio', duration_sec: 0, is_live: true },
+  { kind: 'video', id: 'shortshort1', title: 'A short', subtitle: 'Studio', duration_sec: 40, is_short: true },
+  { kind: 'video', id: 'normal00001', title: 'ASTRO BOT - Launch Trailer | PS5 Games', subtitle: 'PlayStation', duration_sec: 125, art_url: 'https://i.ytimg.com/x.jpg', overview: 'long text '.repeat(200) },
+  { kind: 'video', id: 'normal00002', title: 'Second', subtitle: 'Other', duration_sec: 61 },
+  { kind: 'video', id: 'bad id', title: 'Broken' }
+];
+
+test('pageItems: only videos, only the fields the screen uses, at most the page limit', () => {
+  const items = pageItems({ items: ITEMS });
+  assert.deepEqual(items.map((item) => item.id), ['upcoming001', 'livelive001', 'shortshort1', 'normal00001', 'normal00002']);
+  assert.deepEqual(items[3], { id: 'normal00001', title: 'ASTRO BOT - Launch Trailer | PS5 Games', channel: 'PlayStation', seconds: 125, live: false, short: false, upcoming: false });
+  assert.equal(pageItems({ items: Array.from({ length: 40 }, (_, i) => ({ kind: 'video', id: `v${String(i).padStart(10, '0')}`, title: 't' })) }).length, 24);
+  assert.equal(pageItems({ items: [{ id: 'a'.repeat(11), title: 'x'.repeat(500) }] })[0].title.length, 120, 'long titles are cut');
+  assert.deepEqual(pageItems(null), []);
+  // The plain search (no kind): the service's item() rows.
+  assert.equal(pageItems({ items: [{ id: 'abcdefghijk', title: 'plain', subtitle: 'c', duration_sec: 3 }] })[0].channel, 'c');
+});
+
+test('pickFirstVideo: the first normal video; live or Short only when there is no normal one; never a scheduled one', () => {
+  const items = pageItems({ items: ITEMS });
+  assert.equal(pickFirstVideo(items).id, 'normal00001', 'channels, playlists, scheduled, live and Shorts skipped');
+  assert.equal(pickFirstVideo(items.filter((item) => !item.id.startsWith('normal'))).id, 'livelive001', 'no normal video: live or Short');
+  assert.equal(pickFirstVideo(items.filter((item) => item.upcoming)), null, 'only scheduled: nothing to play');
+  assert.equal(pickFirstVideo([]), null);
+});
+
+test('playableChoices/defaultChoice: the HLS link of each choice, no AV1 nor DASH alone, best up to 1080p by default', () => {
+  const m = (name) => `${BASE}/media/s/${name}`;
+  const choices = [
+    { label: '2160p VP9 / OPUS', container: 'dash', video_codec: 'vp9', height: 2160, fps: 30, url: m('d0.mpd'), hls_url: m('v0.m3u8') },
+    { label: '1440p AV1 / OPUS', container: 'dash', video_codec: 'av1', height: 1440, url: m('d1.mpd'), hls_url: m('v1.m3u8') },
+    { label: '1080p VP9 / OPUS', container: 'dash', video_codec: 'vp9', height: 1080, url: m('d2.mpd') },
+    { label: '1080p H264 / AAC', container: 'dash', video_codec: 'h264', height: 1080, fps: 60, url: m('d3.mpd'), hls_url: m('v3.m3u8') },
+    { label: '720p H264 / AAC', container: 'dash', video_codec: 'h264', height: 720, url: m('d4.mpd'), hls_url: m('v4.m3u8') },
+    { label: '360p H264 / AAC', container: 'mp4', video_codec: 'h264', height: 360, url: m('p5') },
+    { label: 'evil', container: 'hls', video_codec: 'h264', height: 480, url: 'https://elsewhere.example/x.m3u8' }
+  ];
+  const list = playableChoices(choices);
+  assert.deepEqual(list.map((choice) => choice.label), ['2160p VP9 / OPUS', '1080p H264 / AAC', '720p H264 / AAC', '360p H264 / AAC']);
+  assert.equal(list[1].url, m('v3.m3u8'), 'the master HLS, not the .mpd');
+  assert.equal(list[3].url, m('p5'), 'a muxed file: its redirect address');
+  assert.equal(list[1].hls, true);
+  assert.equal(defaultChoice(list), 1, '1080p, not 2160p');
+  assert.equal(defaultChoice(list, 720), 2);
+  assert.equal(defaultChoice([{ height: 1440, hls: true }, { height: 1200, hls: true }]), 1, 'none up to 1080p: the smallest');
+  assert.equal(defaultChoice([{ height: 1080, hls: false, label: 'a' }, { height: 1080, hls: true, label: 'b' }]), 1, 'HLS before a file at the same height');
+  assert.equal(defaultChoice([]), -1);
+  // Live: YouTube's own HLS variants (container hls).
+  assert.equal(playableChoices([{ label: '720p', container: 'hls', video_codec: 'h264', height: 720, url: m('h0.m3u8') }])[0].url, m('h0.m3u8'));
+});
+
+test('pickCaption: the app language (written before automatic, original before translated), else English, as WebVTT', () => {
+  const m = (name) => `${BASE}/media/s/${name}`;
+  const captions = [
+    { language: 'en', name: 'English', url: m('c0.srt'), automatic: false, translated: false },
+    { language: 'pt', name: 'Portuguese (auto)', url: m('c1.srt'), automatic: true, translated: false },
+    { language: 'pt-BR', name: 'Portuguese (Brazil)', url: m('c2.srt'), automatic: false, translated: false },
+    { language: 'en', name: 'Portuguese', url: m('c3.srt'), automatic: false, translated: true, target: 'pt' }
+  ];
+  assert.deepEqual(pickCaption(captions, 'pt-BR'), { uri: `${m('c2.srt')}?format=vtt`, language: 'pt-BR', title: 'Portuguese (Brazil)' });
+  assert.equal(pickCaption(captions, 'de').uri, `${m('c0.srt')}?format=vtt`, 'no German: English');
+  assert.equal(pickCaption([], 'pt-BR'), null);
+  assert.equal(pickCaption([{ language: 'ja', url: m('c9.srt') }], 'pt-BR'), null, 'neither the language nor English: none');
+});
+
+test('sponsorSkipTo, searchRequest and clockText', () => {
+  const segments = [{ start: 10, end: 30, category: 'sponsor' }, { start: 50, end: 50, category: 'poi_highlight' }];
+  assert.equal(sponsorSkipTo(segments, 12), 30);
+  assert.equal(sponsorSkipTo(segments, 9.9), null);
+  assert.equal(sponsorSkipTo(segments, 29.8), null, 'at the very end: nothing to jump over');
+  assert.equal(sponsorSkipTo(segments, 50), null, 'a highlight is not skipped');
+  assert.deepEqual(searchRequest('  ASTRO BOT   trailer ', { order: 'view_count', duration: 'long', upload_date: 'week', type: 'all' }),
+    { action: 'search', query: 'ASTRO BOT trailer', order: 'view_count', duration: 'long', upload_date: 'week', type: 'all' });
+  assert.deepEqual(searchRequest('x', { order: 'date', duration: 'huge', upload_date: 1, type: 'channel' }),
+    { action: 'search', query: 'x', order: 'relevance', duration: 'any', upload_date: 'any', type: 'video' }, 'unknown values fall back');
+  assert.equal(clockText(125), '2:05');
+  assert.equal(clockText(3723), '1:02:03');
+  assert.equal(clockText(-4), '0:00');
+});
+
+test('ensure: a service already up with its token is used as it is (no ELF sent)', async () => {
+  const service = fakeService();
+  const client = make(service);
+  assert.deepEqual(await client.ensure(), { ok: true, version: '0.1.0' });
+  assert.deepEqual(service.sends, []);
+  assert.equal(client.isReady(), true);
+});
+
+test('ensure: on demand, the ELF goes to the loader (port 9021, no answer awaited) and the app waits for /v1/health and the token', async () => {
+  const service = fakeService({ up: false });
+  const client = make(service);
+  const [a, b] = await Promise.all([client.ensure(), client.ensure()]);
+  assert.equal(a.ok, true);
+  assert.equal(b.ok, true);
+  assert.deepEqual(service.sends, [{ path: '/app0/tube-service.elf', options: { answer: false } }], 'sent once for two callers');
+});
+
+test('ensure: an older service (lower api) is replaced by this app\'s ELF; a copy in /data/JobeesLair is used without one in the package', async () => {
+  const older = fakeService({ api: 0 });
+  assert.equal((await make(older).ensure()).ok, true);
+  assert.equal(older.sends.length, 1);
+  const copied = fakeService({ up: false });
+  copied.elfs = new Set(['/data/JobeesLair/tube-service.elf']);
+  assert.equal((await make(copied).ensure()).ok, true);
+  assert.equal(copied.sends[0].path, '/data/JobeesLair/tube-service.elf');
+});
+
+test('ensure fails (and the Videos sheet falls back to the video app): no ELF, loader refused, no answer, desktop', async () => {
+  const none = fakeService({ up: false });
+  none.elfs = new Set();
+  const client = make(none);
+  assert.equal(client.offered(), false, 'no ELF: the sheet keeps the old flow');
+  assert.deepEqual(await client.ensure(), { ok: false, reason: 'missing', error: 'tube-service.elf' });
+  assert.deepEqual(none.sends, []);
+  const refused = fakeService({ up: false });
+  refused.refuse = true;
+  assert.equal((await make(refused).ensure()).reason, 'send');
+  const silent = fakeService({ up: false });
+  silent.payloads.send = (path) => (silent.sends.push(path), { ok: true }); // sent, never answers
+  const started = Date.now();
+  assert.equal((await make(silent, { startWaitMs: 100 }).ensure()).reason, 'timeout');
+  assert.ok(Date.now() - started < 1000);
+  assert.equal((await make(fakeService({ up: false }), { platform: 'desktop' }).ensure()).reason, 'desktop');
+  assert.equal(make(fakeService()).offered(), true);
+});
+
+test('search and more: library jobs with the token, polled until done; one page of videos and the cursor', async () => {
+  const service = fakeService({ pending: 2, results: {
+    search: { kind: 'catalog', items: ITEMS, cursor: '0f9d0c1e-1111-2222-3333-444455556666', has_more: true },
+    continue: { kind: 'catalog', items: ITEMS.slice(5), cursor: '', has_more: false }
+  } });
+  const client = make(service);
+  const page = await client.search('ASTRO BOT trailer', { order: 'relevance', duration: 'any', upload_date: 'any', type: 'video' });
+  assert.equal(page.items.length, 5);
+  assert.equal(page.cursor, '0f9d0c1e-1111-2222-3333-444455556666');
+  const created = service.calls.find((call) => call.method === 'POST');
+  assert.deepEqual(created.body, { action: 'library', library: { action: 'search', query: 'ASTRO BOT trailer', order: 'relevance', duration: 'any', upload_date: 'any', type: 'video' } });
+  assert.equal(created.auth, `Bearer ${TOKEN}`);
+  assert.equal(service.calls.filter((call) => call.method === 'GET' && call.path.startsWith('/v1/jobs/')).length, 3, 'two pending, then done');
+  const next = await client.more(page.cursor);
+  assert.deepEqual(next.items.map((item) => item.id), ['normal00001', 'normal00002']);
+  assert.equal(next.cursor, '');
+  assert.deepEqual(service.calls.filter((call) => call.method === 'POST').at(-1).body, { action: 'library', library: { action: 'continue', cursor: page.cursor } });
+});
+
+test('a failed job throws the service\'s code; a cancelled one is given up (DELETE)', async () => {
+  const failing = fakeService({ failWith: { code: 'upstream_limit', message: 'too many' } });
+  await assert.rejects(make(failing).search('x'), (error) => error.code === 'upstream_limit');
+  const slow = fakeService({ pending: 1000 });
+  const listeners = new Set();
+  const signal = { aborted: false, addEventListener: (type, fn) => listeners.add(fn), removeEventListener: (type, fn) => listeners.delete(fn) };
+  const asked = make(slow).search('x', undefined, { signal });
+  setTimeout(() => { signal.aborted = true; for (const fn of listeners) fn(); }, 30);
+  await assert.rejects(asked, (error) => error.code === 'cancelled');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(slow.cancelled, 1);
+  const wrongToken = fakeService();
+  wrongToken.fs.readFile = () => 'd'.repeat(64);
+  await assert.rejects(make(wrongToken).search('x'), (error) => error.code === 'unauthorized');
+});
+
+test('resolve: the playable choices and the caption; fresh links on request; sponsor segments (and [] when it fails)', async () => {
+  const m = (name) => `${BASE}/media/s/${name}`;
+  const service = fakeService({ results: { resolve: {
+    title: 'ASTRO BOT', channel: 'PlayStation', duration_sec: 125,
+    choices: [{ label: '1080p H264 / AAC', container: 'dash', video_codec: 'h264', height: 1080, url: m('d0.mpd'), hls_url: m('v0.m3u8') }],
+    captions: [{ language: 'en', name: 'English', url: m('c0.srt') }]
+  } } });
+  const client = make(service);
+  const info = await client.resolve('normal00001', { locale: 'pt-BR' });
+  assert.equal(info.title, 'ASTRO BOT');
+  assert.equal(info.duration, 125);
+  assert.equal(info.choices[0].url, m('v0.m3u8'));
+  assert.equal(info.caption.uri, `${m('c0.srt')}?format=vtt`);
+  const playback = service.calls.find((call) => call.method === 'POST').body.playback;
+  assert.deepEqual(playback, { id: 'normal00001', max_height: 2160, codec: 'auto', caption_language: 'pt', automatic_captions: true });
+  await client.resolve('normal00001', { fresh: true });
+  assert.equal(service.calls.filter((call) => call.method === 'POST').at(-1).body.playback.fresh, true);
+  await assert.rejects(client.resolve('bad'), (error) => error.code === 'invalid_video');
+  const none = fakeService({ results: { resolve: { choices: [{ label: 'x', container: 'dash', video_codec: 'av1', height: 1080, url: m('d.mpd'), hls_url: m('v.m3u8') }] } } });
+  await assert.rejects(make(none).resolve('normal00001'), (error) => error.code === 'unsupported_media');
+  assert.deepEqual(await client.sponsor('normal00001'), [{ start: 10, end: 30, category: 'sponsor' }, { start: 5, end: 5, category: 'poi_highlight' }].filter((segment) => segment.end > segment.start));
+  const down = fakeService();
+  down.up = false;
+  assert.deepEqual(await make(down).sponsor('normal00001'), []);
+});
