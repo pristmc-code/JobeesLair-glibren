@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "それが終わり次第（最長3分）、アプリが再起動してアップデートを適用します。ダウンロードは再び開いたときに自動で再開します。",
   "update.install.retry": "再試行",
   "update.install.rolledBack": "バージョン{version}が起動しなかったため、前のバージョンに戻しました：{reason}",
-  "update.install.waiting": "ダウンロードの完了を待っています…",
+  "update.install.waiting": "アップデートを準備しています…",
   "update.noBrowser": "別の機器で{url}を開いてください。",
   "update.view": "リリースを見る",
   "urlDialog.cancel": "キャンセル",

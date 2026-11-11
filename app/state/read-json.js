@@ -40,6 +40,7 @@
     "feed-mirrors.json": isRecord,
     "update-check.json": isRecord,
     "auto-update.json": isRecord,
+    "own-image.json": isRecord,
     "link-health.json": isRecord,
     "debrid.json": isRecord,
     "capture-hosts.json": isRecord,

@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "一旦完成（最多 3 分钟），应用就会重启以应用更新。重新打开后下载会自动继续。",
   "update.install.retry": "重试",
   "update.install.rolledBack": "版本 {version} 未能启动，因此已恢复到之前的版本：{reason}",
-  "update.install.waiting": "正在等待你的下载完成…",
+  "update.install.waiting": "正在准备更新…",
   "update.noBrowser": "请在另一台设备上打开 {url}。",
   "update.view": "查看版本",
   "urlDialog.cancel": "取消",

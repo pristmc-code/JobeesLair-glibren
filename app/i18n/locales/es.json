@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "La app se reinicia para aplicar la actualización en cuanto eso termine (3 minutos como máximo). Las descargas siguen solas cuando se vuelva a abrir.",
   "update.install.retry": "Reintentar",
   "update.install.rolledBack": "La versión {version} no arrancó, así que se restauró la anterior: {reason}",
-  "update.install.waiting": "Esperando a que terminen tus descargas…",
+  "update.install.waiting": "Preparando la actualización…",
   "update.noBrowser": "Abre {url} en otro dispositivo.",
   "update.view": "Ver la versión",
   "urlDialog.cancel": "Cancelar",

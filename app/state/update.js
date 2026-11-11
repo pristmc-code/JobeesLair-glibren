@@ -34,10 +34,48 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
   var automatic = canInstall && loadList(SETTINGS, "settings").autoInstallUpdates === true;
   var automaticListeners = /* @__PURE__ */ new Set();
   // Where the running image is: ShadowMount+'s record of this title.
+  // glibren.30: ShadowMount+ ocupado (montando imagens, uma conversao) nao respondia games/info em 20 s e a atualizacao
+  // falhava ("ShadowMount did not answer"). Agora tenta LOCATE_TRIES vezes; sem resposta, usa o caminho que ele deu da
+  // ultima vez (own-image.json) ou o da ultima atualizacao (auto-update.json target), se o arquivo ainda existe; por
+  // ultimo, a JobeesLair.exfat em <disco>/homebrew quando ha uma so.
+  var LOCATE_TRIES = 3;
+  var LOCATE_PAUSE_MS = 3e3;
+  var OWN_IMAGE = "own-image.json";
+  var IMAGE_ROOTS = ["/data", ...[0, 1, 2, 3, 4, 5, 6, 7].flatMap((n) => [`/mnt/usb${n}`, `/mnt/ext${n}`])];
+  var IMAGE_PATH = /^(?:\/data|\/mnt\/(?:usb|ext)\d+)\/[^\0\r\n"\\]+\.exfat$/;
+  var exists = (path) => {
+    try {
+      return FileSystem.exists(path);
+    } catch {
+      return false;
+    }
+  };
+  function knownImage() {
+    const remembered = [loadList(OWN_IMAGE, "own image").path, loadList("auto-update.json", "auto update").target];
+    for (const path of remembered) if (typeof path === "string" && IMAGE_PATH.test(path) && exists(path)) return path;
+    const found = IMAGE_ROOTS.map((root) => `${root}/homebrew/JobeesLair.exfat`).filter(exists);
+    return found.length === 1 ? found[0] : "";
+  }
   async function locate() {
-    const game = await shadowRequest(Http, "games/info", { title_id: TITLE_ID });
-    if (game?.source_type && game.source_type !== "image") throw new Error(t("update.install.notImage"));
-    return game?.path ?? "";
+    let failure = null;
+    for (let tries = 0; tries < LOCATE_TRIES; tries++) {
+      if (tries) await new Promise((resolve) => setTimeout(resolve, LOCATE_PAUSE_MS));
+      try {
+        const game = await shadowRequest(Http, "games/info", { title_id: TITLE_ID });
+        if (game?.source_type && game.source_type !== "image") throw new Error(t("update.install.notImage"));
+        const path = game?.path ?? "";
+        if (path && IMAGE_PATH.test(path)) saveList(OWN_IMAGE, "own image", { path });
+        return path;
+      } catch (error) {
+        if (!error.timedOut && !error.unreachable) throw error;
+        failure = error;
+        console.log(`jobeeslair: update: ${error.message}`);
+      }
+    }
+    const known = knownImage();
+    if (!known) throw failure;
+    console.log(`jobeeslair: update: ShadowMount+ did not answer; using ${known}`);
+    return known;
   }
   var installer = canInstall ? createAutoUpdater({
     fs: FileSystem,
@@ -254,4 +292,4 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
     return on;
   }
 
-export { canInstall, cancelUpdate, stopRestart, checkForUpdate, closeUpdateDialog, downloadUpdate, openUpdateDialog, restartToApply, setAutoInstall, startInstaller, startUpdateChecks, updateDetail, updateSnapshot, useAutoInstall, useInstall, useUpdate, useUpdateDialog };
+export { canInstall, cancelUpdate, locate as locateOwnImage, stopRestart, checkForUpdate, closeUpdateDialog, downloadUpdate, openUpdateDialog, restartToApply, setAutoInstall, startInstaller, startUpdateChecks, updateDetail, updateSnapshot, useAutoInstall, useInstall, useUpdate, useUpdateDialog };

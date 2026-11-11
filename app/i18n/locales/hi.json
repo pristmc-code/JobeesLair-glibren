@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "वह खत्म होते ही (अधिकतम 3 मिनट) ऐप अपडेट लागू करने के लिए फिर से शुरू होगा। ऐप फिर खुलने पर डाउनलोड अपने आप जारी होंगे।",
   "update.install.retry": "फिर से कोशिश करें",
   "update.install.rolledBack": "संस्करण {version} शुरू नहीं हुआ, इसलिए पिछला संस्करण वापस रखा गया: {reason}",
-  "update.install.waiting": "आपके डाउनलोड पूरे होने का इंतज़ार है…",
+  "update.install.waiting": "अपडेट तैयार किया जा रहा है…",
   "update.noBrowser": "{url} किसी दूसरे डिवाइस पर खोलें।",
   "update.view": "रिलीज़ देखें",
   "urlDialog.cancel": "रद्द करें",

@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "Приложение перезапустится для установки обновления, как только это закончится (не дольше 3 минут). Загрузки продолжатся сами после повторного открытия.",
   "update.install.retry": "Повторить",
   "update.install.rolledBack": "Версия {version} не запустилась, поэтому возвращена предыдущая: {reason}",
-  "update.install.waiting": "Ожидание завершения ваших загрузок…",
+  "update.install.waiting": "Подготовка обновления…",
   "update.noBrowser": "Откройте {url} на другом устройстве.",
   "update.view": "Открыть релиз",
   "urlDialog.cancel": "Отменить",

@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "Aplikasi dimulai ulang untuk menerapkan pembaruan begitu itu selesai (paling lama 3 menit). Unduhan berlanjut sendiri saat aplikasi dibuka lagi.",
   "update.install.retry": "Coba lagi",
   "update.install.rolledBack": "Versi {version} tidak mau mulai, jadi versi sebelumnya dikembalikan: {reason}",
-  "update.install.waiting": "Menunggu unduhan Anda selesai…",
+  "update.install.waiting": "Menyiapkan pembaruan…",
   "update.noBrowser": "Buka {url} di perangkat lain.",
   "update.view": "Lihat rilis",
   "urlDialog.cancel": "Batalkan",

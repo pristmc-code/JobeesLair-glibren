@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "يُعاد تشغيل التطبيق لتطبيق التحديث بمجرد انتهاء ذلك (3 دقائق على الأكثر). تستأنف التنزيلات تلقائيًا عند إعادة فتحه.",
   "update.install.retry": "أعد المحاولة",
   "update.install.rolledBack": "لم يبدأ الإصدار {version}، لذا أُعيد الإصدار السابق: {reason}",
-  "update.install.waiting": "بانتظار انتهاء تنزيلاتك…",
+  "update.install.waiting": "جارٍ تجهيز التحديث…",
   "update.noBrowser": "افتح {url} على جهاز آخر.",
   "update.view": "عرض الإصدار",
   "urlDialog.cancel": "إلغاء",

@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "ওটা শেষ হলেই (সর্বোচ্চ ৩ মিনিট) আপডেট প্রয়োগ করতে অ্যাপ আবার চালু হবে। আবার খুললে ডাউনলোড নিজে থেকেই চলবে।",
   "update.install.retry": "আবার চেষ্টা করুন",
   "update.install.rolledBack": "সংস্করণ {version} চালু হয়নি, তাই আগের সংস্করণ ফিরিয়ে আনা হয়েছে: {reason}",
-  "update.install.waiting": "আপনার ডাউনলোড শেষ হওয়ার অপেক্ষায়…",
+  "update.install.waiting": "আপডেট প্রস্তুত করা হচ্ছে…",
   "update.noBrowser": "অন্য একটি ডিভাইসে {url} খুলুন।",
   "update.view": "রিলিজ দেখুন",
   "urlDialog.cancel": "বাতিল করুন",

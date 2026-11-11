@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.30** (fork): an app update no longer fails when ShadowMount+ is busy and does not answer where the app's
+  image is ("ShadowMount did not answer games/info"): it asks three times, then uses the path ShadowMount+ gave last
+  time (or the last update's), while that file is still there, or the one JobeesLair.exfat in a drive's homebrew
+  folder. The update's generic wait no longer says "Waiting for your downloads to finish" (it has not waited for them
+  since glibren.22): "Getting the update ready".
 - **glibren.29** (fork): asking TorBox about a game's links no longer runs the app out of memory ("Find formats" closed
   it with Orbit Store on): links are asked 10 at a time instead of 100, each answer is read one entry at a time, and
   only what is used is kept (name, size and id of the files that matter; a long backport list as a summary). The same

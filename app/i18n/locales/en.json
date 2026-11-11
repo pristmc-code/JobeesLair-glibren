@@ -1167,7 +1167,7 @@
     "update.install.restartPending": "The app restarts to apply the update as soon as that ends (3 minutes at most). Downloads pick up again on their own when it reopens.",
     "update.install.retry": "Try again",
     "update.install.rolledBack": "Version {version} did not start, so the previous version was put back: {reason}",
-    "update.install.waiting": "Waiting for your downloads to finish\u2026",
+    "update.install.waiting": "Getting the update ready…",
     "update.noBrowser": "Open {url} on another device.",
     "update.view": "View release",
     "urlDialog.cancel": "Cancel",

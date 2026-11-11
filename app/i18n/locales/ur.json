@@ -1167,7 +1167,7 @@
   "update.install.restartPending": "وہ ختم ہوتے ہی (زیادہ سے زیادہ 3 منٹ) ایپ اپ ڈیٹ لگانے کے لیے دوبارہ شروع ہوگی۔ دوبارہ کھلنے پر ڈاؤن لوڈ خود جاری ہوں گے۔",
   "update.install.retry": "دوبارہ کوشش کریں",
   "update.install.rolledBack": "ورژن {version} شروع نہیں ہوا، اس لیے پچھلا ورژن واپس رکھ دیا گیا: {reason}",
-  "update.install.waiting": "آپ کے ڈاؤن لوڈز مکمل ہونے کا انتظار ہے…",
+  "update.install.waiting": "اپ ڈیٹ تیار کی جا رہی ہے…",
   "update.noBrowser": "{url} کسی دوسرے آلے پر کھولیں۔",
   "update.view": "ریلیز دیکھیں",
   "urlDialog.cancel": "منسوخ کریں",
