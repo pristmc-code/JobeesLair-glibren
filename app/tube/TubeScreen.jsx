@@ -11,6 +11,10 @@
 //     mesmo item focado. Aberta com `auto` (Trailer/Gameplay com "Tocar o primeiro video automaticamente"), toca
 //     direto o primeiro video normal (state/tube-service.js pickFirstVideo) e o Circulo no player volta para a
 //     pagina do jogo (onBack).
+//   - glibren-a: aberta pelo pedido do glibren (state/tube-request.js) com `ensure` (sobe o servico antes; sem ele, o
+//     erro na tela) e `back` (o title ID de voltar=): o botao "Voltar ao glibren" no topo, e o Circulo na raiz (ou ao
+//     fechar o video no modo auto) pede ao payload a troca de volta e fecha o app; se a troca falhar, um aviso curto e
+//     o inicio da Jobe.
 
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -25,9 +29,12 @@ import { Icon } from '../ui/Icon.jsx';
 import { HINT, useHints } from '../ui/Legend.jsx';
 import { colors, radius } from '../ui/colors.js';
 import { TubePlayer } from './TubePlayer.jsx';
+import { backToCaller } from '../state/tube-request-run.js';
 import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
 
   var MAX_QUERY = 100;
+  // Quanto o aviso "nao deu para voltar ao glibren" fica antes de ir ao inicio da Jobe.
+  var LEAVE_FAILED_MS = 2500;
   var COLUMNS = 4;
   var CARD_W = 438, THUMB_H = 246;
   var HINTS = [HINT.select, { button: "triangle", label: "hints.type" }, HINT.back];
@@ -93,21 +100,27 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
 
   /**
    * `query`: a busca inicial; `auto`: tocar o primeiro video normal assim que a busca responder (e o Circulo no player
-   * volta para onBack); `service`: o cliente (testes); `start`: o estado inicial (testes: { page, playing }).
+   * volta para onBack); `service`: o cliente (testes); `start`: o estado inicial (testes: { page, playing, leaving }).
+   * glibren-a: `ensure`: sobe o servico (service.ensure) antes da primeira busca; `back`: o title ID para voltar (o
+   * pedido do glibren); `goBack(back)`: a volta (state/tube-request-run.js backToCaller; trocado nos testes).
    */
-  function TubeScreen({ query: initialQuery = "", auto = false, onBack, service = tubeService(), start = null }) {
+  function TubeScreen({ query: initialQuery = "", auto = false, back = "", ensure = false, goBack = backToCaller, onBack, service = tubeService(), start = null }) {
     const t2 = useT();
     const { focusLater } = useNavActions();
     useHints(HINTS);
     const [query, setQuery] = useState(initialQuery);
     const [filters, setFilters] = useState(DEFAULT_FILTERS);
-    const [page, setPage] = useState(() => start?.page ?? { state: initialQuery ? "loading" : "idle", items: [], cursor: "", index: 0, error: "" });
+    const [page, setPage] = useState(() => start?.page ?? { state: ensure ? "starting" : initialQuery ? "loading" : "idle", items: [], cursor: "", index: 0, error: "" });
     const [playing, setPlaying] = useState(() => start?.playing ?? null); // { item, back: true quando o Circulo sai da tela }
     const [typing, setTyping] = useState(false);
+    // glibren-a: a volta ao glibren em curso ({ text }) ou recusada ({ bad, text }).
+    const [leaving, setLeaving] = useState(() => start?.leaving ?? null);
+    const leavingNow = useRef(false);
+    const leaveTimer = useRef(null);
     const typed = useRef(query);
     typed.current = query;
     const cursors = useRef([""]); // cursors.current[n]: o cursor que leva a pagina n ("" na 0)
-    const run = useRef({ n: 0, abort: null, autoDone: !auto });
+    const run = useRef({ n: 0, abort: null, autoDone: !(auto && initialQuery) });
     const load = (q, f, index) => {
       const state = run.current;
       state.abort?.();
@@ -143,10 +156,56 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
         setPage((last) => ({ ...last, state: "error", error: error?.code ?? error?.message ?? String(error) }));
       });
     };
+    // glibren-a: o servico no ar antes da primeira busca (aberta pelo glibren, sem passar pela folha Videos). Sem
+    // busca, abre o teclado.
+    const startService = () => {
+      const state = run.current;
+      const n = ++state.n;
+      setPage((last) => ({ ...last, state: "starting", error: "" }));
+      Promise.resolve().then(() => service.ensure()).then((ready) => ready, (error) => ({ ok: false, reason: error?.message ?? String(error) })).then((ready) => {
+        if (n !== state.n) return;
+        console.log(`tube: service ${ready?.ok ? `up ${ready.version ?? ""}` : `${ready?.reason ?? ""} ${ready?.error ?? ""}`}`);
+        if (!ready?.ok) {
+          setPage((last) => ({ ...last, state: "down", error: [ready?.reason, ready?.error].filter(Boolean).join(": ") }));
+          focusLater(back ? "tube:page:glibren-down" : "tube:page:retry");
+          return;
+        }
+        if (initialQuery) {
+          load(initialQuery, filters, 0);
+          return;
+        }
+        setPage((last) => ({ ...last, state: "idle" }));
+        type();
+      });
+    };
     useEffect(() => {
-      if (initialQuery && !start) load(initialQuery, filters, 0);
-      return () => run.current.abort?.();
+      if (!start) {
+        if (ensure) startService();
+        else if (initialQuery) load(initialQuery, filters, 0);
+      }
+      return () => {
+        run.current.abort?.();
+        ++run.current.n;
+        clearTimeout(leaveTimer.current);
+      };
     }, []);
+    // glibren-a: o Circulo na raiz. Com `back`, volta ao glibren (troca pelo payload e fecha o app); se a troca falhar,
+    // um aviso curto e o inicio da Jobe. Sem `back`, a tela anterior (onBack), como sempre.
+    const leaveRoot = () => {
+      run.current.abort?.();
+      if (!back) {
+        onBack();
+        return;
+      }
+      if (leavingNow.current) return;
+      leavingNow.current = true;
+      setLeaving({ text: t2("tube.leaving") });
+      Promise.resolve().then(() => goBack(back)).then((result) => result, (error) => ({ ok: false, error: error?.message ?? String(error) })).then((result) => {
+        if (result?.ok) return;
+        setLeaving({ bad: true, text: t2("tube.leaveFailed", { error: result?.error || "?" }) });
+        leaveTimer.current = setTimeout(onBack, LEAVE_FAILED_MS);
+      });
+    };
     const search = (term) => {
       const clean = term.replace(/\s+/g, " ").trim().slice(0, MAX_QUERY);
       setQuery(clean);
@@ -180,11 +239,13 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
       const was = playing;
       setPlaying(null);
       if (was?.back) {
-        onBack();
+        leaveRoot();
         return;
       }
       if (was) focusLater(itemKey(was.item.id));
     };
+    // glibren-a: "Voltando ao glibren" (ou o aviso de que nao deu) no lugar da tela, ate o app fechar.
+    if (leaving) return jsx(View, { style: { flex: 1, backgroundColor: colors.canvas }, children: jsx(FocusScope, { autoFocus: true, onBack: () => true, children: jsx(Message, { icon: leaving.bad ? "alert" : "restart", title: leaving.text }) }) });
     if (playing) return jsx(TubePlayer, { item: playing.item, service, onClose: closePlayer }, playing.item.id);
     const onAction = (action) => {
       if (action === "triangle" && !typing) type();
@@ -193,7 +254,13 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
     };
     const rows = [];
     for (let at = 0; at < page.items.length; at += COLUMNS) rows.push(page.items.slice(at, at + COLUMNS));
-    const results = page.state === "loading" ? jsx(Message, { icon: "search", title: t2("tube.loading") })
+    const backButton = (id) => jsx(PageButton, { id, icon: "chevronLeft", label: t2("tube.backToGlibren"), onPress: leaveRoot });
+    const results = page.state === "starting" ? jsx(Message, { icon: "restart", title: t2("videos.preparing") })
+      : page.state === "down" ? jsx(Message, { icon: "alert", title: t2("videos.tubeFailed", { error: page.error || "?" }), action: jsxs(View, { style: { flexDirection: "row", gap: 16 }, children: [
+        back ? backButton("glibren-down") : null,
+        jsx(PageButton, { id: "retry", icon: "restart", label: t2("tube.retry"), onPress: startService })
+      ] }) })
+      : page.state === "loading" ? jsx(Message, { icon: "search", title: t2("tube.loading") })
       : page.state === "error" ? jsx(Message, { icon: "alert", title: t2("tube.failed", { error: page.error }), action: jsx(PageButton, { id: "retry", icon: "restart", label: t2("tube.retry"), onPress: () => load(query, filters, page.index) }) })
       : page.state === "idle" ? jsx(Message, { icon: "search", title: t2("tube.searchPlaceholder") })
       : !page.items.length ? jsx(Message, { icon: "searchX", title: t2("tube.none", { query }) })
@@ -207,12 +274,14 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
       ] });
     return jsxs(View, { style: { flex: 1, backgroundColor: colors.canvas }, children: [
       jsx(FocusScope, { autoFocus: !typing, inert: typing, onBack: () => {
-        run.current.abort?.();
-        onBack();
+        leaveRoot();
         return true;
       }, onAction, children: jsxs(ScrollView, { style: { flex: 1, gap: 22, paddingHorizontal: 48, paddingTop: 24, paddingBottom: typing ? 300 : 72 }, children: [
         jsxs(View, { scrollAnchor: true, style: { gap: 18 }, children: [
-          jsx(View, { style: { height: 80, flexDirection: "row", alignItems: "center", gap: 16 }, children: jsx(Field, { query, onPress: type }) }),
+          jsxs(View, { style: { height: 80, flexDirection: "row", alignItems: "center", gap: 16 }, children: [
+            back ? backButton("glibren") : null,
+            jsx(Field, { query, onPress: type })
+          ] }),
           jsx(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 12 }, children: FILTERS.map((spec) => jsx(FilterChip, { id: spec.key, icon: spec.icon, label: spec.label(t2, filters[spec.key]), active: filters[spec.key] !== DEFAULT_FILTERS[spec.key], onPress: () => cycle(spec.key) }, spec.key)) }),
           query && page.state === "ready" ? jsx(Text, { style: text(28, colors.fg, { fontWeight: 600, numberOfLines: 1, ellipsizeMode: "tail" }), children: t2("tube.resultsFor", { query }) }) : null
         ] }),

@@ -70,6 +70,7 @@ import { useInterfaceHaptics } from './ui/haptics.js';
 import { useInterfaceSounds } from './ui/sounds.js';
 import './state/picture-route.js';
 import { takeStartStack } from './state/return-screen-run.js';
+import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
 
   function Screen({ screen: screen2 }) {
     const { openGame, pop, push } = useNavActions();
@@ -85,7 +86,8 @@ import { takeStartStack } from './state/return-screen-run.js';
     // Settings, a section since 0.5.0 Pre Release 3.
     // glibren.9: a screen can open Settings on a category (the TorBox store's "build the library first").
     // glibren-tube: YouTube inside the app (game/VideosSheet.jsx opens it with the game's search).
-    if (screen2.name === "tube") return jsx(TubeScreen, { query: screen2.query ?? "", auto: screen2.auto === true, onBack: pop });
+    // glibren-a: aberta pelo pedido do glibren (state/tube-request.js): `back` o title ID para voltar, `ensure` sobe o servico.
+    if (screen2.name === "tube") return jsx(TubeScreen, { query: screen2.query ?? "", auto: screen2.auto === true, back: screen2.back ?? "", ensure: screen2.ensure === true, onBack: pop });
     if (screen2.name === "settings") return /* @__PURE__ */ (0, jsx)(SettingsScreen, { onBack: pop, ...screen2.start ? { start: screen2.start } : {} });
     return /* @__PURE__ */ (0, jsx)(SearchScreen, { onBack: pop, onOpenGame: openCard });
   }
@@ -234,6 +236,10 @@ import { takeStartStack } from './state/return-screen-run.js';
     // ShadowMount+ can let go of the title (state/sandbox-sweeper.js). 0.5.3: from here, as the app starts,
     // not from the store: a launch closed before the store had been up 8 s was never cleared.
     (0, useEffect)(() => startSandboxSweeper(), []);
+    // glibren-a: o glibren so abre esta Jobe para tocar YouTube se ela disser que sabe (state/tube-request.js).
+    (0, useEffect)(() => {
+      advertiseTube();
+    }, []);
     (0, useEffect)(() => startInstaller(), []);
     // The saved download speed limit, handed to the engine before any download starts.
     (0, useEffect)(() => applySpeedLimit(), []);
@@ -258,5 +264,7 @@ import { takeStartStack } from './state/return-screen-run.js';
   }
   // glibren.31: a volta do app de videos abre na tela de onde ele foi aberto (state/return-screen.js); o jogo tem de
   // existir no catalogo. takeStartStack responde uma vez so: o app remontado pela troca de tema comeca no inicio.
-  var restoreScreen = (root) => takeStartStack(root, (id) => Boolean(getGame(id)));
+  // glibren-a: um pedido do glibren para tocar YouTube (state/tube-request.js, abrir.txt) vem antes: abre direto a tela
+  // de YouTube e a tela guardada e apagada.
+  var restoreScreen = (root) => takeTubeStartStack(root) ?? takeStartStack(root, (id) => Boolean(getGame(id)));
   AppRegistry.registerComponent("jobeeslair", () => () => /* @__PURE__ */ (0, jsx)(Boot, {}));

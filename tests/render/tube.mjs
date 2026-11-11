@@ -1,7 +1,8 @@
 // glibren-tube: YouTube inside Jobee'sLair. The Videos sheet with the service payload in the package (searches here,
 // even with no video app), the "tube" screen's results (search, filters, cards with title, channel and duration,
 // pages) and its loading/error states, and the player (the HLS link, the subtitles as WebVTT, the hints). Fails on any
-// exception. Run: npm run test:render
+// exception. glibren-a: and the screen opened by glibren (Back to glibren, Circle at the root, the service down).
+// Run: npm run test:render
 import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -24,6 +25,8 @@ globalThis.__fake = { jobs: [], fs, focused: true, queue: { snapshot: () => [], 
 const texts = [];
 const pressable = new Map();
 const videos = [];
+const backs = [];
+const players = [];
 function walk(node) {
   if (node == null || typeof node !== 'object') return;
   if (Array.isArray(node)) return node.forEach(walk);
@@ -31,6 +34,8 @@ function walk(node) {
   if (typeof props.style === 'function') props.style({ focused: true, pressed: false });
   if (props.focusKey && props.onPress) pressable.set(props.focusKey, props);
   if (type === 'Video') videos.push(props);
+  if (type === 'FocusScope' && props.onBack) backs.push(props.onBack);
+  if (typeof type === 'function' && type.name === 'TubePlayer') players.push(props);
   if (typeof type === 'function') return walk(type(props));
   if (type === 'Text') {
     const children = [props.children].flat().filter((child) => typeof child === 'string' || typeof child === 'number');
@@ -42,6 +47,8 @@ function walk(node) {
 const screen = (name, element) => {
   texts.length = 0;
   videos.length = 0;
+  backs.length = 0;
+  players.length = 0;
   pressable.clear();
   walk(element);
   console.log(`--- ${name}\n${[...new Set(texts)].join('\n')}`);
@@ -109,3 +116,55 @@ const broken = screen('Player (failed)', { type: TubePlayer, props: { item: item
 assert.ok(broken.includes('This video didn\'t play (unsupported_media).'), broken.join('|'));
 assert.equal(videos.length, 0);
 console.log('\nOK: YouTube inside the app (sheet, results, player)');
+
+// glibren-a: aberta pelo pedido do glibren (state/tube-request.js) com voltar=: o botao "Back to glibren" no topo, e o
+// Circulo na raiz (e ao fechar o video do modo auto) pede a volta (goBack -> POST /switch); sem voltar=, onBack.
+const asked = [];
+const goBack = async (to) => { asked.push(to); return { ok: true }; };
+let popped = 0;
+const pop = () => { popped += 1; };
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const fromGlibren = screen('Tube (opened by glibren, results)', { type: TubeScreen, props: { query: 'gta trailer', back: 'PMGL00001', ensure: true, goBack, service: fake, onBack: pop, start: { page: { state: 'ready', items, cursor: '', index: 0, error: '' } } } });
+assert.ok(fromGlibren.includes('Back to glibren'), fromGlibren.join('|'));
+assert.ok(pressable.has('tube:page:glibren'), 'the button at the top');
+assert.equal(backs.length, 1);
+assert.equal(backs[0](), true);
+await tick();
+assert.deepEqual(asked, ['PMGL00001'], 'Circle at the root asks to go back to glibren');
+assert.equal(popped, 0, 'not to the start of Jobee\'sLair');
+backs[0]();
+await tick();
+assert.deepEqual(asked, ['PMGL00001'], 'once: a second Circle while leaving does nothing');
+screen('Tube (opened by glibren, again)', { type: TubeScreen, props: { query: 'gta trailer', back: 'PMGL00001', goBack, service: fake, onBack: pop, start: { page: { state: 'ready', items, cursor: '', index: 0, error: '' } } } });
+pressable.get('tube:page:glibren').onPress();
+await tick();
+assert.deepEqual(asked, ['PMGL00001', 'PMGL00001'], 'the top button too');
+const refused = screen('Tube (opened by glibren, the switch refused)', { type: TubeScreen, props: { query: 'gta', back: 'PMGL00001', goBack: async () => ({ ok: false, error: 'HTTP 409' }), service: fake, onBack: pop, start: { page: { state: 'ready', items, cursor: '', index: 0, error: '' } } } });
+assert.ok(refused.includes('Back to glibren'));
+backs[0]();
+await new Promise((resolve) => setTimeout(resolve, 2700));
+assert.equal(popped, 1, 'refused: a short notice, then the start of Jobee\'sLair');
+popped = 0;
+
+const normal = screen('Tube (from the Videos sheet: no glibren)', { type: TubeScreen, props: { query: 'gta', goBack, service: fake, onBack: pop, start: { page: { state: 'ready', items, cursor: '', index: 0, error: '' } } } });
+assert.ok(!normal.includes('Back to glibren') && !pressable.has('tube:page:glibren'), normal.join('|'));
+backs[0]();
+await tick();
+assert.equal(popped, 1, 'Circle goes back as before');
+assert.equal(asked.length, 2);
+
+const auto = screen('Tube (opened by glibren with auto=1: the video playing)', { type: TubeScreen, props: { query: 'gta', auto: true, back: 'PMGL00001', goBack, service: fake, onBack: pop, start: { page: { state: 'ready', items, cursor: '', index: 0, error: '' }, playing: { item: items[0], back: true } } } });
+assert.ok(auto.includes('Loading the video…'), auto.join('|'));
+assert.equal(players.length, 1);
+players[0].onClose();
+await tick();
+assert.deepEqual(asked.slice(2), ['PMGL00001'], 'closing the auto video goes back to glibren');
+
+const starting = screen('Tube (opened by glibren, starting the service)', { type: TubeScreen, props: { query: 'gta', back: 'PMGL00001', ensure: true, goBack, service: fake, onBack: pop } });
+assert.ok(starting.includes('Starting the video service…') && starting.includes('Back to glibren'), starting.join('|'));
+const down = screen('Tube (opened by glibren, the service did not start)', { type: TubeScreen, props: { query: 'gta', back: 'PMGL00001', ensure: true, goBack, service: fake, onBack: pop, start: { page: { state: 'down', items: [], cursor: '', index: 0, error: 'missing: tube-service.elf' } } } });
+assert.ok(down.includes('The video service didn\'t start (missing: tube-service.elf).') && down.includes('Back to glibren') && down.includes('Try again'), down.join('|'));
+assert.ok(pressable.has('tube:page:glibren-down') && pressable.has('tube:page:retry'));
+const leaving = screen('Tube (going back to glibren)', { type: TubeScreen, props: { query: 'gta', back: 'PMGL00001', goBack, service: fake, onBack: pop, start: { leaving: { text: 'Going back to glibren…' } } } });
+assert.ok(leaving.includes('Going back to glibren…'), leaving.join('|'));
+console.log('\nOK: opened by glibren (Back to glibren, Circle, service down)');
