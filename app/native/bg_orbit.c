@@ -10,6 +10,12 @@
 // fora (o feed da Jobe nao tem DLC separado do jogo). Uma revisao igual a gravada nao reescreve o arquivo: o app so le
 // de novo quando ele muda.
 //
+// glibren.27: o app manda os codigos que ja conhece sem a lista (o catalogo embutido, as outras edicoes e os outros feeds)
+// no POST /orbit {"known": [...]}; o payload guarda em <dir>/orbit-known.txt e, para um jogo conhecido, grava so codigo,
+// nome, plataforma e os links (o app junta os links ao jogo que ja tem; descricao, capa e fundo sao os do catalogo). So os
+// ~220 jogos que o app nao tem vao com a pagina inteira. Com 2.458 jogos a lista inteira pesava ~11 MB no heap de 32 MiB
+// do app e ele fechava ao abrir. Uma lista de conhecidos diferente regrava o feed (baixa de novo).
+//
 // <dir>/orbit-store-status.json guarda o estado (ligado, ultima tentativa, ultima vez que deu certo, revisao e desde
 // quando ela nao muda, erro). "stale" diz quando a lista parou de atualizar, e o payload manda uma notificacao do PS5
 // quando isso comeca e quando volta:
@@ -26,7 +32,10 @@
 #define ORBIT_STALE_S (24 * 3600)
 #define ORBIT_QUIET_S (14 * 24 * 3600)
 // glibren.26: versao da conversao; mudou, o feed e regravado mesmo sem revisao nova do Orbit (o corte do about).
-#define ORBIT_CONV 2
+// glibren.27: 3, o jogo que o app ja conhece vai so com os links (ver "known").
+#define ORBIT_CONV 3
+#define ORBIT_KNOWN_MAX 20000         // glibren.27: codigos conhecidos aceitos no POST /orbit (o resto e ignorado)
+#define ORBIT_KNOWN_RETRY_S (15 * 60) // glibren.27: regravar para uma lista de conhecidos nova depois de uma falha
 #define ORBIT_MIN_GAP_S 60 // um "Atualizar" logo depois de outra tentativa nao baixa de novo
 
 typedef struct {
@@ -35,6 +44,8 @@ typedef struct {
   uint64_t revision;
   int games, releases;
   int conv; // glibren.26: ORBIT_CONV de quem gravou o feed
+  int known; // glibren.27: quantos codigos conhecidos o feed gravado usou (0: a lista inteira, sem nenhum)
+  char known_hash[17]; // glibren.27: o hash da lista de conhecidos do feed gravado ("" sem lista)
   char kind[12];   // "", "network", "broken"
   char error[200];
   char said[12];   // o "stale" que ja foi notificado
@@ -44,6 +55,11 @@ static pthread_mutex_t g_orbit_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_orbit_wake = PTHREAD_COND_INITIALIZER;
 static char g_orbit_dir[600], g_orbit_feed[700], g_orbit_status[700], g_orbit_url[600];
 static int64_t g_orbit_every = 6 * 3600;
+// glibren.27: os codigos que o app conhece (ordenados, sem repetir), o hash deles e o arquivo onde ficam.
+typedef char OrbitId[10];
+static OrbitId* g_known;
+static size_t g_known_count;
+static char g_known_hex[17], g_orbit_known_file[700];
 
 // Em que pe a lista esta (com g_orbit_lock): "" quando esta em dia ou desligada.
 static const char* orbit_stale_locked(int64_t now) {
@@ -57,10 +73,12 @@ static const char* orbit_stale_locked(int64_t now) {
 
 static void orbit_json_locked(Buf* b, int64_t now) {
   buf_fmt(b, "{\"enabled\":%s,\"busy\":%s,\"enabledAt\":%lld,\"lastTry\":%lld,\"lastOk\":%lld,\"revision\":%llu,"
-          "\"revisionSince\":%lld,\"retryUntil\":%lld,\"games\":%d,\"releases\":%d,\"conv\":%d,\"kind\":",
+          "\"revisionSince\":%lld,\"retryUntil\":%lld,\"games\":%d,\"releases\":%d,\"conv\":%d,\"known\":%d,\"knownIds\":%zu,"
+          "\"knownHash\":\"%s\",\"kind\":",
           g_orbit.enabled ? "true" : "false", g_orbit.busy ? "true" : "false", (long long)g_orbit.enabled_at,
           (long long)g_orbit.last_try, (long long)g_orbit.last_ok, (unsigned long long)g_orbit.revision,
-          (long long)g_orbit.revision_since, (long long)g_orbit.retry_until, g_orbit.games, g_orbit.releases, g_orbit.conv);
+          (long long)g_orbit.revision_since, (long long)g_orbit.retry_until, g_orbit.games, g_orbit.releases, g_orbit.conv,
+          g_orbit.known, g_known_count, g_orbit.known_hash);
   buf_json(b, g_orbit.kind);
   buf_str(b, ",\"error\":");
   buf_json(b, g_orbit.error);
@@ -90,6 +108,8 @@ static int orbit_status_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "kind")) return jp_text(jp, s->kind, sizeof s->kind) ? 1 : -1;
   if (!strcmp(key, "error")) return lib_text(jp, s->error, sizeof s->error) ? 1 : -1;
   if (!strcmp(key, "conv")) { if (!jp_uint(jp, &number)) return -1; s->conv = (int)number; return 1; }
+  if (!strcmp(key, "known")) { if (!jp_uint(jp, &number)) return -1; s->known = (int)(number > ORBIT_KNOWN_MAX ? 0 : number); return 1; }
+  if (!strcmp(key, "knownHash")) return lib_text(jp, s->known_hash, sizeof s->known_hash) ? 1 : -1;
   if (!strcmp(key, "said")) return jp_text(jp, s->said, sizeof s->said) ? 1 : -1;
   int64_t* slot = !strcmp(key, "enabledAt") ? &s->enabled_at : !strcmp(key, "lastTry") ? &s->last_try :
                   !strcmp(key, "lastOk") ? &s->last_ok : !strcmp(key, "revisionSince") ? &s->revision_since :
@@ -120,6 +140,73 @@ static void orbit_load(void) {
     logf_("orbit: %s ilegivel; comecando do zero", g_orbit_status);
   }
   free(text);
+}
+
+// ---- glibren.27: os codigos que o app ja conhece ------------------------------------------------------------
+
+static int orbit_id_cmp(const void* a, const void* b) { return strcmp(a, b); }
+// Ordena, tira repetidos e calcula o hash (FNV-1a 64 dos codigos em ordem); "" para a lista vazia.
+static size_t orbit_known_tidy(OrbitId* ids, size_t count, char hex[17]) {
+  size_t n = 0;
+  if (count) qsort(ids, count, sizeof *ids, orbit_id_cmp);
+  for (size_t i = 0; i < count; ++i) if (!n || strcmp(ids[n - 1], ids[i])) memmove(ids[n++], ids[i], sizeof *ids);
+  uint64_t h = 1469598103934665603ull;
+  for (size_t i = 0; i < n; ++i)
+    for (const char* p = ids[i];; ++p) { h = (h ^ (unsigned char)(*p ? *p : '\n')) * 1099511628211ull; if (!*p) break; }
+  if (n) snprintf(hex, 17, "%016llx", (unsigned long long)h);
+  else hex[0] = 0;
+  return n;
+}
+static int orbit_title_ok(const char* id);
+// Um codigo valido de PS4/PS5 vai para a lista (em maiusculas); o resto e ignorado. 0 sem memoria.
+static int orbit_known_add(OrbitId** ids, size_t* count, size_t* cap, const char* text) {
+  char id[10];
+  if (strlen(text) != 9) return 1;
+  for (int i = 0; i < 10; ++i) id[i] = (char)toupper((unsigned char)text[i]);
+  if (!orbit_title_ok(id) || *count >= ORBIT_KNOWN_MAX) return 1;
+  if (*count == *cap) {
+    const size_t next_cap = *cap ? *cap * 2 : 1024;
+    OrbitId* next = realloc(*ids, next_cap * sizeof *next);
+    if (!next) return 0;
+    *ids = next;
+    *cap = next_cap;
+  }
+  memcpy((*ids)[(*count)++], id, sizeof id);
+  return 1;
+}
+// Troca a lista (com g_orbit_lock; fica com `ids`) e grava o arquivo; 1 se mudou.
+static int orbit_known_set_locked(OrbitId* ids, size_t count) {
+  char hex[17];
+  count = orbit_known_tidy(ids, count, hex);
+  if (!strcmp(hex, g_known_hex)) { free(ids); return 0; }
+  free(g_known);
+  g_known = ids;
+  g_known_count = count;
+  snprintf(g_known_hex, sizeof g_known_hex, "%s", hex);
+  Buf b = {0};
+  for (size_t i = 0; i < count; ++i) { buf_str(&b, ids[i]); buf_str(&b, "\n"); }
+  if (b.failed || !save_atomic(g_orbit_known_file, b.data ? b.data : "", b.size, 0644))
+    logf_("orbit: %s nao gravado: %s", g_orbit_known_file, strerror(errno));
+  free(b.data);
+  return 1;
+}
+// Ao subir: a lista que o app mandou da ultima vez.
+static void orbit_known_load(void) {
+  size_t size = 0;
+  char* text = read_text(g_orbit_known_file, 1024 * 1024, &size);
+  if (!text) return;
+  OrbitId* ids = NULL;
+  size_t count = 0, cap = 0;
+  for (char* line = text; line && *line;) {
+    char* next = strchr(line, '\n');
+    if (next) *next++ = 0;
+    if (!orbit_known_add(&ids, &count, &cap, line)) break;
+    line = next;
+  }
+  free(text);
+  pthread_mutex_lock(&g_orbit_lock);
+  if (orbit_known_set_locked(ids, count)) logf_("orbit: %zu codigos conhecidos lidos de %s", g_known_count, g_orbit_known_file);
+  pthread_mutex_unlock(&g_orbit_lock);
 }
 
 // ---- Envelope ORBITENC ----------------------------------------------------------------------------------
@@ -274,7 +361,7 @@ static void orbit_release_json(Buf* b, const OrbitRel* r) {
   buf_str(b, "}");
 }
 #define ORBIT_ABOUT_MAX 1500
-static void orbit_game_json(Buf* b, OrbitRel* first, size_t count) {
+static void orbit_game_json(Buf* b, OrbitRel* first, size_t count, int known) {
   const OrbitRel* g = first;
   buf_str(b, "{\"id\":");
   buf_json(b, g->f[OF_TITLE_ID]);
@@ -283,6 +370,8 @@ static void orbit_game_json(Buf* b, OrbitRel* first, size_t count) {
   const char* platform = orbit_s(g, OF_PLATFORM);
   buf_str(b, ",\"platform\":");
   buf_json(b, !strcmp(platform, "ps4") || !strcmp(platform, "ps5") ? platform : !strncmp(g->f[OF_TITLE_ID], "PPSA", 4) ? "ps5" : "ps4");
+  // glibren.27: um jogo que o app ja conhece vai so com os links (o app usa a pagina, a capa e o fundo que ja tem).
+  if (known) goto releases;
   if (g->f[OF_PUBLISHER]) { buf_str(b, ",\"publisher\":"); buf_json(b, g->f[OF_PUBLISHER]); }
   const char* date = orbit_s(g, OF_DATE);
   if (strlen(date) == 10) { buf_str(b, ",\"releaseDate\":"); buf_json(b, date); }
@@ -324,7 +413,9 @@ static void orbit_game_json(Buf* b, OrbitRel* first, size_t count) {
   if (g->f[OF_COVER]) { buf_str(b, "\"cover\":"); buf_json(b, g->f[OF_COVER]); comma = 1; }
   if (g->f[OF_HERO]) { buf_str(b, comma ? ",\"hero\":" : "\"hero\":"); buf_json(b, g->f[OF_HERO]); comma = 1; }
   if (g->f[OF_COVER_FALLBACK]) { buf_str(b, comma ? ",\"coverFallbacks\":[" : "\"coverFallbacks\":["); buf_json(b, g->f[OF_COVER_FALLBACK]); buf_str(b, "]"); }
-  buf_str(b, "},\"releases\":[");
+  buf_str(b, "}");
+releases:
+  buf_str(b, ",\"releases\":[");
   for (size_t i = 0; i < count; ++i) {
     if (i) buf_str(b, ",");
     orbit_release_json(b, first + i);
@@ -332,7 +423,9 @@ static void orbit_game_json(Buf* b, OrbitRel* first, size_t count) {
   buf_str(b, "]}");
 }
 // O feed da Jobe a partir do catalogo decifrado. 0 ok (o feed em *out, revisao, jogos e links); -1 nao e o catalogo.
-static int orbit_convert(const char* text, size_t size, Buf* out, uint64_t* revision, int* games, int* releases) {
+// glibren.27: `known` (ordenada, `nknown` codigos): os jogos que o app ja tem, gravados so com os links (*slim conta).
+static int orbit_convert(const char* text, size_t size, const OrbitId* known, size_t nknown, Buf* out, uint64_t* revision,
+                         int* games, int* releases, int* slim) {
   OrbitDoc d;
   memset(&d, 0, sizeof d);
   JP jp = {text, text + size, 0};
@@ -341,12 +434,14 @@ static int orbit_convert(const char* text, size_t size, Buf* out, uint64_t* revi
   if (parsed && !d.failed && d.has_revision && d.has_releases && d.count) {
     qsort(d.items, d.count, sizeof *d.items, orbit_rel_cmp);
     buf_fmt(out, "{\"version\":1,\"name\":\"Orbit Store\",\"orbitRevision\":%llu,\"games\":[", (unsigned long long)d.revision);
-    int n = 0;
+    int n = 0, light = 0;
     for (size_t i = 0; i < d.count;) {
       size_t j = i + 1;
       while (j < d.count && !strcmp(d.items[j].f[OF_TITLE_ID], d.items[i].f[OF_TITLE_ID])) ++j;
       if (n++) buf_str(out, ",");
-      orbit_game_json(out, d.items + i, j - i);
+      const int is_known = nknown && bsearch(d.items[i].f[OF_TITLE_ID], known, nknown, sizeof *known, orbit_id_cmp) != NULL;
+      light += is_known;
+      orbit_game_json(out, d.items + i, j - i, is_known);
       i = j;
     }
     buf_str(out, "]}\n");
@@ -354,6 +449,7 @@ static int orbit_convert(const char* text, size_t size, Buf* out, uint64_t* revi
       *revision = d.revision;
       *games = n;
       *releases = (int)d.count;
+      *slim = light;
       result = 0;
     }
   }
@@ -402,6 +498,14 @@ static size_t orbit_header(char* data, size_t a, size_t b, void* ctx) {
 static void orbit_check(void) {
   OrbitFetch f;
   memset(&f, 0, sizeof f);
+  // glibren.27: a lista de conhecidos de agora (uma copia: o app pode mandar outra enquanto isto roda).
+  char known_hex[17] = "";
+  pthread_mutex_lock(&g_orbit_lock);
+  size_t nknown = g_known_count;
+  OrbitId* known = nknown ? malloc(nknown * sizeof *known) : NULL;
+  if (known) { memcpy(known, g_known, nknown * sizeof *known); snprintf(known_hex, sizeof known_hex, "%s", g_known_hex); }
+  else nknown = 0;
+  pthread_mutex_unlock(&g_orbit_lock);
   long status = 0;
   CURLcode code = CURLE_FAILED_INIT;
   CURL* curl = curl_easy_init();
@@ -419,7 +523,7 @@ static void orbit_check(void) {
   char error[200] = "";
   const char* kind = "";
   uint64_t revision = 0;
-  int games = 0, releases = 0, wrote = 0, same = 0;
+  int games = 0, releases = 0, wrote = 0, same = 0, slim = 0;
   if (code != CURLE_OK || status != 200 || !f.data) {
     kind = "network";
     if (f.too_big) snprintf(error, sizeof error, "the catalogue is larger than 16 MiB");
@@ -435,24 +539,26 @@ static void orbit_check(void) {
                                                  : "the file is not an Orbit catalogue");
     } else {
       Buf out = {0};
-      if (orbit_convert(plain, plain_size, &out, &revision, &games, &releases)) {
+      if (orbit_convert(plain, plain_size, known, nknown, &out, &revision, &games, &releases, &slim)) {
         kind = "broken";
         snprintf(error, sizeof error, "the catalogue opened but its contents changed (no games read)");
       } else {
         pthread_mutex_lock(&g_orbit_lock);
-        same = revision == g_orbit.revision && g_orbit.last_ok && g_orbit.conv == ORBIT_CONV;
+        same = revision == g_orbit.revision && g_orbit.last_ok && g_orbit.conv == ORBIT_CONV && !strcmp(g_orbit.known_hash, known_hex);
         pthread_mutex_unlock(&g_orbit_lock);
         struct stat st;
         if (same && !stat(g_orbit_feed, &st)) wrote = 1;
         else if (save_atomic(g_orbit_feed, out.data, out.size, 0644)) wrote = 1;
         if (!wrote) { kind = "network"; snprintf(error, sizeof error, "the feed file could not be written: %s", strerror(errno)); }
-        else if (!same) logk_("orbit: revisao %llu gravada: %d jogos, %d links, %zu bytes", (unsigned long long)revision, games, releases, out.size);
+        else if (!same) logk_("orbit: revisao %llu gravada: %d jogos (%d ja conhecidos, so com os links), %d links, %zu bytes",
+                              (unsigned long long)revision, games, slim, releases, out.size);
       }
       free(out.data);
       if (plain) { OPENSSL_cleanse(plain, plain_size); free(plain); }
     }
   }
   free(f.data);
+  free(known);
   const int64_t now = now_s();
   pthread_mutex_lock(&g_orbit_lock);
   g_orbit.last_try = now;
@@ -463,6 +569,8 @@ static void orbit_check(void) {
     if (!g_orbit.revision_since || revision != g_orbit.revision) g_orbit.revision_since = now;
     g_orbit.revision = revision;
     g_orbit.conv = ORBIT_CONV;
+    if (!same) g_orbit.known = (int)nknown;
+    snprintf(g_orbit.known_hash, sizeof g_orbit.known_hash, "%s", known_hex);
     g_orbit.games = games;
     g_orbit.releases = releases;
     g_orbit.last_ok = now;
@@ -494,6 +602,7 @@ static void orbit_tell_locked(int64_t now) {
 static void* orbit_loop(void* unused) {
   (void)unused;
   orbit_load();
+  orbit_known_load();
   pthread_mutex_lock(&g_orbit_lock);
   // Ao subir, a proxima tentativa conta da ultima (um payload reiniciado nao baixa de novo antes das 6 h).
   g_orbit.next_try = g_orbit.last_try ? g_orbit.last_try + g_orbit_every : 0;
@@ -504,7 +613,12 @@ static void* orbit_loop(void* unused) {
     const int64_t now = now_s();
     // O relogio voltou (PS5 acertou a hora): nao espera anos pela proxima.
     if (g_orbit.next_try > now + g_orbit_every + 7 * 86400) g_orbit.next_try = now;
-    if (g_orbit.enabled && (g_orbit.kick || now >= g_orbit.next_try)) {
+    // glibren.27: o feed gravado com outra lista de conhecidos (ou outra conversao) e regravado logo, sem esperar as 6 h:
+    // 1 min depois da ultima tentativa, ou 15 min se ela falhou (sem martelar o GitHub com a rede fora).
+    const int outdated = g_orbit.last_ok && (g_orbit.conv != ORBIT_CONV || strcmp(g_orbit.known_hash, g_known_hex));
+    const int redo = outdated && now >= g_orbit.retry_until &&
+                     now - g_orbit.last_try >= (g_orbit.last_ok >= g_orbit.last_try ? ORBIT_MIN_GAP_S : ORBIT_KNOWN_RETRY_S);
+    if (g_orbit.enabled && (g_orbit.kick || now >= g_orbit.next_try || redo)) {
       g_orbit.kick = 0;
       g_orbit.busy = 1;
       orbit_save_locked(); // glibren.25: o app (Configuracoes) mostra "Atualizando..." enquanto baixa
@@ -524,22 +638,40 @@ static void* orbit_loop(void* unused) {
   return NULL;
 }
 
-typedef struct { int has_enabled, enabled, refresh; } OrbitBody;
+typedef struct { int has_enabled, enabled, refresh, has_known, failed; OrbitId* known; size_t count, cap; } OrbitBody;
+static int orbit_known_item(JP* jp, void* ctx) {
+  OrbitBody* o = ctx;
+  char text[16];
+  if (!lib_text(jp, text, sizeof text)) return 0;
+  if (!orbit_known_add(&o->known, &o->count, &o->cap, text)) o->failed = 1;
+  return 1;
+}
 static int orbit_body_field(JP* jp, const char* key, void* ctx) {
   OrbitBody* o = ctx;
   if (!strcmp(key, "enabled")) { o->has_enabled = 1; return jp_bool(jp, &o->enabled) ? 1 : -1; }
+  if (!strcmp(key, "known")) {
+    jp_ws(jp);
+    if (jp->p >= jp->end || *jp->p != '[') return -1;
+    o->has_known = 1;
+    return jp_array(jp, orbit_known_item, o) ? 1 : -1;
+  }
   if (!strcmp(key, "refresh")) return jp_bool(jp, &o->refresh) ? 1 : -1;
   return jp_skip(jp) ? 1 : -1;
 }
 
-// GET /orbit: o estado. POST /orbit {enabled?, refresh?}: liga/desliga e pede uma atualizacao agora.
+// GET /orbit: o estado. POST /orbit {enabled?, refresh?, known?}: liga/desliga, pede uma atualizacao agora e (glibren.27)
+// troca a lista de codigos que o app ja conhece.
 static int orbit_route(int fd, Request* r) {
   if (strcmp(r->path, "/orbit")) return 0;
   if (!strcmp(r->method, "POST")) {
     OrbitBody o;
     memset(&o, 0, sizeof o);
     JP jp = {r->body, r->body + r->content_length, 0};
-    if (!r->body || !jp_object(&jp, orbit_body_field, &o)) { respond_error(fd, 400, "expected {enabled?: bool, refresh?: bool}"); return 1; }
+    if (!r->body || !jp_object(&jp, orbit_body_field, &o) || o.failed) {
+      free(o.known);
+      respond_error(fd, 400, "expected {enabled?: bool, refresh?: bool, known?: [title ids]}");
+      return 1;
+    }
     const int64_t now = now_s();
     pthread_mutex_lock(&g_orbit_lock);
     if (o.has_enabled && o.enabled != g_orbit.enabled) {
@@ -554,6 +686,9 @@ static int orbit_route(int fd, Request* r) {
     }
     if (o.refresh && g_orbit.enabled && !g_orbit.busy && now - g_orbit.last_try >= ORBIT_MIN_GAP_S && now >= g_orbit.retry_until)
       g_orbit.kick = 1;
+    // glibren.27: a lista nova fica com o payload (orbit_known_set_locked fica com ela); o laco regrava o feed.
+    if (!o.has_known) free(o.known);
+    else if (orbit_known_set_locked(o.known, o.count)) logk_("orbit: %zu codigos conhecidos pelo app", g_known_count);
     pthread_cond_broadcast(&g_orbit_wake);
     pthread_mutex_unlock(&g_orbit_lock);
   } else if (strcmp(r->method, "GET")) {
@@ -573,6 +708,7 @@ static void orbit_setup(void) {
   snprintf(g_orbit_dir, sizeof g_orbit_dir, "%s", env_or("BGDL_ORBIT_DIR", "/data/JobeesLair/orbit"));
   snprintf(g_orbit_feed, sizeof g_orbit_feed, "%s/orbit-store.json", g_orbit_dir);
   snprintf(g_orbit_status, sizeof g_orbit_status, "%s/orbit-store-status.json", g_orbit_dir);
+  snprintf(g_orbit_known_file, sizeof g_orbit_known_file, "%s/orbit-known.txt", g_orbit_dir); // glibren.27
   snprintf(g_orbit_url, sizeof g_orbit_url, "%s", ORBIT_URL);
 #ifndef __PROSPERO__
   // Nos testes: o servidor local e um intervalo curto.

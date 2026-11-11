@@ -81,6 +81,8 @@ test('off by default; on, the payload file is a feed on the console; off again, 
   // Not written yet: the list says why; then the payload writes it.
   await feeds.refreshFeeds();
   assert.equal(feeds.orbitFeedSnapshot().state, 'failed');
+  // glibren.27: so e lida a lista gravada com os codigos conhecidos (o estado diz conv 3 e known).
+  put(orbit.ORBIT_STATUS, JSON.stringify({ enabled: true, conv: 3, known: 2000 }));
   put(orbit.ORBIT_FEED, JSON.stringify({ version: 1, name: 'Orbit Store', games: Array.from({ length: 2421 }, (_, n) => game(id(n), 2)) }));
   await feeds.refreshFeeds();
   const card = feeds.orbitFeedSnapshot();
@@ -160,4 +162,58 @@ test('glibren.26: a summary that is only the start of the description is kept on
   const again = parseFeed(cached, '/x/orbit-store.json');
   assert.equal(pageSummary(again.games[0].page), 'Become a mercenary in Night City.');
   assert.deepEqual(again.games.map((item) => item.releases.map((r) => r.label)), feed.games.map((item) => item.releases.map((r) => r.label)));
+});
+
+// glibren.27: a lista Orbit pesava ~11 MB no heap de 32 MiB (2.458 jogos com descricao, capa e fundo) e o app fechava ao
+// abrir. O app manda ao payload os codigos que ja conhece; o jogo conhecido vem so com os links e continua recebendo-os;
+// um codigo desconhecido sem pagina entra sem quebrar; a lista inteira de antes nao e lida ate o payload regravar.
+test('glibren.27: the known titles go to the payload, a known game only gets the links, a bare unknown one still works', async () => {
+  files.clear();
+  told.length = 0;
+  orbit.setOrbitSource(null);
+  orbit.setOrbitFeed(true);
+  const { games: bundled } = await import(href('app/data/catalog-index.js'));
+  const mine = bundled[0];
+  const link = (n) => ({ url: `https://vikingfile.com/d/orbit${n}/game${n}.rar`, provider: 'Vikingfile', label: `Vikingfile - EUR - Game folder (rar) ${n}`, record: `orbit-${n}`, format: 'rar' });
+  const slim = { version: 1, name: 'Orbit Store', games: [
+    { id: mine.id, title: mine.title, platform: mine.platform, releases: [link(1)] },
+    { id: 'PPSA99990', title: 'Only on Orbit', platform: 'ps5', releases: [link(2)] },
+  ] };
+  put(orbit.ORBIT_FEED, JSON.stringify(slim));
+  // Written by an older payload (or before the titles reached it): left out, with the reason.
+  put(orbit.ORBIT_STATUS, JSON.stringify({ enabled: true, conv: 2, games: 2458 }));
+  const old = await launch();
+  assert.equal(old.loadFeedGames().length, 0, 'the whole list is not read');
+  assert.match(old.orbitFeedSnapshot().error, /rewrite/);
+  put(orbit.ORBIT_STATUS, JSON.stringify({ enabled: true, conv: 3, known: 2000, games: 2 }));
+  const catalog = await import(`${href('app/state/catalog.js')}?glibren27`);
+  const known = catalog.getGame(mine.id);
+  assert.ok(!known.feedPage, 'still the bundled game, with its own page');
+  assert.ok(known.releases.some((release) => release.label === link(1).label), 'and the Orbit link');
+  assert.ok(known.providers.includes('vikingfile'));
+  const bare = catalog.getGame('PPSA99990');
+  assert.ok(bare, 'an unknown title with no page is listed');
+  assert.deepEqual(bare.about, []);
+  assert.deepEqual(bare.shots, []);
+  assert.equal(bare.shortDescription, '');
+  assert.equal(bare.art.cover, undefined);
+  assert.deepEqual(bare.genres, []);
+  assert.equal(bare.releases.length, 1);
+  const ids = orbit.orbitKnownIds();
+  assert.ok(ids.includes(mine.id) && ids.length >= bundled.length, 'every bundled title is known');
+  assert.ok(!ids.includes('PPSA99990'), 'a title only the Orbit list has is not');
+  // They go to the payload with the setting, at launch and when the list is turned on.
+  const sent = [];
+  orbit.setOrbitSource(async (body) => {
+    sent.push(body);
+    return null;
+  });
+  orbit.startOrbitFeed((key) => key);
+  assert.deepEqual(sent.at(-1), { enabled: true, known: ids });
+  orbit.setOrbitFeed(false);
+  assert.deepEqual(sent.at(-1), { enabled: false, refresh: false }, 'not when turning it off');
+  orbit.setOrbitFeed(true);
+  assert.deepEqual(sent.at(-1), { enabled: true, refresh: true, known: ids });
+  orbit.setOrbitFeed(false);
+  orbit.setOrbitSource(null);
 });

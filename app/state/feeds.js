@@ -16,14 +16,14 @@
 // the link never touches the file itself. No mirrors for a file.
 
 import { useEffect, useState } from 'react';
-import { MAX_MIRRORS, feedDocument, parseFeed, parseFeedAsync, stableKey, stableKeyAsync } from './feed-format.js';
+import { MAX_MIRRORS, feedDocument, parseFeed, parseFeedAsync, checkFeedTextAsync, parseFeedText, stableKey, stableKeyAsync } from './feed-format.js';
 import { isoStamp } from './clock.js';
 import { readJlxAsync } from './jlx.js';
 import { askListsHome, listsAddress, listsGone } from './lists-home.js';
 import { DATA_DIR, LEGACY_DATA_DIR } from './data-dir.js';
 import { webURL } from './download-sources.js';
 import { checkLocalPath, isLocalFeed } from './local-feed.js';
-import { ORBIT_FEED, onOrbitFeed, orbitFeedOn, requestOrbitRefresh } from './orbit-feed.js';
+import { ORBIT_FEED, onOrbitFeed, orbitFeedOn, orbitFeedReady, requestOrbitRefresh } from './orbit-feed.js';
 import { savedList } from './saved.js';
 import { FileSystem, Http } from '@ps5-react/core';
 
@@ -51,7 +51,11 @@ import { FileSystem, Http } from '@ps5-react/core';
   var liveSource = () => listsAddress(LIVE_PATH);
   // The feeds read and refreshed: the live catalog first, then the player's.
   // glibren.20: e a lista Orbit Store (um arquivo que o payload grava), so com a opcao ligada.
-  var allFeeds = () => [LIVE_FEED, ...orbitFeedOn() ? [ORBIT_FEED] : [], ...feedList.get().filter((url) => url !== LIVE_FEED && url !== ORBIT_FEED)];
+  // glibren.27: a lista Orbit por ultimo: um jogo que so um feed do jogador tem e conhecido (o payload grava so os links
+  // dele) e precisa ja estar no catalogo, com a pagina do feed, quando os links da Orbit chegam (state/catalog.js).
+  var allFeeds = () => [LIVE_FEED, ...feedList.get().filter((url) => url !== LIVE_FEED && url !== ORBIT_FEED), ...orbitFeedOn() ? [ORBIT_FEED] : []];
+  // glibren.27: a lista Orbit gravada sem os codigos conhecidos (inteira) fica de fora ate o payload regravar.
+  var ORBIT_WAIT = "Waiting for the payload to rewrite the list for this version.";
   var DIR = `${DATA_DIR}/feeds`;
   // Caches an earlier build left in the old data folder are read until the feed refreshes into this one.
   var LEGACY_DIR = `${LEGACY_DATA_DIR}/feeds`;
@@ -68,6 +72,36 @@ import { FileSystem, Http } from '@ps5-react/core';
       }
     }
     return null;
+  }
+  // glibren.27: o cache de um feed da web como TEXTO: o cabecalho (o que vem antes de "document") lido a parte e o
+  // documento deixado no texto, para parseFeedText ler um jogo por vez. Antes o cache inteiro virava uma arvore
+  // (JSON.parse) e depois a copia validada, as duas no heap ao mesmo tempo. null quando nao ha cache dele.
+  var DOCUMENT_KEY = ',"document":';
+  function readWebCache(url) {
+    for (const path of [cacheFile(url), `${LEGACY_DIR}/${stableKey(url)}.json`]) {
+      try {
+        const text2 = FileSystem.readFile(path);
+        const at = typeof text2 === "string" ? text2.indexOf(DOCUMENT_KEY) : -1;
+        const end = at < 0 ? -1 : text2.lastIndexOf("}");
+        if (end <= at) continue;
+        const head = JSON.parse(`${text2.slice(0, at)}}`);
+        if (head?.url === url) return { cache: head, text: text2, from: at + DOCUMENT_KEY.length, to: end };
+      } catch {
+      }
+    }
+    return null;
+  }
+  // glibren.27: o cache gravado sem montar uma segunda copia do documento: o cabecalho e depois o texto em pedacos
+  // (FileSystem.appendFile). Sem appendFile (um runtime antigo), de uma vez, como antes.
+  var WRITE_SLICE = 256 * 1024;
+  function writeCacheText(path, head, text2) {
+    if (typeof FileSystem.appendFile !== "function") {
+      FileSystem.writeFile(path, `${head}${DOCUMENT_KEY}${text2}}`);
+      return;
+    }
+    FileSystem.writeFile(path, `${head}${DOCUMENT_KEY}`);
+    for (let at = 0; at < text2.length; at += WRITE_SLICE) FileSystem.appendFile(path, text2.slice(at, at + WRITE_SLICE));
+    FileSystem.appendFile(path, "}");
   }
   // What the catalog loaded from each feed this launch, by URL: a later refresh that differs needs a restart.
   var loaded = /* @__PURE__ */ new Map();
@@ -98,6 +132,19 @@ import { FileSystem, Http } from '@ps5-react/core';
     if (typeof info.size === "number" && info.size > MAX_BYTES) throw new Error(TOO_BIG);
     return info;
   }
+  // glibren.27: o texto de um arquivo do PS5, para parseFeedText ler um jogo por vez (a lista Orbit Store e os .json
+  // do jogador): sem a arvore inteira do JSON.parse no heap de 32 MiB.
+  function readLocalText(path) {
+    let text2;
+    try {
+      text2 = FileSystem.readFile(path);
+    } catch (error2) {
+      throw new Error(`File not readable (${error2.message}).`);
+    }
+    if (typeof text2 !== "string") throw new Error("File not readable.");
+    if (text2.length > MAX_BYTES) throw new Error(TOO_BIG);
+    return text2;
+  }
   function readLocalDocument(path) {
     let text2;
     try {
@@ -116,11 +163,14 @@ import { FileSystem, Http } from '@ps5-react/core';
   // The cache of a file's good read: the same form as a fetched feed's, with the file's stamp.
   // glibren.26: escrito de uma vez (um texto so de ~4 MB para a lista Orbit Store, nao o documento e depois uma segunda
   // copia dele emendada ao cabecalho), e o documento por ultimo, como antes (readCacheHead le so o que vem antes dele).
-  function saveLocal(url, feed, stamp) {
+  function saveLocal(url, feed, stamp, text2 = null) {
     const cache = { url, from: url, hash: `file:${stamp}`, etag: null, stamp, fetchedAt: isoStamp(Date.now()), name: feed.name, games: feed.games.length, skipped: feed.skipped, mirrors: [] };
     try {
       FileSystem.mkdir(DIR, { recursive: true });
-      FileSystem.writeFile(`${cacheFile(url)}.tmp`, JSON.stringify({ ...cache, document: feedDocument({ ...feed, mirrors: [] }) }));
+      // glibren.27: com o texto do arquivo, o cache leva o proprio texto em pedacos (writeCacheText), sem montar
+      // feedDocument e um JSON.stringify de mais alguns MB ao lado.
+      if (text2 !== null) writeCacheText(`${cacheFile(url)}.tmp`, JSON.stringify(cache).slice(0, -1), text2);
+      else FileSystem.writeFile(`${cacheFile(url)}.tmp`, JSON.stringify({ ...cache, document: feedDocument({ ...feed, mirrors: [] }) }));
       FileSystem.rename(`${cacheFile(url)}.tmp`, cacheFile(url));
     } catch (error2) {
       console.log(`feeds: copy of ${url} not kept: ${error2.message}`);
@@ -146,24 +196,26 @@ import { FileSystem, Http } from '@ps5-react/core';
     }
     return null;
   }
+  // glibren.27: o arquivo lido como texto (parseFeedText, um jogo por vez); o cache so quando o arquivo nao pode ser
+  // lido, tambem como texto (readWebCache). O feed sai igual ao de antes.
   function loadLocal(url) {
     const cache = readCacheHead(url);
-    // O documento do cache so quando ele vale: o arquivo nao mudou, ou nao pode ser lido.
-    const cachedDocument = () => readCache(url)?.document;
     let failure = null;
     try {
       const info = statLocal(url);
       const stamp = stampOf(info);
+      let text2 = readLocalText(url);
+      const feed = parseFeedText(text2, url);
+      if (!feed.games.length) throw new Error("No usable games in this file.");
       if (cache && cache.stamp === stamp) {
-        const feed2 = parseFeed(cachedDocument(), url);
+        text2 = null;
         loaded.set(url, cache.hash);
         meta.set(url, { ...summary(cache), fetchedAt: isoStamp(Date.now()) });
-        setIndex(url, feed2.games);
-        return feed2;
+        setIndex(url, feed.games);
+        return feed;
       }
-      const feed = parseFeed(readLocalDocument(url), url);
-      if (!feed.games.length) throw new Error("No usable games in this file.");
-      const saved = saveLocal(url, feed, stamp);
+      const saved = saveLocal(url, feed, stamp, text2);
+      text2 = null;
       loaded.set(url, saved.hash);
       console.log(`feeds: ${url}: read, ${feed.games.length} games, ${feed.skipped} skipped`);
       return feed;
@@ -173,7 +225,9 @@ import { FileSystem, Http } from '@ps5-react/core';
     console.log(`feeds: ${url} not read: ${failure.message}`);
     status.set(url, { state: "failed", error: failure.message });
     if (!cache) return null;
-    const feed = parseFeed(cachedDocument(), url);
+    const kept = readWebCache(url);
+    if (!kept) return null;
+    const feed = parseFeedText(kept.text, url, kept.from, kept.to);
     loaded.set(url, cache.hash);
     meta.set(url, summary(cache));
     setIndex(url, feed.games);
@@ -185,15 +239,23 @@ import { FileSystem, Http } from '@ps5-react/core';
   function loadFeedGames() {
     const out = [];
     for (const url of allFeeds()) {
-      const cache = isLocalFeed(url) ? null : readCache(url);
-      if (!cache && !isLocalFeed(url)) continue;
+      if (url === ORBIT_FEED && !orbitFeedReady()) {
+        console.log(`feeds: ${url} not read: written without the known titles (the payload rewrites it)`);
+        status.set(url, { state: "failed", error: ORBIT_WAIT });
+        continue;
+      }
+      // glibren.27: um feed da web le o cache como texto (readWebCache), sem a arvore do documento.
+      let kept = isLocalFeed(url) ? null : readWebCache(url);
+      if (!kept && !isLocalFeed(url)) continue;
       try {
         let feed;
         if (isLocalFeed(url)) {
           feed = loadLocal(url);
           if (!feed) continue;
         } else {
-          feed = parseFeed(cache.document, url);
+          const { cache } = kept;
+          feed = parseFeedText(kept.text, url, kept.from, kept.to);
+          kept = null; // o texto do cache sai antes do proximo feed
           loaded.set(url, cache.hash);
           meta.set(url, summary(cache));
           setIndex(url, feed.games);
@@ -271,7 +333,7 @@ import { FileSystem, Http } from '@ps5-react/core';
   var strongTag = (tag) => typeof tag === "string" && tag !== "" && !tag.startsWith("W/") ? tag : null;
   async function fetchFrom(source, url) {
     // No custom headers: with them the transport will not follow a redirect (raw file hosts redirect).
-    const response = await Http.request(source, { maxBytes: Math.min(MAX_BYTES, NET_MAX_BYTES) });
+    let response = await Http.request(source, { maxBytes: Math.min(MAX_BYTES, NET_MAX_BYTES) });
     if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
     // 0.5.3: the copy the cache holds already, as the server's ETag says: it is not read, checked, hashed or
     // written again. Reading the live catalog (2 MiB at most) and building its copies held the console for
@@ -280,22 +342,36 @@ import { FileSystem, Http } from '@ps5-react/core';
     const etag = strongTag(response.headers?.etag);
     const known = meta.get(url);
     if (etag && known?.etag === etag && known.from === source) return { unchanged: true };
-    let document2;
+    // glibren.27: o pico de memoria deste caminho (catalogo ao vivo de 1,8 MB) passava de 20 MB no QuickJS: o texto
+    // baixado preso na resposta ate o fim, o texto decodificado, a arvore do JSON.parse, a copia validada, o documento
+    // refeito (feedDocument) e o seu JSON, e o cache montado como mais uma string. Agora: a resposta solta logo depois
+    // de lida, o texto baixado solto depois de decodificado, o feed conferido do texto um jogo por vez, guardando so
+    // id e direct de cada jogo (checkFeedTextAsync: o catalogo le os jogos do cache na proxima abertura), e o proprio
+    // texto decodificado vai para o cache (fetchFeed), sem documento refeito.
+    let text2 = await response.text();
+    response = null;
     try {
       // 0.5.7: a JLX1 feed (state/jlx.js) is decoded first, a few slices a frame; a plain one is read as it is.
-      document2 = JSON.parse(await readJlxAsync(await response.text(), nextFrame));
+      text2 = await readJlxAsync(text2, nextFrame);
     } catch {
       throw new Error("Not JSON.");
     }
-    const feed = await parseFeedAsync(document2, url, nextFrame);
-    document2 = null; // the raw document can go before the normalized copy is built
+    let feed;
+    try {
+      feed = await checkFeedTextAsync(text2, url, nextFrame);
+    } catch (error2) {
+      if (error2 instanceof SyntaxError) throw new Error("Not JSON.");
+      throw error2;
+    }
     if (!feed.games.length) throw new Error("No usable games in this feed.");
     feed.etag = etag;
+    feed.text = text2;
     return feed;
   }
   // glibren.14: a linked file, read again (Refresh feeds, and the refresh after launch): an unchanged stamp reads
   // nothing; a missing or broken file keeps its last good read and says why.
   async function refreshLocal(url) {
+    if (url === ORBIT_FEED && !orbitFeedReady()) return setStatus(url, { state: "failed", error: ORBIT_WAIT });
     setStatus(url, { state: "refreshing" });
     try {
       const info = statLocal(url);
@@ -306,10 +382,13 @@ import { FileSystem, Http } from '@ps5-react/core';
         setStatus(url, { state: "ok", changed: loaded.get(url) !== known.hash });
         return;
       }
-      const feed = await parseFeedAsync(readLocalDocument(url), url, nextFrame);
+      // glibren.27: so a contagem e o indice (checkFeedTextAsync guarda { id, direct } de cada jogo); o cache leva o texto.
+      let text2 = readLocalText(url);
+      const feed = await checkFeedTextAsync(text2, url, nextFrame);
       if (!feed.games.length) throw new Error("No usable games in this file.");
       if (!listed(url)) return;
-      const cache = saveLocal(url, feed, stamp);
+      const cache = saveLocal(url, feed, stamp, text2);
+      text2 = null;
       setStatus(url, { state: "ok", changed: loaded.get(url) !== cache.hash });
       console.log(`feeds: ${url}: read, ${feed.games.length} games, ${feed.skipped} skipped`);
     } catch (error2) {
@@ -357,16 +436,19 @@ import { FileSystem, Http } from '@ps5-react/core';
         console.log(`feeds: ${url}${from === url ? "" : ` (via ${hostOf(from)})`}: unchanged, ${known.games} games`);
         return;
       }
-      // 0.5.3: the normalized copy is held only while its text is made, not through the hash's many frames: the
-      // interpreter frees it as soon as nothing holds it, and the console's heap is tight while a feed refreshes.
-      const text = JSON.stringify(feedDocument(feed));
+      // glibren.27: o cache guarda o texto que veio (ja decodificado), nao um documento refeito do feed validado: nada
+      // de feedDocument + JSON.stringify (mais uma arvore e mais uma string do tamanho do feed) e o arquivo fica menor
+      // (1,8 MB em vez de 2,4 no catalogo ao vivo). Na abertura ele e validado de novo (loadFeedGames), como sempre.
+      // O hash passa a ser o desse texto: um cache de antes conta como "mudou" uma vez.
+      let text = feed.text;
+      feed.text = null;
       await nextFrame();
       const hash = await stableKeyAsync(text, nextFrame);
       if (!listed(url)) return;
       const cache = { url, from, hash, etag: feed.etag, fetchedAt: isoStamp(Date.now()), name: feed.name, games: feed.games.length, skipped: feed.skipped, mirrors: feed.mirrors };
       FileSystem.mkdir(DIR, { recursive: true });
-      // The document goes in as the text already made for the hash: one stringify of the feed, not two.
-      FileSystem.writeFile(`${cacheFile(url)}.tmp`, `${JSON.stringify(cache).slice(0, -1)},"document":${text}}`);
+      writeCacheText(`${cacheFile(url)}.tmp`, JSON.stringify(cache).slice(0, -1), text);
+      text = null;
       FileSystem.rename(`${cacheFile(url)}.tmp`, cacheFile(url));
       meta.set(url, summary(cache));
       setIndex(url, feed.games);

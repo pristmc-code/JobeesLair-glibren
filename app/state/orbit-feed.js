@@ -12,6 +12,11 @@
 // O aviso aparece de tres jeitos: notificacao do PS5 mandada pelo payload quando comeca (mesmo com o app fechado),
 // notificacao do app ao abrir (uma vez por problema) e a barra amarela de avisos enquanto durar (ui/AnnouncementBar.jsx),
 // alem do texto nas Configuracoes.
+//
+// glibren.27: o app manda junto os codigos que ja conhece sem a lista ("known": o catalogo embutido, as outras edicoes e
+// os outros feeds, ver state/catalog.js); o payload grava esses jogos so com os links (o app junta os links ao jogo que
+// ja tem) e so os que o app nao tem com a pagina inteira. Uma lista gravada antes disso (sem "known" no estado) nao e
+// lida: inteira, ela enchia o heap de 32 MiB e o app fechava ao abrir; o payload a regrava logo que recebe os codigos.
 
 import { useEffect, useState } from 'react';
 import { FileSystem, Notifications, Platform } from '@ps5-react/core';
@@ -50,7 +55,7 @@ import { loadList, saveList } from './saved.js';
       console.log(`jobeeslair: settings: orbitFeed not saved (${problem?.message ?? problem})`);
     }
     // Ligar baixa agora (o payload nao repete antes de 1 min); desligar so para as atualizacoes.
-    void sendOrbit({ enabled, refresh: enabled });
+    void sendOrbit(enabled ? withKnown({ enabled, refresh: enabled }) : { enabled, refresh: enabled });
     for (const listener of [...listeners]) listener(enabled);
   }
   function onOrbitFeed(listener) {
@@ -62,6 +67,21 @@ import { loadList, saveList } from './saved.js';
     useEffect(() => onOrbitFeed(setOn), []);
     return on;
   }
+
+  // ---- glibren.27: os codigos que o app ja conhece sem a lista (state/catalog.js os da ao carregar) ----
+  var knownIds = null;
+  var TITLE_ID = /^(?:PPSA|CUSA)\d{5}$/;
+  /** glibren.27: guarda os codigos conhecidos; vao ao payload com a opcao (ao abrir o app e ao ligar a lista). */
+  function setOrbitKnown(ids) {
+    knownIds = [...new Set(ids)].filter((id) => TITLE_ID.test(id)).sort();
+  }
+  var orbitKnownIds = () => knownIds;
+  var withKnown = (body) => knownIds ? { ...body, known: knownIds } : body;
+  /**
+   * glibren.27: se o arquivo da lista ja foi gravado com os codigos conhecidos (leve) e pode ser lido; antes disso o
+   * app nao le a lista (a inteira, de um payload antigo ou ainda sem os codigos, nao cabe no heap).
+   */
+  var orbitFeedReady = (status = readOrbitStatus()) => num(status?.conv) >= 3 && num(status?.known) > 0;
 
   // ---- O payload (background-downloads.js registra como falar com ele) ----
   var source = null, pending = null;
@@ -141,7 +161,7 @@ import { loadList, saveList } from './saved.js';
   function startOrbitFeed(t) {
     const on = orbitFeedOn();
     const status = readOrbitStatus();
-    if (on || status?.enabled) void sendOrbit({ enabled: on });
+    if (on || status?.enabled) void sendOrbit(on ? withKnown({ enabled: on }) : { enabled: on });
     const stale = orbitStale(status, on);
     let told = "";
     try {
@@ -163,4 +183,4 @@ import { loadList, saveList } from './saved.js';
     return stale;
   }
 
-export { ORBIT_FEED, ORBIT_STATUS, onOrbitFeed, orbitFeedOn, orbitStale, readOrbitStatus, requestOrbitRefresh, sendOrbit, setOrbitFeed, setOrbitSource, startOrbitFeed, useOrbitFeed, useOrbitStale, useOrbitStatus };
+export { ORBIT_FEED, ORBIT_STATUS, onOrbitFeed, orbitFeedOn, orbitFeedReady, orbitKnownIds, orbitStale, setOrbitKnown, readOrbitStatus, requestOrbitRefresh, sendOrbit, setOrbitFeed, setOrbitSource, startOrbitFeed, useOrbitFeed, useOrbitStale, useOrbitStatus };

@@ -9,6 +9,7 @@
 
 import { isMagnetLink, sourceKind, webURL } from './download-sources.js';
 import { youtubeId } from './youtube.js';
+import { jsonMembers, skipSpace } from './json-scan.js';
 
   // MAX_TOTAL_RELEASES bounds a whole feed: 1500 games × 64 releases would be ~96 000 records, far
   // more than the 32 MiB JS heap holds beside the catalog; real feeds list a few per game.
@@ -322,6 +323,63 @@ import { youtubeId } from './youtube.js';
   var parseFeed = (document2, url) => finish(feedSteps(document2, url, Infinity));
   // The same, with the screen's frames in between: a refresh while the store or Settings is open.
   var parseFeedAsync = (document2, url, pause) => finishPaced(feedSteps(document2, url, PARSE_BATCH), pause);
+  // glibren.27: o mesmo feed lido do TEXTO, um jogo por vez (state/json-scan.js), sem a arvore do documento inteiro no
+  // heap: o catalogo ao vivo (1,8 MB) montado por JSON.parse e validado ao lado passava de 20 MB e o app ficava sem
+  // memoria no PS5. Da o mesmo que parseFeed(JSON.parse(text)); um texto que nao e um objeto com "games" (uma lista
+  // Pegasus, "packages") cai no caminho de sempre. `from`/`to` leem so um trecho (o documento dentro de um cache).
+  // `lean`: cada jogo e validado como sempre, mas so fica { game: { id, direct } } (o que o indice e a contagem usam):
+  // uma atualizacao nao precisa dos jogos, que o catalogo so le do cache na proxima abertura.
+  var KEPT_KEYS = /* @__PURE__ */ new Set(["version", "name", "mirrors", "ratings", "packages", "games"]);
+  function* feedTextSteps(text2, url, batch, from = 0, to = text2.length, lean = false) {
+    const whole = () => JSON.parse(text2.slice(from, to));
+    if (text2.charCodeAt(skipSpace(text2, from, to)) !== 123) return yield* feedSteps(whole(), url, batch);
+    const head = {};
+    const key = stableKey(url);
+    const games2 = [];
+    const seen = /* @__PURE__ */ new Set();
+    let streamed = false, offered = 0, releases = 0, done = 0, again = false;
+    pool = /* @__PURE__ */ new Map();
+    try {
+      for (const part of jsonMembers(text2, from, to, "games")) {
+        // "games" duas vezes: vale o ultimo, como no JSON.parse; raro o bastante para ler o documento inteiro.
+        if (part.key === "games" && streamed && !part.item) {
+          again = true;
+          break;
+        }
+        if (part.open) {
+          streamed = true;
+          continue;
+        }
+        const value = JSON.parse(text2.slice(part.start, part.end));
+        if (!part.item) {
+          if (KEPT_KEYS.has(part.key)) head[part.key] = value;
+          continue;
+        }
+        if (offered >= MAX_GAMES) continue; // the rest count as skipped
+        offered++;
+        if (releases >= MAX_TOTAL_RELEASES) continue;
+        const item = game(value, key);
+        if (item && !seen.has(item.game.id)) {
+          seen.add(item.game.id);
+          item.releases = item.releases.slice(0, MAX_TOTAL_RELEASES - releases);
+          releases += item.releases.length;
+          games2.push(lean ? { game: { id: item.game.id, direct: item.game.direct } } : item);
+        }
+        if (++done % batch === 0) yield;
+      }
+    } finally {
+      pool = null;
+    }
+    // (`lean` vale so para o caminho por texto: os outros sao raros e dao o feed inteiro, que serve igual.)
+    if (again) return yield* feedSteps(whole(), url, batch);
+    if (!streamed) return yield* feedSteps(head, url, batch);
+    if (head.version !== 1) throw new Error("Not a catalog feed: expected version 1 with a games list.");
+    const mirrors = [...new Set(list(head.mirrors, 16, httpURL))].filter((mirror) => mirror !== url).slice(0, MAX_MIRRORS);
+    return { name: text(head.name, 80) || defaultName(url), games: games2, skipped: offered - games2.length, mirrors, ratings: ratingsOf(head.ratings) };
+  }
+  var parseFeedText = (text2, url, from, to) => finish(feedTextSteps(text2, url, Infinity, from, to));
+  var parseFeedTextAsync = (text2, url, pause, from, to) => finishPaced(feedTextSteps(text2, url, PARSE_BATCH, from, to), pause);
+  var checkFeedTextAsync = (text2, url, pause) => finishPaced(feedTextSteps(text2, url, PARSE_BATCH, 0, text2.length, true), pause);
   // A parsed feed back in feed form, as the cache stores it: what parseFeed gives for it is the same feed.
   /** glibren.26: o resumo de uma pagina de feed (o comeco da descricao quando ele nao ficou guardado a parte). */
   var pageSummary = (page) => page.summary || (page.cut ? (page.about[0] ?? "").slice(0, page.cut) : "");
@@ -341,4 +399,4 @@ import { youtubeId } from './youtube.js';
     };
   }
 
-export { MAX_GAMES, MAX_MIRRORS, feedDocument, pageSummary, parseFeed, parseFeedAsync, stableKey, stableKeyAsync };
+export { MAX_GAMES, MAX_MIRRORS, feedDocument, pageSummary, parseFeed, parseFeedAsync, checkFeedTextAsync, parseFeedText, parseFeedTextAsync, stableKey, stableKeyAsync };

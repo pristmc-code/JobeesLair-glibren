@@ -6,6 +6,14 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.27** (fork): the app no longer runs out of memory reading its catalogs on the PS5. The live catalog (now
+  actually downloaded since glibren.26) and the console's own feed files are read one game at a time from the text
+  instead of as one big tree, and their caches are written in pieces (a live catalog refresh went from ~24 MB to ~6 MB
+  of heap in QuickJS). The Orbit Store list carries only the links of games the app already knows (the app tells the
+  payload which ones), keeping cover, background and description for the ~220 new ones: about 1.5 MB instead of
+  3.3 MB; it shows from the launch after the payload rewrites it. Web feeds show the date and time of their last
+  download, and so does the live catalog under "Show in the store", whose hint now reads as a description. Background
+  payload API 22.
 - **glibren.26** (fork): the live catalog updates on the PS5 again: since glibren.20 every web feed was asked with
   8 MiB while the console transport takes at most 4 MiB, so each request was refused ("invalid
   method/body/maxBytes/binary") and the store stopped receiving new games. The Orbit Store list weighs less (repeated

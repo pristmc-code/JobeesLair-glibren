@@ -42,7 +42,7 @@ import { useNavActions } from '../state/nav.jsx';
 import { downloadQueue, driveName } from '../state/downloads.js';
 import { useDrives } from '../state/drives.js';
 import { setDefaultDrive, useDefaultDrive } from '../state/last-drive.js';
-import { MAX_FEEDS, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, orbitFeedSnapshot, refreshFeedsNow, refreshOrbitFeed, removeFeed, removeMirror, useFeeds } from '../state/feeds.js';
+import { MAX_FEEDS, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedsSnapshot, orbitFeedSnapshot, refreshFeedsNow, refreshOrbitFeed, removeFeed, removeMirror, useFeeds } from '../state/feeds.js';
 import { setOrbitFeed, useOrbitFeed, useOrbitStatus } from '../state/orbit-feed.js';
 import { isoStamp, parseStamp } from '../state/clock.js';
 import { FeedFilePicker } from './FeedFilePicker.jsx';
@@ -294,7 +294,8 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     if (feed.local) return localDetail(t2, feed);
     if (feed.state === "refreshing") return t2("settings.feeds.refreshing");
     if (feed.state === "failed") return t2("settings.feeds.failed", { error: feed.error });
-    const base = t2("settings.feeds.games", { count: feed.games, date: feed.fetchedAt ? formatDate2(feed.fetchedAt.slice(0, 10)) : "—" });
+    // glibren.27: data e hora do ultimo download (era so a data), como os arquivos do PS5 mostram.
+    const base = t2("settings.feeds.games", { count: feed.games, date: feed.fetchedAt ? readTime(feed.fetchedAt) : "—" });
     const extra = [feed.via ? t2("settings.feeds.via", { host: hostOf(feed.via) }) : null, feed.mirrors.length ? t2("settings.feeds.mirrors", { count: feed.mirrors.length }) : null].filter(Boolean);
     return extra.length ? `${base} \xB7 ${extra.join(" \xB7 ")}` : base;
   }
@@ -546,13 +547,22 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       jsx(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
       jsx(Text, { style: text(20, colors.muted, { fontWeight: 600, letterSpacing: 1 }), children: t2("settings.feeds.shown") }),
       notice ? jsx(Callout, { tone: "warn", children: notice }) : null,
-      ...sources.map((source) => jsx(Row, { focusKey: `settings:feeds:shown:${source.id}`, name: sourceLabel(t2, source), detail: t2("tblib.sourceGames", { count: source.count }), hint: t2("settings.feeds.shownHint"), end: jsx(Switch, { on: sourceShown(source.id) }), onPress: () => {
+      ...sources.map((source) => jsx(Row, { focusKey: `settings:feeds:shown:${source.id}`, name: sourceLabel(t2, source), detail: shownDetail(t2, source), hint: t2("settings.feeds.shownHint"), end: jsx(Switch, { on: sourceShown(source.id) }), onPress: () => {
         const { ok, reason } = setSourceShown(source.id, !sourceShown(source.id));
         setNotice(ok ? "" : reason === "last" ? t2("settings.feeds.shownLast") : reason === "empty" ? t2("storeMode.empty") : t2("storeMode.never"));
         // glibren.26: o foco fica na linha tocada (a .25 refazia as linhas a cada troca e o foco subia para o topo).
         focusLater(`settings:feeds:shown:${source.id}`);
       } }, source.id))
     ] });
+  }
+  // glibren.27: a catalog's line under "Show in the store": its games and, for the live catalog and a web feed, when its
+  // copy was last downloaded (the live catalog has no row of its own in the feeds list).
+  function shownDetail(t2, source) {
+    const games = t2("tblib.sourceGames", { count: source.count });
+    if (source.kind === "bundled") return games;
+    const [feed] = feedsSnapshot([source.id]);
+    if (!feed?.fetchedAt) return games;
+    return t2("settings.feeds.games", { count: source.count, date: readTime(feed.fetchedAt) });
   }
   // glibren.14: no limit of three feeds any more (MAX_FEEDS is only a safety ceiling), and "Add a file from the PS5".
   function FeedsCard({ onAdd, onAddFile, onMirror }) {

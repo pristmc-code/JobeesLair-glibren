@@ -17,6 +17,7 @@ import { formats as bundledFormats } from '../data/formats.js';
 import { formatDate2, t } from '../i18n/core.js';
 import { createPageCache } from './page-cache.js';
 import { feedRatings, loadFeedGames } from './feeds.js';
+import { ORBIT_FEED, setOrbitKnown } from './orbit-feed.js';
 import { pageSummary } from './feed-format.js';
 import { ratings as bundledRatings } from '../data/ratings.js';
 import { createReleaseCache } from './release-cache.js';
@@ -115,6 +116,8 @@ import { noteRow, warmAtStart } from './cover-warm.js';
   var feedReleases = /* @__PURE__ */ new Map();
   // The PS4 lists its own games only: every PS4 edition, a game the PS5 lists under its PS5 edition too, and no
   // PS5 edition at all (state/ps4.js).
+  // glibren.27: todo codigo do catalogo embutido (no PS4 tambem os de PS5): conhecidos para a lista Orbit.
+  var bundledKnown = [...games, ...twins].map((game) => game.id);
   if (PS4) {
     const own = [...games, ...twins].filter((game) => game.platform === "ps4");
     games.splice(0, games.length, ...own);
@@ -149,6 +152,9 @@ import { noteRow, warmAtStart } from './cover-warm.js';
       catalogIds.set(feedGame.id, entry);
     }
   }
+  // glibren.27: o que o app conhece sem a lista Orbit (o embutido e o que um outro feed lista) vai ao payload, que grava
+  // esses jogos so com os links: acima, um jogo conhecido so ganha providers, direct e releases dela.
+  setOrbitKnown([...bundledKnown, ...[...sourcesById].filter(([, from]) => from.some((source) => source !== ORBIT_FEED)).map(([id]) => id)]);
   var entries = [...games, ...twins];
   var _a;
   for (const game of entries) {

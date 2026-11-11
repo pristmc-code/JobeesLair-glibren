@@ -907,7 +907,7 @@
     "settings.feeds.removeFeed": "Remove feed",
     "settings.feeds.removeMirror": "Remove mirror {host}",
     "settings.feeds.shown": "SHOW IN THE STORE",
-    "settings.feeds.shownHint": "Off: its games leave the store; the catalog stays included and updated. Leave one on to see only its games.",
+    "settings.feeds.shownHint": "Shows this catalog's games in the store. Turned off, they leave the store while the catalog stays included and updated; leave only one on to see just its games.",
     "settings.feeds.shownLast": "At least one catalog stays shown.",
     "settings.feeds.restart": "Close and reopen the app to see what your feeds brought in.",
     "settings.orbit.name": "Orbit Store list",

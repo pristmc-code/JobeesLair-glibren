@@ -93,7 +93,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 21 // glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#define BG_API 22 // glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -3154,7 +3154,8 @@ static int read_request(int fd, Request* r) {
       *colon = 0;
       const char* value = colon + 1;
       while (*value == ' ' || *value == '\t') ++value;
-      if (!strcasecmp(line, "content-length")) { uint64_t n; if (!decimal(value, &n) || n > 64 * 1024) return 413; r->content_length = (size_t)n; }
+      // glibren.27: ate 256 KiB no /orbit (a lista de codigos que o app ja conhece, ~12 bytes cada); 64 KiB no resto.
+      if (!strcasecmp(line, "content-length")) { uint64_t n; if (!decimal(value, &n) || n > (strcmp(r->path, "/orbit") ? 64u : 256u) * 1024) return 413; r->content_length = (size_t)n; }
       else if (!strcasecmp(line, "x-jobe-token")) snprintf(r->token, sizeof r->token, "%s", value);
       else if (!strcasecmp(line, "x-session")) snprintf(r->session, sizeof r->session, "%s", value);
       else if (!strcasecmp(line, "authorization") && !strncasecmp(value, "Bearer ", 7)) snprintf(r->token, sizeof r->token, "%s", value + 7);

@@ -255,3 +255,58 @@ test('off again: no more downloads, and a feed already written stays for the nex
   assert.ok(existsSync(path.join(base, 'orbit/orbit-store.json')));
   assert.equal((await call(base, 'POST', '/orbit', '{bad')).status, 400);
 });
+
+// glibren.27: o app manda os codigos que ja conhece; o payload grava esses jogos so com os links, guarda a lista para a
+// proxima vez que subir e regrava o feed quando ela muda (uma lista igual nao baixa de novo).
+test('known titles: written with the links only, kept across restarts, and a new list rewrites the feed', { skip }, async () => {
+  const base = workspace();
+  srv.body = seal(catalogue(95));
+  srv.status = 200;
+  start(base);
+  await up(base);
+  const posted = await call(base, 'POST', '/orbit', { enabled: true, known: ['ppsa04029', 'XYZ00001', 'PPSA04029', 42] });
+  assert.equal(posted.status, 200);
+  assert.equal(posted.data.knownIds, 1, 'only valid PS4/PS5 codes, once');
+  const state = await until(base, (s) => s.lastOk > 0 && s.known === 1);
+  assert.equal(state.conv, 3);
+  assert.match(state.knownHash, /^[0-9a-f]{16}$/);
+  assert.equal(readFileSync(path.join(base, 'orbit/orbit-known.txt'), 'utf8'), 'PPSA04029\n');
+  const file = path.join(base, 'orbit/orbit-store.json');
+  let feed = JSON.parse(readFileSync(file, 'utf8'));
+  const cyberpunk = feed.games.find((game) => game.id === 'PPSA04029');
+  assert.deepEqual(Object.keys(cyberpunk), ['id', 'title', 'platform', 'releases'], 'a known game: no page, no art');
+  assert.deepEqual(cyberpunk.releases.map((r) => r.record), ['orbit-ppsa04029-ffpfsc', 'orbit-ppsa04029-vik-rar']);
+  assert.equal(cyberpunk.releases[1].label, 'Vikingfile - EUR - Game folder (rar)');
+  const watchDogs = feed.games.find((game) => game.id === 'CUSA00021');
+  assert.ok(watchDogs.about[0].startsWith('Hack Chicago.') && watchDogs.art.hero && watchDogs.art.cover, 'a new game keeps its page, cover and hero');
+  // The same list again: nothing to do.
+  const hits = srv.hits;
+  await call(base, 'POST', '/orbit', { known: ['PPSA04029'] });
+  await wait(600);
+  assert.equal(srv.hits, hits);
+  // Restarted (a minute later, as the status says): the list comes back from the file, the feed is not rewritten...
+  const now = (await call(base, 'GET', '/orbit')).data;
+  writeFileSync(path.join(base, 'orbit/orbit-store-status.json'), JSON.stringify({ ...now, lastTry: now.lastTry - 120, lastOk: now.lastOk - 120 }));
+  for (const child of [...children]) child.kill('SIGKILL');
+  await wait(200);
+  start(base);
+  await up(base);
+  const back = (await call(base, 'GET', '/orbit')).data;
+  assert.equal(back.knownIds, 1);
+  assert.equal(back.knownHash, state.knownHash);
+  await wait(600);
+  assert.equal(srv.hits, hits, 'the same list: no download');
+  // ...and a different one rewrites it (Watch Dogs known now, Cyberpunk not).
+  await call(base, 'POST', '/orbit', { known: ['CUSA00021'] });
+  const next = await until(base, (s) => s.knownHash && s.knownHash !== state.knownHash && s.known === 1);
+  assert.equal(next.revision, 95);
+  feed = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(Object.keys(feed.games.find((game) => game.id === 'CUSA00021')), ['id', 'title', 'platform', 'releases']);
+  assert.ok(feed.games.find((game) => game.id === 'PPSA04029').art.hero);
+  // ~2.100 codes today; the body may pass the 64 KiB of the other routes.
+  const many = Array.from({ length: 6000 }, (_, n) => `PPSA${String(n).padStart(5, '0')}`);
+  const big = await call(base, 'POST', '/orbit', { known: many });
+  assert.equal(big.status, 200);
+  assert.equal(big.data.knownIds, 6000);
+  assert.equal((await call(base, 'POST', '/orbit', { known: 'PPSA04029' })).status, 400, 'a list or nothing');
+});

@@ -907,7 +907,7 @@
   "settings.feeds.removeFeed": "Remover feed",
   "settings.feeds.removeMirror": "Remover o espelho {host}",
   "settings.feeds.shown": "MOSTRAR NA LOJA",
-  "settings.feeds.shownHint": "Desligado: os jogos dele saem da loja; o catálogo continua incluído e atualizado. Deixe só um ligado para ver só os jogos dele.",
+  "settings.feeds.shownHint": "Mostra os jogos deste catálogo na loja. Desligado, eles saem da loja, mas o catálogo continua incluído e atualizado; deixe só um ligado para ver só os jogos dele.",
   "settings.feeds.shownLast": "Pelo menos um catálogo fica à mostra.",
   "settings.feeds.restart": "Feche e abra o app de novo para ver o que seus feeds trouxeram.",
   "settings.orbit.name": "Lista Orbit Store",

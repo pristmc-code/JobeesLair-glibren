@@ -78,6 +78,9 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.27**: catalogs are read without running out of memory (the live catalog and the console's feed files one
+> game at a time), the Orbit Store list carries only links for games the app already has, and feeds show the date and
+> time of their last download.
 > **glibren.26**: the live catalog updates on the PS5 again (broken since glibren.20 by a request size the console
 > refuses), the Orbit Store list and TorBox's account take less memory (the app closed with Orbit on), the TorBox
 > library no longer freezes on a call that never returns, and "Show in the store" keeps focus and the titles counter.
