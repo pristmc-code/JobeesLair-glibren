@@ -1523,6 +1523,8 @@
   "videos.noAnswer": "Pemuat payload (port 9021) tidak menjawab. Apakah sedang berjalan?",
   "videos.writeFailed": "Tidak dapat meneruskan pencarian ke {app}: {error}",
   "videos.sendFailed": "Tidak dapat mengirim permintaan ke pemuat payload: {error}",
+  "videos.switching": "Menutup Jobee'sLair: {app} terbuka sendiri dalam sekitar 15 detik, dan Jobee'sLair kembali ke halaman ini saat kamu keluar darinya.",
+  "videos.noPayload": "Tidak bisa membuka {app}: aplikasi itu dibuka oleh payload unduhan latar belakang, dan payload itu tidak menjawab ({error}). Jobee'sLair tetap terbuka.",
   "videos.missing": "Tidak ada aplikasi YouTube homebrew yang terpasang.",
   "videos.missingHow": "Pasang ytps5 (PPSA99350) atau YouTube Max'd (PPSA99991): dari jendela Apps di payload glibren, atau dengan menyalin rilisnya dari github.com/pristmc-code/ps5-glibren-releases ke /data/homebrew. Aplikasi YouTube resmi tidak pernah dibuka dari sini.",
   "game.torboxSearch": "Cari di TorBox",

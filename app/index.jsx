@@ -68,6 +68,7 @@ import { AnnouncementBar, usePageGlide } from './ui/AnnouncementBar.jsx';
 import { useInterfaceHaptics } from './ui/haptics.js';
 import { useInterfaceSounds } from './ui/sounds.js';
 import './state/picture-route.js';
+import { takeStartStack } from './state/return-screen-run.js';
 
   function Screen({ screen: screen2 }) {
     const { openGame, pop, push } = useNavActions();
@@ -249,7 +250,10 @@ import './state/picture-route.js';
       return () => clearTimeout(id);
     }, []);
     return /* @__PURE__ */ (0, jsx)(View, { style: { width: 1920, height: 1080, backgroundColor: colors.canvas }, children: booted
-      ? [/* @__PURE__ */ (0, jsx)(View, { style: { width: 1920, height: 1080 }, children: /* @__PURE__ */ (0, jsx)(LocaleProvider, { children: /* @__PURE__ */ (0, jsx)(StoreProvider, { children: /* @__PURE__ */ (0, jsx)(NavProvider, { children: /* @__PURE__ */ (0, jsx)(App, {}) }) }) }) }, `store:${theme}`), curtain ? /* @__PURE__ */ (0, jsx)(Reveal, { onDone: () => setCurtain(false) }, "curtain") : null]
+      ? [/* @__PURE__ */ (0, jsx)(View, { style: { width: 1920, height: 1080 }, children: /* @__PURE__ */ (0, jsx)(LocaleProvider, { children: /* @__PURE__ */ (0, jsx)(StoreProvider, { children: /* @__PURE__ */ (0, jsx)(NavProvider, { restore: restoreScreen, children: /* @__PURE__ */ (0, jsx)(App, {}) }) }) }) }, `store:${theme}`), curtain ? /* @__PURE__ */ (0, jsx)(Reveal, { onDone: () => setCurtain(false) }, "curtain") : null]
       : [introDone || introLeaving ? /* @__PURE__ */ (0, jsx)(Disclaimer, { onDone: () => setBooted(true) }, "notice") : null, introDone ? null : /* @__PURE__ */ (0, jsx)(Splash, { onExit: () => setIntroLeaving(true), onDone: () => setIntroDone(true) }, "intro")] });
   }
+  // glibren.31: a volta do app de videos abre na tela de onde ele foi aberto (state/return-screen.js); o jogo tem de
+  // existir no catalogo. takeStartStack responde uma vez so: o app remontado pela troca de tema comeca no inicio.
+  var restoreScreen = (root) => takeStartStack(root, (id) => Boolean(getGame(id)));
   AppRegistry.registerComponent("jobeeslair", () => () => /* @__PURE__ */ (0, jsx)(Boot, {}));

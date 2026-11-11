@@ -1523,6 +1523,8 @@
   "videos.noAnswer": "Il loader dei payload (porta 9021) non ha risposto. È in esecuzione?",
   "videos.writeFailed": "Impossibile passare la ricerca a {app}: {error}",
   "videos.sendFailed": "Impossibile inviare la richiesta al loader dei payload: {error}",
+  "videos.switching": "Chiusura di Jobee'sLair: {app} si apre da solo in circa 15 secondi, e Jobee'sLair torna su questa pagina quando lo lasci.",
+  "videos.noPayload": "Impossibile aprire {app}: lo apre il payload dei download in background, che non ha risposto ({error}). Jobee'sLair resta aperta.",
   "videos.missing": "Nessuna app YouTube homebrew installata.",
   "videos.missingHow": "Installa ytps5 (PPSA99350) o YouTube Max'd (PPSA99991): dalla finestra Apps del payload glibren, oppure copiando la sua release da github.com/pristmc-code/ps5-glibren-releases in /data/homebrew. L'app ufficiale di YouTube non viene mai aperta da qui.",
   "game.torboxSearch": "Cerca su TorBox",

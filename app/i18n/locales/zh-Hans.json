@@ -1523,6 +1523,8 @@
   "videos.noAnswer": "Payload 加载器（端口 9021）没有响应。它在运行吗？",
   "videos.writeFailed": "无法将搜索交给 {app}：{error}",
   "videos.sendFailed": "无法向 Payload 加载器发送请求：{error}",
+  "videos.switching": "正在关闭 Jobee'sLair：{app} 将在约 15 秒后自动打开，退出它后 Jobee'sLair 会回到此页面。",
+  "videos.noPayload": "无法打开 {app}：它由后台下载 payload 打开，而该 payload 没有响应（{error}）。Jobee'sLair 保持打开。",
   "videos.missing": "未安装任何自制 YouTube 应用。",
   "videos.missingHow": "请安装 ytps5（PPSA99350）或 YouTube Max'd（PPSA99991）：可通过 glibren payload 的 Apps 窗口安装，或将其发布包从 github.com/pristmc-code/ps5-glibren-releases 复制到 /data/homebrew。这里永远不会打开官方 YouTube 应用。",
   "game.torboxSearch": "在 TorBox 中查找",

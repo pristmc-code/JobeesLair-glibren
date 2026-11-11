@@ -27,9 +27,20 @@ import { useFocus } from '@ps5-react/core';
     return null;
   }
 import { HOMEBREW_ONLY } from '../edition.js';
-  function NavProvider({ children }) {
+  // glibren.31: `restore(root)`: a pilha guardada antes de abrir o app de videos (state/return-screen-run.js
+  // takeStartStack), ou null; so na montagem (index.jsx passa uma vez por execucao).
+  function NavProvider({ children, restore }) {
     // 0.5.1: the homebrew-only edition opens on the Homebrew section; there is no store page under it.
-    const [stack, setStack] = (0, useState)([{ name: HOMEBREW_ONLY ? "homebrew" : "browse" }]);
+    const [stack, setStack] = (0, useState)(() => {
+      const root = { name: HOMEBREW_ONLY ? "homebrew" : "browse" };
+      let restored = null;
+      try {
+        restored = typeof restore === "function" ? restore(root) : null;
+      } catch {
+        restored = null;
+      }
+      return Array.isArray(restored) && restored.length > 1 ? restored : [root];
+    });
     const [request, setRequest] = (0, useState)(null);
     const [immersive, setImmersive] = (0, useState)(0);
     const current = (0, useRef)(stack);

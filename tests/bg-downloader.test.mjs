@@ -1824,3 +1824,78 @@ test('glibren.18: job da fila do app que termina no BACKUP com o app FECHADO vir
     delete files['auto-jogo2.7z'];
   }
 });
+
+// glibren.31: a troca de app (POST /switch). Abrir o app de videos com a Jobe aberta foi recusado no PS5 (0x80940011,
+// 0x80940031) e o console caiu depois: agora a Jobe pede a troca e fecha; o payload espera o `from` fechar, mais um
+// tempo (15 s no console), e abre o `to`, com novas tentativas. No desktop: a Jobe "roda" enquanto BGDL_APP_RUNNING
+// existe, os outros com um arquivo em BGDL_RUNNING_DIR, e cada abertura vira uma linha em BGDL_LAUNCH_FILE.
+test('glibren.31: POST /switch espera o app fechar, abre o outro (com novas tentativas), substitui, desiste e nunca abre com outro app aberto', { skip }, async () => {
+  const base = workspace();
+  const flag = path.join(base, 'app-running');
+  const running = path.join(base, 'running');
+  const launched = path.join(base, 'launched.txt');
+  mkdirSync(running, { recursive: true });
+  writeFileSync(flag, '');
+  const child = start(base, { BGDL_APP_RUNNING: flag, BGDL_RUNNING_DIR: running, BGDL_LAUNCH_FILE: launched, BGDL_LAUNCH_FAILS: '1',
+    BGDL_SWITCH_SETTLE_MS: '300', BGDL_SWITCH_PAUSE_MS: '100', BGDL_SWITCH_GIVEUP_MS: '1500', BGDL_APP_SILENCE_MS: '600000' });
+  const log = () => readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+  const launches = () => existsSync(launched) ? readFileSync(launched, 'utf8').split('\n').filter(Boolean) : [];
+  const logged = async (text, ms = 8000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(50)) if (log().includes(text)) return;
+    throw new Error(`diario sem "${text}":\n${log()}`);
+  };
+  try {
+    await up(base);
+    // Sem token (o app de videos nao tem o da Jobe), so POST, so a lista, dois titulos diferentes, o glibren so como `to`.
+    const ask = (body, token = '') => call(base, 'POST', '/switch', body, token);
+    assert.equal((await call(base, 'GET', '/switch', undefined, '')).status, 404);
+    for (const body of [{}, { to: 'PPSA99991' }, { to: 'PPSA01650', from: 'PPSA99471' }, { to: 'PPSA99471', from: 'PPSA99471' }, { to: 'PPSA99991', from: 'PMGL00001' }, { to: 1, from: 'PPSA99471' }])
+      assert.equal((await ask(body)).status, 400, JSON.stringify(body));
+    assert.equal(launches().length, 0);
+
+    // A Jobe aberta: nada abre ate ela fechar; depois do tempo, a 1a tentativa falha (0x80940033) e a 2a abre.
+    assert.deepEqual((await ask({ to: 'PPSA99991', from: 'PPSA99471' })).data, { ok: true });
+    await wait(700);
+    assert.deepEqual(launches(), [], 'nunca com o from aberto');
+    rmSync(flag);
+    await logged('troca: PPSA99991 aberto (tentativa 2 de 4)');
+    assert.deepEqual(launches(), ['PPSA99991', 'PPSA99991']);
+    for (const line of ['troca: pedido PPSA99471 -> PPSA99991 (espera PPSA99471 fechar)', 'troca: PPSA99471 fechou; abrindo PPSA99991',
+      'troca: abrir PPSA99991 falhou 0x80940033 (tentativa 1 de 4)'])
+      assert.ok(log().includes(line), `diario sem "${line}"`);
+    // A volta (o app de videos pede, com o token ou sem): espera ele fechar e abre a Jobe.
+    writeFileSync(path.join(running, 'PPSA99991'), '');
+    assert.equal((await ask({ to: 'PPSA99471', from: 'PPSA99991' }, readFileSync(path.join(base, 'state/token'), 'utf8').trim())).status, 200);
+    await wait(300);
+    rmSync(path.join(running, 'PPSA99991'));
+    await logged('troca: PPSA99471 aberto (tentativa 1 de 4)');
+    assert.deepEqual(launches().slice(2), ['PPSA99471']);
+
+    // Um pedido novo substitui o pendente: so o mais novo abre.
+    writeFileSync(flag, '');
+    await ask({ to: 'PPSA99991', from: 'PPSA99471' });
+    await ask({ to: 'PMGL00001', from: 'PPSA99471' });
+    await logged('troca: pedido PPSA99471 -> PPSA99991 substituido por outro');
+    rmSync(flag);
+    await logged('troca: PMGL00001 aberto');
+    assert.deepEqual(launches().slice(3), ['PMGL00001']);
+
+    // Outro app da lista aberto (o ytps5): nao abre. O glibren (PMGL00001) aberto nao conta.
+    writeFileSync(path.join(running, 'PMGL00001'), '');
+    writeFileSync(path.join(running, 'PPSA99350'), '');
+    await ask({ to: 'PPSA99991', from: 'PPSA99471' });
+    await logged('troca: PPSA99350 esta aberto; nao abro PPSA99991');
+    rmSync(path.join(running, 'PPSA99350'));
+    await ask({ to: 'PPSA99991', from: 'PPSA99471' });
+    await logged('troca: PPSA99991 aberto (tentativa 1 de 4)');
+    assert.deepEqual(launches().slice(4), ['PPSA99991']);
+
+    // O from que nao fecha: desiste (aqui em 1,5 s; 2 min no console) sem abrir nada.
+    writeFileSync(flag, '');
+    await ask({ to: 'PPSA99350', from: 'PPSA99471' });
+    await logged('troca: PPSA99471 nao fechou em 1 s; desisti de abrir PPSA99350', 5000);
+    assert.deepEqual(launches().slice(5), []);
+  } finally {
+    await stop(child);
+  }
+});

@@ -855,3 +855,39 @@ test('glibren.18: ao abrir, o pedido que o payload ja comecou e adotado sem baix
   await wrapper.adoptRequests();
   assert.deepEqual(queued, ['Baixando'], 'o adotado nao volta; o recusado nao e tentado de novo nesta sessao');
 });
+
+// ---- glibren.31: a troca de app (POST /switch): o app de videos abre depois que a Jobe fecha ----
+test('troca: switchApp manda {to, from} ao payload no ar (com o token); sem payload, antigo (404) ou recusa, diz o motivo', async () => {
+  const payload = fakePayload();
+  const wrapper = make(payload, fakeEngine());
+  let answer = { status: 200, data: { ok: true } };
+  payload.http.request = ((request) => async (url, options = {}) => {
+    if (url.endsWith('/switch') && payload.up) {
+      payload.calls.push({ method: options.method, path: '/switch', body: JSON.parse(options.body), token: options.headers?.['X-Jobe-Token'] });
+      return { status: answer.status, ok: answer.status < 300, json: async () => answer.data };
+    }
+    return request(url, options);
+  })(payload.http.request);
+  assert.deepEqual(await wrapper.switchApp('PPSA99991', 'PPSA99471'), { ok: true });
+  assert.deepEqual(payload.calls.filter((call) => call.path === '/switch'), [{ method: 'POST', path: '/switch', body: { to: 'PPSA99991', from: 'PPSA99471' }, token: TOKEN }]);
+  answer = { status: 404, data: { error: 'not found' } };
+  const old = await wrapper.switchApp('PPSA99991', 'PPSA99471');
+  assert.equal(old.ok, false);
+  assert.match(old.error, /too old/);
+  answer = { status: 400, data: { error: 'expected {to, from}' } };
+  assert.deepEqual(await wrapper.switchApp('PPSA00000', 'PPSA99471'), { ok: false, error: 'HTTP 400: expected {to, from}' });
+  payload.up = false;
+  payload.tokenOnDisk = false;
+  const down = await make(payload, fakeEngine(), { payloads: { send: () => ({ ok: false, error: 'loader off' }) } }).switchApp('PPSA99991', 'PPSA99471');
+  assert.equal(down.ok, false, 'sem payload: nada fecha');
+  assert.match(down.error, /not running/);
+});
+
+test('troca: switchAppVia usa o Downloads embrulhado em uso', async () => {
+  const { switchAppVia } = await import('../app/state/background-downloads.js');
+  const payload = fakePayload();
+  make(payload, fakeEngine());
+  const answer = await switchAppVia('PPSA99991', 'PPSA99471');
+  assert.equal(answer.ok, false, 'o payload falso responde 404 a /switch');
+  assert.ok(payload.calls.some((call) => call.method === 'POST' && call.path === '/switch'));
+});

@@ -70,7 +70,8 @@ import { setOrbitSource } from './orbit-feed.js';
   // glibren.26: 21, a lista Orbit regravada enxuta (ORBIT_CONV) e a conta TorBox em paginas.
   // glibren.27: 22, a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"): o jogo conhecido vai so com
   // os links.
-  var PAYLOAD_API = 22;
+  // glibren.31: 23, a troca de app (POST /switch): o app de videos abre depois que a Jobe fecha, e volta por ela.
+  var PAYLOAD_API = 23;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -145,6 +146,10 @@ import { setOrbitSource } from './orbit-feed.js';
   /** glibren.5: avisa o payload no ar que o app vai fechar (POST /bye). Verdadeiro quando ele respondeu. */
   function sayByeToPayload() {
     return current?.bye ? current.bye() : Promise.resolve(false);
+  }
+  /** glibren.31: pede ao payload a troca de app (POST /switch): { ok } ou { ok: false, error } (sem payload configurado). */
+  function switchAppVia(to, from) {
+    return current?.switchApp ? current.switchApp(to, from) : Promise.resolve({ ok: false, error: "the background payload is not set up" });
   }
 
   // ---- Quem baixa cada destino agora (para o cartao na tela de downloads) ----
@@ -739,6 +744,31 @@ import { setOrbitSource } from './orbit-feed.js';
         return false;
       }
     };
+    // glibren.31: a troca de app (POST /switch, bg_downloader.c switch_route): o payload espera `from` fechar, mais ~15 s,
+    // e abre `to` (o app de videos; ele usa a mesma rota para voltar). No PS5 sobe o payload se preciso (e troca um
+    // antigo, sem a rota). { ok: true } quando ele aceitou; { ok: false, error } senao: o app nao fecha entao.
+    wrapper.switchApp = async (to, from) => {
+      let token = readToken();
+      try {
+        if (platform === "ps5" && payloads) token = await ensurePayload();
+      } catch (problem) {
+        log(`payload not started for the switch (${problem?.message ?? problem})`);
+      }
+      if (!token) return { ok: false, error: "the background payload is not running" };
+      try {
+        const answer = await call(token, "POST", "/switch", { to, from });
+        if (answer.status === 200 && answer.data?.ok === true) {
+          log(`payload switches to ${to} once ${from} closes`);
+          return { ok: true };
+        }
+        const error = answer.status === 404 ? "the background payload is too old (no /switch)" : `HTTP ${answer.status}${answer.data?.error ? `: ${answer.data.error}` : ""}`;
+        log(`payload did not take the switch to ${to}: ${error}`);
+        return { ok: false, error };
+      } catch (problem) {
+        log(`payload not asked to switch to ${to} (${problem?.message ?? problem})`);
+        return { ok: false, error: problem?.message ?? String(problem) };
+      }
+    };
     // glibren: a fila inteira com antecedencia. `items` na ordem da fila: { key, name, total, request? }, `request` o
     // pedido de enqueue (com `background`) de um download que o payload baixa sozinho (link direto, ou TorBox ja
     // pedido); sem ele, so um marcador "waiting-app" para o celular. Com a opcao desligada (ou fora do PS5), uma fila
@@ -1040,4 +1070,4 @@ import { setOrbitSource } from './orbit-feed.js';
     return wrapper;
   }
 
-export { PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };
+export { PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, switchAppVia, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };

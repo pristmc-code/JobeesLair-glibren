@@ -93,7 +93,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 22 // glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#define BG_API 23 // glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -3606,8 +3606,165 @@ static int refuse_field(JP* jp, const char* key, void* ctx) {
 // glibren.20: o catalogo do Orbit Store como feed da Jobe (GET/POST /orbit).
 #include "bg_orbit.c"
 
+// ---- glibren.31: troca de app (POST /switch) -------------------------------------------------------------
+// O PS5 so tem um app em primeiro plano: abrir outro (sceLncUtilLaunchApp) com a Jobe aberta foi recusado
+// (0x80940011, 0x80940031 nos logs de 11/11/2026) e o console caiu minutos depois de uma dessas tentativas. Agora quem
+// quer trocar (a Jobe para o app de videos; o app de videos de volta para a Jobe) pede aqui e FECHA: o payload espera
+// o `from` fechar (sceLncUtilGetAppId), mais SWITCH_SETTLE_MS (a licao do updater: 0x80940033 se abrir cedo, ver
+// ps5-conhecimento/90 de 07/11/2026), e abre o `to`, com novas tentativas em pausas de 5/10/20 s. Cada passo vai ao
+// diario ("troca: ..."). Um pedido novo substitui o pendente; desiste se o `from` nao fechar em SWITCH_GIVEUP_MS; nunca
+// abre com outro app da lista aberto (nem o proprio `to`: ja esta na tela).
+// Contrato: POST /switch, corpo {"to":"<TITLEID>","from":"<TITLEID>"}, os dois em SWITCH_TITLES e diferentes (o `from`
+// nunca SWITCH_LINK_ONLY); sem
+// token (o servidor so ouve 127.0.0.1, e o app de videos nao tem o token da Jobe); 200 {"ok":true} na hora, 400 com
+// {"error":...} para corpo invalido ou titulo fora da lista. Nao conta como "o app falando" (g_last_app_ms).
+static const char* const SWITCH_TITLES[] = {
+    "PPSA99471", // Jobee'sLair
+    "PPSA99991", // YouTube Max'd
+    "PPSA99350", // ytps5
+    "PMGL00001", // glibren (icone da aba Midia: deeplink para http://127.0.0.1:8765/ no navegador, sem eboot): so como `to`
+};
+// Abre, mas nao conta como "um app aberto" (um deeplink do navegador) e nunca e o `from` (nao ha o que esperar fechar).
+#define SWITCH_LINK_ONLY "PMGL00001"
+#define SWITCH_TITLE_COUNT ((int)(sizeof SWITCH_TITLES / sizeof SWITCH_TITLES[0]))
+#define SWITCH_TRIES 4
+#ifdef __PROSPERO__
+typedef struct {
+  uint32_t size, user_id, app_opt;
+  uint64_t crash_report;
+  uint32_t check_flag;
+} LncAppParam; // como companion_daemon.c e o updater.elf
+int sceUserServiceInitialize(void*) __attribute__((weak));
+int sceUserServiceGetForegroundUser(int*) __attribute__((weak));
+int sceLncUtilLaunchApp(const char*, const char**, LncAppParam*) __attribute__((weak));
+#endif
+
+static int switch_allowed(const char* title) {
+  for (int i = 0; i < SWITCH_TITLE_COUNT; ++i)
+    if (!strcmp(title, SWITCH_TITLES[i])) return 1;
+  return 0;
+}
+// O titulo esta aberto? Sem a consulta do sistema, "sim" (nunca abre as cegas). No desktop: a Jobe e BGDL_APP_RUNNING;
+// os outros, um arquivo com o nome do titulo em BGDL_RUNNING_DIR.
+static int switch_running(const char* title) {
+  if (!strcmp(title, BG_TITLE)) return app_running();
+#ifdef __PROSPERO__
+  return sceLncUtilGetAppId ? sceLncUtilGetAppId(title) >= 0 : 1;
+#else
+  const char* dir = getenv("BGDL_RUNNING_DIR");
+  char path[1024];
+  struct stat st;
+  if (!dir || !*dir) return 0;
+  snprintf(path, sizeof path, "%s/%s", dir, title);
+  return !stat(path, &st);
+#endif
+}
+// 0 quando abriu, senao o erro (negativo) do sistema. No desktop: a linha "<titulo>" em BGDL_LAUNCH_FILE; as
+// primeiras BGDL_LAUNCH_FAILS chamadas devolvem 0x80940033 (abrir cedo demais).
+static int switch_launch(const char* title) {
+#ifdef __PROSPERO__
+  if (!sceLncUtilLaunchApp) return (int)0x80020002;
+  static int user_ready;
+  if (!user_ready && sceUserServiceInitialize) { sceUserServiceInitialize(NULL); user_ready = 1; }
+  LncAppParam param = {sizeof param, 0, 0, 0, 0};
+  if (sceUserServiceGetForegroundUser) sceUserServiceGetForegroundUser((int*)&param.user_id);
+  const int result = sceLncUtilLaunchApp(title, NULL, &param);
+  return result < 0 ? result : 0;
+#else
+  static int calls;
+  const char* path = getenv("BGDL_LAUNCH_FILE");
+  if (path && *path) {
+    FILE* file = fopen(path, "a");
+    if (file) { fprintf(file, "%s\n", title); fclose(file); }
+  }
+  if (++calls <= atoi(env_or("BGDL_LAUNCH_FAILS", "0"))) return (int)0x80940033;
+  return path && *path ? 0 : -1;
+#endif
+}
+
+static pthread_mutex_t g_switch_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned g_switch_gen; // o pedido mais novo; um pedido mais velho que ve outro numero para
+typedef struct { char to[16], from[16]; unsigned gen; } SwitchBody;
+static int switch_field(JP* jp, const char* key, void* ctx) {
+  SwitchBody* s = ctx;
+  if (!strcmp(key, "to")) return jp_text(jp, s->to, sizeof s->to) ? 1 : -1;
+  if (!strcmp(key, "from")) return jp_text(jp, s->from, sizeof s->from) ? 1 : -1;
+  return 0;
+}
+static int switch_current(unsigned gen) {
+  pthread_mutex_lock(&g_switch_lock);
+  const int current = gen == g_switch_gen;
+  pthread_mutex_unlock(&g_switch_lock);
+  return current && !g_stop;
+}
+// Espera `ms` em fatias, parando se o pedido foi substituido (ou o payload vai sair). 1 = esperou tudo.
+static int switch_wait(unsigned gen, int64_t ms) {
+  for (const int64_t end = mono_ms() + ms; mono_ms() < end;) {
+    if (!switch_current(gen)) return 0;
+    const int64_t left = end - mono_ms();
+    sleep_ms(left > 200 ? 200 : left > 0 ? (int)left : 1);
+  }
+  return switch_current(gen);
+}
+static void* switch_thread(void* arg) {
+  SwitchBody s = *(SwitchBody*)arg;
+  free(arg);
+  const int64_t settle = atoll(env_or("BGDL_SWITCH_SETTLE_MS", "15000"));
+  const int64_t giveup = atoll(env_or("BGDL_SWITCH_GIVEUP_MS", "120000"));
+  const int64_t pause = atoll(env_or("BGDL_SWITCH_PAUSE_MS", "5000")); // 5, 10, 20 s
+  const int64_t start = mono_ms();
+  while (switch_running(s.from)) {
+    if (!switch_current(s.gen)) { logk_("troca: pedido %s -> %s substituido por outro", s.from, s.to); return NULL; }
+    if (mono_ms() - start >= giveup) { logk_("troca: %s nao fechou em %lld s; desisti de abrir %s", s.from, (long long)(giveup / 1000), s.to); return NULL; }
+    sleep_ms(250);
+  }
+  logk_("troca: %s fechou; abrindo %s em %lld s", s.from, s.to, (long long)(settle / 1000));
+  if (!switch_wait(s.gen, settle)) { logk_("troca: pedido %s -> %s substituido por outro", s.from, s.to); return NULL; }
+  for (int attempt = 1; attempt <= SWITCH_TRIES; ++attempt) {
+    if (attempt > 1 && !switch_wait(s.gen, pause << (attempt - 2))) { logk_("troca: pedido %s -> %s substituido por outro", s.from, s.to); return NULL; }
+    if (strcmp(s.to, SWITCH_LINK_ONLY) && switch_running(s.to)) { logk_("troca: %s ja esta aberto; nada a fazer", s.to); return NULL; }
+    for (int i = 0; i < SWITCH_TITLE_COUNT; ++i) {
+      if (strcmp(SWITCH_TITLES[i], s.to) && strcmp(SWITCH_TITLES[i], SWITCH_LINK_ONLY) && switch_running(SWITCH_TITLES[i])) {
+        logk_("troca: %s esta aberto; nao abro %s", SWITCH_TITLES[i], s.to);
+        return NULL;
+      }
+    }
+    const int result = switch_launch(s.to);
+    if (result >= 0) { logk_("troca: %s aberto (tentativa %d de %d)", s.to, attempt, SWITCH_TRIES); return NULL; }
+    logk_("troca: abrir %s falhou 0x%08x (tentativa %d de %d)", s.to, (unsigned)result, attempt, SWITCH_TRIES);
+  }
+  logk_("troca: desisti de abrir %s depois de %d tentativas", s.to, SWITCH_TRIES);
+  return NULL;
+}
+static void switch_route(int fd, Request* r) {
+  if (strcmp(r->method, "POST")) { respond_error(fd, 404, "not found"); return; }
+  SwitchBody s;
+  memset(&s, 0, sizeof s);
+  JP jp = {r->body, r->body + r->content_length, 0};
+  if (!r->body || !jp_object(&jp, switch_field, &s) || !switch_allowed(s.to) || !switch_allowed(s.from) || !strcmp(s.from, SWITCH_LINK_ONLY) || !strcmp(s.to, s.from)) {
+    respond_error(fd, 400, "expected {to, from}: two different titles of the switch list");
+    return;
+  }
+  SwitchBody* job = malloc(sizeof *job);
+  if (!job) { respond_error(fd, 500, "out of memory"); return; }
+  *job = s;
+  pthread_mutex_lock(&g_switch_lock);
+  job->gen = ++g_switch_gen;
+  pthread_mutex_unlock(&g_switch_lock);
+  logk_("troca: pedido %s -> %s (espera %s fechar)", s.from, s.to, s.from);
+  if (spawn_thread(switch_thread, job, NULL)) {
+    free(job);
+    logk_("troca: thread nao criada");
+    respond_error(fd, 500, "thread not created");
+    return;
+  }
+  respond(fd, 200, "{\"ok\":true}");
+}
+
 static void auto_plan_route(int fd, const char* query); // glibren.18 (perto da Biblioteca TorBox)
 static void route(int fd, Request* r) {
+  // glibren.31: a troca de app vem tambem do app de videos, sem o token (ver switch_route).
+  if (!strcmp(r->path, "/switch")) { switch_route(fd, r); return; }
   if (!token_ok(r->token)) { respond_error(fd, 401, "missing or wrong token"); return; }
   // glibren.5: logo depois de um POST /bye, uma chamada atrasada do app nao o faz "voltar a falar".
   if (strcmp(r->path, "/bye") && mono_ms() - g_bye_ms >= BYE_GRACE_MS) g_last_app_ms = mono_ms();

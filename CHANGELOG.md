@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.31** (fork): "Videos" no longer asks the console to open the video app over Jobee'sLair (it was refused,
+  0x80940011, and a console shut down soon after one of those tries). Jobee'sLair now asks its background payload to
+  switch (POST /switch, payload API 23) and closes; the payload waits for it to close, then opens the video app. The
+  search file carries `voltar=<title>` so YouTube Max'd glibren3 can come back the same way, and Jobee'sLair reopens on
+  the screen it left (return-screen.json, kept 6 hours).
 - **glibren.30** (fork): an app update no longer fails when ShadowMount+ is busy and does not answer where the app's
   image is ("ShadowMount did not answer games/info"): it asks three times, then uses the path ShadowMount+ gave last
   time (or the last update's), while that file is still there, or the one JobeesLair.exfat in a drive's homebrew

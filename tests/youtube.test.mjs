@@ -1,4 +1,5 @@
-// "Videos" on a game's page (app/state/youtube.js and the helper's LNC1 request in app/native/companion_daemon.c):
+// "Videos" on a game's page (app/state/youtube.js; glibren.31: the switch through the background payload, POST /switch,
+// tested in bg-downloader.test.mjs; the helper's LNC1 request in app/native/companion_daemon.c is kept but unused):
 // the search made from the game's name, which YouTube app is chosen (never the official one), the search file
 // written whole then renamed, and the helper launching only an allowed title. Run: npm test
 import test, { after } from 'node:test';
@@ -92,27 +93,69 @@ test('the search file is written whole as .tmp, then renamed into place', () => 
   assert.ok(!fs.files.has(`${at}.tmp`));
 });
 
-test('openVideos: writes the search, then sends LNC1 to the helper; says why when it cannot', () => {
-  const sent = [];
-  const payloads = { send: (file, options) => (sent.push([file, options]), { ok: true }) };
-  const fs = memoryFs(['/data/homebrew/PPSA99991/eboot.bin', '/pl/launch.txt']);
-  const result = yt.openVideos({ fs, payloads, name: 'Returnal™', kind: 'trailer', payloadDir: '/pl' });
-  assert.equal(result.ok, true);
-  assert.equal(result.text, 'Returnal trailer');
-  assert.equal(fs.files.get('/data/homebrew/PPSA99991/glibren_busca.txt'), 'Returnal trailer');
-  assert.ok(!fs.files.has('/pl/launch.txt'), 'the last answer is cleared first');
-  assert.deepEqual(sent, [['/app0/companion-daemon.elf', { request: 'LNC1\nPPSA99991\n/pl\n', answer: false }]]);
-  const writeBefore = fs.log.findIndex((entry) => entry[0] === 'rename');
-  assert.ok(writeBefore >= 0, 'the search is in place before the launch is asked');
+test('glibren.31: the search file\'s second line is voltar=<title>; the search alone stays within 200 bytes', () => {
+  assert.equal(yt.searchFileText('ASTRO BOT gameplay', 'PPSA99471'), 'ASTRO BOT gameplay\nvoltar=PPSA99471');
+  assert.equal(yt.searchFileText('ASTRO BOT gameplay', 'PPSA99472'), 'ASTRO BOT gameplay\nvoltar=PPSA99472', 'the homebrew edition\'s own title');
+  for (const bad of [null, undefined, '', 'ppsa99471', 'PPSA9947', 'PPSA99471\nx', '../x', 42]) {
+    assert.equal(yt.searchFileText('A gameplay', bad), 'A gameplay', `no second line for ${JSON.stringify(bad)}`);
+  }
+  // The longest search keeps its 200 bytes; the return line comes on top of them, apart.
+  const long = yt.searchText('漢'.repeat(300), 'gameplay');
+  const [first, second, ...rest] = yt.searchFileText(long, 'PPSA99471').split('\n');
+  assert.equal(first, long, 'the first line is the search, uncut');
+  assert.ok(bytes(first) <= 200);
+  assert.equal(second, 'voltar=PPSA99471');
+  assert.deepEqual(rest, [], 'two lines, no trailing new line');
+});
 
-  assert.deepEqual(yt.openVideos({ fs: memoryFs([]), payloads, name: 'X', payloadDir: '/pl' }), { ok: false, reason: 'missing', error: '' });
-  assert.equal(yt.openVideos({ fs: memoryFs(['/data/homebrew/PPSA99350/eboot.bin']), payloads, name: '', payloadDir: '/pl' }).reason, 'name');
+test('glibren.31 openVideos: search (with voltar=) in place, screen saved, payload asked to switch, then the app leaves', async () => {
+  const order = [];
+  const switchApp = async (to, from) => (order.push(`switch:${to}<-${from}`), { ok: true });
+  const leave = async () => { order.push('leave'); };
+  const fs = memoryFs(['/data/homebrew/PPSA99991/eboot.bin']);
+  const result = await yt.openVideos({ fs, name: 'Returnal™', kind: 'trailer', returnTo: 'PPSA99471', switchApp, leave, beforeSwitch: (app) => order.push(`save:${app.titleId}`), afterFailure: () => order.push('forget') });
+  assert.equal(result.ok, true);
+  assert.equal(result.text, 'Returnal trailer', 'the search reported is the first line');
+  assert.equal(fs.files.get('/data/homebrew/PPSA99991/glibren_busca.txt'), 'Returnal trailer\nvoltar=PPSA99471');
+  assert.deepEqual(order, ['save:PPSA99991', 'switch:PPSA99991<-PPSA99471', 'leave'], 'saved after the search is in place; the app leaves only once the payload took the switch');
+  assert.ok(fs.log.findIndex((entry) => entry[0] === 'rename') >= 0);
+  // ytps5 first, as before.
+  const both = memoryFs(['/data/homebrew/PPSA99350/eboot.bin', '/data/homebrew/PPSA99991/eboot.bin']);
+  const asked = [];
+  await yt.openVideos({ fs: both, name: 'X', returnTo: 'PPSA99471', switchApp: async (to) => (asked.push(to), { ok: true }), leave });
+  assert.deepEqual(asked, ['PPSA99350']);
+});
+
+test('glibren.31 openVideos: no payload (or it refused) -> nothing closes, the search file and the saved screen go back', async () => {
+  for (const switchApp of [null, async () => ({ ok: false, error: 'the background payload is not running' }), async () => { throw new Error('connect: refused'); }, async () => null]) {
+    const order = [];
+    const fs = memoryFs(['/data/homebrew/PPSA99991/eboot.bin']);
+    const result = await yt.openVideos({ fs, name: 'ASTRO BOT', returnTo: 'PPSA99471', switchApp, leave: () => order.push('leave'), beforeSwitch: () => order.push('save'), afterFailure: () => order.push('forget') });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'switch');
+    assert.equal(result.app.titleId, 'PPSA99991');
+    assert.ok(!order.includes('leave'), 'the app stays open');
+    assert.deepEqual(order, ['save', 'forget']);
+    assert.ok(!fs.files.has('/data/homebrew/PPSA99991/glibren_busca.txt'), 'no search left to come up (and send the player back) later');
+  }
+  const refused = await yt.openVideos({ fs: memoryFs(['/data/homebrew/PPSA99991/eboot.bin']), name: 'X', switchApp: async () => ({ ok: false, error: 'HTTP 400' }), leave() {} });
+  assert.equal(refused.error, 'HTTP 400');
+  // Nothing asked when there is no app, no name, or the search could not be written; no screen saved either.
+  let asked = 0;
+  const count = async () => (++asked, { ok: true });
+  assert.deepEqual(await yt.openVideos({ fs: memoryFs([]), name: 'X', switchApp: count, beforeSwitch: count }), { ok: false, reason: 'missing', error: '' });
+  assert.equal((await yt.openVideos({ fs: memoryFs(['/data/homebrew/PPSA99350/eboot.bin']), name: '', switchApp: count, beforeSwitch: count })).reason, 'name');
   const readOnly = { ...memoryFs(['/data/homebrew/PPSA99350/eboot.bin']), writeFile() { throw new Error('EACCES'); } };
-  const write = yt.openVideos({ fs: readOnly, payloads, name: 'X', payloadDir: '/pl' });
+  const write = await yt.openVideos({ fs: readOnly, name: 'X', switchApp: count, beforeSwitch: count });
   assert.deepEqual([write.reason, write.error], ['write', 'EACCES']);
-  const noLoader = yt.openVideos({ fs: memoryFs(['/data/homebrew/PPSA99350/eboot.bin']), payloads: { send: () => ({ ok: false, error: 'connect: refused' }) }, name: 'X', payloadDir: '/pl' });
-  assert.deepEqual([noLoader.reason, noLoader.error], ['send', 'connect: refused']);
-  assert.equal(yt.openVideos({ fs: memoryFs(['/data/homebrew/PPSA99350/eboot.bin']), payloads: null, name: 'X', payloadDir: '/pl' }).reason, 'send');
+  assert.equal(asked, 0);
+  // A beforeSwitch that throws does not stop the switch; the LNC1 helper is never involved.
+  const sent = [];
+  const fs = memoryFs(['/data/homebrew/PPSA99350/eboot.bin']);
+  const ok = await yt.openVideos({ fs, payloads: { send: (...args) => sent.push(args) }, name: 'X', switchApp: async () => ({ ok: true }), leave() {}, beforeSwitch() { throw new Error('boom'); } });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(sent, [], 'no LNC1 for Videos');
+  assert.equal(fs.files.get('/data/homebrew/PPSA99350/glibren_busca.txt'), 'X gameplay', 'without returnTo, the search alone');
 });
 
 test('launchAnswer reads what the helper wrote', () => {

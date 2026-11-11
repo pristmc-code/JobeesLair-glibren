@@ -1523,6 +1523,8 @@
   "videos.noAnswer": "پے لوڈ لوڈر (پورٹ 9021) سے کوئی جواب نہیں آیا۔ کیا یہ چل رہا ہے؟",
   "videos.writeFailed": "تلاش {app} کو نہیں دی جا سکی: {error}",
   "videos.sendFailed": "درخواست پے لوڈ لوڈر کو نہیں بھیجی جا سکی: {error}",
+  "videos.switching": "Jobee'sLair بند ہو رہا ہے: {app} تقریباً 15 سیکنڈ میں خود کھل جائے گا، اور اس سے نکلنے پر Jobee'sLair اسی صفحے پر واپس آئے گا۔",
+  "videos.noPayload": "{app} نہیں کھل سکا: اسے پس منظر کے ڈاؤن لوڈ والا payload کھولتا ہے، اور اس نے جواب نہیں دیا ({error})۔ Jobee'sLair کھلا رہے گا۔",
   "videos.missing": "کوئی ہوم برو YouTube ایپ انسٹال نہیں ہے۔",
   "videos.missingHow": "ytps5 (PPSA99350) یا YouTube Max'd (PPSA99991) انسٹال کریں: glibren پے لوڈ کی Apps ونڈو سے، یا اس کی ریلیز github.com/pristmc-code/ps5-glibren-releases سے /data/homebrew میں کاپی کر کے۔ سرکاری YouTube ایپ یہاں سے کبھی نہیں کھولی جاتی۔",
   "game.torboxSearch": "TorBox میں تلاش کریں",

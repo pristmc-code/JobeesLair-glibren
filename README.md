@@ -78,6 +78,8 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.31**: "Videos" closes Jobee'sLair and the background payload opens the video app (no more opening one app
+> over another); coming back from YouTube Max'd glibren3 reopens on the same screen.
 > **glibren.30**: the app update no longer fails when ShadowMount+ is busy (it uses the image path it already knows),
 > and no longer says it is waiting for your downloads.
 > **glibren.29**: asking TorBox about a game's links (Find formats, Find via TorBox, Instant, the library) no longer runs

@@ -1523,6 +1523,8 @@
   "videos.noAnswer": "ペイロードローダー（ポート9021）から応答がありません。起動していますか？",
   "videos.writeFailed": "検索を{app}に渡せませんでした：{error}",
   "videos.sendFailed": "ペイロードローダーにリクエストを送れませんでした：{error}",
+  "videos.switching": "Jobee'sLair を閉じています：約 15 秒後に {app} が自動で開き、終了すると Jobee'sLair がこのページに戻ります。",
+  "videos.noPayload": "{app} を開けませんでした：開くのはバックグラウンドダウンロードのペイロードですが、応答がありませんでした（{error}）。Jobee'sLair は開いたままです。",
   "videos.missing": "ホームブリューのYouTubeアプリがインストールされていません。",
   "videos.missingHow": "ytps5（PPSA99350）またはYouTube Max'd（PPSA99991）をインストールしてください。glibrenペイロードのAppsウィンドウから、またはgithub.com/pristmc-code/ps5-glibren-releasesのリリースを/data/homebrewにコピーして行えます。公式のYouTubeアプリがここから開かれることはありません。",
   "game.torboxSearch": "TorBoxで探す",

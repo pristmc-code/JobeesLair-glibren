@@ -1523,6 +1523,8 @@
   "videos.noAnswer": "لا رد من محمّل الـ payload (المنفذ 9021). هل هو قيد التشغيل؟",
   "videos.writeFailed": "تعذّر تسليم البحث إلى {app}: {error}",
   "videos.sendFailed": "تعذّر إرسال الطلب إلى محمّل الـ payload: {error}",
+  "videos.switching": "يتم إغلاق Jobee'sLair: سيفتح {app} تلقائيًا خلال 15 ثانية تقريبًا، وتعود Jobee'sLair إلى هذه الصفحة عند الخروج منه.",
+  "videos.noPayload": "تعذّر فتح {app}: يفتحه payload التنزيلات في الخلفية، ولم يستجب ({error}). تبقى Jobee'sLair مفتوحة.",
   "videos.missing": "لا يوجد تطبيق YouTube من نوع homebrew مثبت.",
   "videos.missingHow": "ثبّت ytps5 ‏(PPSA99350) أو YouTube Max'd ‏(PPSA99991): من نافذة Apps في glibren payload، أو بنسخ إصداره من github.com/pristmc-code/ps5-glibren-releases إلى /data/homebrew. لا يُفتح تطبيق YouTube الرسمي من هنا أبدًا.",
   "game.torboxSearch": "البحث في TorBox",

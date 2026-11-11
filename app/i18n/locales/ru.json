@@ -1523,6 +1523,8 @@
   "videos.noAnswer": "Загрузчик пейлоадов (порт 9021) не отвечает. Он запущен?",
   "videos.writeFailed": "Не удалось передать поиск в {app}: {error}",
   "videos.sendFailed": "Не удалось отправить запрос загрузчику пейлоадов: {error}",
+  "videos.switching": "Jobee'sLair закрывается: {app} откроется сам примерно через 15 секунд, а Jobee'sLair вернётся на эту страницу, когда вы из него выйдете.",
+  "videos.noPayload": "Не удалось открыть {app}: его открывает фоновый payload загрузок, а он не ответил ({error}). Jobee'sLair остаётся открытой.",
   "videos.missing": "Не установлено ни одного homebrew-приложения YouTube.",
   "videos.missingHow": "Установите ytps5 (PPSA99350) или YouTube Max'd (PPSA99991): из окна Apps пейлоада glibren или скопировав его релиз с github.com/pristmc-code/ps5-glibren-releases в /data/homebrew. Официальное приложение YouTube отсюда никогда не открывается.",
   "game.torboxSearch": "Поиск в TorBox",

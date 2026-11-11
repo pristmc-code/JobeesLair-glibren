@@ -1,9 +1,11 @@
 // "Videos" on a game's page: a homebrew YouTube app opened on a search for the game ("<name> gameplay" or
 // "<name> trailer"). The search goes to the app as a file in its own folder, glibren_busca.txt (UTF-8, one line, at
-// most 200 bytes), written as .tmp and renamed into place; the app reads it when it opens (and about every second
-// while it is open), deletes it and shows the results. The app is then opened by the companion's helper
-// (native/companion_daemon.c, request "LNC1"), sent to the payload loader as the closed-app helper is: the helper
-// launches it without closing anything and writes how it went to launch.txt in the payload folder.
+// most 200 bytes; glibren.31: then a second line, voltar=<TITLEID>, the title the app opens again when the player
+// leaves it: the PS5 has one app in front, so opening the video app closes Jobee'sLair; ytps5 and older builds read only
+// the first line), written as .tmp and renamed into place; the app reads it when it opens (and about every second
+// while it is open), deletes it and shows the results. glibren.31: the PS5 has one app in front, so the app is opened by
+// the background payload once Jobee'sLair has closed (POST /switch, see openVideos); the companion helper's "LNC1"
+// launch (launchRequest, launchAnswer) is no longer used for it.
 // Only the homebrew apps below, in this order; the official YouTube app (PPSA01650-2) never: on consoles that use it
 // as their exploit's entry, opening it would run that instead. Plain functions over `fs` and `payloads`, so the
 // tests run them under Node (tests/youtube.test.mjs).
@@ -19,6 +21,9 @@ export const MAX_SEARCH_BYTES = 200;
 export const LAUNCH_FILE = "launch.txt";
 export const HELPER = "/app0/companion-daemon.elf";
 export const KINDS = Object.freeze(["gameplay", "trailer"]);
+// glibren.31: the second line of SEARCH_FILE (the search stays within MAX_SEARCH_BYTES; this line is apart from it).
+export const RETURN_KEY = "voltar";
+const TITLE_ID_FORM = /^[A-Z]{4}\d{5}$/;
 
 export const appFolder = (titleId) => `/data/homebrew/${titleId}`;
 
@@ -110,34 +115,60 @@ export function writeSearch(fs, app, text) {
   return path;
 }
 
+// What SEARCH_FILE holds: the search, then "voltar=<returnTo>" when returnTo is a title ID (else the search alone).
+export function searchFileText(text, returnTo) {
+  return typeof returnTo === "string" && TITLE_ID_FORM.test(returnTo) ? `${text}\n${RETURN_KEY}=${returnTo}` : text;
+}
+
+// The companion helper's request (native/companion_daemon.c "LNC1"). glibren.31: no longer sent for Videos: a launch
+// with Jobee'sLair in front was refused (0x80940011, 0x80940031 in the logs of 11/11/2026) and the console went down
+// minutes after one of those tries. Kept for the helper's own test.
 export const launchRequest = (titleId, payloadDir) => `LNC1\n${titleId}\n${payloadDir}\n`;
 
-// The search written and the helper sent: { ok: true, app, text } (launch.txt says how the launch went a moment
-// later), or { ok: false, reason: 'missing' | 'name' | 'write' | 'send', error }.
-export function openVideos({ fs, payloads, name, kind = "gameplay", payloadDir, helper = HELPER }) {
+// glibren.31: the switch. The search goes to the app's folder (with voltar=<returnTo> as its second line), the screen
+// open now is saved (`beforeSwitch`), the background payload is asked to open the video app once this one has closed
+// (`switchApp(to, from)`, POST /switch: it waits for `from` to close, then ~15 s, then launches `to`), and this app
+// closes (`leave()`). Resolves to { ok: true, app, text } once leave() was called, or { ok: false, reason:
+// 'missing' | 'name' | 'write' | 'switch', error, app? }: nothing closes then, the search file and the saved screen are
+// taken back (`afterFailure`), and the sheet says why.
+export async function openVideos({ fs, name, kind = "gameplay", returnTo = null, switchApp = null, leave = null, beforeSwitch = null, afterFailure = null }) {
   const app = findVideoApp(fs);
   if (!app) return { ok: false, reason: "missing", error: "" };
   const text = searchText(name, kind);
   if (!text) return { ok: false, reason: "name", error: "" };
+  let path;
   try {
-    writeSearch(fs, app, text);
+    path = writeSearch(fs, app, searchFileText(text, returnTo));
   } catch (error) {
     return { ok: false, reason: "write", error: error?.message ?? String(error), app };
   }
-  if (!payloads) return { ok: false, reason: "send", error: "no payload loader here", app };
+  const undo = (error) => {
+    // A search left behind would come up (and send the player back here) the next time the app is opened by hand.
+    try {
+      fs.remove(path);
+    } catch {
+    }
+    try {
+      afterFailure?.();
+    } catch {
+    }
+    return { ok: false, reason: "switch", error, app };
+  };
   try {
-    try {
-      fs.mkdir(payloadDir, { recursive: true });
-    } catch {
-    }
-    try {
-      fs.remove(`${payloadDir}/${LAUNCH_FILE}`);
-    } catch {
-    }
-    const result = payloads.send(helper, { request: launchRequest(app.titleId, payloadDir), answer: false });
-    if (!result?.ok) return { ok: false, reason: "send", error: result?.error ?? "", app };
+    beforeSwitch?.(app);
+  } catch {
+  }
+  if (typeof switchApp !== "function") return undo("no background payload here");
+  let answer;
+  try {
+    answer = await switchApp(app.titleId, returnTo);
   } catch (error) {
-    return { ok: false, reason: "send", error: error?.message ?? String(error), app };
+    return undo(error?.message ?? String(error));
+  }
+  if (!answer?.ok) return undo(answer?.error ?? "");
+  try {
+    await leave?.();
+  } catch {
   }
   return { ok: true, app, text };
 }

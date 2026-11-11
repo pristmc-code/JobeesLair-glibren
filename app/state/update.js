@@ -17,6 +17,7 @@ import { downloadQueue } from './downloads.js';
 import { DAY_MS, HOUR_MS, createUpdateChecker } from './updater.js';
 import { loadList, saveList, savedList } from './saved.js';
 import { shadowRequest } from './shadowmount.js';
+import { forgetScreen } from './return-screen-run.js';
 import { shouldShowWhatsNew } from './whats-new.js';
 import { REPO, TITLE_ID, VERSION } from '../version.js';
 import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Platform, SelfUpdate } from '@ps5-react/core';
@@ -85,7 +86,11 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
     // glibren.22: a atualizacao nao espera os downloads: eles pausam enquanto ela baixa e voltam depois; ao reiniciar
     // para aplicar, o que baixava fica marcado e volta sozinho quando o app reabre.
     claim: () => downloadQueue().claimNetwork("app update"),
-    beforeExit: () => downloadQueue().prepareUpdateRestart?.(),
+    // glibren.31: a reabertura da atualizacao comeca no inicio, nunca na tela guardada para a volta do app de videos.
+    beforeExit: () => {
+      forgetScreen();
+      downloadQueue().prepareUpdateRestart?.();
+    },
     // glibren.18: what the app itself is doing that the update waits for (download-queue.js appWork); the background
     // payload's downloads are not in it.
     busy: (options) => downloadQueue().appWork?.(options) ?? null,
