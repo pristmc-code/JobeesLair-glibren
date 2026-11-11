@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.37**: memory meter (Settings > About) and faster YouTube start.
 > **glibren.36**: conversion options (pause, write limit, chunks), conversion steps logged, shutdown notice.
 > **glibren.35**: glibren 0.9.6's YouTube button opens Jobee'sLair on its YouTube screen; Circle goes back to glibren.
 > **glibren.34**: YouTube service updated to youtubei.js 18.3.0.

@@ -157,12 +157,13 @@ test('pac1: limite de escrita da conversao aplicado (4 MB/s) e marcos da convers
   const child = start(base, { BGDL_MARK_BYTES: String(MiB) });
   await up(base);
   assert.equal((await call(base, 'POST', '/config', { convertWriteLimit: 4 })).status, 200);
-  const started = Date.now();
+  // Relogio monotonico: o Date.now() do WSL anda para tras sob carga (ate -1,1 s visto).
+  const started = performance.now();
   const r = await call(base, 'POST', '/convert', request(base, 3, 16));
   const done = await until(base, r.data.id, ['done']);
-  const took = Date.now() - started;
-  // ~16 MiB de dados a 4 MiB/s: pelo menos ~3 s (sem limite, bem menos de 1 s aqui).
-  assert.ok(took >= 3000, `levou ${took} ms com o limite`);
+  const took = Math.round(performance.now() - started);
+  // ~16 MiB de dados a 4 MiB/s: ~4 s (sem limite, bem menos de 1 s aqui); a primeira janela pode passar inteira.
+  assert.ok(took >= 2000, `levou ${took} ms com o limite`);
   assert.equal(done.written, done.total);
   // O "done" aparece antes do pedido ao ShadowMount+ e do ultimo marco.
   for (let i = 0; i < 100 && !log(base).includes(`conversao ${r.data.id} [marco] fim: pronta`); i++) await wait(50);

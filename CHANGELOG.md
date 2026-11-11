@@ -6,6 +6,10 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.37** (fork): memory meter (the engine's device.memory: JS heap, 64 MiB limit, and the title's heap):
+  peak per screen/action in the log and in Settings > About, a warning above 85%; tools/memory/measure.mjs measures
+  the scenarios in qjs. YouTube opens faster: the focused result is resolved ahead (cache of 3, 10 min) and the
+  player opens at once with the thumbnail while it loads (about 2.7 s -> 1.1 s on a PC).
 - **glibren.36** (fork): conversion options in Settings > Downloads (all off by default): a pause between
   conversions, a write limit (MB/s) and "Write in chunks" (fsync every N MB). The background payload (API 24) logs
   each conversion step with an fsync (disks and file systems, progress every GB, rename, ShadowMount+), and after a
