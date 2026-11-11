@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.36** (fork): conversion options in Settings > Downloads (all off by default): a pause between
+  conversions, a write limit (MB/s) and "Write in chunks" (fsync every N MB). The background payload (API 24) logs
+  each conversion step with an fsync (disks and file systems, progress every GB, rename, ShadowMount+), and after a
+  console shutdown Jobee'sLair shows once "The console shut down at HH:MM during <activity>" with the last step and
+  log lines. Tests that failed under load are deterministic now.
 - **glibren.35** (fork): the glibren payload's YouTube button opens Jobee'sLair straight on its YouTube screen
   (/data/JobeesLair/tube/abrir.txt: search, voltar=, auto=1; Jobee'sLair advertises it in jobe-tube.txt), and
   Circle or "Back to glibren" switches back to glibren through the background payload.
