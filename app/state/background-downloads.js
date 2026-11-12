@@ -74,7 +74,7 @@ import { setOrbitSource } from './orbit-feed.js';
   // glibren.31: 23, a troca de app (POST /switch): o app de videos abre depois que a Jobe fecha, e volta por ela.
   // pac1: 24, a pausa entre conversoes e o limite de escrita da conversao (POST /config "convertPauseSeconds",
   // "convertWriteLimit"; GET /convert "waitSeconds") e a queda da sessao anterior (GET /crash, last-crash.json).
-  var PAYLOAD_API = 24;
+  var PAYLOAD_API = 26;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
