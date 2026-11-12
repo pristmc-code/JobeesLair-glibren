@@ -6,6 +6,10 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.39** (fork): Settings > Videos gets "Default YouTube quality" (1080p, 1440p or 4K; 1080p by default) for
+  the videos played inside the app (state/tube-settings.js tubeQuality); R2 in the player still changes it, and a
+  quality that fails still steps down by itself. The player's info line now says which decoder plays the video: the
+  PS5's (sceVideodec2) or software (FFmpeg), from the `<Video>` status.
 - **glibren.38** (fork): the TorBox Library's network part runs on the background payload (bg_library.c, API 27): it
   keeps going with the app closed, and the final save writes one file at a time (no second copy of the database; a
   lean save above 85% of the heap). The store keeps the feed and Orbit download links on disk (in groups of 40 games)

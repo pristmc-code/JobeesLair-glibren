@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.39**: Default YouTube quality (1080p, 1440p or 4K) and the decoder shown in the player.
 > **glibren.38**: TorBox Library on the payload, leaner store, full store on the phone, self-updating YouTube service.
 > **glibren.37**: memory meter (Settings > About) and faster YouTube start.
 > **glibren.36**: conversion options (pause, write limit, chunks), conversion steps logged, shutdown notice.

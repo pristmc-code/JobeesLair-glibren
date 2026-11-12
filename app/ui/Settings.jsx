@@ -31,7 +31,7 @@ import { HOMEBREW_ONLY } from '../edition.js';
 import { MAX_SPEED_LIMIT, setSpeedLimit, stepSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
 import { setAutoPlayFirst, useAutoPlayFirst } from '../state/auto-play-first.js';
-import { setTubeAutoUpdate, setTubeSponsorBlock, useTubeAutoUpdate, useTubeSponsorBlock } from '../state/tube-settings.js';
+import { TUBE_QUALITY_CHOICES, setTubeAutoUpdate, setTubeQuality, setTubeSponsorBlock, useTubeAutoUpdate, useTubeQuality, useTubeSponsorBlock } from '../state/tube-settings.js';
 import { tubeUpdater } from '../state/tube-service.js';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
@@ -214,10 +214,30 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     return jsxs(View, { scrollAnchor: true, style: CARD, children: [
       jsx(CardHead, { icon: "play", title: t2("videos.title") }),
       jsx(Row, { focusKey: "settings:autoPlayFirst", name: t2("settings.autoPlayFirst"), hint: t2("settings.autoPlayFirstDetail"), end: jsx(Switch, { on }), onPress: () => setAutoPlayFirst(!on) }),
+      jsx(TubeQualityRow, {}),
       jsx(Row, { focusKey: "settings:tubeSponsorBlock", name: t2("settings.tubeSponsorBlock"), hint: t2("settings.tubeSponsorBlockDetail"), end: jsx(Switch, { on: sponsor }), onPress: () => setTubeSponsorBlock(!sponsor) }),
       // glibren-tube-update: the YouTube service updates itself (state/tube-update.js), and which one is in use.
       jsx(Row, { focusKey: "settings:tubeAutoUpdate", name: t2("settings.tubeAutoUpdate"), hint: t2("settings.tubeAutoUpdateDetail"), end: jsx(Switch, { on: autoUpdate }), onPress: () => setTubeAutoUpdate(!autoUpdate) }),
       jsx(Row, { focusKey: "settings:tubeService", name: t2("settings.tubeService"), detail: tubeServiceText(t2, service) })
+    ] });
+  }
+  // glibren-tube-quality: the quality YouTube videos open in (state/tube-settings.js), one pill per choice as the
+  // simultaneous downloads' row.
+  function TubeQualityRow() {
+    const t2 = useT();
+    const chosen = useTubeQuality();
+    return jsxs(View, { style: { gap: 10 }, children: [
+      jsxs(View, { style: { gap: 3 }, children: [
+        jsx(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.tubeQuality") }),
+        jsx(Text, { style: text(20, colors.muted), children: t2("settings.tubeQualityDetail") })
+      ] }),
+      jsx(View, { style: { flexDirection: "row", gap: 12 }, children: TUBE_QUALITY_CHOICES.map((value) => jsx(View, {
+        focusKey: `settings:tubeQuality:${value}`,
+        focusable: true,
+        onPress: () => setTubeQuality(value),
+        style: { position: "relative", flex: 1, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: value === chosen ? colors.accent : colors.surface2 },
+        children: jsx(SpeedFace, { label: value === 2160 ? "4K" : `${value}p`, chosen: value === chosen })
+      }, value)) })
     ] });
   }
   // glibren-tube-update: what the service row says: the version in use (or the one that would start) and where from.

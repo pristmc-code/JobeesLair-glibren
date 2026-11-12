@@ -23,7 +23,7 @@
 
 import { Downloads, FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
 import { createTubeUpdater } from './tube-update.js';
-import { tubeAutoUpdate } from './tube-settings.js';
+import { tubeAutoUpdate, tubeQuality } from './tube-settings.js';
 import { newer } from './updater.js';
 import { REPO, VERSION } from '../version.js';
 
@@ -509,7 +509,7 @@ import { REPO, VERSION } from '../version.js';
     // As playlists de midia da qualidade padrao (vNv/vNa ao lado da master vN.m3u8): um HEAD faz o servico ler os
     // indices do arquivo agora (ele so le os da primeira escolha sozinho), sem trazer o texto para o heap.
     function warm(info) {
-      const index = defaultChoice(info.choices);
+      const index = defaultChoice(info.choices, tubeQuality());
       const url = index >= 0 ? info.choices[index].url : "";
       const match = /^http:\/\/127\.0\.0\.1:\d+(\/media\/[^/?#]+\/v)(\d+)\.m3u8$/.exec(url);
       if (!match || match[2] === "0") return;

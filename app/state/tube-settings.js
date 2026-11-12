@@ -49,4 +49,33 @@ import { loadList, saveList } from './saved.js';
   var setTubeAutoUpdate = autoUpdate.set;
   var useTubeAutoUpdate = autoUpdate.use;
 
-export { setTubeAutoUpdate, tubeAutoUpdate, useTubeAutoUpdate, setTubeSponsorBlock, setTubeSubtitles, tubeSponsorBlock, tubeSubtitles, useTubeSponsorBlock, useTubeSubtitles };
+  // glibren-tube-quality: "tubeQuality", a altura maxima da qualidade que o player abre (1080, 1440 ou 2160; padrao
+  // 1080). Acima de 1080p so o decodificador do PS5 (H.264/HEVC/VP9) da conta; o R2 no player continua trocando.
+  var QUALITY_CHOICES = [1080, 1440, 2160];
+  var quality = null;
+  var qualityListeners = /* @__PURE__ */ new Set();
+  function tubeQuality() {
+    if (quality === null) {
+      const saved = loadList(SETTINGS, "settings").tubeQuality;
+      quality = QUALITY_CHOICES.includes(saved) ? saved : 1080;
+    }
+    return quality;
+  }
+  function setTubeQuality(value) {
+    if (!QUALITY_CHOICES.includes(value)) return;
+    quality = value;
+    saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), tubeQuality: value });
+    for (const listener of [...qualityListeners]) listener(value);
+  }
+  function useTubeQuality() {
+    const [value, setValue] = useState(tubeQuality);
+    useEffect(() => {
+      qualityListeners.add(setValue);
+      return () => {
+        qualityListeners.delete(setValue);
+      };
+    }, []);
+    return value;
+  }
+
+export { QUALITY_CHOICES as TUBE_QUALITY_CHOICES, setTubeQuality, tubeQuality, useTubeQuality, setTubeAutoUpdate, tubeAutoUpdate, useTubeAutoUpdate, setTubeSponsorBlock, setTubeSubtitles, tubeSponsorBlock, tubeSubtitles, useTubeSponsorBlock, useTubeSubtitles };

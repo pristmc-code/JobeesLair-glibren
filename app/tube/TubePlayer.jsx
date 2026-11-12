@@ -21,7 +21,7 @@ import { getLocale } from '../i18n/core.js';
 import { useT } from '../i18n/index.js';
 import { useImmersive } from '../state/nav.jsx';
 import { clockText, defaultChoice, sponsorSkipTo, tubeService } from '../state/tube-service.js';
-import { setTubeSubtitles, tubeSponsorBlock, useTubeSubtitles } from '../state/tube-settings.js';
+import { setTubeSubtitles, tubeQuality, tubeSponsorBlock, useTubeSubtitles } from '../state/tube-settings.js';
 import { ButtonHints } from '../ui/ButtonHints.jsx';
 import { Skeleton } from '../ui/Skeleton.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
@@ -88,6 +88,8 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     const [menu, setMenu] = useState(false);
     const [subtitle, setSubtitle] = useState("");
     const [notice, setNotice] = useState("");
+    // glibren-tube-quality: quem decodifica o video aberto ("sceVideodec2" = o do PS5, "ffmpeg" = software), do onStatus.
+    const [decoder, setDecoder] = useState("");
     const video = useRef(null);
     const live = useRef({ position: 0, segments: [], skipUntil: 0, tries: 0, freshUsed: false, alive: true, abort: null });
     const barTimer = useRef(null);
@@ -116,7 +118,7 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         if (!state.alive || signal.aborted) return;
         const same = keepLabel ? next.choices.findIndex((entry) => entry.label === keepLabel) : -1;
         setInfo(next);
-        setChoice(same >= 0 ? same : defaultChoice(next.choices));
+        setChoice(same >= 0 ? same : defaultChoice(next.choices, tubeQuality()));
         setPhase("opening");
       } catch (error) {
         if (!state.alive || signal.aborted) return;
@@ -164,6 +166,7 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
       if (index === choice) return;
       setStartAt(live.current.position);
       live.current.tries = 0;
+      setDecoder("");
       setChoice(index);
       setPhase("opening");
       showBar();
@@ -251,7 +254,10 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         onProgress,
         onEnd: () => onClose("end"),
         onError,
-        onSubtitle: setSubtitle
+        onSubtitle: setSubtitle,
+        onStatus: (status) => {
+          if (status?.decoder) setDecoder(status.decoder);
+        }
       }, current.url) : null,
       // A superficie que recebe o X (pausar) e mantem o foco no player.
       jsx(View, { focusKey: "tube:player", autoFocus: true, onPress: togglePause, style: FULL }),
@@ -266,7 +272,7 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
       bar || paused || phase !== "playing" ? jsxs(View, { style: { position: "absolute", left: 0, right: 0, bottom: 0, paddingTop: 90, backgroundGradient: { type: "linear", to: "top", stops: [{ color: "#000000e6", offset: 0 }, { color: "#00000000", offset: 1 }] } }, children: [
         jsxs(View, { style: { paddingHorizontal: 64, gap: 6 }, children: [
           jsx(Text, { style: text(30, "#ffffff", { fontWeight: 700, numberOfLines: 1, ellipsizeMode: "tail" }), children: title }),
-          jsx(Text, { style: text(22, "#cbd5e1", { numberOfLines: 1, ellipsizeMode: "tail" }), children: [info?.channel || item.channel, current?.label].filter(Boolean).join("  ·  ") }),
+          jsx(Text, { style: text(22, "#cbd5e1", { numberOfLines: 1, ellipsizeMode: "tail" }), children: [info?.channel || item.channel, current?.label, decoder ? t2(decoder === "sceVideodec2" ? "tube.decoderHardware" : "tube.decoderSoftware") : ""].filter(Boolean).join("  ·  ") }),
           jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 18, marginTop: 10 }, children: [
             jsx(Icon, { name: paused ? "play" : "pause", size: 22, color: "#ffffff" }),
             jsx(Text, { style: text(22, "#ffffff", { width: 110 }), children: clockText(position) }),
