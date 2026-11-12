@@ -11,10 +11,10 @@ import { torBoxApi } from './debrid.js';
 import { storageRoots } from './drives.js';
 import { LIVE_FEED, feedName } from './feeds.js';
 import { libraryChanged } from './store-mode.js';
-import { brokenOnly, buildLibrary, libraryPaths, readLibrary, stillConfirmed, uncheckedCount, writeLibrary, writeList } from './torbox-library.js';
+import { buildLibrary, libraryPaths, readLibrary, saveLibraryRun, summarize } from './torbox-library.js';
 import { hashListPaths, readHashList } from './torbox-search.js';
 import { memorySample } from './memory-meter.js';
-import { FileSystem, Platform } from '@ps5-react/core';
+import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
 
   var IDLE = { state: "idle", phase: null, total: 0, done: 0, found: 0, broken: 0, errors: 0, calls: 0, etaMs: null, waitingUntil: null, error: "", resumed: false };
   var current = null;
@@ -26,24 +26,34 @@ import { FileSystem, Platform } from '@ps5-react/core';
     for (const listener of listeners) listener(progress);
   }
   var log = (line) => console.log(`[torbox-library] ${line}`);
-  /** O que o banco gravado diz (para a tela, sem rodar nada): rodada aberta, quantos confirmados, quando. */
-  function librarySummary() {
+  // glibren.38: o heap do JS agora ({ heapUsed, heapLimit }), para o modo enxuto da gravacao final; null sem medida.
+  var heapReading = () => {
     try {
-      const library = readLibrary(FileSystem, paths());
-      const records = Object.values(library.games);
-      const run = library.run;
-      return {
-        builtAt: library.builtAt,
-        games: records.length,
-        confirmed: records.filter(stillConfirmed).length,
-        // glibren.13: os jogos que o TorBox so tem como copia quebrada (uma pagina de erro), fora da loja.
-        broken: records.filter(brokenOnly).length,
-        // glibren.25: os jogos do catálogo que nenhuma montagem verificou (uma lista ligada depois, como a Orbit Store).
-        unchecked: library.builtAt ? uncheckedCount(library, catalogEntries()) : 0,
-        open: run && !run.finishedAt ? { done: run.done, total: run.total, sources: run.sources, onlyNew: Boolean(run.onlyNew) } : null
-      };
+      return typeof DeviceInfo?.memory === "function" ? DeviceInfo.memory() : null;
+    } catch {
+      return null;
+    }
+  };
+  /** O que o banco gravado diz (para a tela, sem rodar nada): rodada aberta, quantos confirmados, quando. */
+  // glibren.38: o resumo fica guardado (`kept`) quando a montagem o calcula do banco que ja tem na memoria: a tela pedia
+  // o resumo a cada mudanca de estado (comecar, terminar) e lia o banco inteiro de novo, ao lado do da montagem.
+  // glibren.13: `broken` os jogos que o TorBox so tem como copia quebrada; glibren.25: `unchecked` os do catalogo que
+  // nenhuma montagem verificou (torbox-library.js summarize).
+  var kept = null;
+  function librarySummary() {
+    if (kept) return kept;
+    try {
+      kept = summarize(readLibrary(FileSystem, paths()), catalogEntries());
+      return kept;
     } catch {
       return { builtAt: null, games: 0, confirmed: 0, broken: 0, unchecked: 0, open: null };
+    }
+  }
+  function keepSummary(library) {
+    try {
+      kept = summarize(library, catalogEntries());
+    } catch {
+      kept = null;
     }
   }
   /** As fontes que o jogador pode escolher: o catálogo embutido, o ao vivo e cada feed incluído, com seus jogos. */
@@ -74,27 +84,22 @@ import { FileSystem, Platform } from '@ps5-react/core';
       set({ ...IDLE, state: "failed", error: error?.message || String(error) });
       return Promise.resolve();
     }
+    keepSummary(library);
     set({ ...IDLE, state: "running", phase: "account" });
     memorySample("biblioteca-torbox:ler");
     const entries = catalogEntries();
     // As fichas do celular (torbox-fichas.json) saem dos jogos do catálogo: capa, fotos, texto e detalhes da loja.
     const byId = new Map(entries.map(({ game }) => [game.id, game]));
+    // glibren.28: a lista, os ids da loja e as fichas (so na gravacao final; as parciais gravam so o banco) mesmo
+    // quando o banco nao grava: antes a falha do banco levava a lista junto e a loja ficava com a lista antiga.
+    // glibren.38: um arquivo de cada vez (torbox-library.js saveLibraryRun), medindo depois de cada um; com o heap acima
+    // de 85% as fichas e a copia em /data ficam para a proxima montagem (modo enxuto, dito no log).
     const save = (value, { final }) => {
-      try {
-        writeLibrary(FileSystem, where, value, { backup: final });
-      } catch (error) {
-        log(`not saved: ${error?.message || error}`);
+      const done = saveLibraryRun(FileSystem, where, value, { final, gameOf: (id) => byId.get(id) ?? null, log, sample: memorySample, memory: heapReading });
+      if (final) {
+        keepSummary(value);
+        log(`final save: library ${done.library ? "ok" : "FAILED"}, list ${done.list ? "ok" : "FAILED"}, details ${done.details ? "ok" : "skipped"}, copy ${done.backup ? "ok" : "skipped"}${done.lean ? " (lean: memory high)" : ""}`);
       }
-      memorySample("biblioteca-torbox:gravar");
-      // glibren.28: a lista, os ids da loja e as fichas (so na gravacao final; as parciais gravam so o banco) mesmo
-      // quando o banco nao grava: antes a falha do banco levava a lista junto e a loja ficava com a lista antiga.
-      if (!final) return;
-      try {
-        writeList(FileSystem, where, value, void 0, (id) => byId.get(id) ?? null);
-      } catch (error) {
-        log(`list not saved: ${error?.message || error}`);
-      }
-      memorySample("biblioteca-torbox:gravar");
     };
     const promise = buildLibrary({
       entries,
@@ -120,6 +125,7 @@ import { FileSystem, Platform } from '@ps5-react/core';
       (error) => {
         const cancelled = error?.name === "AbortError";
         save(library, { final: false });
+        keepSummary(library);
         log(cancelled ? `cancelled at ${progress.done} of ${progress.total}` : `stopped: ${error?.code || ""} ${error?.message || error}`);
         set({ ...progress, state: cancelled ? "cancelled" : "failed", waitingUntil: null, error: cancelled ? "" : error?.message || String(error) });
       }

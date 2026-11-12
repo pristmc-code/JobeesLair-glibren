@@ -113,12 +113,26 @@ if (scenario === 'prep-loja' || scenario === 'prep-orbit') {
   const debug = std.getenv('MEM_DEBUG') ? (line) => std.err.puts(`${line}\n`) : () => {};
   const api = createTorBox({ http: Http, key: () => KEY, wait: async () => {}, log: debug });
   const byId = new Map(catalog.catalogEntries().map(({ game }) => [game.id, game]));
+  // glibren.38 (item 3): MEM_LIB_STEP para no meio, para achar o passo do pico: "build" (so montar, sem gravar), "library"
+  // (montar + o banco, sem lista nem fichas), "list" (+ lista e ids, sem fichas); vazio = tudo, como o app (com a copia do
+  // banco em /data, que o app grava ao terminar). MEM_LIB_SUMMARY=1 le o banco de novo no fim, como a tela de
+  // Configuracoes fazia ao mudar o estado (librarySummary).
+  const step = std.getenv('MEM_LIB_STEP') || '';
   const save = (value, { final }) => {
-    writeLibrary(FileSystem, where, value, { backup: false });
-    if (final) writeList(FileSystem, where, value, undefined, (id) => byId.get(id) ?? null);
+    if (step === 'build') return;
+    writeLibrary(FileSystem, where, value, { backup: final && !step });
+    if (final && step !== 'library') writeList(FileSystem, where, value, undefined, step === 'list' ? null : (id) => byId.get(id) ?? null);
   };
-  const { progress } = await buildLibrary({ entries: catalog.catalogEntries(), api, save, signal, sleep: async () => {}, pace: 0, rateWait: 0, log: debug,
+  // O gravador do app (torbox-library.js saveLibraryRun, glibren.38) quando existe; senao o de antes.
+  const lib = await import('../../app/state/torbox-library.js');
+  const save2 = lib.saveLibraryRun && !step ? (value, { final }) => lib.saveLibraryRun(FileSystem, where, value, { final, gameOf: (id) => byId.get(id) ?? null, log: debug }) : save;
+  const { progress } = await buildLibrary({ entries: catalog.catalogEntries(), api, save: save2, signal, sleep: async () => {}, pace: 0, rateWait: 0, log: debug,
     onProgress: (p) => debug(`progress ${p.phase} ${p.done}/${p.total} calls ${p.calls}`) });
+  if (std.getenv('MEM_LIB_SUMMARY')) {
+    const { readLibrary, uncheckedCount } = await import('../../app/state/torbox-library.js');
+    const again = readLibrary(FileSystem, where);
+    keep.summary = uncheckedCount(again, catalog.catalogEntries());
+  }
   note = `library ${progress.found} of ${progress.total}, ${progress.calls} calls`;
 } else if (scenario === 'formatos') {
   const catalog = await store();

@@ -336,18 +336,77 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
   // glibren.28: a lista e as fichas gravadas um jogo por vez (writeAtomicParts), no mesmo formato de exportList e
   // exportDetails: nem a lista inteira, nem todas as fichas (texto, fotos e videos de ~1.800 jogos) montadas de uma vez.
   function writeList(fs, paths, library, now = Date.now(), gameOf = null) {
-    const records = listRecords(library);
-    const builtAt = library.builtAt ?? isoStamp(now);
-    writeAtomicParts(fs, paths.list, jsonParts({ version: LIST_FORMAT, builtAt, games: records }, "games", listGame));
-    // { version: 1, builtAt, ids: ["PPSA01234", ...] }
-    writeAtomic(fs, paths.ids, JSON.stringify({ version: LIST_FORMAT, builtAt, rules: IDS_RULES, ids: records.map((record) => record.id) }));
+    writeListFiles(fs, paths, library, now);
     if (gameOf && paths.details) {
       try {
-        writeAtomicParts(fs, paths.details, jsonParts({ version: DETAILS_FORMAT, builtAt, games: records }, "games", (record) => ({ id: record.id, ...gameDetails(gameOf(record.id)) })));
+        writeDetails(fs, paths, library, gameOf, now);
       } catch (error) {
         console.log(`[torbox-library] details not written to ${paths.details}: ${error?.message || error}`);
       }
     }
+  }
+  // glibren.38: a lista e os ids (writeListFiles) e as fichas (writeDetails) em passos separados, para a gravacao final
+  // (saveLibraryRun) medir e liberar a memoria entre um e outro; o texto gravado e o mesmo de writeList.
+  function writeListFiles(fs, paths, library, now = Date.now()) {
+    let records = listRecords(library);
+    const builtAt = library.builtAt ?? isoStamp(now);
+    writeAtomicParts(fs, paths.list, jsonParts({ version: LIST_FORMAT, builtAt, games: records }, "games", listGame));
+    // { version: 1, builtAt, ids: ["PPSA01234", ...] }
+    const ids = records.map((record) => record.id);
+    records = null;
+    writeAtomic(fs, paths.ids, JSON.stringify({ version: LIST_FORMAT, builtAt, rules: IDS_RULES, ids }));
+  }
+  // glibren.38: as fichas, um jogo por vez: so os ids da lista ficam guardados (nao os registros), e cada ficha sai do jogo
+  // do catalogo na hora de ser gravada (as paginas passam pelo cache de paginas do catalogo, que guarda poucas).
+  function writeDetails(fs, paths, library, gameOf, now = Date.now()) {
+    const ids = listRecords(library).map((record) => record.id);
+    const builtAt = library.builtAt ?? isoStamp(now);
+    writeAtomicParts(fs, paths.details, jsonParts({ version: DETAILS_FORMAT, builtAt, games: ids }, "games", (id) => ({ id, ...gameDetails(gameOf(id)) })));
+  }
+  /**
+   * glibren.38 (o app fechava "na hora de gerar a lista", 11/11/2026): a gravacao de uma rodada da montagem, o `save` de
+   * buildLibrary. Parcial (`final` falso): so o banco. Final: o banco, a lista e os ids (o que a loja e o celular leem),
+   * as fichas e por ultimo a copia do banco em /data, um arquivo de cada vez, cada um em pedacos, medindo a memoria
+   * (`sample(acao)`) depois de cada um. Um passo que falha nao leva os outros.
+   * Modo enxuto: com o heap do JS (`memory()`: { heapUsed, heapLimit }) acima de LEAN_AT antes de um passo opcional
+   * (fichas, copia), ele fica para a proxima montagem e o log diz por que; o banco, a lista e os ids sempre vao.
+   * -> { library, list, details, backup, lean } (o que gravou, e se foi enxuto).
+   */
+  var LEAN_AT = 0.85;
+  function heapShare(memory) {
+    try {
+      const reading = typeof memory === "function" ? memory() : null;
+      const used = Number(reading?.heapUsed), limit = Number(reading?.heapLimit);
+      return Number.isFinite(used) && limit > 0 ? used / limit : 0;
+    } catch {
+      return 0;
+    }
+  }
+  function saveLibraryRun(fs, paths, library, { final = false, gameOf = null, now = Date.now(), log = () => {}, sample = () => {}, memory = null, leanAt = LEAN_AT } = {}) {
+    const done = { library: false, list: false, details: false, backup: false, lean: false };
+    const step = (name, work) => {
+      try {
+        work();
+        done[name] = true;
+      } catch (error) {
+        log(`${name} not saved: ${error?.message || error}`);
+      }
+      sample(`biblioteca-torbox:gravar-${name}`);
+    };
+    const roomFor = (name) => {
+      const share = heapShare(memory);
+      if (share < leanAt) return true;
+      done.lean = true;
+      log(`memory high before the ${name} (${Math.round(share * 100)}% of the JS heap): lean save, the ${name} waits for the next build`);
+      return false;
+    };
+    step("library", () => writeLibrary(fs, paths, library));
+    if (!final) return done;
+    // A lista e os ids sempre: sao o que a loja TorBox e a pagina do celular leem.
+    step("list", () => writeListFiles(fs, paths, library, now));
+    if (gameOf && paths.details && roomFor("details")) step("details", () => writeDetails(fs, paths, library, gameOf, now));
+    if (paths.backup && roomFor("backup")) step("backup", () => writeAtomicParts(fs, paths.backup, jsonParts(library, "games")));
+    return done;
   }
   /** Os ids confirmados da lista gravada (a loja TorBox, state/store-mode.js): null quando não há lista. */
   // glibren.13: uma lista de ids gravada antes da regra das copias quebradas e refeita do banco (uma vez: a nova leva a
@@ -564,6 +623,29 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
       });
     });
   }
+  /**
+   * glibren.38: o resumo do banco para a tela (o de torbox-library-run.js librarySummary), de um banco ja na memoria:
+   * a tela lia o banco inteiro de novo a cada mudanca de estado da montagem (ao comecar, com o da montagem ainda na
+   * memoria, eram duas copias). `entries`: os jogos do catalogo ([{ game }]).
+   */
+  function summarize(library, entries) {
+    let games = 0, confirmed = 0, broken = 0;
+    for (const id of Object.keys(library.games)) {
+      const record = library.games[id];
+      games++;
+      if (stillConfirmed(record)) confirmed++;
+      if (brokenOnly(record)) broken++;
+    }
+    const run = library.run;
+    return {
+      builtAt: library.builtAt,
+      games,
+      confirmed,
+      broken,
+      unchecked: library.builtAt ? uncheckedCount(library, entries) : 0,
+      open: run && !run.finishedAt ? { done: run.done, total: run.total, sources: run.sources, onlyNew: Boolean(run.onlyNew) } : null
+    };
+  }
   /** glibren.25: um jogo do catálogo que o banco ainda não verificou (nenhuma montagem passou por ele). */
   var unchecked = (library, game) => !library.games[game.id]?.torbox;
   /** glibren.25: quantos jogos de `entries` ([{ game }]) o banco ainda não verificou. */
@@ -752,9 +834,12 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     run.finishedAt = isoStamp(now());
     library.builtAt = run.finishedAt;
     phase = "done";
+    // glibren.38: a conta e a lista de hashes ja casadas saem de cena antes da gravacao final (a mais pesada).
+    account = null;
+    listHeld = null;
     save(library, { final: true });
     tell();
     return { library, progress: progress() };
   }
 
-export { UNREADABLE, BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, writeLibrary, writeList };
+export { UNREADABLE, BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LEAN_AT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, saveLibraryRun, summarize, writeDetails, writeLibrary, writeList, writeListFiles };
