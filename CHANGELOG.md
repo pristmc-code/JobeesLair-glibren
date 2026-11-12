@@ -6,6 +6,13 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.38** (fork): the TorBox Library's network part runs on the background payload (bg_library.c, API 27): it
+  keeps going with the app closed, and the final save writes one file at a time (no second copy of the database; a
+  lean save above 85% of the heap). The store keeps the feed and Orbit download links on disk (in groups of 40 games)
+  instead of the JS heap (store + Orbit retained 15.1 -> 9.2 MB in qjs), and exports the full store to the payload:
+  the phone page gets a "Full store" tab (search, filters, sort, game page, download; a "Jobe" badge marks what needs
+  Jobe open to start). The YouTube service updates itself from signed `tube-service-*` releases (Ed25519, sha256,
+  rollback when it does not answer; Settings > Videos), and subtitles follow Jobe's language.
 - **glibren.37** (fork): memory meter (the engine's device.memory: JS heap, 64 MiB limit, and the title's heap):
   peak per screen/action in the log and in Settings > About, a warning above 85%; tools/memory/measure.mjs measures
   the scenarios in qjs. YouTube opens faster: the focused result is resolved ahead (cache of 3, 10 min) and the

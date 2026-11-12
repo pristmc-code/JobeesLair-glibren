@@ -25,6 +25,7 @@ import { linkHealth } from './links.js';
 import { PS4 } from './ps4.js';
 import { VERSION } from '../version.js';
 import { exclusive } from './heavy-work.js';
+import { isoStamp } from './clock.js';
 
   var STORE_DIR = Platform.OS === "ps5" ? "/data/JobeesLair/store" : `${DATA_DIR}/store`;
   var INDEX = `${STORE_DIR}/store-index.json`;
@@ -74,7 +75,7 @@ import { exclusive } from './heavy-work.js';
     return {
       version: FORMAT,
       key,
-      builtAt: new Date().toISOString(),
+      builtAt: isoStamp(Date.now()),
       console: PS4 ? "ps4" : "ps5",
       readyFirmware: readyLabel("13.60"),
       facets: {

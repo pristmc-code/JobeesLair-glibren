@@ -286,7 +286,7 @@ test('glibren.38: EQUIVALENCE: the payload\'s network gives the same library, li
   assert.ok(after2.progress.calls > 0 && calls > 0, 'calls counted');
   // A chave nunca foi para um arquivo nem para o diario do payload.
   const written = readdirSync(path.join(payload.base, 'state'), { recursive: true }).map((name) => path.join(payload.base, 'state', String(name))).filter((p) => !p.endsWith('library') && existsSync(p));
-  for (const file of written) { try { assert.ok(!readFileSync(file, 'utf8').includes(KEY), file); } catch (error) { if (error.code !== 'EISDIR') throw error; } }
+  for (const file of written) { try { assert.ok(!readFileSync(file, 'utf8').includes(KEY), file); } catch (error) { if (error.code !== 'EISDIR' && error.code !== 'ENOENT') throw error; } }  // um .tmp pode ser renomeado entre listar e ler
   let state = (await payload.call('GET', '/library/build')).data;
   for (const end = Date.now() + 10000; state.busy && Date.now() < end; await wait(20)) state = (await payload.call('GET', '/library/build')).data;
   assert.equal(state.state, 'done');
