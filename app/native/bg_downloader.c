@@ -1735,13 +1735,35 @@ static void classify_invalid(Conn* c) {
 // lentidao. Mudar o limite vale na hora para tudo que esta baixando.
 #define RATE_BURST_MS 250
 static pthread_mutex_t g_rate_lock = PTHREAD_MUTEX_INITIALIZER; // depois de g_lock, nunca antes
-static uint64_t g_rate_bps; // 0 = sem limite
+static uint64_t g_rate_bps; // 0 = sem limite (o que vale agora: o limite salvo, ou menor enquanto um video toca)
 static double g_rate_tokens;
 static int64_t g_rate_at; // em us
+// glibren.41 (A1): o limite salvo (speedLimit) e o limite temporario enquanto um video toca no app ("videoCap" no
+// POST /config, com validade "videoCapSeconds"). O temporario nunca vai para o config.json e vence sozinho: se o app
+// fechar (ou cair) com o video aberto, ele para de renovar e em ate 2 min volta o limite salvo.
+static uint64_t g_rate_base_bps;
+static uint64_t g_rate_cap_bps;
+static int64_t g_rate_cap_until; // mono_us; 0 = sem limite temporario
 static int64_t mono_us(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+// Recalcula o que vale agora (com g_rate_lock). O temporario vencido sai daqui mesmo, sem thread nenhuma.
+static void rate_effective_locked(void) {
+  uint64_t bps = g_rate_base_bps;
+  if (g_rate_cap_until) {
+    if (mono_us() >= g_rate_cap_until) {
+      g_rate_cap_until = 0;
+      g_rate_cap_bps = 0;
+      logf_("limite enquanto assiste: venceu (o app parou de renovar); volta o limite salvo");
+    } else if (g_rate_cap_bps && (!bps || g_rate_cap_bps < bps)) bps = g_rate_cap_bps;
+  }
+  if (bps != g_rate_bps) {
+    g_rate_bps = bps;
+    g_rate_tokens = 0;
+    g_rate_at = mono_us();
+  }
 }
 static void rate_refill_locked(void) {
   const int64_t now = mono_us();
@@ -1753,15 +1775,33 @@ static void rate_refill_locked(void) {
 }
 static void rate_set(int megabytes) {
   pthread_mutex_lock(&g_rate_lock);
-  g_rate_bps = megabytes > 0 ? (uint64_t)megabytes * 1024 * 1024 : 0;
-  g_rate_tokens = 0;
-  g_rate_at = mono_us();
+  g_rate_base_bps = megabytes > 0 ? (uint64_t)megabytes * 1024 * 1024 : 0;
+  g_rate_bps = (uint64_t)-1; // forca o recalculo
+  rate_effective_locked();
+  pthread_mutex_unlock(&g_rate_lock);
+}
+// glibren.41 (A1): limite temporario enquanto um video toca; 0 tira. A validade (segundos) e limitada a 5 min.
+static void rate_video_cap(int megabytes, int seconds) {
+  pthread_mutex_lock(&g_rate_lock);
+  const int had = g_rate_cap_until != 0;
+  if (megabytes > 0 && seconds > 0) {
+    g_rate_cap_bps = (uint64_t)megabytes * 1024 * 1024;
+    g_rate_cap_until = mono_us() + (int64_t)(seconds > 300 ? 300 : seconds) * 1000000;
+    if (!had) logf_("limite enquanto assiste: %d MB/s (renovado pelo app)", megabytes);
+  } else {
+    g_rate_cap_bps = 0;
+    g_rate_cap_until = 0;
+    if (had) logf_("limite enquanto assiste: tirado (o video fechou)");
+  }
+  g_rate_bps = (uint64_t)-1;
+  rate_effective_locked();
   pthread_mutex_unlock(&g_rate_lock);
 }
 // Tira `length` fichas; 0 = balde vazio (espere). Com fichas, pode ficar negativo (o pedaco inteiro passa).
 static int rate_take(size_t length) {
   pthread_mutex_lock(&g_rate_lock);
   int ok = 1;
+  rate_effective_locked();
   if (g_rate_bps) {
     rate_refill_locked();
     ok = g_rate_tokens > 0;
@@ -1773,6 +1813,7 @@ static int rate_take(size_t length) {
 static int rate_open(void) {
   pthread_mutex_lock(&g_rate_lock);
   int ok = 1;
+  rate_effective_locked();
   if (g_rate_bps) { rate_refill_locked(); ok = g_rate_tokens > 0; }
   pthread_mutex_unlock(&g_rate_lock);
   return ok;
@@ -2976,6 +3017,9 @@ typedef struct {
   // pac1: a pausa entre conversoes (s) e o limite de escrita da conversao (MB/s).
   int has_conv_pause, has_conv_write, has_conv_sync;
   uint64_t conv_pause, conv_write, conv_sync;
+  // glibren.41 (A1): limite temporario enquanto um video toca (so do POST, nunca do config.json; nunca gravado).
+  int has_video_cap;
+  uint64_t video_cap, video_cap_seconds;
 } ConfigBody;
 static int config_field(JP* jp, const char* key, void* ctx) {
   ConfigBody* c = ctx;
@@ -2995,6 +3039,8 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "convertPauseSeconds")) { c->found = c->has_conv_pause = 1; return jp_uint(jp, &c->conv_pause) ? 1 : -1; }
   if (!strcmp(key, "convertWriteLimit")) { c->found = c->has_conv_write = 1; return jp_uint(jp, &c->conv_write) ? 1 : -1; }
   if (!strcmp(key, "convertSyncMB")) { c->found = c->has_conv_sync = 1; return jp_uint(jp, &c->conv_sync) ? 1 : -1; }
+  if (!c->from_disk && !strcmp(key, "videoCap")) { c->found = c->has_video_cap = 1; return jp_uint(jp, &c->video_cap) ? 1 : -1; }
+  if (!c->from_disk && !strcmp(key, "videoCapSeconds")) return jp_uint(jp, &c->video_cap_seconds) ? 1 : -1;
   if (!strcmp(key, "pauseOnCloseSeconds")) {
     // So um inteiro (nem null, nem fracao, nem negativo); o limite e conferido em config_valid.
     double d;
@@ -3011,6 +3057,7 @@ static int config_valid(const ConfigBody* c) {
   if (c->has_concurrency && (c->concurrency < 1 || c->concurrency > MAX_WORKERS)) return 0;
   if (c->has_pause && c->pause_seconds > MAX_PAUSE_SECONDS) return 0;
   if (c->has_speed && c->speed > MAX_SPEED_LIMIT) return 0;
+  if (c->has_video_cap && (c->video_cap > MAX_SPEED_LIMIT || c->video_cap_seconds > 300)) return 0;
   if (c->has_conv_pause && c->conv_pause > MAX_CONVERT_PAUSE) return 0;
   if (c->has_conv_write && c->conv_write > MAX_CONVERT_WRITE) return 0;
   if (c->has_conv_sync && c->conv_sync > MAX_CONVERT_SYNC) return 0;
@@ -3044,6 +3091,9 @@ static int config_apply_locked(const ConfigBody* c) {
     g_speed_remote = c->has_speed_by && !strcmp(c->speed_by, "remote");
     g_speed_stamp = (unsigned)c->speed_stamp;
   }
+  // glibren.41 (A1): o limite enquanto assiste vale ate a validade (90 s sem "videoCapSeconds"); 0 tira. Nao conta como
+  // mudanca: nada disso vai para o config.json.
+  if (c->has_video_cap) rate_video_cap((int)c->video_cap, c->video_cap ? (c->video_cap_seconds ? (int)c->video_cap_seconds : 90) : 0);
   // glibren.18: o disco e a conversao para os pedidos do celular com o app fechado.
   if (c->has_auto_root && strcmp(g_auto_root, c->auto_root)) {
     snprintf(g_auto_root, sizeof g_auto_root, "%s", c->auto_root);
@@ -3285,7 +3335,10 @@ static void handle_create(int fd, Request* r) {
   for (int i = 0; i < g_job_count; ++i) {
     Job* other = g_jobs[i];
     if (strcmp(other->destination, j->destination) && strcmp(other->published, j->destination)) continue;
-    if (!terminal(other->state)) { // nunca dois donos do mesmo arquivo
+    // nunca dois donos do mesmo arquivo. glibren.41 (J3): um terminado que o trabalhador ainda esta fechando ("running":
+    // aviso, auto_after_download, engine_free depois do finish) tambem e dono: remove-lo liberava memoria em uso, e o
+    // job novo podia ganhar dois trabalhadores na mesma .part. O app tenta de novo (409) em seguida.
+    if (!terminal(other->state) || other->running) {
       Buf b = {0};
       buf_str(&b, "{\"error\":\"a job already owns this destination\",\"id\":");
       buf_json(&b, other->id);
@@ -6768,6 +6821,7 @@ int main(void) {
   current_ip(last_ip, sizeof last_ip);
   int64_t last_save = mono_ms();
   time_t last_wall = time(NULL);
+  int64_t last_wall_mono = mono_ms(); // glibren.41: o relogio monotonico na ultima volta (ver "acordou" abaixo)
   // O app aberto? (sceLncUtilGetAppId, a mesma consulta que o sandbox-sweeper faz em laco) e falando com o payload?
   int app_seen = app_running(), app_talking = 1, was_quiet = 0;
   int64_t last_close = INT64_MIN / 2, last_event = mono_ms(), last_beat = mono_ms();
@@ -6830,11 +6884,21 @@ int main(void) {
       }
     }
     time_t wall = time(NULL);
+    const int64_t wall_mono = mono_ms();
     current_ip(ip, sizeof ip);
-    int woke = g_wake || wall - last_wall > 10 || wall < last_wall;
-    if (strcmp(ip, last_ip)) { logf_("rede: IP %s -> %s", last_ip[0] ? last_ip : "-", ip[0] ? ip : "-"); woke = 1; snprintf(last_ip, sizeof last_ip, "%s", ip); }
-    if (woke) { g_wake = 0; ++g_epoch; g_reopen_server = 1; g_reopen_monitor = 1; logf_("acordou (SIGCONT/IP/relogio): reabrindo servidor e conexoes"); }
+    // glibren.41: "acordou" = o relogio de parede andou mais de 10 s ALEM do monotonico (no repouso o monotonico para),
+    // voltou para tras, um salto enorme (mais de 2 min), ou SIGCONT (g_wake). Antes bastava a volta deste laco
+    // demorar 10 s (console ou PC carregados): o servidor era reaberto a toa e os pedidos daquele instante caiam.
+    const int64_t wall_step = (int64_t)(wall - last_wall) * 1000, mono_step = wall_mono - last_wall_mono;
+    // (um acerto pequeno da hora - NTP, o glibren acertando o relogio, o WSL nos testes - volta 1-2 s: nao e acordar)
+    const char* why = g_wake ? "SIGCONT" : wall < last_wall - 5 ? "relogio voltou" : wall_step - mono_step > 10000 ? "repouso (relogio)" : wall_step > 120000 ? "salto do relogio" : NULL;
+    if (strcmp(ip, last_ip)) { logf_("rede: IP %s -> %s", last_ip[0] ? last_ip : "-", ip[0] ? ip : "-"); why = "IP mudou"; snprintf(last_ip, sizeof last_ip, "%s", ip); }
+    if (why) {
+      g_wake = 0; ++g_epoch; g_reopen_server = 1; g_reopen_monitor = 1;
+      logf_("acordou (%s; parede %+llds, monotonico %+llds): reabrindo servidor e conexoes", why, (long long)(wall_step / 1000), (long long)(mono_step / 1000));
+    }
     last_wall = wall;
+    last_wall_mono = wall_mono;
     if (mono_ms() - last_save >= 10000) {
       pthread_mutex_lock(&g_lock);
       if (g_dirty) save_jobs_locked();

@@ -756,6 +756,24 @@ test('glibren.13: o limite de velocidade vai no POST /config, muda ao vivo, e o 
   await wait(30);
 });
 
+test('glibren.41: o limite salvo vai como speedLimit e o do video como videoCap temporario (com validade)', async () => {
+  const payload = fakePayload();
+  let saved = 50, video = 0;
+  const wrapper = make(payload, fakeEngine(), { concurrency: () => 1, speedLimit: () => saved, videoCap: () => video });
+  wrapper.enqueue(queueOptions());
+  await wait(40);
+  assert.deepEqual([payload.configs.at(-1).speedLimit, payload.configs.at(-1).videoCap, payload.configs.at(-1).videoCapSeconds], [50, undefined, undefined], 'sem video: o corpo de antes');
+  video = 5;
+  await wrapper.refreshConfig();
+  assert.deepEqual([payload.configs.at(-1).speedLimit, payload.configs.at(-1).videoCap, payload.configs.at(-1).videoCapSeconds], [50, 5, 90],
+    'o salvo continua 50 (o payload grava so ele); o do video vale 90 s');
+  video = 0;
+  await wrapper.refreshConfig();
+  assert.deepEqual([payload.configs.at(-1).speedLimit, payload.configs.at(-1).videoCap], [50, 0], 'fechou: tira');
+  for (const job of payload.jobs) job.state = 'completed';
+  await wait(30);
+});
+
 // ---- glibren.12: origem e formato vao na fila (item e job), validados ----
 
 test('fila inteira (glibren.12: origem): host/format/parts/via no item, e no job o site e o formato da fonte', async () => {

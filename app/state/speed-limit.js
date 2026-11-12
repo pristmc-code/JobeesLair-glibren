@@ -93,4 +93,7 @@ import { log } from '../services/logger.js';
     };
   }
 
-export { effective as speedLimitEffective, onVideoCap, setVideoCap, LIMITS, MAX_SPEED_LIMIT, adoptSpeedLimit, applySpeedLimit, current as speedLimitNow, onSpeedLimit, setSpeedLimit, stepSpeedLimit, useSpeedLimit };
+  /** glibren.41 (A1): the cap while a video plays (MB/s), 0 for none; the background payload gets it as a temporary field. */
+  var videoCapNow = () => videoCap;
+
+export { effective as speedLimitEffective, videoCapNow, onVideoCap, setVideoCap, LIMITS, MAX_SPEED_LIMIT, adoptSpeedLimit, applySpeedLimit, current as speedLimitNow, onSpeedLimit, setSpeedLimit, stepSpeedLimit, useSpeedLimit };

@@ -13,6 +13,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePortFrom } from './free-port.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-store-'));
@@ -35,9 +36,7 @@ after(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const freePort = () => new Promise((resolve) => {
-  const probe = net.createServer().listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
-});
+const freePort = freePortFrom(4); // glibren.41 (T1): bloco de portas so deste arquivo (tests/free-port.mjs)
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const PIN = '135790';
 const pinConfig = () => { const salt = randomBytes(32).toString('hex'); return { pinSalt: salt, pinHash: sha(`${salt}:${PIN}`) }; };

@@ -16,6 +16,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePortFrom } from './free-port.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-pac1-'));
@@ -34,9 +35,7 @@ after(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const freePort = () => new Promise((resolve) => {
-  const probe = net.createServer().listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
-});
+const freePort = freePortFrom(1); // glibren.41 (T1): bloco de portas so deste arquivo (tests/free-port.mjs)
 let api, monitorPort;
 if (!skip) {
   api = await freePort();
@@ -219,7 +218,8 @@ test('pac1: queda no meio da conversao -> last-crash.json (<= 4 KB) com o ultimo
   let child = start(base, { BGDL_MARK_BYTES: String(MiB), BGDL_CONVERT_DELAY_MS: '60' });
   await up(base);
   assert.deepEqual((await call(base, 'GET', '/crash')).data, { crash: null });
-  const r = await call(base, 'POST', '/convert', request(base, 4, 8));
+  const body4 = request(base, 4, 8);
+  const r = await call(base, 'POST', '/convert', body4);
   await until(base, r.data.id, ['converting'], (item) => item.written >= 2 * MiB);
   await stop(child, 'SIGKILL'); // o console "caiu": nenhuma linha de saida limpa
   child = start(base);
@@ -239,7 +239,12 @@ test('pac1: queda no meio da conversao -> last-crash.json (<= 4 KB) com o ultimo
   assert.equal(crash.lastLine, crash.lines.at(-1));
   assert.ok(!crash.lines.some((line) => line.includes('saida limpa')));
   assert.match(log(base), /queda anterior registrada em last-crash\.json: convert de Jogo 4; ultimo marco: escrita do exFAT/);
-  // A conversao voltou para a fila e termina; depois uma saida limpa: a proxima subida nao registra queda nova.
+  // A conversao fica segurada (falhou: interrompida) ate Converter de novo; reenviada, termina.
+  // Depois uma saida limpa: a proxima subida nao registra queda nova.
+  const held = await until(base, r.data.id, ['failed', 'done', 'converting']);
+  assert.equal(held.state, 'failed', 'segurada, nao recomecou sozinha');
+  assert.match(held.error, /^interrupted:/);
+  assert.equal((await call(base, 'POST', '/convert', body4)).data.id, r.data.id);
   await until(base, r.data.id, ['done']);
   await stop(child);
   child = start(base);

@@ -10,6 +10,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePortFrom } from './free-port.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const core = await import('@ps5-react/core');
@@ -86,9 +87,7 @@ const binary = path.join(dir, 'bgdl');
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
 const built = compiler && spawnSync(compiler, ['-std=gnu11', '-O1', '-o', binary, path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { encoding: 'utf8' });
 const skip = !compiler ? 'no C compiler' : built.status !== 0 ? `did not compile: ${built.stderr.slice(0, 300)}` : false;
-const freePort = () => new Promise((resolve) => {
-  const probe = net.createServer().listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
-});
+const freePort = freePortFrom(6); // glibren.41 (T1): bloco de portas so deste arquivo (tests/free-port.mjs)
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('o payload da os mesmos ids, ordem e contagens que catalog.js para o indice exportado', { skip }, async () => {

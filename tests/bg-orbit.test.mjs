@@ -13,6 +13,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePortFrom } from './free-port.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-orbit-'));
@@ -35,9 +36,7 @@ after(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const freePort = () => new Promise((resolve) => {
-  const probe = net.createServer().listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
-});
+const freePort = freePortFrom(3); // glibren.41 (T1): bloco de portas so deste arquivo (tests/free-port.mjs)
 
 const KEY = Buffer.from(readFileSync(path.join(repo, 'app/native/orbit_key.h'), 'utf8').match(/0x[0-9a-fA-F]{2}/g).map((byte) => parseInt(byte, 16)));
 // O envelope do Orbit (backend/catalog_crypto.c catalog_seal): magic, formato 1, chave 1, proposito 1, 0, nonce, cifra, tag.

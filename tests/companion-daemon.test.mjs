@@ -10,6 +10,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePortFrom } from './free-port.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
@@ -30,12 +31,7 @@ after(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 // A port for the helper to take. Another test file can take it first; the test's own servers use listening().
-const freePort = () => new Promise((resolve) => {
-  const server = net.createServer().listen(0, '127.0.0.1', () => {
-    const { port } = server.address();
-    server.close(() => resolve(port));
-  });
-});
+const freePort = freePortFrom(5); // glibren.41 (T1): bloco de portas so deste arquivo (tests/free-port.mjs)
 // Starts one of the test's own servers on a port the system picks; resolves with the port.
 const listening = (server) => new Promise((resolve, reject) => {
   server.once('error', reject);

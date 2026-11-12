@@ -14,6 +14,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePortFrom } from './free-port.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-bgdl-'));
@@ -43,9 +44,7 @@ after(() => {
 });
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha = (data) => createHash('sha256').update(data).digest('hex');
-const freePort = () => new Promise((resolve) => {
-  const probe = net.createServer().listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
-});
+const freePort = freePortFrom(2); // glibren.41 (T1): bloco de portas so deste arquivo (tests/free-port.mjs)
 
 // O servidor: /f/<nome> (ETag forte), /t/<token>/<nome> (403 depois que os tokens vencem), /v1/api/webdl/requestdl
 // (o TorBox falso), /big.bin (virtual, 4 GiB + 40 MiB). `rate` limita cada resposta (bytes/s).
@@ -289,6 +288,37 @@ test('link vencido (403): pede outro ao TorBox com a chave e continua a mesma pa
   assert.ok(!readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').includes(KEY));
   assert.ok(!readFileSync(path.join(base, 'state/jobs.json'), 'utf8').includes(KEY));
   await stop(child);
+});
+
+// glibren.41 (A1): o limite enquanto um video toca chega como campo temporario, nunca vai para o config.json e vence
+// sozinho quando o app para de renovar (fechado com o video aberto, ou caiu).
+test('glibren.41: videoCap no POST /config e temporario, validado, fora do config.json e vence sozinho', { skip }, async () => {
+  const base = workspace();
+  files['vc.bin'] = randomBytes(3 * MiB);
+  const child = start(base);
+  try {
+    await up(base);
+    assert.equal((await call(base, 'POST', '/config', { speedLimit: 0, videoCap: 1001, videoCapSeconds: 10 })).status, 400, 'acima do maximo');
+    assert.equal((await call(base, 'POST', '/config', { speedLimit: 0, videoCap: 1, videoCapSeconds: 301 })).status, 400, 'validade acima de 5 min');
+    assert.equal((await call(base, 'POST', '/config', { speedLimit: 7, videoCap: 1, videoCapSeconds: 1 })).status, 200); // 7: o config.json e gravado (so grava quando muda)
+    const dest = path.join(base, 'disk/downloads/vc.bin');
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/vc.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 2, sha256: sha(files['vc.bin']) });
+    const job = await until(base, data.id, ['completed', 'failed']);
+    assert.equal(job.state, 'completed', job.error);
+    const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+    assert.match(log, /limite enquanto assiste: 1 MB\/s/);
+    assert.match(log, /limite enquanto assiste: venceu/, 'sem renovacao, venceu durante o download');
+    const saved = readFileSync(path.join(base, 'state/config.json'), 'utf8');
+    assert.ok(!/videoCap/.test(saved), 'nunca gravado: ' + saved);
+    assert.match(saved, /"speedLimit":7/, 'o salvo e o speedLimit, nao o do video');
+    // tirar (o video fechou)
+    assert.equal((await call(base, 'POST', '/config', { speedLimit: 0, videoCap: 4, videoCapSeconds: 60 })).status, 200);
+    assert.equal((await call(base, 'POST', '/config', { speedLimit: 0, videoCap: 0 })).status, 200);
+    assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /limite enquanto assiste: tirado/);
+  } finally {
+    await stop(child);
+    delete files['vc.bin'];
+  }
 });
 
 test('glibren.13: TorBox com redirecionamento e limite de velocidade baixo: conexoes pausadas nao viram "link vencido"', { skip }, async () => {

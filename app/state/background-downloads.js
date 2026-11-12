@@ -196,7 +196,10 @@ import { setLibraryPayload } from './torbox-library-payload.js';
    * como o payload a entende ({ provider, kind, id, fileId, zip }); `secret(service)`: a chave do servico
    * debrid; `text(key, vars)`: as mensagens da notificacao no idioma do jogador.
    */
-  function createBackgroundDownloads({
+  // glibren.41 (A1): o limite do video vale 90 s no payload e o app renova a cada 30 s enquanto o video toca.
+var VIDEO_CAP_TTL_S = 90;
+var VIDEO_CAP_RENEW_MS = 30e3;
+function createBackgroundDownloads({
     downloads,
     http,
     fs,
@@ -230,6 +233,10 @@ import { setLibraryPayload } from './torbox-library-payload.js';
     // manda o campo. adoptSpeedLimit grava nas Configuracoes o escolhido no celular (setSpeedLimit), ou null.
     speedLimit = () => null,
     adoptSpeedLimit = null,
+    // glibren.41 (A1): o limite enquanto um video toca (MB/s, 0 = nenhum). Vai no POST /config como "videoCap" com
+    // validade ("videoCapSeconds"): o payload nunca grava e volta sozinho ao limite salvo se o app parar de renovar
+    // (fechado com o video aberto, ou caiu). Enquanto vale, a configuracao e mandada de novo a cada VIDEO_CAP_RENEW_MS.
+    videoCap = () => 0,
     // glibren.18: o disco padrao e a conversao ({ root, convert }) que vao no POST /config ("autoRoot", "autoConvert"):
     // com eles o payload comeca sozinho, com o app fechado, um pedido da Biblioteca TorBox feito no celular. null: nada.
     autoStart = () => null,
@@ -247,6 +254,7 @@ import { setLibraryPayload } from './torbox-library-payload.js';
     const base = `http://127.0.0.1:${port}`;
     let secretsFor = null; // pid do payload que ja recebeu a chave
     let configFor = null; // pid + a configuracao que o payload ja recebeu (downloads simultaneos, pagina do celular)
+    let videoCapSent = false; // glibren.41 (A1): o payload recebeu um limite de video (falta mandar o 0 que o tira)
     const readToken = () => {
       try {
         const value = String(fs.readFile(`${stateDir}/token`) ?? "").trim();
@@ -416,11 +424,18 @@ import { setLibraryPayload } from './torbox-library-payload.js';
       // pac1: so os campos validos das opcoes da conversao.
       const conv = convertOptions() ?? {};
       const convFields = Object.fromEntries(["convertPauseSeconds", "convertWriteLimit", "convertSyncMB"].filter((key) => Number.isInteger(conv[key]) && conv[key] >= 0).map((key) => [key, conv[key]]));
-      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...Number.isInteger(cap) && cap >= 0 ? { speedLimit: cap } : {}, ...autoFields, ...convFields, ...monitor() ?? {} };
-      const key = `${state?.pid}:${JSON.stringify(body)}`;
+      const video = videoCap() | 0;
+      // o campo do video so vai quando ha limite, e uma vez com 0 para tira-lo (videoCapSent); sem video, o corpo e o de antes
+      const videoFields = video > 0 ? { videoCap: video, videoCapSeconds: VIDEO_CAP_TTL_S } : videoCapSent ? { videoCap: 0 } : {};
+      const body = { concurrency: count, ...Number.isInteger(pause) ? { pauseOnCloseSeconds: pause } : {}, ...Number.isInteger(cap) && cap >= 0 ? { speedLimit: cap } : {}, ...autoFields, ...convFields, ...monitor() ?? {}, ...videoFields };
+      // com o limite do video ligado, a mesma configuracao vale de novo a cada renovacao (a validade e contada no payload)
+      const key = `${state?.pid}:${JSON.stringify(body)}${video > 0 ? `:${Math.floor(Date.now() / VIDEO_CAP_RENEW_MS)}` : ""}`;
       if (!state || configFor === key) return;
       const answer = await call(token, "POST", "/config", body);
-      if (answer.status === 200) configFor = key;
+      if (answer.status === 200) {
+        configFor = key;
+        videoCapSent = video > 0;
+      }
       else log(`payload did not take its configuration (${count} simultaneous downloads; HTTP ${answer.status})`);
     }
     const eligible = (options) => platform === "ps5" && on() && options.background && typeof options.url === "string" &&
@@ -641,7 +656,15 @@ import { setLibraryPayload } from './torbox-library-payload.js';
             // Entregue com antecedencia (a fila do app): agora e o app que o comeca.
             await follow(existing);
           } else {
-            const answer = await call(token, "POST", "/jobs", jobBody(options, meta, source));
+            let answer = await call(token, "POST", "/jobs", jobBody(options, meta, source));
+            // glibren.41 (J3): 409 de um job que ja terminou mas o payload ainda esta fechando (o trabalhador dele): espera
+            // um instante e pede de novo, em vez de seguir o antigo (que ja falhou ou terminou).
+            for (let tries = 0; answer.status === 409 && answer.data?.id && tries < 6; tries++) {
+              const other = (await call(token, "GET", "/jobs")).data?.jobs?.find((job) => job.id === answer.data.id);
+              if (!other || !["completed", "failed", "cancelled"].includes(other.state)) break;
+              await wait(500);
+              answer = await call(token, "POST", "/jobs", jobBody(options, meta, source));
+            }
             if (answer.status === 409 && answer.data?.id) jobId = answer.data.id;
             else if (answer.status === 201 && answer.data?.id) jobId = answer.data.id;
             else {

@@ -14,6 +14,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePortFrom } from './free-port.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-conv-'));
@@ -35,9 +36,7 @@ after(() => {
 });
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha = (data) => createHash('sha256').update(data).digest('hex');
-const freePort = () => new Promise((resolve) => {
-  const probe = net.createServer().listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); });
-});
+const freePort = freePortFrom(0); // glibren.41 (T1): bloco de portas so deste arquivo (tests/free-port.mjs)
 let api;
 if (!skip) {
   api = await freePort();
@@ -202,8 +201,14 @@ test('cancelar no meio: o .part some, a pasta extraida fica; tentar de novo pela
   assert.equal(retry.data.attached, false);
   await until(base, data.id, ['done'], () => true, 90000);
   assert.ok(existsSync(request.output));
-  // Esquecer: so uma que terminou.
-  assert.equal((await call(base, 'POST', `/convert/${data.id}/forget`)).status, 200);
+  // Esquecer: so uma que terminou e que o ciclo ja largou (glibren.41 J4: logo depois do "done" o ciclo ainda avisa e
+  // pede a varredura ao ShadowMount com ela: 409 ate ele terminar).
+  let forgot = 0;
+  for (let i = 0; i < 100 && forgot !== 200; i++) {
+    forgot = (await call(base, 'POST', `/convert/${data.id}/forget`)).status;
+    if (forgot === 409) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(forgot, 200);
   assert.equal(await conversion(base, data.id), undefined);
   await stop(child);
 });
@@ -236,7 +241,9 @@ test('erros com codigo: imagem ja existe (write:), fonte sumida (source:), sem e
   await stop(child);
 });
 
-test('reinicio no meio: o payload morto volta, a conversao recomeca limpa e termina', { skip }, async () => {
+// glibren.41 (J2): morto no meio (queda: SIGKILL, como o console desligando) a conversao fica "falhou" com o motivo e
+// nao recomeca sozinha (se foi ela que derrubou o console, recomecar derrubaria de novo); "Converter" de novo termina.
+test('reinicio no meio: morto (queda) a conversao fica segurada com o motivo; pedida de novo, recomeca limpa e termina', { skip }, async () => {
   monitorPort = await freePort();
   const base = workspace();
   const work = path.join(base, 'disk/downloads/extracted/R');
@@ -250,10 +257,15 @@ test('reinicio no meio: o payload morto volta, a conversao recomeca limpa e term
   assert.ok(existsSync(`${request.output}.part`), 'o .part ficou do processo morto');
   child = start(base);
   await up(base);
+  const held = await until(base, data.id, ['failed', 'done', 'converting']);
+  assert.equal(held.state, 'failed', 'segurada, nao recomecou sozinha');
+  assert.match(held.error, /^interrupted:/);
+  assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /segurada ate Converter de novo/);
+  const again = await call(base, 'POST', '/convert', request);
+  assert.equal(again.data.id, data.id, 'a mesma conversao volta');
   const done = await until(base, data.id, ['done']);
   assert.equal(done.written, done.total);
   assert.ok(existsSync(request.output) && !existsSync(`${request.output}.part`));
-  assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /parada no meio; recomeca do zero/);
   // Parar limpo (SIGTERM) no meio tambem volta para a fila.
   const work2 = path.join(base, 'disk/downloads/extracted/R2');
   gameFolder(work2, 8);
@@ -266,6 +278,32 @@ test('reinicio no meio: o payload morto volta, a conversao recomeca limpa e term
   const saved = JSON.parse(readFileSync(path.join(base, 'state/conversions.json'), 'utf8')).conversions.find((item) => item.id === second.data.id);
   assert.equal(saved.state, 'queued');
   assert.ok(!existsSync(path.join(base, 'disk/homebrew/R2.exfat.part')));
+});
+
+// glibren.41 (J1): a pasta de trabalho da extracao (<root>/BACKUP/_temp/<id>) vale ao reiniciar (antes a conversao era
+// descartada e a pasta ficava escondida no disco), e uma sobra de extracao sem conversao viva e apagada ao iniciar.
+test('extracao em BACKUP/_temp: a conversao sobrevive ao reinicio e a sobra sem dono some', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const work = path.join(base, 'disk/BACKUP/_temp/cx');
+  gameFolder(work, 4);
+  const orfa = path.join(base, 'disk/BACKUP/_temp/c999');
+  mkdirSync(orfa, { recursive: true });
+  writeFileSync(path.join(orfa, 'lixo.bin'), Buffer.alloc(1024));
+  let child = start(base, { BGDL_CONVERT_DELAY_MS: '200' });
+  await up(base);
+  const request = body(base, { key: 'kt', kind: 'dir', source: work, work, output: path.join(base, 'disk/homebrew/T.exfat') });
+  const { status, data } = await call(base, 'POST', '/convert', request);
+  assert.ok(status === 200 || status === 201, `aceita work em BACKUP/_temp (HTTP ${status})`);
+  await until(base, data.id, ['converting'], (item) => item.written > 0);
+  await stop(child); // saida limpa: volta para a fila
+  child = start(base);
+  await up(base);
+  const done = await until(base, data.id, ['done']);
+  assert.equal(done.state, 'done', 'nao foi descartada ao reiniciar');
+  assert.ok(!existsSync(orfa), 'a sobra sem conversao viva foi apagada');
+  assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /apagada a sobra de extracao/);
+  await stop(child);
 });
 
 // Os FPKG de PS5 de verdade do pkg_source (tests/pkg-source, gerados pelo construtor aberto do ps5upload), em gzip.

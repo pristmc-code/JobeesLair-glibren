@@ -170,7 +170,7 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
           state.autoDone = true;
           const first = pickFirstVideo(result.items);
           if (first) {
-            console.log(`tube: auto-play ${first.id} for "${q}"`);
+            console.log(`tube: auto-play ${first.id}`); // glibren.41 (A7): sem o texto da busca no log
             opening.current = first.id;
             service.prefetch?.(first.id, { locale: localeNow() });
             setPlaying({ item: first, back: true });

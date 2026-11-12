@@ -93,7 +93,8 @@ export function takeTubeRequest(fs, dir, { now = Date.now(), maxAge = REQUEST_MA
     return null;
   }
   const request = parseTubeRequest(text);
-  log(`tube request: "${request.query}"${request.back ? ` back to ${request.back}` : ""}${request.auto ? " (auto)" : ""}`);
+  // glibren.41 (A7): o texto da busca nao vai para o log (regra de privacidade do projeto); so o tamanho.
+  log(`tube request: ${request.query ? `${request.query.length} chars` : "(empty)"}${request.back ? ` back to ${request.back}` : ""}${request.auto ? " (auto)" : ""}`);
   return request;
 }
 

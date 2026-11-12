@@ -353,7 +353,14 @@ static void lb_entry_write(Buf* b, const LbEntry* e, int all_files) {
 }
 
 // ---- Chamadas ----
-typedef struct { char code[64]; int transient, rate; } LbErr;
+// glibren.41 (J5): "fatal" = a chave foi recusada (HTTP 401/403 ou erro de autenticacao do TorBox): nenhuma outra chamada
+// vai dar certo, entao a rodada para na hora com o motivo (antes cada grupo de 50 links era partido ate o link sozinho:
+// milhares de chamadas recusadas e a rodada terminava "pronta" com tudo em falha, sem aviso).
+typedef struct { char code[64]; int transient, rate, fatal; } LbErr;
+static int lb_auth_code(const char* code) {
+  return !strcmp(code, "BAD_TOKEN") || !strcmp(code, "NO_AUTH") || !strcmp(code, "AUTH_ERROR") || !strcmp(code, "INVALID_TOKEN") ||
+         !strcmp(code, "TOKEN_EXPIRED") || !strcmp(code, "HTTP_401") || !strcmp(code, "HTTP_403");
+}
 typedef struct { int success; char error[64]; Span data; } LbAnswer;
 static int lb_answer_field(JP* j, const char* key, void* ctx) {
   LbAnswer* a = ctx;
@@ -427,11 +434,13 @@ static int lb_get(const char* path, const char* key, Buf* body, LbAnswer* a, LbE
   if (!body->data || !jp_object(&jp, lb_answer_field, a)) {
     snprintf(err->code, sizeof err->code, "HTTP_%ld", status);
     err->transient = status >= 500 && status <= 599;
+    err->fatal = lb_auth_code(err->code);
     return 0;
   }
   if (!a->success) {
     if (a->error[0]) snprintf(err->code, sizeof err->code, "%s", a->error);
     else { snprintf(err->code, sizeof err->code, "HTTP_%ld", status); err->transient = status >= 500 && status <= 599; }
+    err->fatal = lb_auth_code(err->code) || status == 401 || status == 403;
     return 0;
   }
   return 1;
@@ -541,7 +550,7 @@ static int lb_held(const char* key, char** links, int n, char** found, char** fa
   if (!n) return 1;
   const int r = lb_ask_group(key, links, n, found, body, err);
   if (r != 0) return r;
-  if (err->rate || err->transient) return 0;
+  if (err->rate || err->transient || err->fatal) return 0; // glibren.41 (J5): chave recusada para tudo
   if (n == 1) { failed[0] = strdup(err->code); return 1; }
   const int half = (n + 1) / 2;
   const int first = lb_held(key, links, half, found, failed, body, err);
@@ -816,8 +825,8 @@ static int lb_account(const char* key, Buf* body, LbErr* err) {
   buf_str(&out, "}");
   if (r == 1) {
     if (!lb_write("account.json", &out)) { free(out.data); snprintf(err->code, sizeof err->code, "NOT_SAVED"); return 0; }
-  } else if (r == 0 && !err->rate && !err->transient) {
-    // Como o app: "account not read" e a montagem segue sem a conta.
+  } else if (r == 0 && !err->rate && !err->transient && !err->fatal) {
+    // Como o app: "account not read" e a montagem segue sem a conta (glibren.41: menos com a chave recusada, que para).
     Buf note = {0};
     buf_str(&note, "{\"error\":");
     buf_json(&note, err->code);

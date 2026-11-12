@@ -62,6 +62,9 @@ typedef struct {
   int64_t created, updated;
   volatile int cancel;
   int running;
+  // glibren.41 (J4): o conv_loop ainda usa esta conversao (do inicio do conv_run ao fim do ciclo: aviso, varredura do
+  // ShadowMount, marcos, extracao). Enquanto 1, ninguem a libera da memoria (esquecer, abrir vaga).
+  int in_use;
 } Conv;
 
 static pthread_mutex_t g_conv_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -253,13 +256,19 @@ static int conv_validate(Conv* c, char* error, size_t cap) {
     snprintf(error, cap, "output must be <root>/homebrew/<name>.exfat"); return 0;
   }
   if (!conv_inside(c->source, c->root)) { snprintf(error, cap, "source must be on the same drive (root)"); return 0; }
-  if (c->work[0] && (!conv_inside(c->work, downloads) || (!strcmp(c->kind, "dir") && strcmp(c->source, c->work) && !conv_inside(c->source, c->work)))) {
-    snprintf(error, cap, "work must be inside <root>/downloads and hold the source"); return 0;
+  // glibren.41 (J1): a pasta de trabalho tambem pode ser a da extracao (<root>/BACKUP/_temp/<id>, conv_extract_in_place):
+  // antes uma conversao que ja tinha extraido era descartada ao reiniciar e a pasta extraida ficava no disco para sempre.
+  char temp[1100];
+  snprintf(temp, sizeof temp, "%s/BACKUP/_temp", c->root);
+  if (c->work[0] && (!(conv_inside(c->work, downloads) || conv_inside(c->work, temp)) ||
+                     (!strcmp(c->kind, "dir") && strcmp(c->source, c->work) && !conv_inside(c->source, c->work)))) {
+    snprintf(error, cap, "work must be inside <root>/downloads (or BACKUP/_temp) and hold the source"); return 0;
   }
   if (strlen(c->label) > 11) c->label[11] = 0;
   return 1;
 }
 
+static int g_lock_contended; // definida em bg_downloader.c (outra copia viva: nao foi queda); declaracao provisoria do C
 static void conv_load(void) {
   char path[600];
   snprintf(path, sizeof path, "%s/conversions.json", g_dir);
@@ -281,14 +290,25 @@ static void conv_load(void) {
       if (!c) break;
       char error[200];
       if (!jp_object(&jp, conv_field, c) || g_conv_count >= MAX_CONVS || !c->id[0] || !conv_validate(c, error, sizeof error)) {
+        if (c->id[0]) logf_("conversao %s descartada ao iniciar: %s", c->id, g_conv_count >= MAX_CONVS ? "lista cheia" : error);
         free(c);
       } else {
-        // Parada no meio: recomeca limpa (o .part some quando ela rodar de novo).
+        // Parada no meio. Saida limpa (o app parou o payload, atualizacao): recomeca limpa (o .part some quando ela rodar
+        // de novo). glibren.41 (J2): queda (o console desligou, o processo morreu): fica "falhou" com o motivo e so volta
+        // com "Converter agora" - se foi ela que derrubou o console, recomecar sozinha derrubaria de novo, em laco.
         if (!strcmp(c->state, "converting") || !strcmp(c->state, "verifying") || !strcmp(c->state, "extracting") || !c->state[0]) {
+          const int queda = c->state[0] && g_previous_seen && !g_lock_contended && !strstr(g_previous_last, CLEAN_EXIT_MARK);
           if (!g_crash_conv[0] && c->state[0]) copy_text(g_crash_conv, sizeof g_crash_conv, c->name[0] ? c->name : c->id); // pac1
-          snprintf(c->state, sizeof c->state, "queued");
           c->written = 0;
-          logf_("conversao %s (%s): parada no meio; recomeca do zero", c->id, c->name);
+          if (queda) {
+            snprintf(c->state, sizeof c->state, "failed");
+            copy_text(c->error, sizeof c->error, "interrupted: the console went down while this conversion was running; tap Convert to try again");
+            c->updated = now_s();
+            logf_("conversao %s (%s): estava rodando quando o console caiu; segurada ate Converter de novo", c->id, c->name);
+          } else {
+            snprintf(c->state, sizeof c->state, "queued");
+            logf_("conversao %s (%s): parada no meio; recomeca do zero", c->id, c->name);
+          }
         }
         g_convs[g_conv_count++] = c;
       }
@@ -437,7 +457,7 @@ static int conv_progress(void* ctx, uint64_t done, uint64_t total) {
 
 static void conv_finish(Conv* c, const char* state, const char* error) {
   pthread_mutex_lock(&g_conv_lock);
-  c->running = 0; // ja pode ser esquecida ou pedida de novo
+  c->running = 0; // ja pode ser pedida de novo (liberar da memoria so depois do ciclo: in_use, glibren.41 J4)
   snprintf(c->state, sizeof c->state, "%s", state);
   copy_utf8(c->error, sizeof c->error, error ? error : "");
   c->updated = now_s();
@@ -849,11 +869,11 @@ static void* conv_loop(void* arg) {
       continue;
     }
     next->running = 1;
+    next->in_use = 1; // glibren.41 (J4)
     next->cancel = 0;
     pthread_mutex_unlock(&g_conv_lock);
     conv_run(next);
     pthread_mutex_lock(&g_conv_lock);
-    next->running = 0;
     // glibren.20: qualquer conversao que nao deu direto (do app, do payload ou "Converter agora") e extraida aqui.
     const int extract = !strcmp(next->state, "extracting");
     const int leftover = (!strcmp(next->state, "failed") || !strcmp(next->state, "cancelled")) && conv_temp_work(next);
@@ -864,12 +884,14 @@ static void* conv_loop(void* arg) {
     pthread_mutex_unlock(&g_conv_lock);
     if (extract) conv_extract_in_place(next);
     else if (leftover && conv_remove_tree(work, 0)) logf_("conversao %s: pasta temporaria %s nao apagada inteira", next->id, work);
+    pthread_mutex_lock(&g_conv_lock);
     if (worked) {
-      pthread_mutex_lock(&g_conv_lock);
       g_conv_last_end_ms = mono_ms();
       copy_text(g_conv_last_id, sizeof g_conv_last_id, next->id);
-      pthread_mutex_unlock(&g_conv_lock);
     }
+    next->running = 0;
+    next->in_use = 0; // glibren.41 (J4): so agora pode ser esquecida ou aberta vaga com ela
+    pthread_mutex_unlock(&g_conv_lock);
   }
   return NULL;
 }
@@ -894,8 +916,42 @@ static void conv_start(void) {
     c->written = 0;
     ++again;
   }
-  if (again) { conv_save_locked(); logk_("conversoes: %d que nao deram direto voltam para a fila (o payload extrai)", again); }
+  if (again) logk_("conversoes: %d que nao deram direto voltam para a fila (o payload extrai)", again);
+  conv_save_locked(); // glibren.41 (J2): o estado lido (queued ou "falhou" por queda) fica gravado ja
+  // glibren.41 (J1): pastas de extracao (<root>/BACKUP/_temp/<id>) sem conversao viva sao sobra de uma conversao que
+  // terminou, foi esquecida ou descartada: dezenas de GB escondidos (a lista do BACKUP nao mostra _temp). Apagadas aqui,
+  // fora da trava (pode demorar).
+  char roots[8][1024], sobras[16][1400];
+  int nroots = 0, nsobras = 0;
+  for (int i = 0; i < g_conv_count && nroots < 8; ++i) {
+    int visto = 0;
+    for (int k = 0; k < nroots; ++k) visto |= !strcmp(roots[k], g_convs[i]->root);
+    if (!visto) copy_text(roots[nroots++], sizeof roots[0], g_convs[i]->root);
+  }
+  for (int r = 0; r < nroots && nsobras < 16; ++r) {
+    char dir[1100];
+    snprintf(dir, sizeof dir, "%.1000s/BACKUP/_temp", roots[r]);
+    DIR* d = opendir(dir);
+    struct dirent* e;
+    while (d && (e = readdir(d)) && nsobras < 16) {
+      if (e->d_name[0] == '.') continue;
+      char completo[1400];
+      snprintf(completo, sizeof completo, "%.1100s/%.255s", dir, e->d_name);
+      // viva: uma conversao nao terminada com esse id, ou cuja pasta de trabalho e essa (ou esta dentro dela)
+      int viva = 0;
+      for (int i = 0; i < g_conv_count && !viva; ++i) {
+        const Conv* c = g_convs[i];
+        viva = !conv_terminal(c->state) && (!strcmp(c->id, e->d_name) || !strcmp(c->work, completo) || conv_inside(c->work, completo));
+      }
+      if (!viva) copy_text(sobras[nsobras++], sizeof sobras[0], completo);
+    }
+    if (d) closedir(d);
+  }
   pthread_mutex_unlock(&g_conv_lock);
+  for (int i = 0; i < nsobras; ++i) {
+    if (conv_remove_tree(sobras[i], 0)) logf_("conversoes: sobra de extracao %s nao apagada inteira", sobras[i]);
+    else logk_("conversoes: apagada a sobra de extracao %s (sem conversao viva)", sobras[i]);
+  }
 }
 
 // ---- API local ----
@@ -933,7 +989,7 @@ static void conv_create(int fd, Request* r) {
     if (g_conv_count >= MAX_CONVS) {
       // Abre lugar esquecendo a mais antiga que terminou.
       for (int i = 0; i < g_conv_count; ++i) {
-        if (!conv_terminal(g_convs[i]->state) || g_convs[i]->running) continue;
+        if (!conv_terminal(g_convs[i]->state) || g_convs[i]->running || g_convs[i]->in_use) continue;
         free(g_convs[i]);
         memmove(&g_convs[i], &g_convs[i + 1], sizeof(Conv*) * (size_t)(g_conv_count - i - 1));
         --g_conv_count;
@@ -951,9 +1007,11 @@ static void conv_create(int fd, Request* r) {
     char id[24];
     snprintf(id, sizeof id, "%s", c->id);
     const int64_t created = c->created;
+    const int in_use = c->in_use; // glibren.41 (J4): o ciclo pode ainda estar terminando com ela
     *c = *body;
     snprintf(c->id, sizeof c->id, "%s", id);
     c->created = created;
+    c->in_use = in_use;
   }
   snprintf(c->state, sizeof c->state, "queued");
   c->error[0] = 0;
@@ -1003,7 +1061,7 @@ static int conv_route(int fd, Request* r) {
         if (!c->running) { snprintf(c->state, sizeof c->state, "cancelled"); c->updated = now_s(); conv_save_locked(); }
       }
     } else if (c && !strcmp(action, "forget")) {
-      if (c->running) status = 409;
+      if (c->running || c->in_use) status = 409; // glibren.41 (J4): o ciclo ainda usa
       else {
         for (int i = 0; i < g_conv_count; ++i) {
           if (g_convs[i] != c) continue;
@@ -1401,9 +1459,11 @@ static int conv_add_auto(const char* key, const char* name, const char* kind, co
     char id[sizeof again->id];
     const __typeof__(again->created) created = again->created;
     copy_text(id, sizeof id, again->id);
+    const int in_use = again->in_use; // glibren.41 (J4)
     *again = *body;
     copy_text(again->id, sizeof again->id, id);
     again->created = created;
+    again->in_use = in_use;
     again->updated = now_s();
     snprintf(again->state, sizeof again->state, "queued");
     conv_save_locked();
@@ -1426,7 +1486,7 @@ static int conv_add_auto(const char* key, const char* name, const char* kind, co
     return 1;
   }
   for (int i = 0; g_conv_count >= MAX_CONVS && i < g_conv_count; ++i) {
-    if (!conv_terminal(g_convs[i]->state) || g_convs[i]->running) continue;
+    if (!conv_terminal(g_convs[i]->state) || g_convs[i]->running || g_convs[i]->in_use) continue;
     free(g_convs[i]);
     memmove(&g_convs[i], &g_convs[i + 1], sizeof(Conv*) * (size_t)(g_conv_count - i - 1));
     --g_conv_count;

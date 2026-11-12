@@ -6,6 +6,18 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.41** (fork): Etapa 2 do plano de ação (revisão de 12/11) e o catálogo do usuário. The cap while a video
+  plays goes to the background payload as a temporary field ("videoCap" + "videoCapSeconds" in POST /config, renewed
+  every 30 s): it is never written to config.json and expires by itself when the app stops renewing (closed with the
+  video open), and the saved limit is what the payload stores and compares with the phone's (A1, A5, A8). A conversion
+  that was running when the console went down (unclean exit) is held as "failed: interrupted" until Convert is tapped
+  again, instead of starting over in a loop (J2); a conversion whose work folder is the extraction one
+  (<root>/BACKUP/_temp/<id>) survives a restart, and extraction leftovers without a live conversion are deleted (J1);
+  "running" only drops at the end of the conversion loop and a finishing job keeps its destination, so neither is freed
+  while still in use (J3, J4); the TorBox Library stops at the first key refusal (J5); the YouTube search text is no
+  longer logged (A7). Bundled catalog: 149 working links checked from the user's catalog files (Vikingfile and
+  Archive.org), 89 games gain links and 43 games are new. Tests: each payload test file gets its own block of ports
+  (T1).
 - **glibren.40** (fork): Settings > Videos gets "Downloads while watching": while the YouTube player is open, the
   downloads are capped at a value chosen with − / + (any whole MB/s, 5 by default; "Leave as is" turns it off). The
   lower of this cap and the saved speed limit holds, in the download engine and in the background payload (POST

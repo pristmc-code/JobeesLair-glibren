@@ -17,6 +17,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { freePortFrom } from './free-port.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const load = (rel) => import(pathToFileURL(path.join(repo, rel)).href);
@@ -122,7 +123,7 @@ const nodeHttp = { async request(url, { method = 'GET', headers, body, signal } 
   const text = await res.text();
   return { status: res.status, ok: res.ok, text: async () => text, json: async () => JSON.parse(text) };
 } };
-const freePort = () => new Promise((resolve) => { const probe = net.createServer().listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)); }); });
+const freePort = freePortFrom(7); // glibren.41 (T1): bloco de portas so deste arquivo (tests/free-port.mjs)
 
 // O que a montagem gravou, sem o que muda de uma rodada para outra (o id da rodada, as horas e as chamadas).
 function normalized(fs, paths) {
@@ -346,9 +347,10 @@ test('glibren.38: a TorBox without the key (BAD_TOKEN) or a 429 that never ends 
   writeFileSync(path.join(payload.base, 'debrid.json'), JSON.stringify({ torbox: { key: 'wrong-key-wrong-key-1234' } }));
   const games = catalog(5);
   const remote = createLibraryRemote({ fs: diskFs, link: () => payload.link, poll: 20 });
-  // BAD_TOKEN na conta: como o app, a conta fica de fora; nos links, o grupo e partido ate cada link ficar com o erro.
-  const { library } = await lib.buildLibrary({ entries: entriesOf(games), api: {}, remote, pace: 0, sleep: async () => {} });
-  assert.deepEqual(Object.values(library.games).map((g) => g.torbox.error), ['BAD_TOKEN', 'BAD_TOKEN', 'BAD_TOKEN', 'BAD_TOKEN', 'BAD_TOKEN']);
+  // glibren.41 (J5): BAD_TOKEN para a rodada na hora, com o motivo (antes cada grupo de links era partido ate o link
+  // sozinho: milhares de chamadas recusadas e a rodada terminava "pronta" com tudo em falha).
+  await assert.rejects(lib.buildLibrary({ entries: entriesOf(games), api: {}, remote, pace: 0, sleep: async () => {} }), { code: 'BAD_TOKEN' });
+  assert.deepEqual(((await payload.call('GET', '/library/build')).data).error, 'BAD_TOKEN');
   // 429 sem fim: 5 tentativas (61 s, 2, 4, 4 min no PS5; aqui milissegundos) e a rodada para com RATE_LIMITED.
   writeFileSync(path.join(payload.base, 'debrid.json'), JSON.stringify({ torbox: { key: KEY } }));
   tb.server.removeAllListeners('request');
