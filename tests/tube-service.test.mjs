@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const tube = await import('../app/state/tube-service.js');
-const { createTubeService, pageItems, pickFirstVideo, playableChoices, defaultChoice, pickCaption, sponsorSkipTo, searchRequest, clockText, TUBE_API } = tube;
+const { createTubeService, pageItems, pickFirstVideo, playableChoices, defaultChoice, pickCaption, captionLanguage, sponsorSkipTo, searchRequest, clockText, TUBE_API } = tube;
 
 const TOKEN = 'c'.repeat(64);
 const BASE = 'http://127.0.0.1:34210';
@@ -347,4 +347,46 @@ test('prefetch cache: only the last three, and only for a short while (well befo
   clock += 6e5 + 1;
   await client.resolve('normal00001');
   assert.equal(posts(service), 6, 'after 10 min: resolved again');
+});
+
+// glibren-captions: a legenda no idioma configurado na Jobe (manual > automatica > traducao tlang > ingles).
+test('captionLanguage: the app languages as YouTube writes them', () => {
+  assert.equal(captionLanguage('pt-BR').request, 'pt');
+  assert.equal(captionLanguage('zh-Hans').request, 'zh-Hans');
+  for (const code of ['en', 'es', 'fr', 'de', 'it', 'ru', 'ja', 'hi', 'ar', 'bn', 'id', 'ur']) assert.equal(captionLanguage(code).request, code);
+  assert.equal(captionLanguage('').request, 'en');
+});
+
+test('pickCaption: written in the app language, else automatic, else YouTube translation (tlang), else English', () => {
+  const m = (name) => `http://127.0.0.1:34210/media/s/${name}`;
+  const manualEn = { language: 'en', name: 'English', url: m('en.srt'), automatic: false, translated: false };
+  const autoPt = { language: 'pt', name: 'Portuguese (auto)', url: m('pt-asr.srt'), automatic: true, translated: false };
+  const manualPtPt = { language: 'pt-PT', name: 'Portuguese (Portugal)', url: m('pt-pt.srt'), automatic: false, translated: false };
+  const trPt = { language: 'pt-en', name: 'Portuguese', url: m('tr-pt.srt'), automatic: true, translated: true, target: 'pt' };
+  const manualPtBr = { language: 'pt-BR', name: 'Portuguese (Brazil)', url: m('pt-br.srt'), automatic: false, translated: false };
+  const pick = (list, locale) => pickCaption(list, locale)?.uri.replace(/\?format=vtt$/, '').split('/').pop();
+  assert.equal(pick([manualEn, trPt, autoPt, manualPtBr], 'pt-BR'), 'pt-br.srt', 'written first');
+  assert.equal(pick([manualEn, trPt, autoPt], 'pt-BR'), 'pt-asr.srt', 'then automatic');
+  assert.equal(pick([manualEn, trPt, manualPtPt], 'pt-BR'), 'tr-pt.srt', 'then the translation to pt, before pt-PT');
+  assert.equal(pick([manualEn, manualPtPt], 'pt-BR'), 'pt-pt.srt', 'then another Portuguese');
+  assert.equal(pick([manualEn], 'pt-BR'), 'en.srt', 'else English (as before)');
+  // An automatic track keyed "<lang>-asr" when a written one has that language.
+  assert.equal(pick([manualEn, { language: 'de-asr', url: m('de-asr.srt'), automatic: true }], 'de'), 'de-asr.srt');
+  // Chinese: Simplified (zh-Hans/zh-CN), then the translation to zh-Hans, before Traditional.
+  const zhTw = { language: 'zh-TW', url: m('zh-tw.srt'), automatic: false, translated: false };
+  const zhCn = { language: 'zh-CN', url: m('zh-cn.srt'), automatic: false, translated: false };
+  const trZh = { language: 'zh-Hans-en', url: m('tr-zh.srt'), automatic: true, translated: true, target: 'zh-Hans' };
+  assert.equal(pick([zhTw, trZh, zhCn, manualEn], 'zh-Hans'), 'zh-cn.srt');
+  assert.equal(pick([zhTw, trZh, manualEn], 'zh-Hans'), 'tr-zh.srt');
+  assert.equal(pick([zhTw, manualEn], 'zh-Hans'), 'zh-tw.srt');
+  // Spanish: any regional variant, the plain code first.
+  const es419 = { language: 'es-419', url: m('es-419.srt'), automatic: false, translated: false };
+  const es = { language: 'es', url: m('es.srt'), automatic: false, translated: false };
+  assert.equal(pick([es419, es], 'es'), 'es.srt');
+  assert.equal(pick([es419, manualEn], 'es'), 'es-419.srt');
+  // Indonesian: YouTube's old code "in" too.
+  assert.equal(pick([manualEn, { language: 'in', url: m('in.srt'), automatic: false }], 'id'), 'in.srt');
+  // Japanese with only a translation.
+  assert.equal(pick([manualEn, { language: 'ja-en', url: m('tr-ja.srt'), automatic: true, translated: true, target: 'ja' }], 'ja'), 'tr-ja.srt');
+  assert.equal(pickCaption([], 'pt-BR'), null);
 });

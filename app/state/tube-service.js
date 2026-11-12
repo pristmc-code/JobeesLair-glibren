@@ -128,19 +128,57 @@ import { REPO, VERSION } from '../version.js';
     return (best.find(({ choice }) => choice.hls) ?? best[0]).index;
   }
 
-  /** A legenda no idioma do app (a escrita antes da automatica, a original antes da traduzida), senao em ingles, senao null. */
+  // glibren-captions: as 14 linguas do app nos codigos de legenda do YouTube. `request`: o caption_language pedido ao
+  // servico (ele poe essa lingua primeiro, inclusive nas traducoes automaticas, tlang=); `family`: os codigos que sao
+  // "a mesma lingua" (o primeiro e o preferido); um codigo so com a mesma base (pt-PT para pt-BR, zh-Hant/zh-TW para
+  // zh-Hans) vale depois de todas as da familia, ate da traducao automatica. As outras linguas: qualquer codigo com a
+  // mesma base (es-419 e es-ES para es), o codigo puro primeiro.
+  var CAPTION_LANGUAGES = {
+    "pt-br": { request: "pt", family: ["pt-br", "pt"] },
+    "zh-hans": { request: "zh-Hans", family: ["zh-hans", "zh-cn", "zh-sg", "zh"] },
+    id: { request: "id", family: ["id", "in"] }
+  };
+  var baseOf = (tag) => String(tag ?? "").toLowerCase().split(/[-_]/)[0];
+  /** A lingua do app como o YouTube a escreve: { request, family (null: qualquer da mesma base), base, exact }. */
+  function captionLanguage(locale) {
+    const exact = String(locale ?? "").toLowerCase().replace(/_/g, "-");
+    const known = CAPTION_LANGUAGES[exact] ?? CAPTION_LANGUAGES[baseOf(exact)];
+    const base = /^[a-z]{2,3}$/.test(baseOf(exact)) ? baseOf(exact) : "en";
+    return { request: known?.request ?? base, family: known?.family ?? null, base: known ? baseOf(known.family[0]) : base, exact };
+  }
+  // Quao perto um codigo de legenda esta da lingua: [nivel (0 a mesma lingua, 1 so a mesma base, -1 nenhuma), ordem].
+  function closeness(code, lang) {
+    const tag = String(code ?? "").toLowerCase().replace(/_/g, "-").replace(/-asr$/, "");
+    if (lang.family) {
+      const index = lang.family.indexOf(tag);
+      if (index >= 0) return [0, index];
+      const base = baseOf(tag);
+      return base === lang.base || lang.family.some((entry) => baseOf(entry) === base) ? [1, 0] : [-1, 0];
+    }
+    if (baseOf(tag) !== lang.base) return [-1, 0];
+    return [0, tag === lang.exact ? 0 : tag === lang.base ? 1 : 2];
+  }
+  /**
+   * A legenda no idioma do app: a escrita (manual) nessa lingua, senao a automatica nessa lingua, senao a traducao
+   * automatica do YouTube (tlang) para ela; senao em ingles (na mesma ordem); senao null. Ligar ou nao continua sendo
+   * do jogador (tube-settings.js tubeSubtitles, o Triangulo no player).
+   */
   function pickCaption(captions, locale = "en") {
     const list = (Array.isArray(captions) ? captions : []).filter((caption) => typeof caption?.url === "string" && caption.url);
-    const base = (tag) => String(tag ?? "").toLowerCase().split(/[-_]/)[0];
-    const exact = String(locale ?? "").toLowerCase();
-    const want = base(locale);
-    const rank = (caption) => (caption.translated ? 2 : 0) + (caption.automatic ? 1 : 0);
-    for (const target of [want, "en"]) {
-      const found = list.filter((caption) => base(caption.translated ? caption.target ?? caption.language : caption.language) === target).sort((a, b) => rank(a) - rank(b) || (String(b.language).toLowerCase() === exact) - (String(a.language).toLowerCase() === exact));
-      if (found.length) {
-        const caption = found[0];
-        return { uri: `${caption.url}${caption.url.includes("?") ? "&" : "?"}format=vtt`, language: clip(caption.language, 32), title: clip(caption.name || caption.language, 64) };
+    const kind = (caption) => caption.translated ? 2 : caption.automatic ? 1 : 0;
+    for (const target of [locale, "en"]) {
+      const lang = captionLanguage(target);
+      let best = null, bestRank = null;
+      for (const caption of list) {
+        const [level, order] = closeness(caption.translated ? caption.target ?? caption.language : caption.language, lang);
+        if (level < 0) continue;
+        const rank = [level, kind(caption), order];
+        if (!bestRank || rank[0] - bestRank[0] < 0 || rank[0] === bestRank[0] && (rank[1] - bestRank[1] < 0 || rank[1] === bestRank[1] && rank[2] < bestRank[2])) {
+          best = caption;
+          bestRank = rank;
+        }
       }
+      if (best) return { uri: `${best.url}${best.url.includes("?") ? "&" : "?"}format=vtt`, language: clip(best.language, 32), title: clip(best.name || best.language, 64) };
     }
     return null;
   }
@@ -420,10 +458,8 @@ import { REPO, VERSION } from '../version.js';
       const result = await job({ action: "library", library: { action: "continue", cursor } }, options);
       return { items: pageItems(result), cursor: result?.has_more && typeof result.cursor === "string" ? result.cursor : "" };
     }
-    const languageOf = (locale) => {
-      const language = String(locale ?? "").split(/[-_]/)[0].toLowerCase();
-      return /^[a-z]{2,3}$/.test(language) ? language : "en";
-    };
+    // glibren-captions: a lingua do app no codigo do YouTube (pt-BR -> pt, zh-Hans -> zh-Hans), lida a cada video.
+    const languageOf = (locale) => captionLanguage(locale).request;
     async function resolveNow(id, { locale, maxHeight, fresh, signal }) {
       const result = await job({ action: "resolve", playback: { id, max_height: maxHeight, codec: "auto", caption_language: languageOf(locale), automatic_captions: true, ...fresh ? { fresh: true } : {} } }, { signal });
       const choices = playableChoices(result?.choices);
@@ -587,4 +623,4 @@ import { REPO, VERSION } from '../version.js';
     }, delayMs);
   }
 
-export { checkTubeUpdateSoon, setTubeUpdater, tubeUpdater, DEFAULT_FILTERS, DURATIONS, ELF_PATHS, ORDERS, TUBE_API, TUBE_DIR, TUBE_PORT, TYPES, TubeError, UPLOADS, clockText, createTubeService, defaultChoice, pageItems, pickCaption, pickFirstVideo, playableChoices, searchRequest, setTubeService, sponsorSkipTo, tubeService };
+export { captionLanguage, checkTubeUpdateSoon, setTubeUpdater, tubeUpdater, DEFAULT_FILTERS, DURATIONS, ELF_PATHS, ORDERS, TUBE_API, TUBE_DIR, TUBE_PORT, TYPES, TubeError, UPLOADS, clockText, createTubeService, defaultChoice, pageItems, pickCaption, pickFirstVideo, playableChoices, searchRequest, setTubeService, sponsorSkipTo, tubeService };
