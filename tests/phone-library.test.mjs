@@ -9,7 +9,7 @@ import path from 'node:path';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const load = (rel) => import(pathToFileURL(path.join(repo, rel)).href);
-const { libraryFile, libraryGame, queueLibraryRequest } = await load('app/state/phone-library.js');
+const { libraryFile, libraryGame, queueLibraryRequest, queueStoreRequest } = await load('app/state/phone-library.js');
 const { setDefaultDrive } = await load('app/state/last-drive.js');
 const { createBackgroundDownloads } = await load('app/state/background-downloads.js');
 
@@ -104,4 +104,22 @@ test('background-downloads: pedidos do celular vao para a fila e saem do payload
   calls.length = 0;
   assert.equal(await quiet.adoptRequests(), 0);
   assert.deepEqual(calls, []);
+});
+
+test('glibren (item 2): pedido da Loja completa vai como o Baixar da ficha; o comecado pelo payload, com a mesma fonte e o disco padrao', () => {
+  setDefaultDrive('/mnt/ext0');
+  const calls = [];
+  const start = (game, source, options) => { calls.push({ game, source, options }); return { id: `${game.id}/x` }; };
+  const game = { id: 'PPSA01001', title: 'Jogo', releases: [] };
+  const getGame = (id) => id === 'PPSA01001' ? game : null;
+  const roots = ['/data', '/mnt/ext0'];
+  // O marcador (Jobe aberta, ou sem link solo): a Jobe escolhe a fonte e o disco, como na ficha.
+  assert.equal(queueStoreRequest({ store: 'ppsa01001', source: -1, autoStarted: false }, { start, getGame, roots }), 'PPSA01001/x');
+  assert.deepEqual([calls[0].game, calls[0].source, calls[0].options], [game, null, {}]);
+  // Comecado pelo payload com a Jobe fechada: a fonte dele e o disco padrao (o mesmo destino: a fila acha a parcial).
+  queueStoreRequest({ store: 'PPSA01001', source: 3, autoStarted: true }, { start, getGame, roots });
+  assert.deepEqual([calls[1].source, calls[1].options], [3, { root: '/mnt/ext0' }]);
+  assert.throws(() => queueStoreRequest({ store: 'PPSA09999' }, { start, getGame, roots }), /not in the store/);
+  assert.throws(() => queueStoreRequest({ store: 'x' }, { start, getGame, roots }), /not in the store/);
+  assert.throws(() => queueStoreRequest({ store: 'PPSA01001' }, { getGame, roots }), /not ready/);
 });

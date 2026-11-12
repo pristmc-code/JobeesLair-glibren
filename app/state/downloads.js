@@ -17,7 +17,8 @@ import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMon
 import { adoptSpeedLimit, onSpeedLimit, speedLimitNow } from './speed-limit.js';
 import { convertOptions, onConvertOptions } from './convert-options.js';
 import { recordCapture } from './capture-hosts.js';
-import { libraryRoot, queueLibraryRequest } from './phone-library.js';
+import { libraryRoot, queueLibraryRequest, queueStoreRequest } from './phone-library.js';
+import { startRemoteDownload } from '../companion/remote-download.js';
 import { onDefaultDrive } from './last-drive.js';
 import { createMockDownloadQueue } from './mock-download-queue.js';
 import { freeBytes, storageRoots } from './drives.js';
@@ -87,7 +88,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       // pac1: pausa entre conversoes, limite de escrita e gravar em pedacos (Configuracoes > Downloads).
       convertOptions,
       // glibren: um jogo pedido na Biblioteca TorBox do celular entra nesta fila, pelo TorBox, no disco padrao.
-      onLibraryRequest: (request) => queueLibraryRequest(request, { queue: downloadQueue(), roots: storageRoots(), getGame })
+      // glibren (item 2): um da Loja completa do celular ("store") vai como o Baixar da ficha do jogo.
+      onLibraryRequest: (request) => request?.store ? queueStoreRequest(request, { start: startRemoteDownload, getGame, roots: storageRoots() }) : queueLibraryRequest(request, { queue: downloadQueue(), roots: storageRoots(), getGame })
     }),
     // glibren: quantos downloads rodam ao mesmo tempo (Configuracoes).
     concurrency: simultaneousDownloads,

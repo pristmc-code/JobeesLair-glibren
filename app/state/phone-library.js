@@ -92,4 +92,25 @@ import { formatFromName } from './link-formats.js';
     return chosen && drives.includes(chosen) ? chosen : drives[startingDrive(drives, () => true)] ?? drives[0];
   }
 
-export { libraryFile, libraryGame, libraryRoot, queueLibraryRequest };
+  /**
+   * glibren (item 2): um pedido da Loja completa do celular (POST /api/store/add no payload; o GET /jobs o mostra com
+   * "library": { store: "<id do jogo>", source, autoStarted }). Vai a fila como o Baixar da ficha (start =
+   * companion/remote-download.js startRemoteDownload): o jogo da loja deste console; a fonte que o payload ja comecou
+   * (source >= 0, com a Jobee'sLair fechada) e o disco padrao dele, para a fila achar a parcial e acompanhar o job; sem
+   * fonte (o marcador), a Jobe escolhe como na ficha. -> o id do job na fila.
+   */
+  function queueStoreRequest(request, { start, getGame, roots } = {}) {
+    if (typeof start !== "function") throw new Error("The download queue is not ready.");
+    const id = CODE.test(String(request?.store || "")) ? String(request.store).toUpperCase() : "";
+    let game = null;
+    try {
+      game = id && typeof getGame === "function" ? getGame(id) : null;
+    } catch {
+    }
+    if (!game) throw new Error("This game is not in the store on this console. Open it in Jobee'sLair.");
+    const source = Number.isInteger(request.source) && request.source >= 0 ? request.source : null;
+    const options = request.autoStarted && source !== null ? { root: libraryRoot(roots) } : {};
+    return start(game, source, options).id;
+  }
+
+export { libraryFile, libraryGame, libraryRoot, queueLibraryRequest, queueStoreRequest };
