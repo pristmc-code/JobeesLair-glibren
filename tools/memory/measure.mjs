@@ -81,6 +81,7 @@ const ALL = [
   ['formatos', 'formatos', orbit.fs, 'Descobrir formatos (TorBox ligado), Orbit ligada', 'orbit'],
   ['procurar', 'procurar', orbit.fs, 'Procurar no TorBox, Orbit ligada', 'orbit'],
   ['youtube', 'youtube', orbit.fs, 'uma pagina do YouTube, Orbit ligada', 'orbit'],
+  ['exportar', 'exportar', orbit.fs, 'loja completa exportada ao payload (celular), Orbit ligada', 'orbit'],
 ];
 const wanted = process.argv.slice(2);
 const mb = (kb) => (kb / 1024).toFixed(1).replace('.', ',');

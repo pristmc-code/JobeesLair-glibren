@@ -132,10 +132,10 @@ test('o payload da os mesmos ids, ordem e contagens que catalog.js para o indice
         answer = await get(params.toString());
         assert.equal(answer.ok, true, JSON.stringify(answer).slice(0, 200));
         ids.push(...answer.games.map((game) => game.id));
-        if (ids.length >= answer.total || !answer.games.length) break;
+        if (ids.length >= answer.count || !answer.games.length) break;
       }
       const label = `${JSON.stringify(picked)} q=${query} ${sort}`;
-      assert.equal(answer.total, expected.length, label);
+      assert.equal(answer.count, expected.length, label);
       assert.deepEqual(ids, expected, label);
       for (const item of FACETS) {
         const counts = facetCounts(state, item);

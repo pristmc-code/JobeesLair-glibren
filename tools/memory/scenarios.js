@@ -9,6 +9,7 @@
 //   formatos                a loja + Descobrir formatos do jogo com mais links (TorBox ligado: checkcached com list_files)
 //   procurar                a loja + Procurar no TorBox do jogo com mais links
 //   youtube                 a loja + uma pagina de resultados do YouTube (tube-service pageItems)
+//   exportar                a loja + a loja completa exportada ao payload (state/store-export.js: indice, fichas, links)
 // A loja dos cenarios depois de "loja" e a da pasta de trabalho: com a Orbit ligada se ela foi preparada com prep-orbit.
 import * as std from 'qjs:std';
 import * as os from 'qjs:os';
@@ -153,6 +154,14 @@ if (scenario === 'prep-loja' || scenario === 'prep-orbit') {
   rows.length = 0;
   keep.items = pageItems(JSON.parse(body));
   note = `youtube ${keep.items.length} items`;
+} else if (scenario === 'exportar') {
+  // glibren (item 2): a loja completa exportada para o payload (indice, fichas e links de todos os jogos).
+  await store();
+  const { STORE_DIR, exportStore } = await import('../../app/state/store-export.js');
+  // Sempre a exportacao inteira (a de uma loja que mudou), nao a que ve tudo gravado e para.
+  for (const name of ['store-index.json', 'store-games.json', 'store-games.done.json']) if (FileSystem.exists(`${STORE_DIR}/${name}`)) FileSystem.remove(`${STORE_DIR}/${name}`);
+  const result = await exportStore({ pause: async () => {}, log: () => {} });
+  note = `export ${result.games} games ${result.written}`;
 } else if (scenario !== 'base') {
   throw new Error(`unknown scenario ${scenario}`);
 }
