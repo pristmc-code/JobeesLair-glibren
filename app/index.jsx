@@ -31,6 +31,7 @@ import { LocaleProvider, useLocale } from './i18n/index.js';
 import { SearchScreen } from './search/index.jsx';
 import { TubeScreen } from './tube/TubeScreen.jsx';
 import { getGame, warmCovers } from './state/catalog.js';
+import { startStoreExport } from './state/store-export.js';
 import { refreshFeeds } from './state/feeds.js';
 import { startOrbitFeed } from './state/orbit-feed.js';
 import { t as tNow } from './i18n/core.js';
@@ -124,6 +125,7 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
   var WARM_DELAY_MS = 3e3;
   // After the covers warm: a feed's new copy is only read at the next launch, so nothing here waits on it.
   var FEEDS_DELAY_MS = 8e3;
+  var STORE_EXPORT_DELAY_MS = 2e4;
   function App() {
     useInterfaceSounds();
     useInterfaceHaptics();
@@ -140,6 +142,12 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
         startOrbitFeed(tNow);
         void refreshFeeds();
       }, FEEDS_DELAY_MS);
+      return () => clearTimeout(id);
+    }, []);
+    // glibren (item 2): a loja completa exportada para o payload (pagina do celular), depois das capas e dos feeds.
+    (0, useEffect)(() => {
+      if (HOMEBREW_ONLY) return void 0;
+      const id = setTimeout(startStoreExport, STORE_EXPORT_DELAY_MS);
       return () => clearTimeout(id);
     }, []);
     (0, useEffect)(() => HOMEBREW_ONLY ? void 0 : startCompanionIfEnabled(), []);
