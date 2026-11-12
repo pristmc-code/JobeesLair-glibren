@@ -308,6 +308,18 @@ def main():
     if tube_elf and tube_elf.read_bytes()[:4] == b"ELF":
         shutil.copy2(tube_elf, app / "tube-service.elf")
         print(f"tube-service.elf: {tube_elf}")
+        # glibren-tube-update: the built-in service's version ({"version", "api"}, written by tube-service's build_ps5.sh
+        # beside the ELF), so the app can tell whether a downloaded update (state/tube-update.js) is newer.
+        tube_info = tube_elf.with_suffix(".json")
+        try:
+            info = json.loads(tube_info.read_text(encoding="utf-8")) if tube_info.is_file() else None
+        except ValueError:
+            info = None
+        if isinstance(info, dict) and isinstance(info.get("version"), str):
+            (app / "tube-service.json").write_text(json.dumps({"version": info["version"], "api": info.get("api", 1)}) + "\n", encoding="utf-8")
+            print(f"tube-service.json: version {info['version']}")
+        else:
+            print("tube-service.json: not found (the app learns the built-in version from the running service)")
     else:
         print("tube-service.elf: not found (optional; videos open in the homebrew video app)")
     shutil.copy2(relauncher, app / "relauncher.elf")

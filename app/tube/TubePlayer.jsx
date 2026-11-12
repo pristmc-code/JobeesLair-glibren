@@ -75,6 +75,8 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     const t2 = useT();
     useImmersive(true);
     const subsOn = useTubeSubtitles();
+    // glibren-tube-update: o player usa o servico (os links /media sao dele): uma versao nova so entra depois.
+    useEffect(() => service.hold?.(), []);
     const [info, setInfo] = useState(() => start?.info ?? null); // { title, channel, duration, choices, caption }
     const [choice, setChoice] = useState(() => start?.choice ?? -1);
     const [startAt, setStartAt] = useState(0);

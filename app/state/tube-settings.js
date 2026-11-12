@@ -42,5 +42,11 @@ import { loadList, saveList } from './saved.js';
   var tubeSubtitles = subtitles.get;
   var setTubeSubtitles = subtitles.set;
   var useTubeSubtitles = subtitles.use;
+  // glibren-tube-update: "tubeAutoUpdate" (ligada por padrao): baixar sozinho as versoes novas do servico do YouTube
+  // (state/tube-update.js).
+  var autoUpdate = flag("tubeAutoUpdate", true);
+  var tubeAutoUpdate = autoUpdate.get;
+  var setTubeAutoUpdate = autoUpdate.set;
+  var useTubeAutoUpdate = autoUpdate.use;
 
-export { setTubeSponsorBlock, setTubeSubtitles, tubeSponsorBlock, tubeSubtitles, useTubeSponsorBlock, useTubeSubtitles };
+export { setTubeAutoUpdate, tubeAutoUpdate, useTubeAutoUpdate, setTubeSponsorBlock, setTubeSubtitles, tubeSponsorBlock, tubeSubtitles, useTubeSponsorBlock, useTubeSubtitles };

@@ -72,9 +72,13 @@ import { IMAGE_NAME } from '../version.js';
   }
   // A release as the checker keeps it, or null when it is not one that can be offered. `assets` is set only
   // when both files are there and checkable.
+  // glibren-tube-update: o mesmo repositorio publica versoes so do servico do YouTube (tags "tube-service-<versao>",
+  // state/tube-update.js), sempre como NAO latest. Elas nunca sao uma versao do app, mesmo se aparecerem aqui.
+  var TUBE_SERVICE_TAG = /^tube-service-/i;
+  var isTubeServiceTag = (tag) => typeof tag === "string" && TUBE_SERVICE_TAG.test(tag);
   function describe(release, repo) {
     const tag = release?.tag_name;
-    if (typeof tag !== "string" || !numbers(tag)) return null;
+    if (typeof tag !== "string" || isTubeServiceTag(tag) || !numbers(tag)) return null;
     const [image, zip] = [assetOf(release, ASSETS.image, repo), assetOf(release, ASSETS.zip, repo)];
     return {
       version: tag.replace(/^v/, ""),
@@ -91,6 +95,17 @@ import { IMAGE_NAME } from '../version.js';
       const latest = store.get().latest;
       return latest && newer(latest.version, version2) ? latest : null;
     }
+    async function latestAppRelease() {
+      const response = await http.request(`https://api.github.com/repos/${repo}/releases?per_page=10`, { headers: { Accept: "application/vnd.github+json", "User-Agent": "JobeesLair" }, maxBytes: 1024 * 1024 });
+      if (!response.ok) throw new Error(`Update check answered HTTP ${response.status}`);
+      const list = await response.json();
+      for (const release of Array.isArray(list) ? list : []) {
+        if (release?.draft || release?.prerelease) continue;
+        const found = describe(release, repo);
+        if (found) return found;
+      }
+      return null;
+    }
     // Asks GitHub unless it already did within `minAge` ms; returns { update, checkedAt, asked }, or throws
     // when GitHub cannot be reached (nothing is remembered then, so the next launch asks again).
     async function check({ minAge = 0 } = {}) {
@@ -101,7 +116,11 @@ import { IMAGE_NAME } from '../version.js';
       // No release published yet is an answer, not a failure.
       if (response.status !== 404) {
         if (!response.ok) throw new Error(`Update check answered HTTP ${response.status}`);
-        latest = describe(await response.json(), repo);
+        const release = await response.json();
+        latest = describe(release, repo);
+        // glibren-tube-update: uma versao do servico do YouTube marcada como latest por engano esconderia a do app:
+        // procura a mais recente do app (nem rascunho nem pre-release) nas ultimas da lista.
+        if (isTubeServiceTag(release?.tag_name)) latest = await latestAppRelease();
       }
       const checkedAt = now();
       store.set({ ...saved, checkedAt, latest });
@@ -110,4 +129,4 @@ import { IMAGE_NAME } from '../version.js';
     return { check, known };
   }
 
-export { ASSETS, DAY_MS, HOUR_MS, contentVersionOf, createUpdateChecker, describe, newer };
+export { ASSETS, DAY_MS, HOUR_MS, contentVersionOf, createUpdateChecker, describe, isTubeServiceTag, newer };

@@ -31,7 +31,8 @@ import { HOMEBREW_ONLY } from '../edition.js';
 import { MAX_SPEED_LIMIT, setSpeedLimit, stepSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
 import { setAutoPlayFirst, useAutoPlayFirst } from '../state/auto-play-first.js';
-import { setTubeSponsorBlock, useTubeSponsorBlock } from '../state/tube-settings.js';
+import { setTubeAutoUpdate, setTubeSponsorBlock, useTubeAutoUpdate, useTubeSponsorBlock } from '../state/tube-settings.js';
+import { tubeUpdater } from '../state/tube-service.js';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
@@ -208,11 +209,34 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     const on = useAutoPlayFirst();
     // glibren-tube: SponsorBlock in the videos played inside the app (tube/TubePlayer.jsx).
     const sponsor = useTubeSponsorBlock();
+    const autoUpdate = useTubeAutoUpdate();
+    const service = useTubeServiceInfo();
     return jsxs(View, { scrollAnchor: true, style: CARD, children: [
       jsx(CardHead, { icon: "play", title: t2("videos.title") }),
       jsx(Row, { focusKey: "settings:autoPlayFirst", name: t2("settings.autoPlayFirst"), hint: t2("settings.autoPlayFirstDetail"), end: jsx(Switch, { on }), onPress: () => setAutoPlayFirst(!on) }),
-      jsx(Row, { focusKey: "settings:tubeSponsorBlock", name: t2("settings.tubeSponsorBlock"), hint: t2("settings.tubeSponsorBlockDetail"), end: jsx(Switch, { on: sponsor }), onPress: () => setTubeSponsorBlock(!sponsor) })
+      jsx(Row, { focusKey: "settings:tubeSponsorBlock", name: t2("settings.tubeSponsorBlock"), hint: t2("settings.tubeSponsorBlockDetail"), end: jsx(Switch, { on: sponsor }), onPress: () => setTubeSponsorBlock(!sponsor) }),
+      // glibren-tube-update: the YouTube service updates itself (state/tube-update.js), and which one is in use.
+      jsx(Row, { focusKey: "settings:tubeAutoUpdate", name: t2("settings.tubeAutoUpdate"), hint: t2("settings.tubeAutoUpdateDetail"), end: jsx(Switch, { on: autoUpdate }), onPress: () => setTubeAutoUpdate(!autoUpdate) }),
+      jsx(Row, { focusKey: "settings:tubeService", name: t2("settings.tubeService"), detail: tubeServiceText(t2, service) })
     ] });
+  }
+  // glibren-tube-update: what the service row says: the version in use (or the one that would start) and where from.
+  function tubeServiceText(t2, info) {
+    if (!info) return t2("settings.tubeServiceNone");
+    const version = info.version ?? "?";
+    return t2(info.source === "downloaded" ? "settings.tubeServiceDownloaded" : info.source === "embedded" ? "settings.tubeServiceBuiltIn" : "settings.tubeServiceOther", { version });
+  }
+  function useTubeServiceInfo() {
+    const read = () => {
+      try {
+        return tubeUpdater().inUse();
+      } catch {
+        return null;
+      }
+    };
+    const [info, setInfo] = (0, useState)(read);
+    (0, useEffect)(() => tubeUpdater().subscribe(() => setInfo(read())), []);
+    return info;
   }
   // One swatch per preset: its accent filled, the accent frame when focused, a check on the chosen one.
   function SwatchFace({ preset, chosen }) {
