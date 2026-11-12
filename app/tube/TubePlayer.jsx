@@ -21,7 +21,8 @@ import { getLocale } from '../i18n/core.js';
 import { useT } from '../i18n/index.js';
 import { useImmersive } from '../state/nav.jsx';
 import { clockText, defaultChoice, sponsorSkipTo, tubeService } from '../state/tube-service.js';
-import { setTubeSubtitles, tubeQuality, tubeSponsorBlock, useTubeSubtitles } from '../state/tube-settings.js';
+import { setTubeSubtitles, tubeDownloadCap, tubeQuality, tubeSponsorBlock, useTubeSubtitles } from '../state/tube-settings.js';
+import { setVideoCap } from '../state/speed-limit.js';
 import { ButtonHints } from '../ui/ButtonHints.jsx';
 import { Skeleton } from '../ui/Skeleton.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
@@ -77,6 +78,12 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     const subsOn = useTubeSubtitles();
     // glibren-tube-update: o player usa o servico (os links /media sao dele): uma versao nova so entra depois.
     useEffect(() => service.hold?.(), []);
+    // glibren-video-cap: os downloads ficam limitados enquanto o player esta aberto (Configuracoes > Videos); ao
+    // fechar, volta o limite salvo.
+    useEffect(() => {
+      setVideoCap(tubeDownloadCap());
+      return () => setVideoCap(0);
+    }, []);
     const [info, setInfo] = useState(() => start?.info ?? null); // { title, channel, duration, choices, caption }
     const [choice, setChoice] = useState(() => start?.choice ?? -1);
     const [startAt, setStartAt] = useState(0);

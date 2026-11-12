@@ -31,7 +31,7 @@ import { HOMEBREW_ONLY } from '../edition.js';
 import { MAX_SPEED_LIMIT, setSpeedLimit, stepSpeedLimit, useSpeedLimit } from '../state/speed-limit.js';
 import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-continue.js';
 import { setAutoPlayFirst, useAutoPlayFirst } from '../state/auto-play-first.js';
-import { TUBE_QUALITY_CHOICES, setTubeAutoUpdate, setTubeQuality, setTubeSponsorBlock, useTubeAutoUpdate, useTubeQuality, useTubeSponsorBlock } from '../state/tube-settings.js';
+import { TUBE_DOWNLOAD_CAP_MAX, setTubeDownloadCap, stepTubeDownloadCap, useTubeDownloadCap, TUBE_QUALITY_CHOICES, setTubeAutoUpdate, setTubeQuality, setTubeSponsorBlock, useTubeAutoUpdate, useTubeQuality, useTubeSponsorBlock } from '../state/tube-settings.js';
 import { tubeUpdater } from '../state/tube-service.js';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
@@ -215,6 +215,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       jsx(CardHead, { icon: "play", title: t2("videos.title") }),
       jsx(Row, { focusKey: "settings:autoPlayFirst", name: t2("settings.autoPlayFirst"), hint: t2("settings.autoPlayFirstDetail"), end: jsx(Switch, { on }), onPress: () => setAutoPlayFirst(!on) }),
       jsx(TubeQualityRow, {}),
+      jsx(TubeDownloadCapRow, {}),
       jsx(Row, { focusKey: "settings:tubeSponsorBlock", name: t2("settings.tubeSponsorBlock"), hint: t2("settings.tubeSponsorBlockDetail"), end: jsx(Switch, { on: sponsor }), onPress: () => setTubeSponsorBlock(!sponsor) }),
       // glibren-tube-update: the YouTube service updates itself (state/tube-update.js), and which one is in use.
       jsx(Row, { focusKey: "settings:tubeAutoUpdate", name: t2("settings.tubeAutoUpdate"), hint: t2("settings.tubeAutoUpdateDetail"), end: jsx(Switch, { on: autoUpdate }), onPress: () => setTubeAutoUpdate(!autoUpdate) }),
@@ -238,6 +239,33 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
         style: { position: "relative", flex: 1, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: value === chosen ? colors.accent : colors.surface2 },
         children: jsx(SpeedFace, { label: value === 2160 ? "4K" : `${value}p`, chosen: value === chosen })
       }, value)) })
+    ] });
+  }
+  // glibren-video-cap: the downloads' cap while a video plays (state/tube-settings.js), any whole MB/s chosen with
+  // − / + as the speed limit's row; "leave as is" (0) turns it off.
+  function TubeDownloadCapRow() {
+    const t2 = useT();
+    const value = useTubeDownloadCap();
+    const key = (id, label, onPress, options = {}) => jsx(View, {
+      focusKey: `settings:tubeDownloadCap:${id}`,
+      focusable: true,
+      onPress,
+      style: { position: "relative", flex: options.flex ?? 1, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: options.chosen ? colors.accent : colors.surface2, opacity: options.disabled ? 0.45 : 1 },
+      children: jsx(SpeedFace, { label, chosen: Boolean(options.chosen) })
+    }, id);
+    return jsxs(View, { style: { gap: 10 }, children: [
+      jsxs(View, { style: { gap: 3 }, children: [
+        jsx(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.tubeDownloadCap") }),
+        jsx(Text, { style: text(20, colors.muted), children: t2("settings.tubeDownloadCapDetail") })
+      ] }),
+      jsxs(View, { style: { flexDirection: "row", gap: 12, alignItems: "center" }, children: [
+        key("down10", "−10", () => stepTubeDownloadCap(-10), { disabled: value <= 0 }),
+        key("down", "−", () => stepTubeDownloadCap(-1), { disabled: value <= 0 }),
+        jsx(View, { style: { flex: 2, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 2, borderColor: value ? colors.accent : colors.surface2 }, children: jsx(Text, { style: text(23, colors.fg, { fontWeight: 700 }), children: value ? t2("units.speed", { n: String(value) }) : t2("settings.tubeDownloadCapOff") }) }, "value"),
+        key("up", "+", () => stepTubeDownloadCap(1), { disabled: value >= TUBE_DOWNLOAD_CAP_MAX }),
+        key("up10", "+10", () => stepTubeDownloadCap(10), { disabled: value >= TUBE_DOWNLOAD_CAP_MAX }),
+        key("off", t2("settings.tubeDownloadCapOff"), () => setTubeDownloadCap(0), { flex: 2, chosen: value === 0 })
+      ] })
     ] });
   }
   // glibren-tube-update: what the service row says: the version in use (or the one that would start) and where from.

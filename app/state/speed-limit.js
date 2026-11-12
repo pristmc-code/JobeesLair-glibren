@@ -26,10 +26,21 @@ import { log } from '../services/logger.js';
     return speedLimit;
   }
   var listeners = /* @__PURE__ */ new Set();
+  // glibren-video-cap: a temporary cap while a video plays in the app (tube/TubePlayer.jsx, Settings > Videos), on top
+  // of the saved limit: the lower of the two holds, and the saved one is never changed. 0 = none. The engine gets it at
+  // once and the background payload on its next POST /config (downloads.js refreshes it on every change).
+  var videoCap = 0;
+  var videoCapListeners = /* @__PURE__ */ new Set();
+  function effective() {
+    const saved = current();
+    if (!videoCap) return saved;
+    return saved ? Math.min(saved, videoCap) : videoCap;
+  }
   function apply() {
     try {
-      Downloads.setRateLimit?.(current() * 1024 ** 2);
-      log("speed", current() ? `download limit ${current()} MB/s applied` : "download limit off");
+      const limit = effective();
+      Downloads.setRateLimit?.(limit * 1024 ** 2);
+      log("speed", limit ? `download limit ${limit} MB/s applied${videoCap ? " (video playing)" : ""}` : "download limit off");
     } catch (error) {
       console.log("[speed-limit] not applied:", error.message);
     }
@@ -67,5 +78,19 @@ import { log } from '../services/logger.js';
   }
   /** Hands the saved limit to the engine; called once at launch. */
   var applySpeedLimit = apply;
+  /** glibren-video-cap: sets (MB/s) or clears (0) the cap while a video plays; applies it at once. */
+  function setVideoCap(limit) {
+    const value = valid(limit) ? limit : 0;
+    if (value === videoCap) return;
+    videoCap = value;
+    apply();
+    for (const listener of [...videoCapListeners]) listener(value);
+  }
+  function onVideoCap(listener) {
+    videoCapListeners.add(listener);
+    return () => {
+      videoCapListeners.delete(listener);
+    };
+  }
 
-export { LIMITS, MAX_SPEED_LIMIT, adoptSpeedLimit, applySpeedLimit, current as speedLimitNow, onSpeedLimit, setSpeedLimit, stepSpeedLimit, useSpeedLimit };
+export { effective as speedLimitEffective, onVideoCap, setVideoCap, LIMITS, MAX_SPEED_LIMIT, adoptSpeedLimit, applySpeedLimit, current as speedLimitNow, onSpeedLimit, setSpeedLimit, stepSpeedLimit, useSpeedLimit };

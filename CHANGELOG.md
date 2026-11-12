@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.40** (fork): Settings > Videos gets "Downloads while watching": while the YouTube player is open, the
+  downloads are capped at a value chosen with − / + (any whole MB/s, 5 by default; "Leave as is" turns it off). The
+  lower of this cap and the saved speed limit holds, in the download engine and in the background payload (POST
+  /config); the saved limit is never changed, and closing the player brings it back (state/speed-limit.js
+  setVideoCap, state/tube-settings.js tubeDownloadCap).
 - **glibren.39** (fork): Settings > Videos gets "Default YouTube quality" (1080p, 1440p or 4K; 1080p by default) for
   the videos played inside the app (state/tube-settings.js tubeQuality); R2 in the player still changes it, and a
   quality that fails still steps down by itself. The player's info line now says which decoder plays the video: the

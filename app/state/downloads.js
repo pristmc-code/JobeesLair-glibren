@@ -14,7 +14,7 @@ import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
 import { createBackgroundDownloads, onBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from './background-downloads.js';
 import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
-import { adoptSpeedLimit, onSpeedLimit, speedLimitNow } from './speed-limit.js';
+import { adoptSpeedLimit, onSpeedLimit, onVideoCap, speedLimitEffective, speedLimitNow } from './speed-limit.js';
 import { convertOptions, onConvertOptions } from './convert-options.js';
 import { recordCapture } from './capture-hosts.js';
 import { libraryRoot, queueLibraryRequest, queueStoreRequest } from './phone-library.js';
@@ -81,7 +81,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       // MODIFIED (glibren.8): os downloads simultaneos escolhidos na pagina do celular / APK viram os das Configuracoes.
       adoptConcurrency: setSimultaneousDownloads,
       // glibren.13: o limite de velocidade das Configuracoes vale tambem no payload; o escolhido no celular volta para ca.
-      speedLimit: speedLimitNow,
+      // glibren-video-cap: the payload gets the limit in force (the saved one, or lower while a video plays).
+      speedLimit: speedLimitEffective,
       adoptSpeedLimit,
       // glibren.18: o disco padrao e a conversao, para o payload comecar sozinho (app fechado) um pedido do celular.
       autoStart: () => ({ root: libraryRoot(storageRoots()), convert: convertToExfatOn() }),
@@ -131,6 +132,7 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   onPauseOnClose(() => background?.refreshConfig?.());
   // glibren.13: mudar o limite de velocidade (Configuracoes, ou adotado do celular) chega ao payload no ar na hora.
   onSpeedLimit(() => background?.refreshConfig?.());
+  onVideoCap(() => background?.refreshConfig?.());
   // glibren.18: o disco padrao ou a conversao mudados chegam ao payload no ar (pedidos do celular com o app fechado).
   onDefaultDrive(() => background?.refreshConfig?.());
   onConvertToExfat(() => background?.refreshConfig?.());

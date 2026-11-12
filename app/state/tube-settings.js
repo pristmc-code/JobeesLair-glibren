@@ -78,4 +78,39 @@ import { loadList, saveList } from './saved.js';
     return value;
   }
 
-export { QUALITY_CHOICES as TUBE_QUALITY_CHOICES, setTubeQuality, tubeQuality, useTubeQuality, setTubeAutoUpdate, tubeAutoUpdate, useTubeAutoUpdate, setTubeSponsorBlock, setTubeSubtitles, tubeSponsorBlock, tubeSubtitles, useTubeSponsorBlock, useTubeSubtitles };
+  // glibren-video-cap: "tubeDownloadCap", o limite dos downloads (MB/s) enquanto um video toca no app; 0 = nao mexer.
+  // Qualquer valor inteiro de 0 a CAP_MAX, escolhido com − / + em Configuracoes > Videos; padrao 5 (folga para o 4K,
+  // que usa uns 3 a 5 MB/s).
+  var CAP_MAX = 1000;
+  var validCap = (value) => Number.isInteger(value) && value >= 0 && value <= CAP_MAX;
+  var cap = null;
+  var capListeners = /* @__PURE__ */ new Set();
+  function tubeDownloadCap() {
+    if (cap === null) {
+      const saved = loadList(SETTINGS, "settings").tubeDownloadCap;
+      cap = validCap(saved) ? saved : 5;
+    }
+    return cap;
+  }
+  function setTubeDownloadCap(value) {
+    if (!validCap(value)) return;
+    cap = value;
+    saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), tubeDownloadCap: value });
+    for (const listener of [...capListeners]) listener(value);
+  }
+  function stepTubeDownloadCap(delta) {
+    const next = Math.min(CAP_MAX, Math.max(0, tubeDownloadCap() + Math.round(delta)));
+    if (next !== tubeDownloadCap()) setTubeDownloadCap(next);
+  }
+  function useTubeDownloadCap() {
+    const [value, setValue] = useState(tubeDownloadCap);
+    useEffect(() => {
+      capListeners.add(setValue);
+      return () => {
+        capListeners.delete(setValue);
+      };
+    }, []);
+    return value;
+  }
+
+export { CAP_MAX as TUBE_DOWNLOAD_CAP_MAX, stepTubeDownloadCap, setTubeDownloadCap, tubeDownloadCap, useTubeDownloadCap, QUALITY_CHOICES as TUBE_QUALITY_CHOICES, setTubeQuality, tubeQuality, useTubeQuality, setTubeAutoUpdate, tubeAutoUpdate, useTubeAutoUpdate, setTubeSponsorBlock, setTubeSubtitles, tubeSponsorBlock, tubeSubtitles, useTubeSponsorBlock, useTubeSubtitles };
