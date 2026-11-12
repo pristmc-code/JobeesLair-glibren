@@ -13,6 +13,7 @@ import { LIVE_FEED, feedName } from './feeds.js';
 import { libraryChanged } from './store-mode.js';
 import { buildLibrary, libraryPaths, readLibrary, saveLibraryRun, summarize } from './torbox-library.js';
 import { hashListPaths, readHashList } from './torbox-search.js';
+import { createLibraryRemote } from './torbox-library-payload.js';
 import { memorySample } from './memory-meter.js';
 import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
 
@@ -112,6 +113,8 @@ import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
       onlyNew,
       signal: controller.signal,
       log,
+      // glibren.38: a rede da rodada no payload quando ha um no ar com api >= 27 (state/torbox-library-payload.js).
+      remote: createLibraryRemote({ fs: FileSystem, log }),
       onProgress: (next) => {
         set({ ...progress, ...next, state: "running", error: "" });
         memorySample("biblioteca-torbox:montar");

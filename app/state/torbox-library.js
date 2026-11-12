@@ -570,8 +570,57 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     };
   }
 
+  // Os outros nomes que o TorBox reconhece de `games` (knownByName): o MD5 do nome de cada arquivo do catálogo e de
+  // "<código>.<tipo>". -> { byName, byCode, hashes } (cada nome e código com o primeiro jogo que o tem).
+  function nameKeys(games) {
+    const byName = /* @__PURE__ */ new Map(), byCode = /* @__PURE__ */ new Map(), hashes = [];
+    for (const game of games) {
+      const code = codeOf(game);
+      if (code) {
+        byCode.set(code, game);
+        hashes.push(...CODE_TYPES.map((type) => md5(`${code}.${type}`)));
+      }
+      for (const release of game.releases || []) {
+        const name = release.parts ? null : baseName(release.filename || "");
+        if (!name || byName.has(name.toLowerCase())) continue;
+        byName.set(name.toLowerCase(), game);
+        hashes.push(md5(name));
+      }
+    }
+    return { byName, byCode, hashes: [...new Set(hashes)] };
+  }
+  // A resposta vem pela chave do link de origem, então cada entrada volta ao seu jogo pelo nome: o nome de um arquivo
+  // pedido, ou o código de um jogo pedido no nome dela ou de um arquivo dela. Junta em `found` (Map jogo -> linhas).
+  function knownFrom(entries, { byName, byCode }, found = /* @__PURE__ */ new Map()) {
+    if (!byName.size && !byCode.size) return found;
+    for (const entry of entries) {
+      const names = [entry.name, ...filesOf(entry).map((file) => baseName(file.name))].filter(Boolean);
+      const named = names.map((name) => byName.get(name.toLowerCase())).find(Boolean);
+      const coded = named ? null : names.flatMap(codesIn).map((code) => byCode.get(code)).find(Boolean);
+      const game = named ?? coded;
+      if (!game) continue;
+      const rows = fileRows(entry, { via: named ? "name" : "code", hash: entry.hash });
+      found.set(game, [...found.get(game) ?? [], ...rows.length ? rows : [{ name: baseName(entry.name), size: entry.size, format: formatFromName(entry.name), via: named ? "name" : "code", hash: entry.hash }]]);
+    }
+    return found;
+  }
+  /**
+   * glibren.38: um jogo no plano do payload (app/native/bg_library.c): o que ele pergunta ao TorBox por este jogo. `links`
+   * os links de um arquivo só (catalogLinks), `parts` os das partes dos conjuntos (catalogSets), `code` e `names` para os
+   * MD5 de knownByName (os mesmos de nameKeys).
+   */
+  function planGame(game) {
+    return {
+      id: game.id,
+      code: codeOf(game),
+      links: [...catalogLinks(game).keys()],
+      parts: catalogSets(game).flatMap((set) => set.links),
+      names: (game.releases || []).map((release) => release.parts ? "" : baseName(release.filename || "")).filter(Boolean)
+    };
+  }
+
   // ---- A rodada ----
-  var stopped = () => Object.assign(new Error("Stopped."), { name: "AbortError" });
+  var stopped =() => Object.assign(new Error("Stopped."), { name: "AbortError" });
   var defaultSleep = (ms, signal) => new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(stopped());
     const timer = setTimeout(() => {
@@ -650,7 +699,7 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
   var unchecked = (library, game) => !library.games[game.id]?.torbox;
   /** glibren.25: quantos jogos de `entries` ([{ game }]) o banco ainda não verificou. */
   var uncheckedCount = (library, entries) => entries.filter((entry) => unchecked(library, entry.game)).length;
-  async function buildLibrary({ entries, api, hashList = null, library = emptyLibrary(), save = () => {}, onProgress = () => {}, signal, sources = null, fresh = false, onlyNew = false, sleep = defaultSleep, now = Date.now, pace = PACE_MS, rateWait = RATE_WAIT_MS, chunk = CHUNK, saveEvery = SAVE_EVERY_MS, callLimit = CALL_LIMIT_MS, log = () => {} }) {
+  async function buildLibrary({ entries, api, hashList = null, library = emptyLibrary(), save = () => {}, onProgress = () => {}, signal, sources = null, fresh = false, onlyNew = false, sleep = defaultSleep, now = Date.now, pace = PACE_MS, rateWait = RATE_WAIT_MS, chunk = CHUNK, saveEvery = SAVE_EVERY_MS, callLimit = CALL_LIMIT_MS, log = () => {}, remote = null }) {
     const wanted = sources ? new Set(sources) : null;
     const sourceList = sources ? [...sources].sort() : null;
     const open = library.run && !library.run.finishedAt && !fresh && JSON.stringify(library.run.sources) === JSON.stringify(sourceList) && Boolean(library.run.onlyNew) === Boolean(onlyNew);
@@ -731,22 +780,9 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     // de "<código>.<tipo>". A resposta vem pela chave do link de origem, então cada entrada volta ao seu jogo pelo
     // nome: o nome de um arquivo pedido, ou o código de um jogo pedido no nome dela ou de um arquivo dela.
     async function knownByName(games) {
-      const byName = /* @__PURE__ */ new Map(), byCode = /* @__PURE__ */ new Map(), hashes = [];
-      for (const game of games) {
-        const code = codeOf(game);
-        if (code) {
-          byCode.set(code, game);
-          hashes.push(...CODE_TYPES.map((type) => md5(`${code}.${type}`)));
-        }
-        for (const release of game.releases || []) {
-          const name = release.parts ? null : baseName(release.filename || "");
-          if (!name || byName.has(name.toLowerCase())) continue;
-          byName.set(name.toLowerCase(), game);
-          hashes.push(md5(name));
-        }
-      }
+      const keys = nameKeys(games);
       const found = /* @__PURE__ */ new Map();
-      const unique = [...new Set(hashes)];
+      const unique = keys.hashes;
       for (let i = 0; i < unique.length; i += ALT_GROUP) {
         let entries;
         try {
@@ -756,28 +792,47 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
           log(`names not checked: ${error?.code || error?.message}`);
           continue;
         }
-        for (const entry of entries) {
-          const names = [entry.name, ...filesOf(entry).map((file) => baseName(file.name))].filter(Boolean);
-          const named = names.map((name) => byName.get(name.toLowerCase())).find(Boolean);
-          const coded = named ? null : names.flatMap(codesIn).map((code) => byCode.get(code)).find(Boolean);
-          const game = named ?? coded;
-          if (!game) continue;
-          const rows = fileRows(entry, { via: named ? "name" : "code", hash: entry.hash });
-          found.set(game, [...found.get(game) ?? [], ...rows.length ? rows : [{ name: baseName(entry.name), size: entry.size, format: formatFromName(entry.name), via: named ? "name" : "code", hash: entry.hash }]]);
-        }
+        knownFrom(entries, keys, found);
       }
       return found;
     }
+    // glibren.38: com o payload (`remote`, state/torbox-library-payload.js) a rede da rodada e dele: a conta, a lista de
+    // hashes e os links de cada bloco chegam de la, com as mesmas entradas do TorBox, e o casamento abaixo e o mesmo.
+    // null: um payload antigo (api < 27), nenhum no ar, ou ele recusou: tudo pelo app, como antes.
+    let session = null;
+    let callsBefore = run.calls;
+    if (remote) {
+      try {
+        session = await remote.open({ runId: run.id, pending, chunk, hashList, signal, onStatus: (status) => {
+          if ((status.phase === "account" || status.phase === "list") && phase !== "games") phase = status.phase;
+          waitingUntil = status.waitMs > 0 ? now() + status.waitMs : null;
+          run.calls = callsBefore + (Number(status.calls) || 0);
+          tell();
+        } });
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        log(`payload not used: ${error?.code || error?.message || error}`);
+        session = null;
+      }
+      if (session) log(`network on the payload: ${session.blocks} block(s)${session.attached ? " (run already there)" : ""}`);
+    }
+    if (session) callsBefore = Math.max(0, run.calls - (session.calls || 0));
     tell();
     // A conta, uma vez por rodada.
     let account = null;
     try {
-      const lists = [];
-      for (const kind of ["webdl", "torrent"]) lists.push([kind, await polite(() => api.myList(kind, { signal }))]);
-      account = indexAccount(lists);
+      if (session) {
+        const lists = await session.account();
+        account = lists ? indexAccount(lists) : null;
+        if (!lists) log("account not read (payload)");
+      } else {
+        const lists = [];
+        for (const kind of ["webdl", "torrent"]) lists.push([kind, await polite(() => api.myList(kind, { signal }))]);
+        account = indexAccount(lists);
+      }
     } catch (error) {
       if (error?.name === "AbortError") throw error;
-      if (transient(error) || error?.code === "RATE_LIMITED") throw error;
+      if (transient(error) || error?.code === "RATE_LIMITED" || session) throw error;
       log(`account not read: ${error?.code || error?.message}`);
     }
     // A lista de hashes do jogador, uma vez por rodada.
@@ -785,49 +840,81 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     tell();
     let listHeld = [];
     if (hashList?.entries?.length) {
-      const failed = /* @__PURE__ */ new Map();
-      const found = await heldAll(hashList.entries.map((item) => magnetOf(item.hash)), failed);
+      let found;
+      if (session) {
+        const byHash = await session.list();
+        found = new Map([...byHash].map(([hash, entry]) => [magnetOf(hash), entry]));
+      } else found = await heldAll(hashList.entries.map((item) => magnetOf(item.hash)), /* @__PURE__ */ new Map());
       listHeld = hashList.entries.filter((item) => found.has(magnetOf(item.hash))).map((item) => ({ hash: item.hash, code: item.code, entry: found.get(magnetOf(item.hash)) }));
     }
     // Os jogos, em blocos: os links do bloco todo em poucos pedidos.
     phase = "games";
     tell();
     let savedAt = now();
+    // glibren.38: um bloco: `fetch(links)` -> { heldByLink, failed } (o TorBox, ou o que o payload trouxe) e
+    // `knownFor(jogos)` -> Map jogo -> linhas achadas pelos nomes, so dos jogos que nada achou.
+    async function settle(block, fetch, knownFor) {
+      const linksOf = new Map(block.map(({ game }) => [game, catalogLinks(game)]));
+      // glibren.16: as partes dos conjuntos vão no mesmo lote (nos mesmos grupos de WEB_GROUP/MAGNET_GROUP links).
+      const setsOf = new Map(block.map(({ game }) => [game, catalogSets(game)]));
+      const asked = (game) => [...linksOf.get(game).keys(), ...setsOf.get(game).flatMap((set) => set.links)];
+      const all = [...new Set(block.flatMap(({ game }) => asked(game)))];
+      const { heldByLink, failed } = await fetch(all);
+      const setsHeld = new Map(block.map(({ game }) => [game, setFiles(setsOf.get(game), heldByLink)]));
+      const rowsOf = new Map(block.map(({ game }) => [game, [...catalogFiles(linksOf.get(game), heldByLink), ...setsHeld.get(game).rows, ...accountFiles(account, game), ...listFiles(listHeld, game)]]));
+      const known = await knownFor(block.map(({ game }) => game).filter((game) => !rowsOf.get(game).length));
+      for (const { game, sources: from } of block) {
+        const rows = rowsOf.get(game);
+        const errors = asked(game).map((link) => failed.get(link)).filter(Boolean);
+        const torbox = verdict(rows, run.id, now(), !rows.length && errors.length ? errors[0] : null, [...known.get(game) ?? [], ...setsHeld.get(game).partial]);
+        library.games[game.id] = { ...describe(game, from), torbox };
+        run.done++;
+        if (torbox.confirmed) run.found++;
+        if (torbox.known) run.known++;
+        if (torbox.broken) run.broken++;
+        if (torbox.error) run.errors++;
+      }
+      tell();
+      if (now() - savedAt >= saveEvery) {
+        save(library, { final: false });
+        savedAt = now();
+      }
+      // Um respiro para a tela entre blocos.
+      await sleep(0, signal);
+    }
+    const byTorBox = async (all) => {
+      const failed = /* @__PURE__ */ new Map();
+      return { heldByLink: await heldAll(all, failed), failed };
+    };
+    const byNames = (games) => api.cachedByHash && games.length ? knownByName(games) : Promise.resolve(/* @__PURE__ */ new Map());
     // O que parar a rodada (Cancelar, TorBox fora do ar) guarda o que já foi verificado: a próxima continua dali.
     try {
-      for (let start = 0; start < pending.length; start += chunk) {
+      let rest = pending;
+      if (session) {
+        // Os blocos do plano do payload, na ordem; um jogo que ja e desta rodada (gravado antes) fica como esta.
+        const waiting = new Map(pending.map((entry) => [entry.game.id, entry]));
+        for (let b = 0; b < session.blocks; b++) {
+          if (signal?.aborted) throw stopped();
+          const got = await session.block(b);
+          const block = [];
+          for (const id of got.ids) {
+            const entry = waiting.get(id);
+            if (!entry) continue;
+            waiting.delete(id);
+            if (library.games[id]?.torbox?.run !== run.id) block.push(entry);
+          }
+          if (block.length) await settle(block, async () => ({ heldByLink: got.held, failed: got.failed }), async (games) => knownFrom(got.names, nameKeys(games)));
+        }
+        // Os que o plano nao tinha (o catalogo mudou desde que a rodada comecou): pelo app.
+        rest = [...waiting.values()];
+        session = null;
+      }
+      for (let start = 0; start < rest.length; start += chunk) {
         if (signal?.aborted) throw stopped();
-        const block = pending.slice(start, start + chunk);
-        const linksOf = new Map(block.map(({ game }) => [game, catalogLinks(game)]));
-        // glibren.16: as partes dos conjuntos vão no mesmo lote (nos mesmos grupos de WEB_GROUP/MAGNET_GROUP links).
-        const setsOf = new Map(block.map(({ game }) => [game, catalogSets(game)]));
-        const asked = (game) => [...linksOf.get(game).keys(), ...setsOf.get(game).flatMap((set) => set.links)];
-        const all = [...new Set(block.flatMap(({ game }) => asked(game)))];
-        const failed = /* @__PURE__ */ new Map();
-        const heldByLink = await heldAll(all, failed);
-        const setsHeld = new Map(block.map(({ game }) => [game, setFiles(setsOf.get(game), heldByLink)]));
-        const rowsOf = new Map(block.map(({ game }) => [game, [...catalogFiles(linksOf.get(game), heldByLink), ...setsHeld.get(game).rows, ...accountFiles(account, game), ...listFiles(listHeld, game)]]));
-        const known = api.cachedByHash ? await knownByName(block.map(({ game }) => game).filter((game) => !rowsOf.get(game).length)) : /* @__PURE__ */ new Map();
-        for (const { game, sources: from } of block) {
-          const rows = rowsOf.get(game);
-          const errors = asked(game).map((link) => failed.get(link)).filter(Boolean);
-          const torbox = verdict(rows, run.id, now(), !rows.length && errors.length ? errors[0] : null, [...known.get(game) ?? [], ...setsHeld.get(game).partial]);
-          library.games[game.id] = { ...describe(game, from), torbox };
-          run.done++;
-          if (torbox.confirmed) run.found++;
-          if (torbox.known) run.known++;
-          if (torbox.broken) run.broken++;
-          if (torbox.error) run.errors++;
-        }
-        tell();
-        if (now() - savedAt >= saveEvery) {
-          save(library, { final: false });
-          savedAt = now();
-        }
-        // Um respiro para a tela entre blocos.
-        await sleep(0, signal);
+        await settle(rest.slice(start, start + chunk), byTorBox, byNames);
       }
     } catch (error) {
+      if (session && error?.name === "AbortError") await session.cancel().catch(() => {});
       save(library, { final: false });
       throw error;
     }
@@ -842,4 +929,4 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     return { library, progress: progress() };
   }
 
-export { UNREADABLE, BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LEAN_AT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, saveLibraryRun, summarize, writeDetails, writeLibrary, writeList, writeListFiles };
+export { UNREADABLE, BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LEAN_AT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, planGame, saveLibraryRun, summarize, writeDetails, writeLibrary, writeList, writeListFiles };

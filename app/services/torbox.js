@@ -703,4 +703,4 @@ import { formatFromName } from '../state/link-formats.js';
     });
   }
 
-export { LIST_GROUP, NAMES_KEPT, fileNamesOf, MESSAGES, PLANS, TorBoxError, chooseFiles, createTorBox, hostSupported, quotaLeft, isMagnet, linkHashes, magnetHash, md5, pickFile, validKey };
+export { LIST_GROUP, NAMES_KEPT, cachedEntry, fileNamesOf, MESSAGES, PLANS, TorBoxError, chooseFiles, createTorBox, hostSupported, quotaLeft, isMagnet, linkHashes, magnetHash, md5, pickFile, validKey };

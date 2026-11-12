@@ -56,6 +56,7 @@ import { originOf } from './link-formats.js';
 import { noteConversionWait, setBackupSource, setConversionSource } from './payload-conversions.js';
 import { setCrashSource } from './crash-notice.js';
 import { setOrbitSource } from './orbit-feed.js';
+import { setLibraryPayload } from './torbox-library-payload.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
@@ -74,7 +75,8 @@ import { setOrbitSource } from './orbit-feed.js';
   // glibren.31: 23, a troca de app (POST /switch): o app de videos abre depois que a Jobe fecha, e volta por ela.
   // pac1: 24, a pausa entre conversoes e o limite de escrita da conversao (POST /config "convertPauseSeconds",
   // "convertWriteLimit"; GET /convert "waitSeconds") e a queda da sessao anterior (GET /crash, last-crash.json).
-  var PAYLOAD_API = 26;
+  // glibren.38: 27, a rede da Biblioteca TorBox (GET/POST /library/build).
+  var PAYLOAD_API = 27;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -1060,6 +1062,31 @@ import { setOrbitSource } from './orbit-feed.js';
       return answer.status === 200 ? answer.data : null;
     };
     setOrbitSource(wrapper.orbit);
+    // glibren.38: a rede da Biblioteca TorBox (state/torbox-library-payload.js, app/native/bg_library.c). So no PS5 e com um
+    // payload de api >= 27; status e cancelar so perguntam a um payload no ar, comecar sobe o payload e entrega a chave
+    // do TorBox (POST /secret) antes. null: a montagem fica toda no app.
+    const libraryAnswer = (answer) => answer.status === 200 && answer.data?.ok && Number(answer.data.api) >= 27 ? answer.data : null;
+    wrapper.library = {
+      dir: `${stateDir}/library`,
+      async status() {
+        const token = platform === "ps5" ? readToken() : "";
+        return token ? libraryAnswer(await call(token, "GET", "/library/build")) : null;
+      },
+      async start(run) {
+        if (platform !== "ps5" || !payloads) return null;
+        const token = await ensurePayload();
+        if (!token) return null;
+        await handSecret(token, "torbox").catch(() => {});
+        const answer = await call(token, "POST", "/library/build", { run });
+        if (answer.status !== 200) log(`payload did not take the TorBox library run (HTTP ${answer.status}: ${answer.data?.error ?? ""})`);
+        return libraryAnswer(answer);
+      },
+      async cancel() {
+        const token = platform === "ps5" ? readToken() : "";
+        return token ? libraryAnswer(await call(token, "POST", "/library/build/cancel", {})) : null;
+      }
+    };
+    setLibraryPayload(wrapper.library);
     // glibren.22: a tela Pasta BACKUP (state/payload-conversions.js): a lista, converter um ou todos, apagar e o diario.
     // Lista e diario so perguntam a um payload no ar; converter e apagar sobem o payload se preciso (so no PS5).
     const backupToken = async (start) => {
