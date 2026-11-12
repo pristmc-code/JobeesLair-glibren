@@ -14,6 +14,7 @@ import { libraryChanged } from './store-mode.js';
 import { buildLibrary, libraryPaths, readLibrary, saveLibraryRun, summarize } from './torbox-library.js';
 import { hashListPaths, readHashList } from './torbox-search.js';
 import { createLibraryRemote } from './torbox-library-payload.js';
+import { exclusive } from './heavy-work.js';
 import { memorySample } from './memory-meter.js';
 import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
 
@@ -102,7 +103,8 @@ import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
         log(`final save: library ${done.library ? "ok" : "FAILED"}, list ${done.list ? "ok" : "FAILED"}, details ${done.details ? "ok" : "skipped"}, copy ${done.backup ? "ok" : "skipped"}${done.lean ? " (lean: memory high)" : ""}`);
       }
     };
-    const promise = buildLibrary({
+    // glibren.38: nunca junto com a exportacao da loja para o payload (state/heavy-work.js): uma espera a outra.
+    const promise = exclusive(() => controller.signal.aborted ? Promise.reject(Object.assign(new Error("Stopped."), { name: "AbortError" })) : buildLibrary({
       entries,
       api: torBoxApi(),
       hashList,
@@ -119,7 +121,7 @@ import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
         set({ ...progress, ...next, state: "running", error: "" });
         memorySample("biblioteca-torbox:montar");
       }
-    }).then(
+    }), { onWait: () => log("waiting for the store export to finish") }).then(
       ({ progress: last }) => {
         log(`done: ${last.found} of ${last.total} games confirmed, ${last.calls} calls`);
         set({ ...progress, ...last, state: "done", error: "" });

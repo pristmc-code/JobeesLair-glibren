@@ -72,3 +72,17 @@ test('glibren.38: the screen summary comes from the library in memory (the same 
   library.run = { id: 'r', finishedAt: null, done: 10, total: 12, sources: null };
   assert.deepEqual(lib.summarize(library, entriesOf(games)), { builtAt: 'x', games: 10, confirmed: 5, broken: 2, unchecked: 2, open: { done: 10, total: 12, sources: null, onlyNew: false } });
 });
+
+test('glibren.38: the library build and the store export never run together: one waits for the other', async () => {
+  const { exclusive, heavyBusy } = await import(pathToFileURL(path.join(repo, 'app/state/heavy-work.js')).href);
+  const log = [];
+  let waited = 0;
+  const job = (name, ms) => async () => { log.push(`${name}+`); await new Promise((resolve) => setTimeout(resolve, ms)); log.push(`${name}-`); return name; };
+  const results = await Promise.all([exclusive(job('library', 30)), exclusive(job('export', 5), { onWait: () => waited++ }), exclusive(job('export2', 5), { onWait: () => waited++ })]);
+  assert.deepEqual(results, ['library', 'export', 'export2']);
+  assert.deepEqual(log, ['library+', 'library-', 'export+', 'export-', 'export2+', 'export2-']);
+  assert.equal(waited, 2);
+  assert.equal(heavyBusy(), false);
+  await assert.rejects(exclusive(async () => { throw new Error('boom'); }), /boom/);
+  assert.equal(await exclusive(async () => 'next'), 'next', 'a failure frees the slot');
+});

@@ -24,6 +24,7 @@ import { sourceKind } from './download-sources.js';
 import { linkHealth } from './links.js';
 import { PS4 } from './ps4.js';
 import { VERSION } from '../version.js';
+import { exclusive } from './heavy-work.js';
 
   var STORE_DIR = Platform.OS === "ps5" ? "/data/JobeesLair/store" : `${DATA_DIR}/store`;
   var INDEX = `${STORE_DIR}/store-index.json`;
@@ -172,14 +173,15 @@ import { VERSION } from '../version.js';
       again = true;
       return running;
     }
-    running = (async () => {
+    // glibren.38: nunca junto com a montagem da Biblioteca TorBox (state/heavy-work.js): uma espera a outra.
+    running = exclusive(async () => {
       let result;
       do {
         again = false;
         result = await exportOnce(pause, log);
       } while (again);
       return result;
-    })().finally(() => {
+    }, { onWait: () => log('[store-export] waiting for the TorBox library build to finish') }).finally(() => {
       running = null;
     });
     return running;
