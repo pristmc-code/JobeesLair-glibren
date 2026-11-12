@@ -146,6 +146,25 @@ const settingsLook = await screen('Settings (Look, glibren.32)', { type: Setting
 assert.ok(settingsLook.includes('Play the first video automatically'), settingsLook.join('|'));
 assert.ok(settingsLook.includes('Trailer and Gameplay open the first video found right away, without showing the list.'), settingsLook.join('|'));
 assert.equal((await load('app/state/auto-play-first.js')).autoPlayFirst(), false, 'off by default');
+// glibren-tube-update: "Update the YouTube service automatically" (on by default) and the service in use.
+assert.ok(settingsLook.includes('Update the YouTube service automatically'), settingsLook.join('|'));
+assert.ok(settingsLook.includes('YouTube service'), settingsLook.join('|'));
+assert.ok(settingsLook.some((line) => line === 'Not included in this build' || /^Version \S+ \((built into the app|downloaded update)\)$/.test(line)), settingsLook.join('|'));
+assert.equal((await load('app/state/tube-settings.js')).tubeAutoUpdate(), true, 'on by default');
+{
+  // With the service in the package (its version learned from /v1/health with this Jobe): "Version 0.1.0 (built
+  // into the app)".
+  const { setTubeUpdater } = await load('app/state/tube-service.js');
+  const { VERSION } = await load('app/version.js');
+  const before = globalThis.__fake?.fs;
+  const files = { '/app0/tube-service.elf': 'ELF', '/data/JobeesLair/tube/update.json': JSON.stringify({ embedded: { jobe: VERSION, version: '0.1.0' } }) };
+  globalThis.__fake = { ...globalThis.__fake, fs: { ...before, exists: (p) => p in files || (before?.exists?.(p) ?? false), stat: (p) => p in files ? { size: String(files[p]).length, modified: 1 } : before?.stat?.(p) ?? null, readFile: (p) => p in files ? files[p] : before?.readFile?.(p) ?? '' } };
+  setTubeUpdater(null);
+  const look = await screen('Settings (Look, YouTube service built in)', { type: SettingsScreen, props: { onBack() {}, start: 'look' } });
+  assert.ok(look.includes('Version 0.1.0 (built into the app)'), look.join('|'));
+  globalThis.__fake = { ...globalThis.__fake, fs: before };
+  setTubeUpdater(null);
+}
 const { ExitSheet } = await load('app/ui/ExitSheet.jsx');
 const exitSheet = await screen('Exit (glibren.5)', { type: ExitSheet, props: { summary: { app: 1, background: 2 }, onClose() {}, onExit() {} } });
 assert.ok(exitSheet.includes("Exit Jobee'sLair?") && exitSheet.includes('Exit') && exitSheet.includes('Stay'), exitSheet.join('|'));

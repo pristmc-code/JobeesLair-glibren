@@ -27,7 +27,7 @@ import { useT } from '../i18n/index.js';
 import { FIRST_KEY, KeyboardSheet } from '../search/DockKeyboard.jsx';
 import { useNavActions } from '../state/nav.jsx';
 import { systemKeyboardOn, typeOnSystemKeyboard } from '../state/system-keyboard.js';
-import { DEFAULT_FILTERS, DURATIONS, ORDERS, TYPES, UPLOADS, clockText, pickFirstVideo, tubeService } from '../state/tube-service.js';
+import { DEFAULT_FILTERS, DURATIONS, ORDERS, TYPES, UPLOADS, checkTubeUpdateSoon, clockText, pickFirstVideo, tubeService } from '../state/tube-service.js';
 import { FocusRing } from '../ui/FocusRing.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { HINT, useHints } from '../ui/Legend.jsx';
@@ -120,6 +120,12 @@ import { FocusScope, Image, ScrollView, Text, View } from '@ps5-react/core';
     const [page, setPage] = useState(() => start?.page ?? { state: ensure ? "starting" : initialQuery ? "loading" : "idle", items: [], cursor: "", index: 0, error: "" });
     const [playing, setPlaying] = useState(() => start?.playing ?? null); // { item, back: true quando o Circulo sai da tela }
     const [typing, setTyping] = useState(false);
+    // glibren-tube-update: a tela usa o servico (uma versao nova so entra depois que ela fecha) e, ao abrir, olha se ha
+    // versao nova dele (no maximo 1x a cada 6 h, em segundo plano).
+    useEffect(() => {
+      checkTubeUpdateSoon();
+      return service.hold?.();
+    }, []);
     // glibren-a: a volta ao glibren em curso ({ text }) ou recusada ({ bad, text }).
     const [leaving, setLeaving] = useState(() => start?.leaving ?? null);
     const leavingNow = useRef(false);

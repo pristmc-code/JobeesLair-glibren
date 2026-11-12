@@ -21,7 +21,11 @@
 //
 // Nada de listas grandes no heap: uma pagina de resultados por vez (ate 24, so os campos que a tela usa).
 
-import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
+import { Downloads, FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
+import { createTubeUpdater } from './tube-update.js';
+import { tubeAutoUpdate } from './tube-settings.js';
+import { newer } from './updater.js';
+import { REPO, VERSION } from '../version.js';
 
   var TUBE_DIR = "/data/JobeesLair/tube";
   var TUBE_PORT = 34210;
@@ -124,19 +128,57 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
     return (best.find(({ choice }) => choice.hls) ?? best[0]).index;
   }
 
-  /** A legenda no idioma do app (a escrita antes da automatica, a original antes da traduzida), senao em ingles, senao null. */
+  // glibren-captions: as 14 linguas do app nos codigos de legenda do YouTube. `request`: o caption_language pedido ao
+  // servico (ele poe essa lingua primeiro, inclusive nas traducoes automaticas, tlang=); `family`: os codigos que sao
+  // "a mesma lingua" (o primeiro e o preferido); um codigo so com a mesma base (pt-PT para pt-BR, zh-Hant/zh-TW para
+  // zh-Hans) vale depois de todas as da familia, ate da traducao automatica. As outras linguas: qualquer codigo com a
+  // mesma base (es-419 e es-ES para es), o codigo puro primeiro.
+  var CAPTION_LANGUAGES = {
+    "pt-br": { request: "pt", family: ["pt-br", "pt"] },
+    "zh-hans": { request: "zh-Hans", family: ["zh-hans", "zh-cn", "zh-sg", "zh"] },
+    id: { request: "id", family: ["id", "in"] }
+  };
+  var baseOf = (tag) => String(tag ?? "").toLowerCase().split(/[-_]/)[0];
+  /** A lingua do app como o YouTube a escreve: { request, family (null: qualquer da mesma base), base, exact }. */
+  function captionLanguage(locale) {
+    const exact = String(locale ?? "").toLowerCase().replace(/_/g, "-");
+    const known = CAPTION_LANGUAGES[exact] ?? CAPTION_LANGUAGES[baseOf(exact)];
+    const base = /^[a-z]{2,3}$/.test(baseOf(exact)) ? baseOf(exact) : "en";
+    return { request: known?.request ?? base, family: known?.family ?? null, base: known ? baseOf(known.family[0]) : base, exact };
+  }
+  // Quao perto um codigo de legenda esta da lingua: [nivel (0 a mesma lingua, 1 so a mesma base, -1 nenhuma), ordem].
+  function closeness(code, lang) {
+    const tag = String(code ?? "").toLowerCase().replace(/_/g, "-").replace(/-asr$/, "");
+    if (lang.family) {
+      const index = lang.family.indexOf(tag);
+      if (index >= 0) return [0, index];
+      const base = baseOf(tag);
+      return base === lang.base || lang.family.some((entry) => baseOf(entry) === base) ? [1, 0] : [-1, 0];
+    }
+    if (baseOf(tag) !== lang.base) return [-1, 0];
+    return [0, tag === lang.exact ? 0 : tag === lang.base ? 1 : 2];
+  }
+  /**
+   * A legenda no idioma do app: a escrita (manual) nessa lingua, senao a automatica nessa lingua, senao a traducao
+   * automatica do YouTube (tlang) para ela; senao em ingles (na mesma ordem); senao null. Ligar ou nao continua sendo
+   * do jogador (tube-settings.js tubeSubtitles, o Triangulo no player).
+   */
   function pickCaption(captions, locale = "en") {
     const list = (Array.isArray(captions) ? captions : []).filter((caption) => typeof caption?.url === "string" && caption.url);
-    const base = (tag) => String(tag ?? "").toLowerCase().split(/[-_]/)[0];
-    const exact = String(locale ?? "").toLowerCase();
-    const want = base(locale);
-    const rank = (caption) => (caption.translated ? 2 : 0) + (caption.automatic ? 1 : 0);
-    for (const target of [want, "en"]) {
-      const found = list.filter((caption) => base(caption.translated ? caption.target ?? caption.language : caption.language) === target).sort((a, b) => rank(a) - rank(b) || (String(b.language).toLowerCase() === exact) - (String(a.language).toLowerCase() === exact));
-      if (found.length) {
-        const caption = found[0];
-        return { uri: `${caption.url}${caption.url.includes("?") ? "&" : "?"}format=vtt`, language: clip(caption.language, 32), title: clip(caption.name || caption.language, 64) };
+    const kind = (caption) => caption.translated ? 2 : caption.automatic ? 1 : 0;
+    for (const target of [locale, "en"]) {
+      const lang = captionLanguage(target);
+      let best = null, bestRank = null;
+      for (const caption of list) {
+        const [level, order] = closeness(caption.translated ? caption.target ?? caption.language : caption.language, lang);
+        if (level < 0) continue;
+        const rank = [level, kind(caption), order];
+        if (!bestRank || rank[0] - bestRank[0] < 0 || rank[0] === bestRank[0] && (rank[1] - bestRank[1] < 0 || rank[1] === bestRank[1] && rank[2] < bestRank[2])) {
+          best = caption;
+          bestRank = rank;
+        }
       }
+      if (best) return { uri: `${best.url}${best.url.includes("?") ? "&" : "?"}format=vtt`, language: clip(best.language, 32), title: clip(best.name || best.language, 64) };
     }
     return null;
   }
@@ -184,10 +226,17 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
     prefetchMax = 2,
     cacheKeep = 3,
     cacheMs = 6e5,
-    now = () => Date.now()
+    now = () => Date.now(),
+    // glibren-tube-update: quem escolhe o ELF (state/tube-update.js candidates()); sem ele, `elfPaths` como antes.
+    updater = null
   }) {
     const base = `http://127.0.0.1:${port}`;
     let ready = false;
+    // glibren-tube-update: a versao no ar (do /v1/health), quem usa o servico agora (telas, jobs) e a reinicializacao
+    // para uma versao nova quando ninguem usa.
+    let runningVersion = null;
+    let holds = 0;
+    let active = 0;
     const readToken = () => {
       try {
         const value = String(fs.readFile(`${stateDir}/token`) ?? "").trim();
@@ -247,14 +296,26 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
       }
     }
     const upToDate = (state) => Number.isInteger(state?.api) && state.api >= api;
-    function elfPath() {
+    /** Os ELF que podem subir, na ordem: { path, version, source } (state/tube-update.js; sem ele, `elfPaths`). */
+    function elfCandidates() {
+      if (updater) {
+        try {
+          return updater.candidates();
+        } catch (error) {
+          log(`no candidates: ${error?.message ?? error}`);
+        }
+      }
+      const list = [];
       for (const path of elfPaths) {
         try {
-          if (fs.exists(path)) return path;
+          if (fs.exists(path)) list.push({ path, version: null, source: path.startsWith("/app0/") ? "embedded" : "manual" });
         } catch {
         }
       }
-      return null;
+      return list;
+    }
+    function elfPath() {
+      return elfCandidates()[0]?.path ?? null;
     }
     /** Se vale oferecer o YouTube interno: o ELF existe (ou o servico ja respondeu nesta execucao). */
     function offered() {
@@ -271,39 +332,95 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
     async function ensureNow() {
       let state = await health();
       if (state && upToDate(state) && readToken()) {
+        // O que ja esta no ar serve (mesmo com uma versao mais nova pronta: ela entra quando ninguem usa).
         ready = true;
+        runningVersion = typeof state.version === "string" ? state.version : null;
+        if (updater && !updater.state?.().running) updater.noteRunning("running", runningVersion);
         return { ok: true, version: state.version ?? "" };
       }
       ready = false;
+      runningVersion = null;
       if (platform !== "ps5" || !payloads) return { ok: false, reason: "desktop", error: state ? "old service" : "no service" };
-      const elf = elfPath();
-      if (!elf) return { ok: false, reason: "missing", error: "tube-service.elf" };
-      if (state) log(`service ${state.pid ?? "?"} is older (api ${state.api ?? "none"}) or has no token; sending ${elf}`);
-      try {
-        const result = payloads.send(elf, { answer: false });
-        if (!result?.ok) {
-          log(`payload not sent: ${result?.error ?? "no answer"}`);
-          return { ok: false, reason: "send", error: result?.error ?? "" };
-        }
-      } catch (error) {
-        log(`payload not sent: ${error?.message ?? error}`);
-        return { ok: false, reason: "send", error: error?.message ?? String(error) };
+      const list = elfCandidates();
+      if (!list.length) return { ok: false, reason: "missing", error: "tube-service.elf" };
+      if (state) {
+        // glibren-tube-update: um mais antigo no ar segura a trava do servico: pede para ele sair antes de mandar outro.
+        log(`service ${state.pid ?? "?"} is older (api ${state.api ?? "none"}) or has no token; asking it to quit`);
+        await call("POST", "/v1/quit", { timeoutMs: 3e3 }).catch(() => {
+        });
+        await wait(500);
       }
-      log(`${elf} sent; waiting for 127.0.0.1:${port}`);
-      for (const until = Date.now() + startWaitMs; Date.now() < until; ) {
-        await wait(startPollMs);
-        state = await health();
-        if (state && upToDate(state) && readToken()) {
-          ready = true;
-          log(`service ${state.version ?? ""} up (pid ${state.pid ?? "?"})`);
-          return { ok: true, version: state.version ?? "" };
+      // glibren-tube-update: um por vez, na ordem de candidates(); um baixado que nao responde fica marcado como ruim e
+      // o seguinte (o anterior, o embutido) e tentado.
+      for (const candidate of list) {
+        const elf = candidate.path;
+        try {
+          const result = payloads.send(elf, { answer: false });
+          if (!result?.ok) {
+            log(`payload not sent: ${result?.error ?? "no answer"}`);
+            return { ok: false, reason: "send", error: result?.error ?? "" };
+          }
+        } catch (error) {
+          log(`payload not sent: ${error?.message ?? error}`);
+          return { ok: false, reason: "send", error: error?.message ?? String(error) };
         }
+        log(`${elf} (${candidate.source} ${candidate.version ?? "?"}) sent; waiting for 127.0.0.1:${port}`);
+        for (const until = Date.now() + startWaitMs; Date.now() < until; ) {
+          await wait(startPollMs);
+          state = await health();
+          if (state && upToDate(state) && readToken()) {
+            ready = true;
+            runningVersion = typeof state.version === "string" ? state.version : null;
+            log(`service ${state.version ?? ""} up (pid ${state.pid ?? "?"})`);
+            updater?.noteRunning(candidate.source, runningVersion);
+            return { ok: true, version: state.version ?? "" };
+          }
+        }
+        log(`${elf} did not answer in time`);
+        if (candidate.source === "downloaded") updater?.markBad(candidate.version, "did not answer /v1/health");
       }
       log("service did not answer in time");
       return { ok: false, reason: "timeout", error: "" };
     }
+    /** glibren-tube-update: alguem (uma tela, o player) usa o servico; devolve quem solta. Ao soltar o ultimo, uma
+     *  versao mais nova pronta entra (refreshIfIdle). */
+    function hold() {
+      holds++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        holds = Math.max(0, holds - 1);
+        if (!holds) void refreshIfIdle();
+      };
+    }
+    /** Com ninguem usando e uma versao mais nova pronta que a do ar: pede ao servico para sair (POST /v1/quit); o
+     *  proximo ensure() sobe a nova. True quando pediu. */
+    async function refreshIfIdle() {
+      if (holds || active || pending.size || !ready || !updater || !runningVersion) return false;
+      let best = null;
+      try {
+        best = updater.candidates()[0] ?? null;
+      } catch {
+      }
+      if (!best?.version || !newer(best.version, runningVersion)) return false;
+      log(`service ${runningVersion} is idle and ${best.version} is ready: restarting it`);
+      ready = false;
+      runningVersion = null;
+      await call("POST", "/v1/quit", { timeoutMs: 3e3 }).catch(() => {
+      });
+      return true;
+    }
     // Um job: cria, acompanha, devolve o `result` (ou lanca TubeError com o codigo do servico). `signal` desiste.
-    async function job(payload, { signal } = {}) {
+    async function job(payload, options) {
+      active++;
+      try {
+        return await jobNow(payload, options);
+      } finally {
+        active--;
+      }
+    }
+    async function jobNow(payload, { signal } = {}) {
       const created = await call("POST", "/v1/jobs", { body: payload, signal });
       if (created.status === 401) {
         ready = false;
@@ -341,10 +458,8 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
       const result = await job({ action: "library", library: { action: "continue", cursor } }, options);
       return { items: pageItems(result), cursor: result?.has_more && typeof result.cursor === "string" ? result.cursor : "" };
     }
-    const languageOf = (locale) => {
-      const language = String(locale ?? "").split(/[-_]/)[0].toLowerCase();
-      return /^[a-z]{2,3}$/.test(language) ? language : "en";
-    };
+    // glibren-captions: a lingua do app no codigo do YouTube (pt-BR -> pt, zh-Hans -> zh-Hans), lida a cada video.
+    const languageOf = (locale) => captionLanguage(locale).request;
     async function resolveNow(id, { locale, maxHeight, fresh, signal }) {
       const result = await job({ action: "resolve", playback: { id, max_height: maxHeight, codec: "auto", caption_language: languageOf(locale), automatic_captions: true, ...fresh ? { fresh: true } : {} } }, { signal });
       const choices = playableChoices(result?.choices);
@@ -472,18 +587,40 @@ import { FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
         return [];
       }
     }
-    return { ensure, offered, elfPath, health, readToken, job, search, more, resolve, prefetch, cancelPrefetch, sponsor, isReady: () => ready };
+    return { ensure, offered, elfPath, elfCandidates, health, readToken, job, search, more, resolve, prefetch, cancelPrefetch, sponsor, hold, refreshIfIdle, isReady: () => ready, runningVersion: () => runningVersion };
   }
 
   // O servico do app (o Http, o FileSystem e os Payloads do ps5-react), criado no primeiro uso.
   var shared = null;
+  var sharedUpdater = null;
+  /** glibren-tube-update: a atualizacao do servico (state/tube-update.js) do app, criada no primeiro uso. */
+  function tubeUpdater() {
+    if (!sharedUpdater) sharedUpdater = createTubeUpdater({ http: Http, fs: FileSystem, downloads: Downloads, repo: REPO, jobeVersion: VERSION, api: TUBE_API, enabled: () => Platform.OS === "ps5" && tubeAutoUpdate(), onInstalled: () => void shared?.refreshIfIdle?.() });
+    return sharedUpdater;
+  }
   function tubeService() {
-    if (!shared) shared = createTubeService({ http: Http, fs: FileSystem, payloads: Payloads, platform: Platform.OS });
+    if (!shared) shared = createTubeService({ http: Http, fs: FileSystem, payloads: Payloads, platform: Platform.OS, updater: tubeUpdater() });
     return shared;
   }
   /** Para os testes: troca o servico compartilhado (null volta ao do app). */
   function setTubeService(service) {
     shared = service;
   }
+  /** Para os testes: troca a atualizacao compartilhada (null volta a do app). */
+  function setTubeUpdater(updater) {
+    sharedUpdater = updater;
+  }
+  // glibren-tube-update: ao abrir a tela do YouTube/Videos, olha se ha versao nova do servico (no maximo 1x a cada 6 h,
+  // tube-update.js) um pouco depois, para nao disputar a rede com a primeira busca; nunca segura a tela nem o video.
+  var CHECK_DELAY_MS = 5e3;
+  var checkTimer = null;
+  function checkTubeUpdateSoon(delayMs = CHECK_DELAY_MS) {
+    if (Platform.OS !== "ps5" || checkTimer) return;
+    checkTimer = setTimeout(() => {
+      checkTimer = null;
+      void tubeUpdater().check().catch(() => {
+      });
+    }, delayMs);
+  }
 
-export { DEFAULT_FILTERS, DURATIONS, ELF_PATHS, ORDERS, TUBE_API, TUBE_DIR, TUBE_PORT, TYPES, TubeError, UPLOADS, clockText, createTubeService, defaultChoice, pageItems, pickCaption, pickFirstVideo, playableChoices, searchRequest, setTubeService, sponsorSkipTo, tubeService };
+export { captionLanguage, checkTubeUpdateSoon, setTubeUpdater, tubeUpdater, DEFAULT_FILTERS, DURATIONS, ELF_PATHS, ORDERS, TUBE_API, TUBE_DIR, TUBE_PORT, TYPES, TubeError, UPLOADS, clockText, createTubeService, defaultChoice, pageItems, pickCaption, pickFirstVideo, playableChoices, searchRequest, setTubeService, sponsorSkipTo, tubeService };

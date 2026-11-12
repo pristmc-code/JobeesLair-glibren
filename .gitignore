@@ -15,3 +15,5 @@ tools/*/.dev.vars
 
 # glibren-tube: the YouTube service payload (built by the tube-service project), copied in for a build
 app/native/tube-service.elf
+# glibren-tube-update: the built-in service version beside it (tube-service build/ps5/tube-service.json)
+app/native/tube-service.json

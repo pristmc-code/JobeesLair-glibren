@@ -21,7 +21,7 @@ import { tWhole, useT } from '../i18n/index.js';
 import { findVideoApp, openVideos, searchText } from '../state/youtube.js';
 import { autoPlayFirst } from '../state/auto-play-first.js';
 import { useNavActions, useNavState } from '../state/nav.jsx';
-import { tubeService } from '../state/tube-service.js';
+import { checkTubeUpdateSoon, tubeService } from '../state/tube-service.js';
 import { forgetScreen, rememberScreen } from '../state/return-screen-run.js';
 import { switchAppVia } from '../state/background-downloads.js';
 import { downloadQueue } from '../state/downloads.js';
@@ -53,6 +53,10 @@ import { FileSystem, Text, View } from '@ps5-react/core';
     const timer = useRef(null);
     const nav = useNavState();
     useEffect(() => () => clearTimeout(timer.current), []);
+    // glibren-tube-update: ao abrir os Videos, olha se ha versao nova do servico (no maximo 1x a cada 6 h, sem esperar).
+    useEffect(() => {
+      if (tube) checkTubeUpdateSoon();
+    }, []);
     const leave = () => new Promise((resolve) => {
       setStatus({ busy: true, text: t2("videos.switching", { app: app.name }) });
       timer.current = setTimeout(() => resolve(leaveForSwitch({ prepare: () => downloadQueue().prepareUpdateRestart?.() })), LEAVE_MS);
