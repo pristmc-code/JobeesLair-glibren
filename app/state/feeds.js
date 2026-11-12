@@ -240,19 +240,29 @@ import { FileSystem, Http } from '@ps5-react/core';
   function loadFeedGames() {
     const out = [];
     for (const url of allFeeds()) {
+      // glibren (item 2): o que esta leitura deixou de cada feed (status, resumo, indice, notas), para o retrato da loja
+      // (state/feed-snapshot.js) refazer igual na proxima abertura sem ler os feeds.
+      const seen = () => states.push({ url, status: status.get(url) ?? null, meta: meta.get(url) ?? null, loaded: loaded.has(url) ? loaded.get(url) : null, index: indexes.get(url) ?? null, ratings: ratingsOf.get(url) ?? null });
       if (url === ORBIT_FEED && !orbitFeedReady()) {
         console.log(`feeds: ${url} not read: written without the known titles (the payload rewrites it)`);
         status.set(url, { state: "failed", error: ORBIT_WAIT });
+        seen();
         continue;
       }
       // glibren.27: um feed da web le o cache como texto (readWebCache), sem a arvore do documento.
       let kept = isLocalFeed(url) ? null : readWebCache(url);
-      if (!kept && !isLocalFeed(url)) continue;
+      if (!kept && !isLocalFeed(url)) {
+        seen();
+        continue;
+      }
       try {
         let feed;
         if (isLocalFeed(url)) {
           feed = loadLocal(url);
-          if (!feed) continue;
+          if (!feed) {
+            seen();
+            continue;
+          }
         } else {
           const { cache } = kept;
           feed = parseFeedText(kept.text, url, kept.from, kept.to);
@@ -264,13 +274,57 @@ import { FileSystem, Http } from '@ps5-react/core';
         // glibren.9: each game says which feed it came from (the TorBox library's sources, state/torbox-library.js).
         for (const item of feed.games) item.feed = url;
         out.push(...feed.games);
+        if (feed.ratings && Object.keys(feed.ratings).length) ratingsOf.set(url, feed.ratings);
         for (const [id, pair] of Object.entries(feed.ratings ?? {})) if (!feedRatings[id]) feedRatings[id] = pair;
       } catch (error2) {
         console.log(`feeds: cached ${url} unreadable: ${error2.message}`);
       }
+      seen();
       memorySample(memoryAction(url, "abrir"));
     }
     return out;
+  }
+  // glibren (item 2): o retrato da loja (state/feed-snapshot.js). `states` e o que a ultima loadFeedGames deixou de cada
+  // feed; ratingsOf, as notas de cada um (so para o retrato).
+  var states = [];
+  var ratingsOf = /* @__PURE__ */ new Map();
+  /** O estado de cada feed da ultima leitura (para gravar no retrato); a lista sai daqui. */
+  function takeFeedStates() {
+    const out = states;
+    states = [];
+    ratingsOf.clear();
+    return out;
+  }
+  /** Refaz o estado que a leitura dos feeds deixaria (o retrato valeu): status, resumo, "carregado", indice e notas. */
+  function restoreFeedStates(saved) {
+    for (const item of saved) {
+      if (!item || typeof item.url !== "string") continue;
+      const { url } = item;
+      if (item.status) status.set(url, item.status);
+      if (item.meta) meta.set(url, isLocalFeed(url) ? { ...item.meta, fetchedAt: isoStamp(Date.now()) } : item.meta);
+      if (item.loaded != null) loaded.set(url, item.loaded);
+      if (Array.isArray(item.index)) {
+        indexes.set(url, item.index);
+        indexVersion++;
+      }
+      for (const [id, pair] of Object.entries(item.ratings ?? {})) if (!feedRatings[id]) feedRatings[id] = pair;
+      memorySample(memoryAction(url, "abrir"));
+    }
+  }
+  /**
+   * O que decide se o retrato da loja ainda vale: cada feed lido (na ordem), com o tamanho e a hora do arquivo de que ele
+   * seria lido (o cache, e o proprio arquivo num feed do PS5) e, na lista Orbit, se ela ja pode ser lida. Nada e lido.
+   */
+  function feedSnapshotParts() {
+    const info = (path) => {
+      try {
+        const st = FileSystem.stat(path);
+        return st ? stampOf(st) : "-";
+      } catch {
+        return "!";
+      }
+    };
+    return allFeeds().map((url) => [url, info(cacheFile(url)), info(`${LEGACY_DIR}/${stableKey(url)}.json`), isLocalFeed(url) ? info(url) : "", url === ORBIT_FEED ? orbitFeedReady() : ""]);
   }
   // glibren (medidor de memoria): o nome da acao de cada feed (state/memory-meter.js).
   function memoryAction(url, step) {
@@ -625,4 +679,4 @@ import { FileSystem, Http } from '@ps5-react/core';
 /** glibren.9: a feed's name as its last good copy says (null when none is cached). */
 var feedName = (url) => meta.get(url)?.name ?? null;
 
-export { LIVE_FEED, MAX_FEEDS, NET_MAX_BYTES, feedIndexEntries, orbitFeedSnapshot, refreshOrbitFeed, refreshFeedsNow, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, loadFeedGames, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };
+export { LIVE_FEED, MAX_FEEDS, NET_MAX_BYTES, feedIndexEntries, orbitFeedSnapshot, refreshOrbitFeed, refreshFeedsNow, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, feedSnapshotParts, loadFeedGames, restoreFeedStates, takeFeedStates, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };
