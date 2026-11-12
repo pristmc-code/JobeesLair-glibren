@@ -225,7 +225,8 @@ const T = {
     autoRun: "Baixando pelo payload (Jobee'sLair fechada)",
     autoNotes: { "no-key": "Abra a Jobee'sLair uma vez para entregar a chave do TorBox ao payload; depois ele baixa sozinho.", "no-root": "Abra a Jobee'sLair uma vez para o payload saber em que disco baixar.",
       "no-link": "Este jogo precisa da Jobee'sLair aberta (a lista da Biblioteca é antiga: monte-a de novo para baixar pelo celular).", parts: "Conjunto em partes: começa quando a Jobee'sLair abrir.",
-      exists: "O arquivo já está no disco.", torbox: "O TorBox não entregou o arquivo agora; o payload tenta de novo em 2 min.", preparing: "O TorBox ainda está preparando o arquivo; o payload tenta de novo em 2 min." },
+      exists: "O arquivo já está no disco.", torbox: "O TorBox não entregou o arquivo agora; o payload tenta de novo em 2 min.", preparing: "O TorBox ainda está preparando o arquivo; o payload tenta de novo em 2 min.",
+      "needs-app": "Pedido pela Loja completa: precisa da Jobe aberta para começar o download (host com navegador, torrent ou partes); começa quando ela abrir.", store: "Pedido pela Loja completa: entra na fila da Jobee'sLair." },
     confirmReq: "Tirar este pedido da fila?", yesReq: "Sim, tirar",
     via: "via", direct: "direto", parts: "{n} partes", viaTitle: "Baixado pelo serviço {s}", directTitle: "Download direto do site {s}", fmtTitle: "Formato do arquivo",
     sysTitle: "Sistema e código do jogo", fileTitle: "Arquivo",
@@ -251,7 +252,8 @@ const T = {
     autoRun: "Downloading through the payload (Jobee'sLair closed)",
     autoNotes: { "no-key": "Open Jobee'sLair once to hand the TorBox key to the payload; then it downloads by itself.", "no-root": "Open Jobee'sLair once so the payload knows which drive to use.",
       "no-link": "This game needs Jobee'sLair open (the library list is old: build it again to download from the phone).", parts: "A set in parts: it starts when Jobee'sLair opens.",
-      exists: "The file is already on the drive.", torbox: "TorBox didn't hand the file over just now; the payload tries again in 2 min.", preparing: "TorBox is still preparing the file; the payload tries again in 2 min." },
+      exists: "The file is already on the drive.", torbox: "TorBox didn't hand the file over just now; the payload tries again in 2 min.", preparing: "TorBox is still preparing the file; the payload tries again in 2 min.",
+      "needs-app": "Requested from the Full store: needs Jobe open to start the download (a host that needs the browser, a torrent or parts); it starts when it opens.", store: "Requested from the Full store: it joins Jobee'sLair's queue." },
     confirmReq: "Remove this request from the queue?", yesReq: "Yes, remove",
     via: "via", direct: "direct", parts: "{n} parts", viaTitle: "Downloaded through {s}", directTitle: "Direct download from {s}", fmtTitle: "File format",
     sysTitle: "System and game code", fileTitle: "File",
@@ -1060,6 +1062,14 @@ pinOnOpen();
 .tabs button{flex:1;min-width:0;min-height:36px;border:0;border-radius:7px;background:transparent;color:var(--muted);font-weight:600;font-size:14.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tabs button.on{background:var(--raise);color:var(--fg);box-shadow:inset 0 0 0 1px var(--line-hi)}
 body.lib .dlonly,body:not(.lib) .libonly{display:none!important}
+/* glibren (item 2): a Loja completa (outra aba); selos curtos: "Jobe" (precisa dela aberta para comecar) e "Pronto para" */
+body.store .dlonly,body:not(.store) .storeonly{display:none!important}
+.sb{display:inline-flex;align-items:center;gap:3px;font-weight:700;font-size:11px;line-height:17px;padding:0 6px;border-radius:4px;border:1px solid;white-space:nowrap}
+.sb svg{width:12px;height:12px;flex:none}
+.sb.jobe{color:var(--warn);border-color:rgba(251,191,36,.5)}
+.sb.ready{color:var(--good);border-color:rgba(74,222,128,.45)}
+.fopt .sb{flex:none}
+.stlegend{display:inline-flex;align-items:center;gap:5px}
 .libbar{margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left));display:flex;flex-direction:column;gap:8px;min-width:0}
 .srch{display:flex;gap:8px;min-width:0}
 .srch input{flex:1;min-width:0;min-height:40px;padding:8px 12px;border:1px solid var(--line-hi);border-radius:8px;background:var(--deep);color:var(--fg);font:inherit;font-size:16px;outline:none}
@@ -1876,6 +1886,587 @@ body.fopen{overflow:hidden}
     try { history.replaceState(null, "", "#biblioteca"); history.pushState({ jl: "ficha" }, "", gameHash(start.id)); } catch {}
     show("lib", true); route();
   } else if (location.hash === "#biblioteca") show("lib");
+})();
+// ---- glibren (item 2): a Loja completa (a mesma lista da loja da Jobee'sLair, servida pelo payload: /api/store) ----
+// Ao lado da Biblioteca TorBox (que continua igual): busca, filtros (plataforma, formato com "Pronto para <firmware>",
+// genero, tamanho, so os que baixam com a Jobe fechada), ordem, lista em paginas, ficha (capa, texto, fotos, fontes) e
+// Baixar com o PIN. Selo "Jobe" (com o simbolo de app aberto): o download precisa da Jobee'sLair aberta para comecar (o
+// pedido fica guardado e comeca quando ela abrir); sem selo, o PS5 baixa sozinho mesmo com ela fechada. Os textos novos
+// estao nas 14 linguas da Jobee'sLair (o resto da pagina segue em portugues/ingles).
+(() => {
+  const S = (() => {
+    const all = {
+      pt: { tab: "Loja completa", search: "Buscar na loja", filters: "Filtros", allP: "PS5 e PS4", anySize: "Qualquer tamanho", small: "até 10 GB", medium: "10–50 GB", large: "mais de 50 GB",
+        allFmt: "Todo formato", ready: "Pronto para {v}", allGenre: "Todos os gêneros", sort: { relevance: "Mais populares", newest: "Mais novos", rating: "Melhor avaliados", size: "Maiores", title: "Título" },
+        solo: "Só os que baixam com a Jobe fechada", jobe: "Jobe", jobeTip: "Precisa da Jobe aberta para começar o download", legend: "Selo Jobe: precisa da Jobe aberta para começar o download.",
+        count: "{n} jogos", countOf: "{n} de {t} jogos", get: "Baixar", queued: "Na fila", adding: "Incluindo…", more: "Carregar mais", loading: "Carregando…",
+        none: "Nenhum jogo com esses filtros.", clear: "Limpar filtros", retry: "Tentar de novo", noStore: "A loja ainda não chegou ao payload. Abra a Jobee'sLair uma vez e volte aqui.",
+        badStore: "A lista da loja está com problema. Abra a Jobee'sLair para ela gravar de novo.", offline: "O PS5 não respondeu.",
+        addedPayload: "{t}: o PS5 já está baixando, mesmo com a Jobee'sLair fechada.", addedOpen: "{t}: na fila da Jobee'sLair.",
+        addedWait: "{t}: pedido guardado. Precisa da Jobe aberta para começar o download: começa quando você abrir a Jobee'sLair.",
+        addedRoot: "{t}: pedido guardado. Abra a Jobee'sLair uma vez para o payload saber em que disco baixar.",
+        already: "{t} já está na fila.", exists: "Esse arquivo já está no disco.", full: "A fila do PS5 está cheia.", fail: "Não deu para incluir. Tente de novo.",
+        back: "Voltar", photos: "Fotos", about: "Sobre", facts: "Detalhes", sources: "Fontes", parts: "{n} partes", readMore: "Ler mais", readLess: "Ler menos",
+        code: "Código", platform: "Plataforma", sizeL: "Tamanho", formatsL: "Formatos", genresL: "Gêneros", released: "Lançamento", developer: "Desenvolvedora", publisher: "Editora",
+        stars: "Nota na PS Store", ratings: "{n} avaliações", loadingGame: "Carregando a ficha…", gameFail: "Não deu para abrir a ficha deste jogo.",
+        noDetails: "A Jobee'sLair ainda está preparando a ficha e as fontes deste jogo; o download vai pela Jobee'sLair.",
+        willPayload: "O PS5 baixa sozinho, mesmo com a Jobee'sLair fechada.", willApp: "Precisa da Jobe aberta para começar o download (host com navegador, torrent ou partes). O pedido fica guardado e começa quando você abrir a Jobee'sLair.",
+        open: "Abrir {t}" },
+      en: { tab: "Full store", search: "Search the store", filters: "Filters", allP: "PS5 and PS4", anySize: "Any size", small: "up to 10 GB", medium: "10–50 GB", large: "over 50 GB",
+        allFmt: "Any format", ready: "Ready for {v}", allGenre: "All genres", sort: { relevance: "Most popular", newest: "Newest", rating: "Top rated", size: "Largest", title: "Title" },
+        solo: "Only those that download with Jobe closed", jobe: "Jobe", jobeTip: "Needs Jobe open to start the download", legend: "Jobe badge: needs Jobe open to start the download.",
+        count: "{n} games", countOf: "{n} of {t} games", get: "Get", queued: "Queued", adding: "Adding…", more: "Load more", loading: "Loading…",
+        none: "No game with these filters.", clear: "Clear filters", retry: "Try again", noStore: "The store hasn't reached the payload yet. Open Jobee'sLair once and come back.",
+        badStore: "The store list has a problem. Open Jobee'sLair so it writes it again.", offline: "The PS5 did not answer.",
+        addedPayload: "{t}: the PS5 is downloading it, even with Jobee'sLair closed.", addedOpen: "{t}: queued in Jobee'sLair.",
+        addedWait: "{t}: request saved. Needs Jobe open to start the download: it starts when you open Jobee'sLair.",
+        addedRoot: "{t}: request saved. Open Jobee'sLair once so the payload knows which drive to use.",
+        already: "{t} is already queued.", exists: "That file is already on the drive.", full: "The PS5 queue is full.", fail: "Couldn't add it. Try again.",
+        back: "Back", photos: "Photos", about: "About", facts: "Details", sources: "Sources", parts: "{n} parts", readMore: "Read more", readLess: "Read less",
+        code: "Code", platform: "Platform", sizeL: "Size", formatsL: "Formats", genresL: "Genres", released: "Released", developer: "Developer", publisher: "Publisher",
+        stars: "PS Store rating", ratings: "{n} ratings", loadingGame: "Loading the details…", gameFail: "Couldn't open this game's details.",
+        noDetails: "Jobee'sLair is still preparing this game's details and sources; the download goes through Jobee'sLair.",
+        willPayload: "The PS5 downloads it by itself, even with Jobee'sLair closed.", willApp: "Needs Jobe open to start the download (a host that needs the browser, a torrent or parts). The request is saved and starts when you open Jobee'sLair.",
+        open: "Open {t}" },
+      es: { tab: "Tienda completa", search: "Buscar en la tienda", filters: "Filtros", allP: "PS5 y PS4", anySize: "Cualquier tamaño", small: "hasta 10 GB", medium: "10–50 GB", large: "más de 50 GB",
+        allFmt: "Cualquier formato", ready: "Listo para {v}", allGenre: "Todos los géneros", sort: { relevance: "Más populares", newest: "Más nuevos", rating: "Mejor valorados", size: "Más grandes", title: "Título" },
+        solo: "Solo los que se descargan con Jobe cerrada", jobe: "Jobe", jobeTip: "Necesita Jobe abierta para empezar la descarga", legend: "Sello Jobe: necesita Jobe abierta para empezar la descarga.",
+        count: "{n} juegos", countOf: "{n} de {t} juegos", get: "Descargar", queued: "En cola", adding: "Añadiendo…", more: "Cargar más", loading: "Cargando…",
+        none: "Ningún juego con estos filtros.", clear: "Quitar filtros", retry: "Reintentar", noStore: "La tienda aún no llegó al payload. Abre Jobee'sLair una vez y vuelve.",
+        badStore: "La lista de la tienda tiene un problema. Abre Jobee'sLair para que la grabe de nuevo.", offline: "La PS5 no respondió.",
+        addedPayload: "{t}: la PS5 ya lo está descargando, incluso con Jobee'sLair cerrada.", addedOpen: "{t}: en la cola de Jobee'sLair.",
+        addedWait: "{t}: pedido guardado. Necesita Jobe abierta para empezar la descarga: empieza cuando abras Jobee'sLair.",
+        addedRoot: "{t}: pedido guardado. Abre Jobee'sLair una vez para que el payload sepa en qué disco descargar.",
+        already: "{t} ya está en la cola.", exists: "Ese archivo ya está en el disco.", full: "La cola de la PS5 está llena.", fail: "No se pudo añadir. Reintenta.",
+        back: "Volver", photos: "Fotos", about: "Acerca de", facts: "Detalles", sources: "Fuentes", parts: "{n} partes", readMore: "Leer más", readLess: "Leer menos",
+        code: "Código", platform: "Plataforma", sizeL: "Tamaño", formatsL: "Formatos", genresL: "Géneros", released: "Lanzamiento", developer: "Desarrolladora", publisher: "Editora",
+        stars: "Nota en PS Store", ratings: "{n} valoraciones", loadingGame: "Cargando la ficha…", gameFail: "No se pudo abrir la ficha de este juego.",
+        noDetails: "Jobee'sLair aún está preparando la ficha y las fuentes de este juego; la descarga va por Jobee'sLair.",
+        willPayload: "La PS5 lo descarga sola, incluso con Jobee'sLair cerrada.", willApp: "Necesita Jobe abierta para empezar la descarga (host con navegador, torrent o partes). El pedido queda guardado y empieza cuando abras Jobee'sLair.",
+        open: "Abrir {t}" },
+      fr: { tab: "Boutique complète", search: "Rechercher dans la boutique", filters: "Filtres", allP: "PS5 et PS4", anySize: "Toute taille", small: "jusqu'à 10 Go", medium: "10–50 Go", large: "plus de 50 Go",
+        allFmt: "Tout format", ready: "Prêt pour {v}", allGenre: "Tous les genres", sort: { relevance: "Les plus populaires", newest: "Les plus récents", rating: "Les mieux notés", size: "Les plus gros", title: "Titre" },
+        solo: "Seulement ceux qui se téléchargent Jobe fermée", jobe: "Jobe", jobeTip: "Il faut Jobe ouverte pour lancer le téléchargement", legend: "Badge Jobe : il faut Jobe ouverte pour lancer le téléchargement.",
+        count: "{n} jeux", countOf: "{n} sur {t} jeux", get: "Télécharger", queued: "En file", adding: "Ajout…", more: "Charger plus", loading: "Chargement…",
+        none: "Aucun jeu avec ces filtres.", clear: "Effacer les filtres", retry: "Réessayer", noStore: "La boutique n'est pas encore arrivée au payload. Ouvrez Jobee'sLair une fois et revenez.",
+        badStore: "La liste de la boutique a un problème. Ouvrez Jobee'sLair pour qu'elle la réécrive.", offline: "La PS5 n'a pas répondu.",
+        addedPayload: "{t} : la PS5 le télécharge déjà, même Jobee'sLair fermée.", addedOpen: "{t} : dans la file de Jobee'sLair.",
+        addedWait: "{t} : demande gardée. Il faut Jobe ouverte pour lancer le téléchargement : il démarre quand vous ouvrez Jobee'sLair.",
+        addedRoot: "{t} : demande gardée. Ouvrez Jobee'sLair une fois pour que le payload sache sur quel disque télécharger.",
+        already: "{t} est déjà dans la file.", exists: "Ce fichier est déjà sur le disque.", full: "La file de la PS5 est pleine.", fail: "Ajout impossible. Réessayez.",
+        back: "Retour", photos: "Photos", about: "À propos", facts: "Détails", sources: "Sources", parts: "{n} parties", readMore: "Lire plus", readLess: "Lire moins",
+        code: "Code", platform: "Plateforme", sizeL: "Taille", formatsL: "Formats", genresL: "Genres", released: "Sortie", developer: "Développeur", publisher: "Éditeur",
+        stars: "Note PS Store", ratings: "{n} avis", loadingGame: "Chargement de la fiche…", gameFail: "Impossible d'ouvrir la fiche de ce jeu.",
+        noDetails: "Jobee'sLair prépare encore la fiche et les sources de ce jeu ; le téléchargement passe par Jobee'sLair.",
+        willPayload: "La PS5 le télécharge seule, même Jobee'sLair fermée.", willApp: "Il faut Jobe ouverte pour lancer le téléchargement (hébergeur avec navigateur, torrent ou parties). La demande est gardée et démarre quand vous ouvrez Jobee'sLair.",
+        open: "Ouvrir {t}" },
+      de: { tab: "Ganzer Store", search: "Im Store suchen", filters: "Filter", allP: "PS5 und PS4", anySize: "Jede Größe", small: "bis 10 GB", medium: "10–50 GB", large: "über 50 GB",
+        allFmt: "Jedes Format", ready: "Bereit für {v}", allGenre: "Alle Genres", sort: { relevance: "Am beliebtesten", newest: "Neueste", rating: "Am besten bewertet", size: "Größte", title: "Titel" },
+        solo: "Nur die, die bei geschlossener Jobe laden", jobe: "Jobe", jobeTip: "Jobe muss offen sein, um den Download zu starten", legend: "Jobe-Abzeichen: Jobe muss offen sein, um den Download zu starten.",
+        count: "{n} Spiele", countOf: "{n} von {t} Spielen", get: "Laden", queued: "In der Warteschlange", adding: "Wird hinzugefügt…", more: "Mehr laden", loading: "Lädt…",
+        none: "Kein Spiel mit diesen Filtern.", clear: "Filter löschen", retry: "Erneut versuchen", noStore: "Der Store ist noch nicht beim Payload. Öffne Jobee'sLair einmal und komm zurück.",
+        badStore: "Die Store-Liste hat ein Problem. Öffne Jobee'sLair, damit sie neu geschrieben wird.", offline: "Die PS5 hat nicht geantwortet.",
+        addedPayload: "{t}: Die PS5 lädt es schon, auch bei geschlossener Jobee'sLair.", addedOpen: "{t}: in der Warteschlange von Jobee'sLair.",
+        addedWait: "{t}: Anfrage gespeichert. Jobe muss offen sein, um den Download zu starten: Er startet, wenn du Jobee'sLair öffnest.",
+        addedRoot: "{t}: Anfrage gespeichert. Öffne Jobee'sLair einmal, damit der Payload das Laufwerk kennt.",
+        already: "{t} ist schon in der Warteschlange.", exists: "Diese Datei ist schon auf dem Laufwerk.", full: "Die Warteschlange der PS5 ist voll.", fail: "Hinzufügen fehlgeschlagen. Erneut versuchen.",
+        back: "Zurück", photos: "Fotos", about: "Info", facts: "Details", sources: "Quellen", parts: "{n} Teile", readMore: "Mehr lesen", readLess: "Weniger",
+        code: "Code", platform: "Plattform", sizeL: "Größe", formatsL: "Formate", genresL: "Genres", released: "Erschienen", developer: "Entwickler", publisher: "Publisher",
+        stars: "PS-Store-Bewertung", ratings: "{n} Bewertungen", loadingGame: "Details werden geladen…", gameFail: "Die Details dieses Spiels ließen sich nicht öffnen.",
+        noDetails: "Jobee'sLair bereitet Details und Quellen dieses Spiels noch vor; der Download läuft über Jobee'sLair.",
+        willPayload: "Die PS5 lädt es selbst, auch bei geschlossener Jobee'sLair.", willApp: "Jobe muss offen sein, um den Download zu starten (Host mit Browser, Torrent oder Teile). Die Anfrage bleibt gespeichert und startet, wenn du Jobee'sLair öffnest.",
+        open: "{t} öffnen" },
+      it: { tab: "Negozio completo", search: "Cerca nel negozio", filters: "Filtri", allP: "PS5 e PS4", anySize: "Qualsiasi dimensione", small: "fino a 10 GB", medium: "10–50 GB", large: "oltre 50 GB",
+        allFmt: "Qualsiasi formato", ready: "Pronto per {v}", allGenre: "Tutti i generi", sort: { relevance: "Più popolari", newest: "Più recenti", rating: "Più votati", size: "Più grandi", title: "Titolo" },
+        solo: "Solo quelli che si scaricano con Jobe chiusa", jobe: "Jobe", jobeTip: "Serve Jobe aperta per avviare il download", legend: "Badge Jobe: serve Jobe aperta per avviare il download.",
+        count: "{n} giochi", countOf: "{n} di {t} giochi", get: "Scarica", queued: "In coda", adding: "Aggiunta…", more: "Carica altri", loading: "Caricamento…",
+        none: "Nessun gioco con questi filtri.", clear: "Togli i filtri", retry: "Riprova", noStore: "Il negozio non è ancora arrivato al payload. Apri Jobee'sLair una volta e torna qui.",
+        badStore: "L'elenco del negozio ha un problema. Apri Jobee'sLair per riscriverlo.", offline: "La PS5 non ha risposto.",
+        addedPayload: "{t}: la PS5 lo sta già scaricando, anche con Jobee'sLair chiusa.", addedOpen: "{t}: in coda in Jobee'sLair.",
+        addedWait: "{t}: richiesta salvata. Serve Jobe aperta per avviare il download: parte quando apri Jobee'sLair.",
+        addedRoot: "{t}: richiesta salvata. Apri Jobee'sLair una volta perché il payload sappia su quale disco scaricare.",
+        already: "{t} è già in coda.", exists: "Quel file è già sul disco.", full: "La coda della PS5 è piena.", fail: "Impossibile aggiungere. Riprova.",
+        back: "Indietro", photos: "Foto", about: "Informazioni", facts: "Dettagli", sources: "Fonti", parts: "{n} parti", readMore: "Leggi di più", readLess: "Leggi meno",
+        code: "Codice", platform: "Piattaforma", sizeL: "Dimensione", formatsL: "Formati", genresL: "Generi", released: "Uscita", developer: "Sviluppatore", publisher: "Editore",
+        stars: "Voto PS Store", ratings: "{n} voti", loadingGame: "Caricamento della scheda…", gameFail: "Impossibile aprire la scheda di questo gioco.",
+        noDetails: "Jobee'sLair sta ancora preparando scheda e fonti di questo gioco; il download passa da Jobee'sLair.",
+        willPayload: "La PS5 lo scarica da sola, anche con Jobee'sLair chiusa.", willApp: "Serve Jobe aperta per avviare il download (host con browser, torrent o parti). La richiesta resta salvata e parte quando apri Jobee'sLair.",
+        open: "Apri {t}" },
+      ru: { tab: "Весь магазин", search: "Поиск в магазине", filters: "Фильтры", allP: "PS5 и PS4", anySize: "Любой размер", small: "до 10 ГБ", medium: "10–50 ГБ", large: "больше 50 ГБ",
+        allFmt: "Любой формат", ready: "Готово для {v}", allGenre: "Все жанры", sort: { relevance: "Популярные", newest: "Новые", rating: "С высоким рейтингом", size: "Самые большие", title: "Название" },
+        solo: "Только те, что качаются при закрытой Jobe", jobe: "Jobe", jobeTip: "Чтобы начать загрузку, Jobe должна быть открыта", legend: "Значок Jobe: чтобы начать загрузку, Jobe должна быть открыта.",
+        count: "Игр: {n}", countOf: "{n} из {t} игр", get: "Скачать", queued: "В очереди", adding: "Добавление…", more: "Показать ещё", loading: "Загрузка…",
+        none: "Нет игр с такими фильтрами.", clear: "Сбросить фильтры", retry: "Повторить", noStore: "Магазин ещё не передан payload. Откройте Jobee'sLair один раз и вернитесь.",
+        badStore: "Со списком магазина проблема. Откройте Jobee'sLair, чтобы он записался заново.", offline: "PS5 не ответила.",
+        addedPayload: "{t}: PS5 уже качает, даже при закрытой Jobee'sLair.", addedOpen: "{t}: в очереди Jobee'sLair.",
+        addedWait: "{t}: запрос сохранён. Чтобы начать загрузку, Jobe должна быть открыта: начнётся, когда вы откроете Jobee'sLair.",
+        addedRoot: "{t}: запрос сохранён. Откройте Jobee'sLair один раз, чтобы payload знал, на какой диск качать.",
+        already: "{t} уже в очереди.", exists: "Этот файл уже на диске.", full: "Очередь PS5 заполнена.", fail: "Не удалось добавить. Повторите.",
+        back: "Назад", photos: "Фото", about: "Об игре", facts: "Подробности", sources: "Источники", parts: "Частей: {n}", readMore: "Читать дальше", readLess: "Свернуть",
+        code: "Код", platform: "Платформа", sizeL: "Размер", formatsL: "Форматы", genresL: "Жанры", released: "Выход", developer: "Разработчик", publisher: "Издатель",
+        stars: "Оценка в PS Store", ratings: "Оценок: {n}", loadingGame: "Загрузка карточки…", gameFail: "Не удалось открыть карточку игры.",
+        noDetails: "Jobee'sLair ещё готовит карточку и источники этой игры; загрузка идёт через Jobee'sLair.",
+        willPayload: "PS5 скачает сама, даже при закрытой Jobee'sLair.", willApp: "Чтобы начать загрузку, Jobe должна быть открыта (хост через браузер, торрент или части). Запрос сохранится и начнётся, когда вы откроете Jobee'sLair.",
+        open: "Открыть {t}" },
+      ja: { tab: "ストア全体", search: "ストアを検索", filters: "フィルター", allP: "PS5とPS4", anySize: "すべてのサイズ", small: "10 GBまで", medium: "10–50 GB", large: "50 GB超",
+        allFmt: "すべての形式", ready: "{v}対応", allGenre: "すべてのジャンル", sort: { relevance: "人気順", newest: "新しい順", rating: "評価順", size: "大きい順", title: "タイトル" },
+        solo: "Jobeを閉じてもダウンロードできるものだけ", jobe: "Jobe", jobeTip: "ダウンロード開始にはJobeを開く必要があります", legend: "Jobeバッジ：ダウンロード開始にはJobeを開く必要があります。",
+        count: "{n}本", countOf: "{t}本中{n}本", get: "ダウンロード", queued: "キュー済み", adding: "追加中…", more: "さらに読み込む", loading: "読み込み中…",
+        none: "この条件のゲームはありません。", clear: "フィルターを解除", retry: "再試行", noStore: "ストアがまだペイロードに届いていません。Jobee'sLairを一度開いてから戻ってください。",
+        badStore: "ストアのリストに問題があります。Jobee'sLairを開いて書き直してください。", offline: "PS5が応答しません。",
+        addedPayload: "{t}：Jobee'sLairを閉じていてもPS5がダウンロード中です。", addedOpen: "{t}：Jobee'sLairのキューに追加しました。",
+        addedWait: "{t}：リクエストを保存しました。ダウンロード開始にはJobeを開く必要があります。Jobee'sLairを開くと始まります。",
+        addedRoot: "{t}：リクエストを保存しました。保存先ドライブを伝えるためにJobee'sLairを一度開いてください。",
+        already: "{t}はすでにキューにあります。", exists: "そのファイルはすでにドライブにあります。", full: "PS5のキューがいっぱいです。", fail: "追加できませんでした。再試行してください。",
+        back: "戻る", photos: "写真", about: "概要", facts: "詳細", sources: "ソース", parts: "{n}分割", readMore: "続きを読む", readLess: "閉じる",
+        code: "コード", platform: "機種", sizeL: "サイズ", formatsL: "形式", genresL: "ジャンル", released: "発売日", developer: "開発", publisher: "販売",
+        stars: "PS Storeの評価", ratings: "{n}件の評価", loadingGame: "詳細を読み込み中…", gameFail: "このゲームの詳細を開けませんでした。",
+        noDetails: "Jobee'sLairがこのゲームの詳細とソースを準備中です。ダウンロードはJobee'sLair経由になります。",
+        willPayload: "Jobee'sLairを閉じていてもPS5が自分でダウンロードします。", willApp: "ダウンロード開始にはJobeを開く必要があります（ブラウザが必要なホスト、トレント、分割）。リクエストは保存され、Jobee'sLairを開くと始まります。",
+        open: "{t}を開く" },
+      "zh-Hans": { tab: "完整商店", search: "搜索商店", filters: "筛选", allP: "PS5 和 PS4", anySize: "任意大小", small: "10 GB 以内", medium: "10–50 GB", large: "超过 50 GB",
+        allFmt: "任意格式", ready: "适用于 {v}", allGenre: "所有类型", sort: { relevance: "最热门", newest: "最新", rating: "评分最高", size: "最大", title: "标题" },
+        solo: "仅限 Jobe 关闭也能下载的", jobe: "Jobe", jobeTip: "需要打开 Jobe 才能开始下载", legend: "Jobe 标记：需要打开 Jobe 才能开始下载。",
+        count: "{n} 款游戏", countOf: "{t} 款中的 {n} 款", get: "下载", queued: "已排队", adding: "正在添加…", more: "加载更多", loading: "加载中…",
+        none: "没有符合这些筛选的游戏。", clear: "清除筛选", retry: "重试", noStore: "商店还未传到 payload。请打开一次 Jobee'sLair 再回来。",
+        badStore: "商店列表有问题。请打开 Jobee'sLair 重新写入。", offline: "PS5 没有响应。",
+        addedPayload: "{t}：即使 Jobee'sLair 已关闭，PS5 也在下载。", addedOpen: "{t}：已加入 Jobee'sLair 队列。",
+        addedWait: "{t}：请求已保存。需要打开 Jobe 才能开始下载：打开 Jobee'sLair 时开始。",
+        addedRoot: "{t}：请求已保存。请打开一次 Jobee'sLair，让 payload 知道下载到哪个磁盘。",
+        already: "{t} 已在队列中。", exists: "该文件已在磁盘上。", full: "PS5 队列已满。", fail: "无法添加，请重试。",
+        back: "返回", photos: "图片", about: "简介", facts: "详情", sources: "来源", parts: "{n} 个分卷", readMore: "展开", readLess: "收起",
+        code: "编号", platform: "平台", sizeL: "大小", formatsL: "格式", genresL: "类型", released: "发行", developer: "开发商", publisher: "发行商",
+        stars: "PS Store 评分", ratings: "{n} 个评分", loadingGame: "正在加载详情…", gameFail: "无法打开此游戏的详情。",
+        noDetails: "Jobee'sLair 仍在准备此游戏的详情和来源；下载将通过 Jobee'sLair 进行。",
+        willPayload: "即使 Jobee'sLair 已关闭，PS5 也会自行下载。", willApp: "需要打开 Jobe 才能开始下载（需要浏览器的网盘、种子或分卷）。请求会保存，打开 Jobee'sLair 时开始。",
+        open: "打开 {t}" },
+      ar: { tab: "المتجر الكامل", search: "ابحث في المتجر", filters: "عوامل التصفية", allP: "PS5 و PS4", anySize: "أي حجم", small: "حتى 10 GB", medium: "10–50 GB", large: "أكثر من 50 GB",
+        allFmt: "أي صيغة", ready: "جاهز لـ {v}", allGenre: "كل الأنواع", sort: { relevance: "الأكثر شعبية", newest: "الأحدث", rating: "الأعلى تقييمًا", size: "الأكبر", title: "العنوان" },
+        solo: "فقط ما يُنزَّل و Jobe مغلقة", jobe: "Jobe", jobeTip: "يجب فتح Jobe لبدء التنزيل", legend: "شارة Jobe: يجب فتح Jobe لبدء التنزيل.",
+        count: "{n} لعبة", countOf: "{n} من {t} لعبة", get: "تنزيل", queued: "في الطابور", adding: "جارٍ الإضافة…", more: "تحميل المزيد", loading: "جارٍ التحميل…",
+        none: "لا توجد ألعاب بهذه التصفية.", clear: "مسح التصفية", retry: "أعد المحاولة", noStore: "لم يصل المتجر إلى الـ payload بعد. افتح Jobee'sLair مرة ثم عد.",
+        badStore: "في قائمة المتجر مشكلة. افتح Jobee'sLair لتكتبها من جديد.", offline: "لم يستجب الـ PS5.",
+        addedPayload: "{t}: الـ PS5 ينزّله الآن حتى و Jobee'sLair مغلقة.", addedOpen: "{t}: في طابور Jobee'sLair.",
+        addedWait: "{t}: حُفظ الطلب. يجب فتح Jobe لبدء التنزيل: يبدأ عند فتح Jobee'sLair.",
+        addedRoot: "{t}: حُفظ الطلب. افتح Jobee'sLair مرة ليعرف الـ payload القرص المستخدم.",
+        already: "{t} في الطابور بالفعل.", exists: "هذا الملف موجود على القرص بالفعل.", full: "طابور الـ PS5 ممتلئ.", fail: "تعذّرت الإضافة. أعد المحاولة.",
+        back: "رجوع", photos: "صور", about: "نبذة", facts: "تفاصيل", sources: "المصادر", parts: "{n} أجزاء", readMore: "اقرأ المزيد", readLess: "أقل",
+        code: "الرمز", platform: "المنصة", sizeL: "الحجم", formatsL: "الصيغ", genresL: "الأنواع", released: "الإصدار", developer: "المطوّر", publisher: "الناشر",
+        stars: "تقييم PS Store", ratings: "{n} تقييم", loadingGame: "جارٍ تحميل التفاصيل…", gameFail: "تعذّر فتح تفاصيل هذه اللعبة.",
+        noDetails: "ما زالت Jobee'sLair تجهّز تفاصيل ومصادر هذه اللعبة؛ التنزيل يتم عبر Jobee'sLair.",
+        willPayload: "الـ PS5 ينزّلها وحده حتى و Jobee'sLair مغلقة.", willApp: "يجب فتح Jobe لبدء التنزيل (موقع يحتاج المتصفح أو تورنت أو أجزاء). يُحفظ الطلب ويبدأ عند فتح Jobee'sLair.",
+        open: "افتح {t}" },
+      hi: { tab: "पूरा स्टोर", search: "स्टोर में खोजें", filters: "फ़िल्टर", allP: "PS5 और PS4", anySize: "कोई भी आकार", small: "10 GB तक", medium: "10–50 GB", large: "50 GB से ज़्यादा",
+        allFmt: "कोई भी फ़ॉर्मैट", ready: "{v} के लिए तैयार", allGenre: "सभी शैलियाँ", sort: { relevance: "सबसे लोकप्रिय", newest: "सबसे नए", rating: "सबसे ऊँची रेटिंग", size: "सबसे बड़े", title: "शीर्षक" },
+        solo: "सिर्फ़ वे जो Jobe बंद होने पर भी डाउनलोड हों", jobe: "Jobe", jobeTip: "डाउनलोड शुरू करने के लिए Jobe खुली होनी चाहिए", legend: "Jobe बैज: डाउनलोड शुरू करने के लिए Jobe खुली होनी चाहिए।",
+        count: "{n} गेम", countOf: "{t} में से {n} गेम", get: "डाउनलोड", queued: "कतार में", adding: "जोड़ रहे हैं…", more: "और लोड करें", loading: "लोड हो रहा है…",
+        none: "इन फ़िल्टरों से कोई गेम नहीं।", clear: "फ़िल्टर हटाएँ", retry: "फिर कोशिश करें", noStore: "स्टोर अभी payload तक नहीं पहुँचा। Jobee'sLair एक बार खोलें और लौटें।",
+        badStore: "स्टोर सूची में समस्या है। Jobee'sLair खोलें ताकि वह इसे फिर लिखे।", offline: "PS5 ने जवाब नहीं दिया।",
+        addedPayload: "{t}: Jobee'sLair बंद होने पर भी PS5 डाउनलोड कर रहा है।", addedOpen: "{t}: Jobee'sLair की कतार में।",
+        addedWait: "{t}: अनुरोध सहेजा गया। डाउनलोड शुरू करने के लिए Jobe खुली होनी चाहिए: Jobee'sLair खोलने पर शुरू होगा।",
+        addedRoot: "{t}: अनुरोध सहेजा गया। Jobee'sLair एक बार खोलें ताकि payload को ड्राइव पता चले।",
+        already: "{t} पहले से कतार में है।", exists: "यह फ़ाइल पहले से ड्राइव पर है।", full: "PS5 की कतार भरी है।", fail: "जोड़ नहीं सके। फिर कोशिश करें।",
+        back: "वापस", photos: "फ़ोटो", about: "परिचय", facts: "विवरण", sources: "स्रोत", parts: "{n} भाग", readMore: "और पढ़ें", readLess: "कम पढ़ें",
+        code: "कोड", platform: "प्लैटफ़ॉर्म", sizeL: "आकार", formatsL: "फ़ॉर्मैट", genresL: "शैलियाँ", released: "रिलीज़", developer: "डेवलपर", publisher: "प्रकाशक",
+        stars: "PS Store रेटिंग", ratings: "{n} रेटिंग", loadingGame: "विवरण लोड हो रहा है…", gameFail: "इस गेम का विवरण नहीं खुला।",
+        noDetails: "Jobee'sLair अभी इस गेम का विवरण और स्रोत तैयार कर रहा है; डाउनलोड Jobee'sLair से होगा।",
+        willPayload: "Jobee'sLair बंद होने पर भी PS5 खुद डाउनलोड करता है।", willApp: "डाउनलोड शुरू करने के लिए Jobe खुली होनी चाहिए (ब्राउज़र वाला होस्ट, टॉरेंट या भाग)। अनुरोध सहेजा रहता है और Jobee'sLair खोलने पर शुरू होता है।",
+        open: "{t} खोलें" },
+      bn: { tab: "পুরো স্টোর", search: "স্টোরে খুঁজুন", filters: "ফিল্টার", allP: "PS5 ও PS4", anySize: "যেকোনো আকার", small: "10 GB পর্যন্ত", medium: "10–50 GB", large: "50 GB-এর বেশি",
+        allFmt: "যেকোনো ফরম্যাট", ready: "{v}-এর জন্য প্রস্তুত", allGenre: "সব ধরন", sort: { relevance: "সবচেয়ে জনপ্রিয়", newest: "নতুন", rating: "সেরা রেটিং", size: "সবচেয়ে বড়", title: "শিরোনাম" },
+        solo: "শুধু যেগুলো Jobe বন্ধ থাকলেও নামে", jobe: "Jobe", jobeTip: "ডাউনলোড শুরু করতে Jobe খোলা থাকতে হবে", legend: "Jobe ব্যাজ: ডাউনলোড শুরু করতে Jobe খোলা থাকতে হবে।",
+        count: "{n}টি গেম", countOf: "{t}টির মধ্যে {n}টি গেম", get: "ডাউনলোড", queued: "সারিতে", adding: "যোগ হচ্ছে…", more: "আরও দেখুন", loading: "লোড হচ্ছে…",
+        none: "এই ফিল্টারে কোনো গেম নেই।", clear: "ফিল্টার মুছুন", retry: "আবার চেষ্টা করুন", noStore: "স্টোর এখনো payload-এ পৌঁছায়নি। একবার Jobee'sLair খুলে ফিরে আসুন।",
+        badStore: "স্টোরের তালিকায় সমস্যা আছে। Jobee'sLair খুলুন যাতে এটি আবার লেখে।", offline: "PS5 সাড়া দেয়নি।",
+        addedPayload: "{t}: Jobee'sLair বন্ধ থাকলেও PS5 ডাউনলোড করছে।", addedOpen: "{t}: Jobee'sLair-এর সারিতে।",
+        addedWait: "{t}: অনুরোধ রাখা হলো। ডাউনলোড শুরু করতে Jobe খোলা থাকতে হবে: Jobee'sLair খুললে শুরু হবে।",
+        addedRoot: "{t}: অনুরোধ রাখা হলো। একবার Jobee'sLair খুলুন যাতে payload ড্রাইভ জানে।",
+        already: "{t} আগেই সারিতে আছে।", exists: "ফাইলটি আগেই ড্রাইভে আছে।", full: "PS5-এর সারি পূর্ণ।", fail: "যোগ করা গেল না। আবার চেষ্টা করুন।",
+        back: "ফিরে যান", photos: "ছবি", about: "পরিচিতি", facts: "বিস্তারিত", sources: "উৎস", parts: "{n}টি অংশ", readMore: "আরও পড়ুন", readLess: "কম দেখান",
+        code: "কোড", platform: "প্ল্যাটফর্ম", sizeL: "আকার", formatsL: "ফরম্যাট", genresL: "ধরন", released: "প্রকাশ", developer: "ডেভেলপার", publisher: "প্রকাশক",
+        stars: "PS Store রেটিং", ratings: "{n}টি রেটিং", loadingGame: "বিস্তারিত লোড হচ্ছে…", gameFail: "এই গেমের বিস্তারিত খোলা গেল না।",
+        noDetails: "Jobee'sLair এখনো এই গেমের বিস্তারিত ও উৎস তৈরি করছে; ডাউনলোড Jobee'sLair দিয়ে হবে।",
+        willPayload: "Jobee'sLair বন্ধ থাকলেও PS5 নিজেই ডাউনলোড করে।", willApp: "ডাউনলোড শুরু করতে Jobe খোলা থাকতে হবে (ব্রাউজার লাগে এমন হোস্ট, টরেন্ট বা অংশ)। অনুরোধ রাখা থাকে এবং Jobee'sLair খুললে শুরু হয়।",
+        open: "{t} খুলুন" },
+      id: { tab: "Toko lengkap", search: "Cari di toko", filters: "Filter", allP: "PS5 dan PS4", anySize: "Ukuran apa pun", small: "hingga 10 GB", medium: "10–50 GB", large: "lebih dari 50 GB",
+        allFmt: "Format apa pun", ready: "Siap untuk {v}", allGenre: "Semua genre", sort: { relevance: "Terpopuler", newest: "Terbaru", rating: "Rating tertinggi", size: "Terbesar", title: "Judul" },
+        solo: "Hanya yang bisa diunduh saat Jobe tertutup", jobe: "Jobe", jobeTip: "Jobe harus terbuka untuk memulai unduhan", legend: "Lencana Jobe: Jobe harus terbuka untuk memulai unduhan.",
+        count: "{n} game", countOf: "{n} dari {t} game", get: "Unduh", queued: "Dalam antrean", adding: "Menambahkan…", more: "Muat lagi", loading: "Memuat…",
+        none: "Tidak ada game dengan filter ini.", clear: "Hapus filter", retry: "Coba lagi", noStore: "Toko belum sampai ke payload. Buka Jobee'sLair sekali lalu kembali.",
+        badStore: "Daftar toko bermasalah. Buka Jobee'sLair agar ditulis ulang.", offline: "PS5 tidak menjawab.",
+        addedPayload: "{t}: PS5 sedang mengunduhnya, bahkan saat Jobee'sLair tertutup.", addedOpen: "{t}: masuk antrean Jobee'sLair.",
+        addedWait: "{t}: permintaan disimpan. Jobe harus terbuka untuk memulai unduhan: mulai saat Anda membuka Jobee'sLair.",
+        addedRoot: "{t}: permintaan disimpan. Buka Jobee'sLair sekali agar payload tahu drive yang dipakai.",
+        already: "{t} sudah dalam antrean.", exists: "File itu sudah ada di drive.", full: "Antrean PS5 penuh.", fail: "Gagal menambahkan. Coba lagi.",
+        back: "Kembali", photos: "Foto", about: "Tentang", facts: "Detail", sources: "Sumber", parts: "{n} bagian", readMore: "Baca selengkapnya", readLess: "Lebih sedikit",
+        code: "Kode", platform: "Platform", sizeL: "Ukuran", formatsL: "Format", genresL: "Genre", released: "Rilis", developer: "Pengembang", publisher: "Penerbit",
+        stars: "Rating PS Store", ratings: "{n} rating", loadingGame: "Memuat detail…", gameFail: "Detail game ini tidak bisa dibuka.",
+        noDetails: "Jobee'sLair masih menyiapkan detail dan sumber game ini; unduhan lewat Jobee'sLair.",
+        willPayload: "PS5 mengunduhnya sendiri, bahkan saat Jobee'sLair tertutup.", willApp: "Jobe harus terbuka untuk memulai unduhan (host lewat browser, torrent, atau bagian). Permintaan disimpan dan mulai saat Anda membuka Jobee'sLair.",
+        open: "Buka {t}" },
+      ur: { tab: "پورا اسٹور", search: "اسٹور میں تلاش کریں", filters: "فلٹر", allP: "PS5 اور PS4", anySize: "کوئی بھی سائز", small: "10 GB تک", medium: "10–50 GB", large: "50 GB سے زیادہ",
+        allFmt: "کوئی بھی فارمیٹ", ready: "{v} کے لیے تیار", allGenre: "تمام اقسام", sort: { relevance: "سب سے مقبول", newest: "نئے", rating: "بہترین ریٹنگ", size: "سب سے بڑے", title: "عنوان" },
+        solo: "صرف وہ جو Jobe بند ہونے پر بھی ڈاؤن لوڈ ہوں", jobe: "Jobe", jobeTip: "ڈاؤن لوڈ شروع کرنے کے لیے Jobe کھلی ہونی چاہیے", legend: "Jobe بیج: ڈاؤن لوڈ شروع کرنے کے لیے Jobe کھلی ہونی چاہیے۔",
+        count: "{n} گیمز", countOf: "{t} میں سے {n} گیمز", get: "ڈاؤن لوڈ", queued: "قطار میں", adding: "شامل ہو رہا ہے…", more: "مزید لوڈ کریں", loading: "لوڈ ہو رہا ہے…",
+        none: "ان فلٹرز کے ساتھ کوئی گیم نہیں۔", clear: "فلٹر ہٹائیں", retry: "دوبارہ کوشش کریں", noStore: "اسٹور ابھی payload تک نہیں پہنچا۔ ایک بار Jobee'sLair کھولیں اور واپس آئیں۔",
+        badStore: "اسٹور کی فہرست میں مسئلہ ہے۔ Jobee'sLair کھولیں تاکہ یہ دوبارہ لکھی جائے۔", offline: "PS5 نے جواب نہیں دیا۔",
+        addedPayload: "{t}: Jobee'sLair بند ہونے پر بھی PS5 ڈاؤن لوڈ کر رہا ہے۔", addedOpen: "{t}: Jobee'sLair کی قطار میں۔",
+        addedWait: "{t}: درخواست محفوظ ہو گئی۔ ڈاؤن لوڈ شروع کرنے کے لیے Jobe کھلی ہونی چاہیے: Jobee'sLair کھولنے پر شروع ہوگا۔",
+        addedRoot: "{t}: درخواست محفوظ ہو گئی۔ ایک بار Jobee'sLair کھولیں تاکہ payload کو ڈرائیو معلوم ہو۔",
+        already: "{t} پہلے سے قطار میں ہے۔", exists: "یہ فائل پہلے سے ڈرائیو پر ہے۔", full: "PS5 کی قطار بھری ہوئی ہے۔", fail: "شامل نہیں ہو سکا۔ دوبارہ کوشش کریں۔",
+        back: "واپس", photos: "تصاویر", about: "تعارف", facts: "تفصیلات", sources: "ذرائع", parts: "{n} حصے", readMore: "مزید پڑھیں", readLess: "کم دکھائیں",
+        code: "کوڈ", platform: "پلیٹ فارم", sizeL: "سائز", formatsL: "فارمیٹ", genresL: "اقسام", released: "ریلیز", developer: "ڈیولپر", publisher: "پبلشر",
+        stars: "PS Store ریٹنگ", ratings: "{n} ریٹنگز", loadingGame: "تفصیلات لوڈ ہو رہی ہیں…", gameFail: "اس گیم کی تفصیلات نہیں کھل سکیں۔",
+        noDetails: "Jobee'sLair ابھی اس گیم کی تفصیلات اور ذرائع تیار کر رہا ہے؛ ڈاؤن لوڈ Jobee'sLair سے ہوگا۔",
+        willPayload: "Jobee'sLair بند ہونے پر بھی PS5 خود ڈاؤن لوڈ کرتا ہے۔", willApp: "ڈاؤن لوڈ شروع کرنے کے لیے Jobe کھلی ہونی چاہیے (براؤزر والا ہوسٹ، ٹورینٹ یا حصے)۔ درخواست محفوظ رہتی ہے اور Jobee'sLair کھولنے پر شروع ہوتی ہے۔",
+        open: "{t} کھولیں" },
+    };
+    const tag = String(navigator.language || "en").toLowerCase();
+    const code = tag.startsWith("zh") ? "zh-Hans" : tag.slice(0, 2);
+    return all[code] || all.en;
+  })();
+  const lang = () => document.documentElement.lang;
+  const el = (tagName, cls, text) => { const e = document.createElement(tagName); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+  const okURL = (url) => typeof url === "string" && (/^https:\/\/[^\s"'<>\\`]+$/i.test(url) || /^data:image\//.test(url));
+  const sized = (url, w) => /^https:\/\/image\.api\.playstation\.com\//.test(url) ? (/[?&]w=\d+/.test(url) ? url.replace(/([?&]w=)\d+/, `$1${w}`) : `${url}${url.includes("?") ? "&" : "?"}w=${w}`) : url;
+  const initials = (title) => String(title || "?").replace(/[^\p{L}\p{N} ]+/gu, " ").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+  const gb = (v) => v >= 1 ? `${nf(v, 1)} GB` : `${nf(v * 1024, 0)} MB`;
+  const RANK = ["exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip"];
+  const ranked = (formats) => [...(formats || [])].sort((a, b) => (RANK.indexOf(a) + 1 || 99) - (RANK.indexOf(b) + 1 || 99));
+  // O selo "Jobe": um simbolo de app aberto (janela) e a palavra curta; a frase inteira so no title (e na legenda).
+  const JOBE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/></svg>';
+  function jobeBadge() { const b = el("span", "sb jobe"); b.innerHTML = JOBE_ICON; b.append(document.createTextNode(S.jobe)); b.title = S.jobeTip; b.setAttribute("aria-label", S.jobeTip); return b; }
+  function picture(box, urls, lazy = true) {
+    const list = [...new Set(urls.filter(okURL))];
+    if (!list.length) return;
+    const img = el("img"); img.alt = ""; img.decoding = "async"; img.referrerPolicy = "no-referrer";
+    if (lazy) img.loading = "lazy";
+    let at = 0;
+    img.onload = () => box.classList.add("ok");
+    img.onerror = () => { if (++at < list.length) img.src = list[at]; else { img.remove(); box.classList.add("bad"); } };
+    img.src = list[0];
+    box.append(img);
+  }
+  function coverBox(g, width, lazy = true) { const box = el("div", "cv"); box.append(el("span", "ph", initials(g.title))); picture(box, [g.cover ? sized(g.cover, width) : ""], lazy); return box; }
+
+  // ---- Demo (pagina aberta do disco ou ?demo): uma loja pequena feita aqui ----
+  const DEMO_STORE = Array.from({ length: 36 }, (_, n) => ({ id: `PPSA${String(20000 + n).padStart(5, "0")}`, title: `Jogo da Loja ${n + 1}`, code: `PPSA${String(20000 + n).padStart(5, "0")}`, platform: n % 3 ? "ps5" : "ps4",
+    cover: "", sizeGb: 2 + (n * 7) % 90, formats: [["exfat", "rar", "pkg", "ffpkg"][n % 4]], ready: n % 4 === 0 || n % 4 === 3, stars: 3 + (n % 20) / 10, ratingCount: 100 * n, year: 2015 + n % 11, solo: n % 4 === 1 ? false : n % 5 === 0 ? null : true, queued: false, genres: [["Ação", "RPG", "Corrida"][n % 3]] }));
+  function demoStore(method, path, body) {
+    const [pathname, search = ""] = path.split("?"), p = new URLSearchParams(search);
+    if (pathname === "/api/store/add") {
+      if (!session) return { status: 401, data: { error: "pin" } };
+      const g = DEMO_STORE.find((x) => x.id === body.id);
+      if (g.queued) return { status: 200, data: { ok: true, already: true, id: "b1" } };
+      g.queued = true;
+      return { status: 200, data: g.solo ? { ok: true, id: "b1", via: "payload" } : { ok: true, id: "b1", via: "app", appOpen: false, reason: "needs-app" } };
+    }
+    if (pathname === "/api/store/game") {
+      const g = DEMO_STORE.find((x) => x.id === p.get("id"));
+      const links = [{ kind: g.solo === false ? "browser" : "direct", host: g.solo === false ? "Vikingfile" : "Archive.org", format: g.formats[0], size: g.sizeGb * 1e9, label: "", parts: 0, solo: g.solo !== false }];
+      return { status: 200, data: { ok: true, game: g, details: { summary: "Texto de exemplo do modo demo.", about: ["Na página de verdade, aqui vem a descrição da loja gravada pela Jobee'sLair."], shots: [], hero: "" }, links, download: g.solo === false ? "app" : "payload" } };
+    }
+    const q = (p.get("q") || "").trim().toLowerCase(), plat = (p.get("platform") || "").split(",").filter(Boolean), solo = p.get("solo") === "1";
+    const list = DEMO_STORE.filter((g) => (!q || g.title.toLowerCase().includes(q)) && (!plat.length || plat.includes(g.platform)) && (!solo || g.solo === true));
+    const offset = Number(p.get("offset")) || 0, limit = Number(p.get("limit")) || 40;
+    return { status: 200, data: { ok: true, total: DEMO_STORE.length, count: list.length, offset, limit, readyFirmware: "13.60", games: list.slice(offset, offset + limit),
+      facets: { platform: [{ value: "ps5", count: 24 }, { value: "ps4", count: 12 }], format: [{ value: "ready", count: 18 }, { value: "exfat", count: 9 }, { value: "rar", count: 9 }], genre: [{ value: "Ação", name: "Ação", count: 12 }], size: [{ value: "small", count: 8 }, { value: "medium", count: 20 }, { value: "large", count: 8 }], solo: [{ value: "1", count: 20 }] } } };
+  }
+  const storeApi = (method, path, body) => DEMO ? Promise.resolve(demoStore(method, path, body)) : api(method, path, body).catch(() => ({ status: 0, data: {} }));
+
+  // ---- A aba ----
+  const tabs = document.querySelector("nav.tabs");
+  if (!tabs) return;
+  const tab = el("button", "", S.tab); tab.type = "button"; tab.setAttribute("role", "tab"); tab.setAttribute("aria-selected", "false");
+  tabs.append(tab);
+  const others = [...tabs.querySelectorAll("button")].filter((b) => b !== tab);
+  const pinned = document.querySelector(".pinned");
+  const bar = el("div", "libbar storeonly");
+  bar.innerHTML = `<div class="srch"><input id="stQ" type="search" enterkeyhint="search" autocomplete="off" spellcheck="false"><button class="lock" type="button" id="stF"><span></span><b class="n" hidden></b></button></div>
+    <div class="filters" id="stFilters" hidden><div class="chips" id="stPlat"></div><div class="chips" id="stSize"></div><div class="chips" id="stSolo"></div><div class="sel"><select id="stFormat"></select><select id="stGenre"></select><select id="stSort"></select></div></div>`;
+  pinned.append(bar);
+  const view = el("section", "storeonly"); view.id = "stView";
+  view.innerHTML = `<div class="libhead" id="stHead"></div><div class="glist" id="stList"></div><div class="more" id="stMore"></div>`;
+  $("list").after(view);
+  const fic = el("section", "ficha"); fic.id = "stFicha"; fic.hidden = true; fic.setAttribute("role", "dialog"); fic.setAttribute("aria-modal", "true");
+  fic.innerHTML = `<div class="fbar"><button class="lock" type="button" id="stBack"></button><b id="stTitle"></b></div><div class="fhero" id="stHero" hidden></div><div class="fbody" id="stBody"></div>`;
+  document.body.append(fic);
+  $("stQ").placeholder = S.search; $("stQ").setAttribute("aria-label", S.search);
+  $("stF").querySelector("span").textContent = S.filters;
+  $("stBack").textContent = `‹ ${S.back}`;
+
+  const st = { q: "", platform: "", size: "", format: "", genre: "", solo: false, sort: "relevance", games: [], count: 0, total: 0, done: false, loading: false, seq: 0, state: "", facets: null, ready: "13.60", loaded: false };
+  const rows = new Map();
+  function show(on, keepHash) {
+    document.body.classList.toggle("store", on);
+    if (on) { document.body.classList.remove("lib"); for (const b of others) { b.className = ""; b.setAttribute("aria-selected", "false"); } }
+    tab.className = on ? "on" : ""; tab.setAttribute("aria-selected", String(on));
+    if (on && !keepHash) try { history.replaceState(null, "", "#loja"); } catch {}
+    if (on && !st.loaded) load(true);
+  }
+  tab.onclick = () => show(true);
+  for (const b of others) b.addEventListener("click", () => { if (document.body.classList.contains("store")) { show(false); closeFicha(); } });
+
+  // ---- Filtros ----
+  function query(offset) {
+    const p = new URLSearchParams();
+    if (st.q) p.set("q", st.q.toLowerCase());
+    for (const k of ["platform", "size", "format", "genre"]) if (st[k]) p.set(k, st[k]);
+    if (st.solo) p.set("solo", "1");
+    p.set("sort", st.sort); p.set("offset", String(offset)); p.set("limit", "40");
+    return `/api/store?${p}`;
+  }
+  const active = () => [st.platform, st.size, st.format, st.genre, st.solo].filter(Boolean).length;
+  const countOf = (key, value) => (st.facets?.[key] || []).find((o) => o.value === value)?.count ?? 0;
+  function chip(label, count, on, onclick, title) {
+    const b = el("button", on ? "chip on" : "chip", label); b.type = "button";
+    if (count !== undefined) b.append(el("small", "", String(count)));
+    if (title) b.title = title;
+    b.setAttribute("aria-pressed", String(on)); b.onclick = onclick;
+    return b;
+  }
+  function option(select, value, label, chosen) { const o = el("option", "", label); o.value = value; o.selected = value === chosen; select.append(o); }
+  function filters() {
+    const n = active(), badge = $("stF").querySelector("b");
+    badge.hidden = !n; badge.textContent = String(n);
+    const plat = $("stPlat"); plat.textContent = "";
+    plat.append(chip(S.allP, undefined, !st.platform, () => set({ platform: "" })));
+    for (const p of ["ps5", "ps4"]) plat.append(chip(p.toUpperCase(), countOf("platform", p), st.platform === p, () => set({ platform: st.platform === p ? "" : p })));
+    const sz = $("stSize"); sz.textContent = "";
+    sz.append(chip(S.anySize, undefined, !st.size, () => set({ size: "" })));
+    for (const k of ["small", "medium", "large"]) sz.append(chip(S[k], countOf("size", k), st.size === k, () => set({ size: st.size === k ? "" : k })));
+    const solo = $("stSolo"); solo.textContent = "";
+    solo.append(chip(S.solo, countOf("solo", "1"), st.solo, () => set({ solo: !st.solo })));
+    const fmt = $("stFormat"); fmt.textContent = ""; option(fmt, "", S.allFmt, st.format);
+    for (const o of st.facets?.format || []) option(fmt, o.value, `${o.value === "ready" ? fill(S.ready, { v: st.ready }) : o.value.toUpperCase()} (${o.count})`, st.format);
+    const gen = $("stGenre"); gen.textContent = ""; option(gen, "", S.allGenre, st.genre);
+    for (const o of st.facets?.genre || []) if (o.count || o.value === st.genre) option(gen, o.value, `${o.name || o.value} (${o.count})`, st.genre);
+    const so = $("stSort"); so.textContent = "";
+    for (const k of ["relevance", "newest", "rating", "size", "title"]) option(so, k, S.sort[k], st.sort);
+  }
+  function set(change) { Object.assign(st, change); filters(); load(true); }
+  $("stFormat").onchange = (e) => set({ format: e.target.value });
+  $("stGenre").onchange = (e) => set({ genre: e.target.value });
+  $("stSort").onchange = (e) => set({ sort: e.target.value });
+  $("stF").onclick = () => { $("stFilters").hidden = !$("stFilters").hidden; };
+  let typing = 0;
+  $("stQ").oninput = (e) => { clearTimeout(typing); typing = setTimeout(() => { if (st.q !== e.target.value.trim()) set({ q: e.target.value.trim() }); }, 300); };
+  $("stQ").onkeydown = (e) => { if (e.key === "Enter") { clearTimeout(typing); e.target.blur(); if (st.q !== e.target.value.trim()) set({ q: e.target.value.trim() }); } };
+
+  // ---- Lista ----
+  async function load(reset) {
+    if (reset) { st.games = []; st.done = false; rows.clear(); $("stList").textContent = ""; }
+    if (!reset && (st.loading || st.done)) return;
+    const seq = ++st.seq;
+    st.loading = true; st.loaded = true; foot();
+    const r = await storeApi("GET", query(st.games.length));
+    if (seq !== st.seq) return;
+    st.loading = false;
+    if (r.status === 200 && Array.isArray(r.data.games)) {
+      st.state = "ok";
+      Object.assign(st, { count: r.data.count || 0, total: r.data.total || 0, facets: r.data.facets || null, ready: r.data.readyFirmware || "13.60" });
+      st.games.push(...r.data.games);
+      st.done = !r.data.games.length || st.games.length >= st.count;
+      for (const g of r.data.games) $("stList").append(row(g));
+      if (reset) filters();
+    } else {
+      st.state = r.data?.error === "no-store" ? "missing" : r.data?.error === "bad-store" ? "bad" : "offline";
+      st.done = true;
+    }
+    head(); foot();
+  }
+  function head() {
+    const h = $("stHead"); h.textContent = "";
+    if (st.state !== "ok") return;
+    h.append(el("b", "", fill(st.count === st.total ? S.count : S.countOf, { n: st.count.toLocaleString(lang()), t: st.total.toLocaleString(lang()) })));
+    // A legenda unica dos selos, so quando algum jogo da lista tem o selo.
+    if (st.games.some((g) => g.solo === false)) { const legend = el("span", "stlegend"); legend.append(jobeBadge(), document.createTextNode(` ${S.legend}`)); h.append(legend); }
+  }
+  function foot() {
+    const m = $("stMore"); m.textContent = "";
+    if (st.loading) { m.append(el("span", "foot", S.loading)); return; }
+    if (["missing", "bad", "offline"].includes(st.state)) {
+      const box = el("div", "libmsg", st.state === "missing" ? S.noStore : st.state === "bad" ? S.badStore : S.offline);
+      box.append(el("br")); const again = el("button", "btn", S.retry); again.type = "button"; again.onclick = () => load(true); box.append(again);
+      m.append(box); return;
+    }
+    if (st.state === "ok" && !st.games.length) {
+      const box = el("div", "libmsg", S.none);
+      if (active() || st.q) { box.append(el("br")); const clear = el("button", "btn", S.clear); clear.type = "button"; clear.onclick = () => { $("stQ").value = ""; set({ q: "", platform: "", size: "", format: "", genre: "", solo: false }); }; box.append(clear); }
+      m.append(box); return;
+    }
+    if (!st.done) { const more = el("button", "btn", S.more); more.type = "button"; more.onclick = () => load(false); m.append(more); }
+  }
+  if ("IntersectionObserver" in window) new IntersectionObserver((seen) => { if (seen.some((x) => x.isIntersecting) && document.body.classList.contains("store")) load(false); }, { rootMargin: "600px 0px" }).observe($("stMore"));
+  function metaOf(g, box) {
+    if (g.platform) box.append(el("span", `pf ${g.platform}`, g.platform.toUpperCase()));
+    if (g.sizeGb) box.append(el("span", "", gb(g.sizeGb)));
+    const formats = ranked(g.formats);
+    if (formats.length) box.append(el("span", formats[0] === "exfat" ? "fb best" : "fb", formats[0].toUpperCase()));
+    if (g.ready) { const r = el("span", "sb ready", `✓ ${st.ready}`); r.title = fill(S.ready, { v: st.ready }); box.append(r); }
+    if (g.solo === false) box.append(jobeBadge());
+  }
+  function row(g) {
+    const r = el("article", "game"); r.tabIndex = 0; r.setAttribute("role", "button"); r.setAttribute("aria-label", fill(S.open, { t: g.title }));
+    const info = el("div", "info"), meta = el("div", "m"), det = el("div", "det");
+    info.append(el("div", "t", g.title), meta, det);
+    metaOf(g, meta);
+    const badge = el("span", "qd", S.queued); badge.hidden = !g.queued; meta.append(badge);
+    if (g.code && g.code !== g.title) det.append(el("span", "", g.code));
+    if (g.genres?.length) det.append(el("span", "", g.genres.slice(0, 2).join(", ")));
+    if (g.stars) det.append(el("span", "", `★ ${nf(g.stars, 1)}`));
+    const b = el("button", "btn get"); b.type = "button";
+    rows.set(g.id, { button: b, game: g, badge });
+    b.onclick = (e) => { e.stopPropagation(); if (!g.queued) guarded(() => add(g)); };
+    r.onclick = () => openFicha(g.id);
+    r.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFicha(g.id); } };
+    const chev = el("span", "chev", "›");
+    r.append(coverBox(g, 160), info, b, chev);
+    paint(g);
+    return r;
+  }
+  const fx = { id: "", game: null, data: null, button: null, seq: 0 };
+  function paint(g, busy) {
+    const known = rows.get(g.id);
+    if (known && known.game !== g) known.game.queued = g.queued;
+    if (known) known.badge.hidden = !g.queued;
+    for (const b of [known?.button, fx.id === g.id ? fx.button : null].filter(Boolean)) {
+      b.className = `${b === fx.button ? "btn primary get" : "btn get"}${g.queued ? " inq" : ""}`;
+      b.disabled = Boolean(g.queued || busy);
+      b.textContent = busy ? S.adding : g.queued ? S.queued : S.get;
+    }
+  }
+  let toastTimer = 0;
+  function toast(text, tone) {
+    const t = $("toast"); t.textContent = text; t.className = `toast ${tone || ""}`; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 5200);
+  }
+  async function add(g) {
+    paint(g, true);
+    const r = await storeApi("POST", "/api/store/add", { id: g.id });
+    paint(g);
+    if (r.status === 401) { session = ""; lockButton(); pending = () => add(g); openPin(); return; }
+    if (r.status === 200 && r.data.ok) {
+      g.queued = true; paint(g);
+      const text = r.data.already ? S.already : r.data.via === "payload" ? S.addedPayload : r.data.appOpen ? S.addedOpen : r.data.reason === "no-root" ? S.addedRoot : S.addedWait;
+      toast(fill(text, { t: g.title }), "ok");
+      refresh();
+      return;
+    }
+    if (r.data?.error === "no-store") { st.loaded = false; load(true); }
+    toast(r.data?.error === "exists" ? S.exists : r.data?.error === "full" ? S.full : S.fail, "bad");
+  }
+
+  // ---- Ficha: #loja=<id> no endereco (voltar fecha) ----
+  $("stBack").onclick = () => { if (history.state && history.state.jl === "loja") history.back(); else { try { history.replaceState(null, "", "#loja"); } catch {} closeFicha(); } };
+  function openFicha(id) { try { history.pushState({ jl: "loja" }, "", `#loja=${encodeURIComponent(id)}`); } catch {} routeStore(); }
+  function routeStore() {
+    const m = /^#loja=(.+)$/.exec(location.hash);
+    if (!m) { closeFicha(); if (location.hash === "#loja" && !document.body.classList.contains("store")) show(true, true); return; }
+    if (!document.body.classList.contains("store")) show(true, true);
+    let id = "";
+    try { id = decodeURIComponent(m[1]); } catch { return; }
+    if (fx.id !== id || fic.hidden) openView(id);
+  }
+  addEventListener("popstate", routeStore);
+  const before = window.jobeVoltar;
+  window.jobeVoltar = () => { if (!fic.hidden) { $("stBack").click(); return true; } return typeof before === "function" ? before() : false; };
+  function closeFicha() {
+    if (fic.hidden) return;
+    fic.hidden = true; document.body.classList.remove("fopen");
+    $("stBody").textContent = ""; $("stHero").textContent = ""; $("stHero").hidden = true;
+    const from = fx.id; Object.assign(fx, { id: "", game: null, data: null, button: null, seq: fx.seq + 1 });
+    rows.get(from)?.button?.closest(".game")?.focus({ preventScroll: true });
+  }
+  async function openView(id) {
+    const seq = ++fx.seq;
+    const known = rows.get(id)?.game || null;
+    Object.assign(fx, { id, game: known, data: null, button: null });
+    fic.hidden = false; fic.scrollTop = 0; document.body.classList.add("fopen");
+    $("stTitle").textContent = known ? known.title : "";
+    render("loading");
+    const r = await storeApi("GET", `/api/store/game?id=${encodeURIComponent(id)}`);
+    if (seq !== fx.seq) return;
+    if (r.status !== 200 || !r.data.game) { render("fail"); return; }
+    fx.game = known ? Object.assign(known, { queued: known.queued || r.data.game.queued }) : r.data.game;
+    fx.data = r.data;
+    $("stTitle").textContent = fx.game.title;
+    render("ok");
+  }
+  function section(cls, title) { const s = el("section", `fsec ${cls}`); if (title) s.append(el("h3", "", title)); return s; }
+  function render(state) {
+    const body = $("stBody"); body.textContent = "";
+    const g = fx.game || { title: "", id: fx.id };
+    if (state === "fail" || (state === "loading" && !fx.game)) {
+      const box = el("div", "fmsg", state === "fail" ? S.gameFail : S.loadingGame);
+      if (state === "fail") { box.append(el("br")); const again = el("button", "btn", S.retry); again.type = "button"; again.onclick = () => openView(fx.id); box.append(again); }
+      body.append(box); return;
+    }
+    const data = fx.data || {}, d = data.details || {}, full = data.game || g;
+    if (okURL(d.hero)) { $("stHero").hidden = false; $("stHero").textContent = ""; picture($("stHero"), [d.hero], false); }
+    const grid = el("div", "fgrid"), left = el("div", "fcol"), right = el("div", "fcol");
+    grid.append(left, right); body.append(grid);
+    const top = el("div", "ftop"), meta = el("div", "fmeta");
+    top.append(coverBox(g, 440, false), meta);
+    meta.append(el("h2", "", g.title));
+    const m = el("div", "m"); metaOf(g, m); meta.append(m);
+    if (g.stars) { const r = el("div", "m"), s = el("span", "score"); s.append(el("i", "", "★"), document.createTextNode(` ${nf(g.stars, 1)}`)); s.title = S.stars; r.append(s); meta.append(r); }
+    left.append(top);
+    const get = el("div", "fget"), b = el("button", "btn primary get"); b.type = "button";
+    const note = el("small");
+    get.append(b, note); left.append(get);
+    fx.button = b; paint(g, state === "loading");
+    if (state === "loading") { left.append(el("div", "fmsg", S.loadingGame)); return; }
+    note.textContent = data.download === "payload" ? S.willPayload : S.willApp;
+    b.onclick = () => { if (!g.queued) guarded(() => add(g)); };
+    // As fontes, na ordem da Jobe, com o selo "Jobe" nas que precisam dela aberta.
+    if (data.links?.length) {
+      const s = section("fs-files", S.sources), list = el("div", "files");
+      for (const l of data.links) {
+        const o = el("div", "fopt"), name = el("span", "", l.label || l.host || l.kind);
+        o.append(name);
+        const tags = el("small", "", [l.host && l.host !== l.label ? l.host : "", l.format ? l.format.toUpperCase() : "", l.parts > 1 ? fill(S.parts, { n: l.parts }) : "", l.size ? size(l.size) : ""].filter(Boolean).join(" · "));
+        o.append(tags);
+        if (!l.solo) o.append(jobeBadge());
+        list.append(o);
+      }
+      s.append(list); left.append(s);
+    }
+    const shots = (d.shots || []).filter(okURL);
+    if (shots.length) {
+      const s = section("fs-shots", S.photos), strip = el("div", "shots");
+      for (const url of shots) { const a = el("a", "shot"); a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer"; picture(a, [url]); strip.append(a); }
+      s.append(strip); right.append(s);
+    }
+    const paragraphs = [d.summary, ...(d.about || [])].filter((p, i, all) => p && all.indexOf(p) === i);
+    if (paragraphs.length) {
+      const s = section("fs-about", S.about), text = el("div", "about");
+      for (const p of paragraphs) text.append(el("p", "", p));
+      s.append(text);
+      if (paragraphs.join(" ").length > 360) {
+        text.classList.add("cut");
+        const more = el("button", "linkbtn", S.readMore); more.type = "button";
+        more.onclick = () => { const cut = text.classList.toggle("cut"); more.textContent = cut ? S.readMore : S.readLess; };
+        s.append(more);
+      }
+      right.append(s);
+    } else if (!data.details) right.append(el("div", "hint", S.noDetails));
+    const facts = [[S.code, full.code], [S.platform, full.platform ? full.platform.toUpperCase() : ""], [S.sizeL, full.sizeGb ? gb(full.sizeGb) : ""],
+      [S.formatsL, ranked(full.formats).map((f) => f.toUpperCase()).join(", ")], [S.genresL, (full.genres || []).join(", ")],
+      [S.released, full.releaseDate ? new Date(`${full.releaseDate}T12:00:00`).toLocaleDateString(lang()) : ""], [S.developer, full.developer], [S.publisher, full.publisher],
+      [S.stars, full.stars ? `${nf(full.stars, 2)} / 5${full.ratingCount ? ` · ${fill(S.ratings, { n: full.ratingCount.toLocaleString(lang()) })}` : ""}` : ""]].filter(([, v]) => v);
+    if (facts.length) {
+      const s = section("fs-facts", S.facts), dl = el("dl", "facts");
+      for (const [k, v] of facts) dl.append(el("dt", "", k), el("dd", "", v));
+      s.append(dl); left.append(s);
+    }
+  }
+  if (location.hash === "#loja" || location.hash.startsWith("#loja=")) {
+    const hash = location.hash;
+    if (hash.startsWith("#loja=")) { try { history.replaceState(null, "", "#loja"); history.pushState({ jl: "loja" }, "", hash); } catch {} }
+    show(true, true); routeStore();
+  }
 })();
 </script>
 </body>

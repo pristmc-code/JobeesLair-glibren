@@ -97,7 +97,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 24 // pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#define BG_API 26 // glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -842,6 +842,10 @@ typedef struct {
   char lib_link[1024];
   int auto_started, auto_adopted, auto_convert;
   char auto_note[16];
+  // glibren (item 2): pedido da loja completa (bg_store.c): o id do jogo na loja e a fonte (indice em game.releases + 1;
+  // 0 = a Jobe escolhe). Gravados em jobs.json ("library": "store", "source").
+  char lib_store[16];
+  int store_source;
   int64_t auto_retry_at; // so na memoria
   // glibren.12: de onde vem e o que e, para os selos da pagina do celular: `host` o site do download direto (so o
   // dominio, "mediafire.com"; vazio = o do url), `format` a extensao ("exfat", "rar"; vazio = a do nome), `parts` as
@@ -1019,6 +1023,7 @@ static void job_json_as(Buf* b, const Job* j, int for_disk) {
     buf_fmt(b, ",\"autoStarted\":%s,\"autoAdopted\":%s,\"autoConvert\":%s", j->auto_started ? "true" : "false",
             j->auto_adopted ? "true" : "false", j->auto_convert ? "true" : "false");
     buf_str(b, ",\"autoNote\":"); buf_json(b, j->auto_note);
+    if (j->lib_store[0]) { buf_str(b, ",\"store\":"); buf_json(b, j->lib_store); buf_fmt(b, ",\"source\":%d", j->store_source - 1); } // glibren (item 2)
     buf_str(b, "}");
   }
   buf_str(b, "}");
@@ -1157,6 +1162,8 @@ static int library_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "autoAdopted")) return jp_bool(jp, &j->auto_adopted) ? 1 : -1;
   if (!strcmp(key, "autoConvert")) return jp_bool(jp, &j->auto_convert) ? 1 : -1;
   if (!strcmp(key, "autoNote")) return lib_text(jp, j->auto_note, sizeof j->auto_note) ? 1 : -1;
+  if (!strcmp(key, "store")) return lib_text(jp, j->lib_store, sizeof j->lib_store) ? 1 : -1; // glibren (item 2)
+  if (!strcmp(key, "source")) { int64_t v; if (!jp_int64(jp, &v)) return -1; j->store_source = v >= 0 && v < 100000 ? (int)v + 1 : 0; return 1; }
   return 0;
 }
 
@@ -1342,7 +1349,7 @@ static int validate_job(Job* j, char* error, size_t cap) {
       snprintf(j->state, sizeof j->state, "waiting-app");
     return 1;
   }
-  j->requested = 0; // so marcadores
+  if (!j->lib_store[0]) j->requested = 0; // so marcadores (e o pedido da loja ja comecado pelo payload, glibren item 2)
   if (j->key[0] && !queue_key_ok(j->key)) { snprintf(error, cap, "invalid key"); return 0; }
   if (!safe_url(j->url)) { snprintf(error, cap, "url must be an http(s) URL without spaces"); return 0; }
   if (!safe_path(j->destination)) { snprintf(error, cap, "destination must be an absolute file path"); return 0; }
@@ -3525,7 +3532,7 @@ static void remember_cancelled_locked(const Job* j) {
   if (!system_code_ok(c->code)) c->code[0] = 0;
   if (j->format[0]) snprintf(c->format, sizeof c->format, "%s", j->format);
   else format_of_file(j->destination[0] ? j->destination : j->name, c->format, sizeof c->format);
-  if (j->requested || !strcmp(j->provider, "torbox")) snprintf(c->via, sizeof c->via, "TorBox");
+  if ((j->requested && !j->lib_store[0]) || !strcmp(j->provider, "torbox")) snprintf(c->via, sizeof c->via, "TorBox");
   else if (!strcmp(j->provider, "alldebrid")) snprintf(c->via, sizeof c->via, "AllDebrid");
   else if (j->host[0]) snprintf(c->host, sizeof c->host, "%s", j->host);
   else if (j->url[0]) site_of_url(j->url, c->host, sizeof c->host);
@@ -4556,7 +4563,7 @@ static void monitor_status(Buf* b) {
     buf_str(b, ",\"by\":"); buf_json(b, j->by);
     buf_str(b, ",\"error\":"); buf_json(b, error);
     // glibren: through a debrid service: its name only (no item, link or key), for the page's "via TorBox".
-    if (j->requested) buf_str(b, ",\"requested\":true,\"via\":\"TorBox\""); // glibren: pedido pela Biblioteca TorBox
+    if (j->requested) buf_str(b, j->lib_store[0] ? ",\"requested\":true,\"store\":true" : ",\"requested\":true,\"via\":\"TorBox\""); // glibren: pedido pela Biblioteca TorBox (ou pela loja, item 2)
     else if (!strcmp(j->provider, "torbox")) buf_str(b, ",\"via\":\"TorBox\"");
     else if (!strcmp(j->provider, "alldebrid")) buf_str(b, ",\"via\":\"AllDebrid\"");
     // glibren.18: comecado pelo payload com o app fechado (ainda nao adotado), ou por que ainda espera (so o codigo).
@@ -4566,7 +4573,7 @@ static void monitor_status(Buf* b) {
     // deles, e a pagina mostra o "via". E o formato (o do app, ou a extensao do destino/nome) e as partes.
     {
       char host[65] = "", format[9] = "";
-      const int debrid = j->requested || !strcmp(j->provider, "torbox") || !strcmp(j->provider, "alldebrid");
+      const int debrid = (j->requested && !j->lib_store[0]) || !strcmp(j->provider, "torbox") || !strcmp(j->provider, "alldebrid");
       if (!debrid) {
         if (j->host[0]) snprintf(host, sizeof host, "%s", j->host);
         else if (j->url[0]) site_of_url(j->url, host, sizeof host);
@@ -6375,7 +6382,7 @@ static void* auto_loop(void* arg) {
     convert = g_auto_convert;
     for (int i = 0; i < g_job_count && !found; ++i) {
       Job* j = g_jobs[i];
-      if (!j->requested || !j->placeholder || strcmp(j->state, "waiting-app") || j->auto_retry_at > now) continue;
+      if (!j->requested || !j->placeholder || strcmp(j->state, "waiting-app") || j->auto_retry_at > now || j->lib_store[0]) continue; // a loja: so o app (bg_store.c)
       // O que falta para comecar sem o app (barato: nada de rede aqui).
       char key[96];
       const int has_key = debrid_key("torbox", key, sizeof key);
@@ -6505,12 +6512,16 @@ static void auto_after_download(Job* j) {
   logf_("job %s: terminou no BACKUP com o app fechado; conversao pelo payload: %s", j->id, rc == 1 ? "pedida" : rc == -1 ? "jogo de PS4 (nao)" : rc == -2 ? "ja convertido" : "nada a converter");
 }
 
+// glibren (item 2): a loja completa na pagina do celular.
+#include "bg_store.c"
+
 static void monitor_route(int fd, Request* r, uint32_t ip) {
   char* query = strchr(r->path, '?');
   if (query) *query++ = 0;
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library")) { monitor_library(fd, query); return; }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library/game")) { monitor_library_game(fd, query); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/library/add")) { monitor_library_add(fd, r); return; }
+  if (store_route(fd, r, query)) return; // glibren (item 2): /api/store
   if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {
     monitor_send(fd, 200, "text/html; charset=utf-8", BG_MONITOR_HTML, BG_MONITOR_HTML_SIZE);

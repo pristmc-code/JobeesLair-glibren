@@ -16,7 +16,8 @@ import { catalogLoad, coverSize, features, games, twins } from '../data/catalog-
 import { formats as bundledFormats } from '../data/formats.js';
 import { formatDate2, t } from '../i18n/core.js';
 import { createPageCache } from './page-cache.js';
-import { feedRatings, loadFeedGames } from './feeds.js';
+import { feedRatings, feedSnapshotParts, loadFeedGames, restoreFeedStates, takeFeedStates } from './feeds.js';
+import { bucketReader, readSnapshot, snapshotKey, writeSnapshot } from './feed-snapshot.js';
 import { ORBIT_FEED, setOrbitKnown } from './orbit-feed.js';
 import { pageSummary } from './feed-format.js';
 import { ratings as bundledRatings } from '../data/ratings.js';
@@ -74,7 +75,9 @@ import { memorySample } from './memory-meter.js';
   var Entry = {
     get releases() {
       try {
-        return releaseCache(dataFile("releases", this.id), feedReleases.get(this.id));
+        // glibren (item 2): os links de feed vem do disco (state/feed-snapshot.js) so quando o jogo nao esta guardado.
+        const id = this.id;
+        return releaseCache(dataFile("releases", id), () => feedReleasesOf(id));
       } catch {
         return [];
       }
@@ -114,7 +117,11 @@ import { memorySample } from './memory-meter.js';
   });
   // Feed releases join the catalog game they name (the same id); a game the catalog lacks is listed with
   // the feed's details. Two feeds naming one new game add up on the first one's entry.
+  // glibren (item 2): so enquanto a loja e montada lendo os feeds (ou quando o retrato nao pode ser gravado); depois os
+  // links ficam nos baldes do disco (feedLinks).
   var feedReleases = /* @__PURE__ */ new Map();
+  var feedLinks = null;
+  var feedReleasesOf = (id) => feedReleases.get(id) ?? (feedLinks ? feedLinks(id) : []);
   // The PS4 lists its own games only: every PS4 edition, a game the PS5 lists under its PS5 edition too, and no
   // PS5 edition at all (state/ps4.js).
   // glibren.27: todo codigo do catalogo embutido (no PS4 tambem os de PS5): conhecidos para a lista Orbit.
@@ -133,7 +140,23 @@ import { memorySample } from './memory-meter.js';
   var BUNDLED = "bundled";
   var sourcesById = new Map([...games, ...twins].map((game) => [game.id, [BUNDLED]]));
   var sourceCounts = /* @__PURE__ */ new Map([[BUNDLED, games.length + twins.length]]);
-  for (const { game: feedGame, page, releases, feed } of loadFeedGames()) {
+  // glibren (item 2): o retrato da loja (state/feed-snapshot.js): com os arquivos dos feeds iguais aos da ultima
+  // montagem, os jogos dos feeds vem dele, sem ler os feeds, e os links ficam no disco. Senao, os feeds sao lidos como
+  // antes e o retrato e gravado depois de montada a lista (mais abaixo).
+  var snapKey = snapshotKey(feedSnapshotParts(), PS4);
+  var snapshot = readSnapshot(snapKey);
+  var feedKinds = snapshot ? snapshot.kinds ?? {} : {};
+  var feedGames = snapshot ? snapshot.games : loadFeedGames();
+  var feedStates = snapshot ? null : takeFeedStates();
+  if (snapshot) {
+    restoreFeedStates(snapshot.states ?? []);
+    feedLinks = bucketReader(snapKey, snapshot.buckets);
+  }
+  // O que o retrato guarda de cada jogo de feed: o registro inteiro (e a pagina) so de um jogo novo; de um que o catalogo
+  // ja tem, so o que esta montagem usa dele (providers e direct).
+  var snapItems = snapshot ? null : [];
+  for (const { game: feedGame, page, releases = [], feed } of feedGames) {
+    if (snapItems && !(PS4 && feedGame.platform !== "ps4")) snapItems.push(catalogIds.has(feedGame.id) ? { game: { id: feedGame.id, platform: feedGame.platform, providers: feedGame.providers, ...feedGame.direct ? { direct: true } : {} }, feed } : { game: feedGame, page, feed });
     if (PS4 && feedGame.platform !== "ps4") continue;
     if (feed) {
       const from = sourcesById.get(feedGame.id) ?? [];
@@ -142,7 +165,7 @@ import { memorySample } from './memory-meter.js';
         sourceCounts.set(feed, (sourceCounts.get(feed) ?? 0) + 1);
       }
     }
-    feedReleases.set(feedGame.id, [...feedReleases.get(feedGame.id) ?? [], ...releases]);
+    if (releases.length) feedReleases.set(feedGame.id, [...feedReleases.get(feedGame.id) ?? [], ...releases]);
     const known = catalogIds.get(feedGame.id);
     if (known) {
       known.providers = [.../* @__PURE__ */ new Set([...known.providers ?? [], ...feedGame.providers])];
@@ -169,11 +192,24 @@ import { memorySample } from './memory-meter.js';
   for (const game of entries) {
     const bundled = bundledFormats[game.id]?.split(" ") ?? [];
     const fed = feedReleases.get(game.id);
-    const fromFeed = fed?.length ? gameFormats(fed, game.platform) : [];
+    // glibren (item 2): os formatos tirados dos links de feed, guardados no retrato (o retrato nao tem os links na memoria).
+    const fromFeed = fed?.length ? feedKinds[game.id] = gameFormats(fed, game.platform) : feedKinds[game.id] ?? [];
     game.formats = fromFeed.length ? KINDS.filter((kind) => bundled.includes(kind) || fromFeed.includes(kind)) : bundled;
     // The PS4 installs packages; the disk images and folders are the PS5's ShadowMount's.
     if (PS4) game.formats = game.formats.filter((kind) => kind === "fpkg");
   }
+  // glibren (item 2): montada a lista lendo os feeds, o retrato e gravado (os links em baldes, na ordem do catalogo) e os
+  // links saem da memoria; sem gravar, ficam nela como antes.
+  if (!snapshot && feedReleases.size) {
+    // A chave de agora: ler um feed do PS5 regrava o cache dele (feeds.js saveLocal), e a proxima abertura ve esse cache.
+    snapKey = snapshotKey(feedSnapshotParts(), PS4);
+    const buckets = writeSnapshot(snapKey, { games: snapItems, states: feedStates, kinds: feedKinds, releases: feedReleases, order: entries.map((game) => game.id) });
+    if (buckets) {
+      feedLinks = bucketReader(snapKey, buckets);
+      feedReleases.clear();
+    }
+  }
+  feedGames = feedStates = snapshot = snapItems = null;
   var editionsByWork = /* @__PURE__ */ new Map();
   for (const game of entries) if (game.work) editionsByWork.set(game.work, [...editionsByWork.get(game.work) ?? [], game]);
   for (const game of entries) {

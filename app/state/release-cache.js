@@ -14,6 +14,9 @@ import { releaseSets, withReleaseTypes } from './release-sets.js';
       if (!/^data\/releases\/[a-z0-9%_-]+\.json$/i.test(file)) throw new Error("Invalid release data path.");
       let releases = games2.get(file);
       if (!releases) {
+        // glibren (item 2): `extra` pode vir como funcao (os links de feed lidos do disco, state/feed-snapshot.js): so e
+        // chamada quando o jogo nao esta guardado aqui.
+        if (typeof extra === "function") extra = extra() ?? [];
         let parsed = [];
         try {
           parsed = JSON.parse(read(file));
