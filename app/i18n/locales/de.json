@@ -1877,5 +1877,16 @@
   "crash.suggest": "Wenn es bei Konvertierungen wieder passiert, probiere die Pause zwischen Konvertierungen oder In Stücken schreiben (Einstellungen > Downloads).",
   "crash.details": "Details anzeigen",
   "crash.hideDetails": "Details ausblenden",
-  "crash.ok": "OK"
+  "crash.ok": "OK",
+  "pair.notify": "Jobe: Kopplungscode {code} für „{name}“ (2 Min. gültig)",
+  "pair.notice.title": "Kopplungscode für „{name}“",
+  "pair.notice.detail": "Auf dem Gerät eingeben. Noch {seconds} s gültig.",
+  "settings.devices": "Gekoppelte Geräte",
+  "settings.devicesHint": "Handys und Computer, die die Steuerung der Handy-Seite nutzen. Wird eines entfernt, endet sein Zugriff sofort.",
+  "settings.devicesNone": "Noch keine gekoppelten Geräte. Tippen Sie auf der Handy-Seite auf eine Steuerung und wählen Sie Gerät koppeln.",
+  "settings.devicesOff": "Das Download-Payload läuft nicht: Die Liste erscheint, sobald es läuft.",
+  "settings.deviceAt": "Gekoppelt am {date}",
+  "settings.deviceRemove": "Erneut drücken zum Entfernen",
+  "settings.legacyPin": "Alte PIN akzeptieren",
+  "settings.legacyPinHint": "Während des Wechsels zur Kopplung entsperrt die PIN die Handy-Seite noch. Schalten Sie sie ab, um nur gekoppelte Geräte zuzulassen."
 }

@@ -75,6 +75,13 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 .dialog .row{display:flex;gap:8px}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .msg{min-height:1.2em;font-size:13.5px;color:var(--bad)}
+/* Pareamento por aparelho: texto sempre quebra linha (sem reticencias); botoes da mesma linha com a mesma largura. */
+.plbl{font-size:13px;color:var(--subtle)}
+.ptxt{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--deep);color:var(--fg);font-size:16px;outline:none}
+.ptxt:focus{border-color:var(--ice)}
+.plink{align-self:center;min-height:36px;padding:6px 10px;border:0;background:transparent;color:var(--ice);font-size:14px;text-decoration:underline;cursor:pointer;white-space:normal;text-align:center}
+.dialog .row .btn,.pair-box .row .btn{flex:1 1 0;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.dialog h2,.dialog p,.msg{overflow-wrap:anywhere}
 /* glibren.8: conexoes por download e downloads simultaneos, mudaveis com tudo baixando */
 .conn,.ctlbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0}
 .conn{font-size:14px;color:var(--muted)}
@@ -198,14 +205,53 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
   <div class="foot" id="foot"></div>
 </main>
 <div class="sheet" id="sheet" hidden>
+  <!-- Pareamento por aparelho (bg_pair.c): pedir o codigo (nome do aparelho) e digitar o codigo que o PS5 mostra. -->
+  <form class="dialog" id="pairForm" hidden>
+    <h2 id="pairTitle"></h2>
+    <p id="pairText"></p>
+    <label class="plbl" id="pairNameLbl" for="pairName"></label>
+    <input class="ptxt" id="pairName" type="text" maxlength="40" autocomplete="off" spellcheck="false">
+    <input class="pin" id="pairCode" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" hidden>
+    <div class="msg" id="pairMsg"></div>
+    <div class="row"><button class="btn" type="button" id="pairCancel"></button><button class="btn primary" type="submit" id="pairOk"></button></div>
+    <button class="plink" type="button" id="usePin" hidden></button>
+  </form>
   <form class="dialog" id="pinForm">
     <h2 id="pinTitle">Liberar controles</h2>
     <p id="pinText">Digite o PIN definido nas configurações da Jobee'sLair.</p>
     <input class="pin" id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8">
     <div class="msg" id="pinMsg"></div>
     <div class="row"><button class="btn" type="button" id="pinCancel">Voltar</button><button class="btn primary" type="submit" id="pinOk">Liberar</button></div>
+    <button class="plink" type="button" id="usePair"></button>
   </form>
 </div>
+<script>
+"use strict";
+// Pareamento por aparelho: os textos nos 14 idiomas da Jobe (o resto da pagina e pt/en). Escolhido pelo idioma do
+// aparelho; sem par, ingles.
+const PAIR_T = {
+  pt: {"title": "Parear este aparelho", "text": "Para usar os controles, pareie este aparelho uma vez. O PS5 mostra um código de 6 dígitos numa notificação e na tela da Jobe.", "nameLbl": "Nome deste aparelho", "ask": "Pedir código", "codeText": "Digite o código de 6 dígitos que apareceu no PS5. Ele vale 2 minutos.", "pair": "Parear", "back": "Voltar", "wrong": "Código errado. Restam {n} tentativas.", "blocked": "Muitas tentativas erradas. Espere {s} s.", "wait": "Espere {s} s para pedir outro código.", "expired": "O código venceu. Peça outro.", "failed": "Não deu. Tente de novo.", "usePin": "Usar o PIN antigo", "usePair": "Parear com o código da TV", "pinOffMsg": "O PIN antigo foi desligado. Pareie este aparelho com o código da TV.", "devices": "Aparelhos pareados", "none": "Nenhum aparelho pareado.", "self": "este aparelho", "pairedOn": "pareado em {d}", "remove": "Remover", "removeAsk": "Remover \"{name}\"? Ele vai precisar parear de novo.", "yes": "Sim, remover", "no": "Não", "pinOn": "PIN antigo: ligado. Ele ainda libera os controles.", "pinOff": "PIN antigo: desligado. Só aparelhos pareados usam os controles.", "pinTurnOff": "Desligar o PIN antigo", "pinTurnOn": "Ligar o PIN antigo", "needPair": "Pareie este aparelho para ver e remover os aparelhos.", "local": "Este é o próprio PS5: não precisa parear.", "removedSelf": "Este aparelho foi removido. Pareie de novo para usar os controles."},
+  en: {"title": "Pair this device", "text": "To use the controls, pair this device once. The PS5 shows a 6-digit code in a notification and on Jobe's screen.", "nameLbl": "This device's name", "ask": "Get a code", "codeText": "Type the 6-digit code shown on the PS5. It is valid for 2 minutes.", "pair": "Pair", "back": "Back", "wrong": "Wrong code. {n} tries left.", "blocked": "Too many wrong tries. Wait {s} s.", "wait": "Wait {s} s to ask for another code.", "expired": "The code expired. Ask for another one.", "failed": "It did not work. Try again.", "usePin": "Use the old PIN", "usePair": "Pair with the code on the TV", "pinOffMsg": "The old PIN was turned off. Pair this device with the code on the TV.", "devices": "Paired devices", "none": "No paired devices.", "self": "this device", "pairedOn": "paired on {d}", "remove": "Remove", "removeAsk": "Remove \"{name}\"? It will need to pair again.", "yes": "Yes, remove", "no": "No", "pinOn": "Old PIN: on. It still unlocks the controls.", "pinOff": "Old PIN: off. Only paired devices use the controls.", "pinTurnOff": "Turn off the old PIN", "pinTurnOn": "Turn on the old PIN", "needPair": "Pair this device to see and remove devices.", "local": "This is the PS5 itself: no pairing needed.", "removedSelf": "This device was removed. Pair again to use the controls."},
+  es: {"title": "Vincular este dispositivo", "text": "Para usar los controles, vincula este dispositivo una vez. La PS5 muestra un código de 6 dígitos en una notificación y en la pantalla de Jobe.", "nameLbl": "Nombre de este dispositivo", "ask": "Pedir código", "codeText": "Escribe el código de 6 dígitos que apareció en la PS5. Vale 2 minutos.", "pair": "Vincular", "back": "Volver", "wrong": "Código incorrecto. Quedan {n} intentos.", "blocked": "Demasiados intentos fallidos. Espera {s} s.", "wait": "Espera {s} s para pedir otro código.", "expired": "El código caducó. Pide otro.", "failed": "No funcionó. Inténtalo de nuevo.", "usePin": "Usar el PIN antiguo", "usePair": "Vincular con el código de la TV", "pinOffMsg": "El PIN antiguo se desactivó. Vincula este dispositivo con el código de la TV.", "devices": "Dispositivos vinculados", "none": "Ningún dispositivo vinculado.", "self": "este dispositivo", "pairedOn": "vinculado el {d}", "remove": "Quitar", "removeAsk": "¿Quitar \"{name}\"? Tendrá que vincularse de nuevo.", "yes": "Sí, quitar", "no": "No", "pinOn": "PIN antiguo: activado. Todavía desbloquea los controles.", "pinOff": "PIN antiguo: desactivado. Solo los dispositivos vinculados usan los controles.", "pinTurnOff": "Desactivar el PIN antiguo", "pinTurnOn": "Activar el PIN antiguo", "needPair": "Vincula este dispositivo para ver y quitar dispositivos.", "local": "Esta es la propia PS5: no hace falta vincular.", "removedSelf": "Este dispositivo fue quitado. Vincúlalo de nuevo para usar los controles."},
+  fr: {"title": "Associer cet appareil", "text": "Pour utiliser les commandes, associez cet appareil une fois. La PS5 affiche un code à 6 chiffres dans une notification et sur l'écran de Jobe.", "nameLbl": "Nom de cet appareil", "ask": "Demander un code", "codeText": "Saisissez le code à 6 chiffres affiché sur la PS5. Il est valable 2 minutes.", "pair": "Associer", "back": "Retour", "wrong": "Code incorrect. Encore {n} essais.", "blocked": "Trop d'essais incorrects. Attendez {s} s.", "wait": "Attendez {s} s pour demander un autre code.", "expired": "Le code a expiré. Demandez-en un autre.", "failed": "Ça n'a pas marché. Réessayez.", "usePin": "Utiliser l'ancien PIN", "usePair": "Associer avec le code de la TV", "pinOffMsg": "L'ancien PIN a été désactivé. Associez cet appareil avec le code de la TV.", "devices": "Appareils associés", "none": "Aucun appareil associé.", "self": "cet appareil", "pairedOn": "associé le {d}", "remove": "Retirer", "removeAsk": "Retirer « {name} » ? Il devra être associé à nouveau.", "yes": "Oui, retirer", "no": "Non", "pinOn": "Ancien PIN : activé. Il déverrouille encore les commandes.", "pinOff": "Ancien PIN : désactivé. Seuls les appareils associés utilisent les commandes.", "pinTurnOff": "Désactiver l'ancien PIN", "pinTurnOn": "Activer l'ancien PIN", "needPair": "Associez cet appareil pour voir et retirer les appareils.", "local": "C'est la PS5 elle-même : pas besoin d'association.", "removedSelf": "Cet appareil a été retiré. Associez-le à nouveau pour utiliser les commandes."},
+  de: {"title": "Dieses Gerät koppeln", "text": "Um die Steuerung zu nutzen, koppeln Sie dieses Gerät einmal. Die PS5 zeigt einen 6-stelligen Code in einer Benachrichtigung und auf dem Jobe-Bildschirm.", "nameLbl": "Name dieses Geräts", "ask": "Code anfordern", "codeText": "Geben Sie den 6-stelligen Code ein, der auf der PS5 erschienen ist. Er gilt 2 Minuten.", "pair": "Koppeln", "back": "Zurück", "wrong": "Falscher Code. Noch {n} Versuche.", "blocked": "Zu viele falsche Versuche. Warten Sie {s} s.", "wait": "Warten Sie {s} s, um einen neuen Code anzufordern.", "expired": "Der Code ist abgelaufen. Fordern Sie einen neuen an.", "failed": "Hat nicht geklappt. Bitte erneut versuchen.", "usePin": "Alte PIN verwenden", "usePair": "Mit dem Code vom Fernseher koppeln", "pinOffMsg": "Die alte PIN wurde abgeschaltet. Koppeln Sie dieses Gerät mit dem Code vom Fernseher.", "devices": "Gekoppelte Geräte", "none": "Keine gekoppelten Geräte.", "self": "dieses Gerät", "pairedOn": "gekoppelt am {d}", "remove": "Entfernen", "removeAsk": "„{name}“ entfernen? Es muss danach neu gekoppelt werden.", "yes": "Ja, entfernen", "no": "Nein", "pinOn": "Alte PIN: an. Sie entsperrt die Steuerung weiterhin.", "pinOff": "Alte PIN: aus. Nur gekoppelte Geräte nutzen die Steuerung.", "pinTurnOff": "Alte PIN abschalten", "pinTurnOn": "Alte PIN einschalten", "needPair": "Koppeln Sie dieses Gerät, um Geräte zu sehen und zu entfernen.", "local": "Das ist die PS5 selbst: keine Kopplung nötig.", "removedSelf": "Dieses Gerät wurde entfernt. Koppeln Sie es neu, um die Steuerung zu nutzen."},
+  it: {"title": "Associa questo dispositivo", "text": "Per usare i controlli, associa questo dispositivo una volta. La PS5 mostra un codice di 6 cifre in una notifica e sullo schermo di Jobe.", "nameLbl": "Nome di questo dispositivo", "ask": "Chiedi un codice", "codeText": "Inserisci il codice di 6 cifre apparso sulla PS5. Vale 2 minuti.", "pair": "Associa", "back": "Indietro", "wrong": "Codice errato. Restano {n} tentativi.", "blocked": "Troppi tentativi errati. Attendi {s} s.", "wait": "Attendi {s} s per chiedere un altro codice.", "expired": "Il codice è scaduto. Chiedine un altro.", "failed": "Non è andata. Riprova.", "usePin": "Usa il vecchio PIN", "usePair": "Associa con il codice della TV", "pinOffMsg": "Il vecchio PIN è stato disattivato. Associa questo dispositivo con il codice della TV.", "devices": "Dispositivi associati", "none": "Nessun dispositivo associato.", "self": "questo dispositivo", "pairedOn": "associato il {d}", "remove": "Rimuovi", "removeAsk": "Rimuovere \"{name}\"? Dovrà essere associato di nuovo.", "yes": "Sì, rimuovi", "no": "No", "pinOn": "Vecchio PIN: attivo. Sblocca ancora i controlli.", "pinOff": "Vecchio PIN: disattivato. Solo i dispositivi associati usano i controlli.", "pinTurnOff": "Disattiva il vecchio PIN", "pinTurnOn": "Attiva il vecchio PIN", "needPair": "Associa questo dispositivo per vedere e rimuovere i dispositivi.", "local": "Questa è la PS5 stessa: non serve associare.", "removedSelf": "Questo dispositivo è stato rimosso. Associalo di nuovo per usare i controlli."},
+  ru: {"title": "Привязать это устройство", "text": "Чтобы пользоваться управлением, привяжите это устройство один раз. PS5 покажет 6-значный код в уведомлении и на экране Jobe.", "nameLbl": "Название устройства", "ask": "Получить код", "codeText": "Введите 6-значный код, который появился на PS5. Он действует 2 минуты.", "pair": "Привязать", "back": "Назад", "wrong": "Неверный код. Осталось попыток: {n}.", "blocked": "Слишком много неверных попыток. Подождите {s} с.", "wait": "Подождите {s} с, чтобы запросить новый код.", "expired": "Срок кода истёк. Запросите новый.", "failed": "Не получилось. Попробуйте ещё раз.", "usePin": "Использовать старый PIN", "usePair": "Привязать по коду с телевизора", "pinOffMsg": "Старый PIN отключён. Привяжите это устройство по коду с телевизора.", "devices": "Привязанные устройства", "none": "Нет привязанных устройств.", "self": "это устройство", "pairedOn": "привязано {d}", "remove": "Удалить", "removeAsk": "Удалить «{name}»? Его придётся привязать заново.", "yes": "Да, удалить", "no": "Нет", "pinOn": "Старый PIN: включён. Он всё ещё открывает управление.", "pinOff": "Старый PIN: выключен. Управление доступно только привязанным устройствам.", "pinTurnOff": "Отключить старый PIN", "pinTurnOn": "Включить старый PIN", "needPair": "Привяжите это устройство, чтобы видеть и удалять устройства.", "local": "Это сама PS5: привязка не нужна.", "removedSelf": "Это устройство удалено. Привяжите его снова, чтобы пользоваться управлением."},
+  ja: {"title": "このデバイスをペアリング", "text": "操作を使うには、このデバイスを一度ペアリングしてください。PS5 の通知と Jobe の画面に 6 桁のコードが表示されます。", "nameLbl": "このデバイスの名前", "ask": "コードを表示", "codeText": "PS5 に表示された 6 桁のコードを入力してください。有効期間は 2 分です。", "pair": "ペアリング", "back": "戻る", "wrong": "コードが違います。残り {n} 回です。", "blocked": "間違いが多すぎます。{s} 秒待ってください。", "wait": "次のコードを頼むまで {s} 秒待ってください。", "expired": "コードの期限が切れました。もう一度頼んでください。", "failed": "うまくいきませんでした。もう一度試してください。", "usePin": "以前の PIN を使う", "usePair": "テレビのコードでペアリング", "pinOffMsg": "以前の PIN はオフになりました。テレビのコードでこのデバイスをペアリングしてください。", "devices": "ペアリング済みのデバイス", "none": "ペアリング済みのデバイスはありません。", "self": "このデバイス", "pairedOn": "{d} にペアリング", "remove": "削除", "removeAsk": "「{name}」を削除しますか？もう一度ペアリングが必要になります。", "yes": "削除する", "no": "いいえ", "pinOn": "以前の PIN：オン。まだ操作のロックを解除できます。", "pinOff": "以前の PIN：オフ。ペアリング済みのデバイスだけが操作できます。", "pinTurnOff": "以前の PIN をオフにする", "pinTurnOn": "以前の PIN をオンにする", "needPair": "デバイスの一覧と削除には、このデバイスをペアリングしてください。", "local": "これは PS5 本体です。ペアリングは不要です。", "removedSelf": "このデバイスは削除されました。操作するにはもう一度ペアリングしてください。"},
+  zh: {"title": "配对此设备", "text": "要使用控制功能，请将此设备配对一次。PS5 会在通知和 Jobe 屏幕上显示 6 位数代码。", "nameLbl": "此设备的名称", "ask": "获取代码", "codeText": "输入 PS5 上显示的 6 位数代码。代码 2 分钟内有效。", "pair": "配对", "back": "返回", "wrong": "代码错误。还剩 {n} 次。", "blocked": "错误次数过多。请等待 {s} 秒。", "wait": "请等待 {s} 秒后再获取新代码。", "expired": "代码已过期。请重新获取。", "failed": "没有成功。请重试。", "usePin": "使用旧 PIN", "usePair": "用电视上的代码配对", "pinOffMsg": "旧 PIN 已关闭。请用电视上的代码配对此设备。", "devices": "已配对的设备", "none": "没有已配对的设备。", "self": "此设备", "pairedOn": "配对于 {d}", "remove": "移除", "removeAsk": "移除“{name}”？它需要重新配对。", "yes": "是，移除", "no": "否", "pinOn": "旧 PIN：开启。它仍可解锁控制功能。", "pinOff": "旧 PIN：关闭。只有已配对的设备可以使用控制功能。", "pinTurnOff": "关闭旧 PIN", "pinTurnOn": "开启旧 PIN", "needPair": "配对此设备后才能查看和移除设备。", "local": "这是 PS5 本身：无需配对。", "removedSelf": "此设备已被移除。请重新配对以使用控制功能。"},
+  ar: {"title": "إقران هذا الجهاز", "text": "لاستخدام عناصر التحكم، أقرن هذا الجهاز مرة واحدة. يعرض PS5 رمزًا من 6 أرقام في إشعار وعلى شاشة Jobe.", "nameLbl": "اسم هذا الجهاز", "ask": "طلب رمز", "codeText": "اكتب الرمز المكوّن من 6 أرقام الذي ظهر على PS5. صالح لمدة دقيقتين.", "pair": "إقران", "back": "رجوع", "wrong": "رمز خاطئ. تبقّت {n} محاولات.", "blocked": "محاولات خاطئة كثيرة. انتظر {s} ث.", "wait": "انتظر {s} ث لطلب رمز آخر.", "expired": "انتهت صلاحية الرمز. اطلب رمزًا آخر.", "failed": "لم ينجح ذلك. حاول مرة أخرى.", "usePin": "استخدام رمز PIN القديم", "usePair": "الإقران بالرمز الظاهر على التلفاز", "pinOffMsg": "تم إيقاف رمز PIN القديم. أقرن هذا الجهاز بالرمز الظاهر على التلفاز.", "devices": "الأجهزة المقترنة", "none": "لا توجد أجهزة مقترنة.", "self": "هذا الجهاز", "pairedOn": "اقترن في {d}", "remove": "إزالة", "removeAsk": "إزالة \"{name}\"؟ سيحتاج إلى الإقران من جديد.", "yes": "نعم، أزل", "no": "لا", "pinOn": "رمز PIN القديم: مفعّل. ما زال يفتح عناصر التحكم.", "pinOff": "رمز PIN القديم: متوقف. الأجهزة المقترنة فقط تستخدم عناصر التحكم.", "pinTurnOff": "إيقاف رمز PIN القديم", "pinTurnOn": "تشغيل رمز PIN القديم", "needPair": "أقرن هذا الجهاز لعرض الأجهزة وإزالتها.", "local": "هذا هو جهاز PS5 نفسه: لا حاجة إلى الإقران.", "removedSelf": "تمت إزالة هذا الجهاز. أقرنه من جديد لاستخدام عناصر التحكم."},
+  hi: {"title": "इस डिवाइस को पेयर करें", "text": "कंट्रोल इस्तेमाल करने के लिए इस डिवाइस को एक बार पेयर करें। PS5 एक सूचना में और Jobe की स्क्रीन पर 6 अंकों का कोड दिखाता है।", "nameLbl": "इस डिवाइस का नाम", "ask": "कोड माँगें", "codeText": "PS5 पर दिखा 6 अंकों का कोड लिखें। यह 2 मिनट तक मान्य है।", "pair": "पेयर करें", "back": "वापस", "wrong": "गलत कोड। {n} कोशिशें बाकी हैं।", "blocked": "बहुत सारी गलत कोशिशें। {s} सेकंड रुकें।", "wait": "दूसरा कोड माँगने के लिए {s} सेकंड रुकें।", "expired": "कोड की समय-सीमा खत्म हो गई। दूसरा माँगें।", "failed": "नहीं हो पाया। फिर से कोशिश करें।", "usePin": "पुराना PIN इस्तेमाल करें", "usePair": "टीवी के कोड से पेयर करें", "pinOffMsg": "पुराना PIN बंद कर दिया गया है। टीवी के कोड से इस डिवाइस को पेयर करें।", "devices": "पेयर किए गए डिवाइस", "none": "कोई पेयर किया गया डिवाइस नहीं।", "self": "यह डिवाइस", "pairedOn": "{d} को पेयर किया", "remove": "हटाएँ", "removeAsk": "\"{name}\" को हटाएँ? इसे फिर से पेयर करना होगा।", "yes": "हाँ, हटाएँ", "no": "नहीं", "pinOn": "पुराना PIN: चालू। यह अब भी कंट्रोल खोलता है।", "pinOff": "पुराना PIN: बंद। केवल पेयर किए गए डिवाइस कंट्रोल इस्तेमाल करते हैं।", "pinTurnOff": "पुराना PIN बंद करें", "pinTurnOn": "पुराना PIN चालू करें", "needPair": "डिवाइस देखने और हटाने के लिए इस डिवाइस को पेयर करें।", "local": "यह खुद PS5 है: पेयर करने की ज़रूरत नहीं।", "removedSelf": "यह डिवाइस हटा दिया गया। कंट्रोल इस्तेमाल करने के लिए फिर से पेयर करें।"},
+  bn: {"title": "এই ডিভাইস পেয়ার করুন", "text": "নিয়ন্ত্রণগুলো ব্যবহার করতে এই ডিভাইসটি একবার পেয়ার করুন। PS5 একটি নোটিফিকেশনে এবং Jobe-এর পর্দায় ৬ অঙ্কের কোড দেখায়।", "nameLbl": "এই ডিভাইসের নাম", "ask": "কোড চান", "codeText": "PS5-এ দেখানো ৬ অঙ্কের কোডটি লিখুন। এটি ২ মিনিট বৈধ।", "pair": "পেয়ার করুন", "back": "ফিরে যান", "wrong": "ভুল কোড। আর {n}টি চেষ্টা বাকি।", "blocked": "অনেকগুলো ভুল চেষ্টা। {s} সেকেন্ড অপেক্ষা করুন।", "wait": "আরেকটি কোড চাইতে {s} সেকেন্ড অপেক্ষা করুন।", "expired": "কোডের মেয়াদ শেষ। আরেকটি চান।", "failed": "হয়নি। আবার চেষ্টা করুন।", "usePin": "পুরোনো PIN ব্যবহার করুন", "usePair": "টিভির কোড দিয়ে পেয়ার করুন", "pinOffMsg": "পুরোনো PIN বন্ধ করা হয়েছে। টিভির কোড দিয়ে এই ডিভাইস পেয়ার করুন।", "devices": "পেয়ার করা ডিভাইস", "none": "কোনো পেয়ার করা ডিভাইস নেই।", "self": "এই ডিভাইস", "pairedOn": "{d} তারিখে পেয়ার করা", "remove": "সরান", "removeAsk": "\"{name}\" সরাবেন? এটিকে আবার পেয়ার করতে হবে।", "yes": "হ্যাঁ, সরান", "no": "না", "pinOn": "পুরোনো PIN: চালু। এটি এখনো নিয়ন্ত্রণ খুলে দেয়।", "pinOff": "পুরোনো PIN: বন্ধ। শুধু পেয়ার করা ডিভাইস নিয়ন্ত্রণ ব্যবহার করে।", "pinTurnOff": "পুরোনো PIN বন্ধ করুন", "pinTurnOn": "পুরোনো PIN চালু করুন", "needPair": "ডিভাইস দেখতে ও সরাতে এই ডিভাইসটি পেয়ার করুন।", "local": "এটি নিজেই PS5: পেয়ার করার দরকার নেই।", "removedSelf": "এই ডিভাইসটি সরানো হয়েছে। নিয়ন্ত্রণ ব্যবহার করতে আবার পেয়ার করুন।"},
+  ur: {"title": "یہ ڈیوائس جوڑیں", "text": "کنٹرول استعمال کرنے کے لیے یہ ڈیوائس ایک بار جوڑیں۔ PS5 ایک اطلاع میں اور Jobe کی اسکرین پر 6 ہندسوں کا کوڈ دکھاتا ہے۔", "nameLbl": "اس ڈیوائس کا نام", "ask": "کوڈ مانگیں", "codeText": "PS5 پر دکھایا گیا 6 ہندسوں کا کوڈ لکھیں۔ یہ 2 منٹ تک درست ہے۔", "pair": "جوڑیں", "back": "واپس", "wrong": "غلط کوڈ۔ {n} کوششیں باقی ہیں۔", "blocked": "بہت زیادہ غلط کوششیں۔ {s} سیکنڈ انتظار کریں۔", "wait": "دوسرا کوڈ مانگنے کے لیے {s} سیکنڈ انتظار کریں۔", "expired": "کوڈ کی مدت ختم ہو گئی۔ دوسرا مانگیں۔", "failed": "نہیں ہو سکا۔ دوبارہ کوشش کریں۔", "usePin": "پرانا PIN استعمال کریں", "usePair": "ٹی وی کے کوڈ سے جوڑیں", "pinOffMsg": "پرانا PIN بند کر دیا گیا ہے۔ ٹی وی کے کوڈ سے یہ ڈیوائس جوڑیں۔", "devices": "جڑی ہوئی ڈیوائسز", "none": "کوئی جڑی ہوئی ڈیوائس نہیں۔", "self": "یہ ڈیوائس", "pairedOn": "{d} کو جوڑا گیا", "remove": "ہٹائیں", "removeAsk": "\"{name}\" ہٹائیں؟ اسے دوبارہ جوڑنا ہوگا۔", "yes": "ہاں، ہٹائیں", "no": "نہیں", "pinOn": "پرانا PIN: آن۔ یہ اب بھی کنٹرول کھولتا ہے۔", "pinOff": "پرانا PIN: بند۔ صرف جڑی ہوئی ڈیوائسز کنٹرول استعمال کرتی ہیں۔", "pinTurnOff": "پرانا PIN بند کریں", "pinTurnOn": "پرانا PIN آن کریں", "needPair": "ڈیوائسز دیکھنے اور ہٹانے کے لیے یہ ڈیوائس جوڑیں۔", "local": "یہ خود PS5 ہے: جوڑنے کی ضرورت نہیں۔", "removedSelf": "یہ ڈیوائس ہٹا دی گئی۔ کنٹرول استعمال کرنے کے لیے دوبارہ جوڑیں۔"},
+  id: {"title": "Pasangkan perangkat ini", "text": "Untuk memakai kontrol, pasangkan perangkat ini sekali. PS5 menampilkan kode 6 digit di notifikasi dan di layar Jobe.", "nameLbl": "Nama perangkat ini", "ask": "Minta kode", "codeText": "Ketik kode 6 digit yang muncul di PS5. Kode berlaku 2 menit.", "pair": "Pasangkan", "back": "Kembali", "wrong": "Kode salah. Tersisa {n} percobaan.", "blocked": "Terlalu banyak percobaan salah. Tunggu {s} dtk.", "wait": "Tunggu {s} dtk untuk meminta kode lain.", "expired": "Kode sudah kedaluwarsa. Minta kode lain.", "failed": "Tidak berhasil. Coba lagi.", "usePin": "Pakai PIN lama", "usePair": "Pasangkan dengan kode di TV", "pinOffMsg": "PIN lama sudah dimatikan. Pasangkan perangkat ini dengan kode di TV.", "devices": "Perangkat yang dipasangkan", "none": "Belum ada perangkat yang dipasangkan.", "self": "perangkat ini", "pairedOn": "dipasangkan pada {d}", "remove": "Hapus", "removeAsk": "Hapus \"{name}\"? Perangkat itu harus dipasangkan lagi.", "yes": "Ya, hapus", "no": "Tidak", "pinOn": "PIN lama: aktif. Masih bisa membuka kontrol.", "pinOff": "PIN lama: mati. Hanya perangkat yang dipasangkan memakai kontrol.", "pinTurnOff": "Matikan PIN lama", "pinTurnOn": "Aktifkan PIN lama", "needPair": "Pasangkan perangkat ini untuk melihat dan menghapus perangkat.", "local": "Ini PS5 itu sendiri: tidak perlu dipasangkan.", "removedSelf": "Perangkat ini sudah dihapus. Pasangkan lagi untuk memakai kontrol."}
+};
+const PL = (() => {
+  const lang = String(navigator.language || "en").toLowerCase();
+  const code = lang.slice(0, 2);
+  return PAIR_T[code] || PAIR_T.en;
+})();
+const pfill = (text, vars) => text.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+</script>
 <script>
 "use strict";
 const T = {
@@ -290,7 +336,10 @@ let session = "", confirming = null, jobs = [], pinSet = true, limit = 0, maxLim
 // glibren.19: a sessao do PIN fica guardada no aparelho (o Android recarrega a WebView do Jobe Controle); o payload a
 // mantem 30 dias renovados a cada uso. lockButton() grava/apaga a guardada sempre que a sessao muda.
 const SESSION_KEY = "jobe.session";
-try { const saved = localStorage.getItem(SESSION_KEY); if (/^[0-9a-f]{32}$/.test(saved || "")) session = saved; } catch {}
+// Pareamento: a credencial guardada e o token deste aparelho (64 hex, so dele) ou, na transicao, a sessao do PIN (32 hex).
+// "local" = a pagina aberta no proprio PS5 (127.0.0.1, isento): nunca e guardado.
+const CRED = /^([0-9a-f]{32}|[0-9a-f]{64})$/;
+try { const saved = localStorage.getItem(SESSION_KEY); if (CRED.test(saved || "")) session = saved; } catch {}
 // glibren.13: limite de velocidade (MB/s inteiro de 0 a maxSpeed; 0 = sem limite; null = payload antigo, sem o botao).
 let speedLimit = null, speedLimitSet = false, maxSpeed = 1000;
 const DEMO = location.protocol === "file:" || new URLSearchParams(location.search).has("demo");
@@ -324,6 +373,8 @@ async function api(method, path, body) {
     if (demo.speedLimit && sum > demo.speedLimit * MB) for (const j of demo.jobs) if (j.state === "downloading") j.bytesPerSecond *= demo.speedLimit * MB * (0.97 + Math.random() * 0.03) / sum;
     if (method === "POST") { const [, , , id, act] = path.split("/"); const j = demo.jobs.find((x) => x.id === id && x.state !== "extracting");
       if (path === "/api/unlock") return body.pin === "1234" ? { status: 200, data: { session: "demo" } } : { status: 403, data: { retryIn: 0 } };
+      if (path === "/api/pair/request") return { status: 200, data: { ok: true, validFor: 120 } };
+      if (path === "/api/pair/confirm") return body.code === "123456" ? { status: 200, data: { ok: true, token: "d".repeat(64), id: "0123456789abcdef" } } : { status: 403, data: { error: "wrong", left: 4 } };
       if (!session) return { status: 401, data: { error: "pin" } };
       if (path === "/api/config") {
         if ("concurrency" in body) Object.assign(demo, { limit: body.concurrency, limitSet: true });
@@ -346,7 +397,7 @@ async function api(method, path, body) {
 function lockButton() {
   const b = $("lock"); b.className = session ? "lock open" : "lock";
   b.innerHTML = (session ? ICON.open : ICON.lock) + `<span>${session ? L.unlocked : L.locked}</span>`;
-  if (!DEMO) try { if (session) localStorage.setItem(SESSION_KEY, session); else localStorage.removeItem(SESSION_KEY); } catch {}
+  if (!DEMO) try { if (CRED.test(session)) localStorage.setItem(SESSION_KEY, session); else if (!session) localStorage.removeItem(SESSION_KEY); } catch {}
 }
 function render() {
   const list = $("list"); list.textContent = "";
@@ -661,21 +712,98 @@ $("limitDown").onclick = () => guarded(() => setLimit(limit - 1));
 $("limitUp").onclick = () => guarded(() => setLimit(limit + 1));
 let pending = null;
 function guarded(fn) { if (session) fn(); else { pending = fn; openPin(); } }
-// Sem PIN definido na Jobee'sLair, a janela so explica onde definir (os controles ficam fechados).
-function openPin() {
+// Pareamento por aparelho: pedir credencial abre o pareamento (codigo de 6 digitos na TV). O PIN antigo so aparece
+// como link enquanto estiver ligado e definido na Jobee'sLair (transicao).
+let pinOn = true, pairInfo = null, pairStep = "name";
+function openPin() { openPair(""); }
+// O PIN antigo. Sem PIN definido na Jobee'sLair, a janela so explica onde definir.
+function openPinForm() {
+  $("pairForm").hidden = true; $("pinForm").hidden = false;
   $("pinMsg").textContent = ""; $("pin").value = "";
   $("pinText").textContent = pinSet ? L.pinText : L.noPin;
   $("pin").hidden = $("pinOk").hidden = !pinSet;
   $("sheet").hidden = false;
   if (pinSet) setTimeout(() => $("pin").focus(), 50);
 }
-$("lock").onclick = () => { if (session) { session = ""; lockButton(); } else openPin(); };
+function guessName() {
+  let saved = "";
+  try { saved = localStorage.getItem("jobe.deviceName") || ""; } catch {}
+  if (saved) return saved;
+  const ua = navigator.userAgent || "";
+  if (window.JobeApp) return "JobeControle";
+  if (/iPhone/.test(ua)) return "iPhone";
+  if (/iPad/.test(ua)) return "iPad";
+  if (/Android/.test(ua)) return "Android";
+  if (/Windows/.test(ua)) return "PC Windows";
+  if (/Mac OS/.test(ua)) return "Mac";
+  if (/Linux/.test(ua)) return "Linux";
+  return "Navegador";
+}
+function showPairStep(msg) {
+  const code = pairStep === "code";
+  $("pairTitle").textContent = PL.title;
+  $("pairText").textContent = code ? PL.codeText : PL.text;
+  $("pairNameLbl").textContent = PL.nameLbl;
+  $("pairNameLbl").hidden = $("pairName").hidden = code;
+  $("pairCode").hidden = !code;
+  $("pairCancel").textContent = PL.back;
+  $("pairOk").textContent = code ? PL.pair : PL.ask;
+  $("usePin").textContent = PL.usePin;
+  $("usePin").hidden = !(pinOn && pinSet);
+  $("pairMsg").textContent = msg || "";
+}
+function openPair(msg) {
+  $("pinForm").hidden = true; $("pairForm").hidden = false;
+  pairStep = "name";
+  if (!$("pairName").value) $("pairName").value = guessName();
+  $("pairCode").value = "";
+  showPairStep(msg);
+  $("sheet").hidden = false;
+}
+function pairError(r) {
+  const d = r.data || {};
+  if (d.error === "blocked") return pfill(PL.blocked, { s: d.retryIn || 0 });
+  if (d.error === "wait") return pfill(PL.wait, { s: d.retryIn || 0 });
+  if (d.error === "expired" || d.error === "no-code") return PL.expired;
+  return PL.failed;
+}
+$("usePin").onclick = () => openPinForm();
+$("usePair").textContent = PL.usePair;
+$("usePair").onclick = () => openPair("");
+$("pairCancel").onclick = () => { if (pairStep === "code") { pairStep = "name"; showPairStep(""); } else { $("sheet").hidden = true; pending = null; } };
+$("pairCode").oninput = () => { const v = $("pairCode").value.replace(/\D/g, "").slice(0, 6); if (v !== $("pairCode").value) $("pairCode").value = v; };
+$("pairForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $("pairName").value.trim().slice(0, 40) || guessName();
+  try { localStorage.setItem("jobe.deviceName", name); } catch {}
+  $("pairOk").disabled = true;
+  try {
+    if (pairStep === "name") {
+      const r = await api("POST", "/api/pair/request", { name }).catch(() => ({ status: 0, data: {} }));
+      if (r.status === 200) { pairStep = "code"; showPairStep(""); setTimeout(() => $("pairCode").focus(), 50); }
+      else $("pairMsg").textContent = pairError(r);
+      return;
+    }
+    const r = await api("POST", "/api/pair/confirm", { code: $("pairCode").value.replace(/\D/g, ""), name }).catch(() => ({ status: 0, data: {} }));
+    if (r.status === 200 && /^[0-9a-f]{64}$/.test(r.data.token || "")) {
+      session = r.data.token; pairStep = "name"; $("sheet").hidden = true; lockButton();
+      if (window.pairHook) window.pairHook();
+      const f = pending; pending = null; if (f) f();
+      return;
+    }
+    if (r.data && r.data.error === "wrong") { $("pairCode").value = ""; $("pairMsg").textContent = pfill(PL.wrong, { n: r.data.left || 0 }); return; }
+    pairStep = "name"; showPairStep(pairError(r));
+  } finally { $("pairOk").disabled = false; }
+};
+// O cadeado: com um aparelho pareado (ou no proprio PS5) abre a lista de aparelhos; com a sessao do PIN, tranca de novo.
+$("lock").onclick = () => { if (session.length === 64 || session === "local") { if (window.openDevices) window.openDevices(); } else if (session) { session = ""; lockButton(); } else openPin(); };
 $("pinCancel").onclick = () => { $("sheet").hidden = true; pending = null; };
 $("pinForm").onsubmit = async (e) => {
   e.preventDefault();
   const r = await api("POST", "/api/unlock", { pin: $("pin").value });
   if (r.status === 200 && r.data.session) { session = r.data.session; $("sheet").hidden = true; lockButton(); const f = pending; pending = null; if (f) f(); }
-  else if (r.data.noPin) { pinSet = false; openPin(); }
+  else if (r.data.pinOff) { pinOn = false; openPair(PL.pinOffMsg); }
+  else if (r.data.noPin) { pinSet = false; openPinForm(); }
   else $("pinMsg").textContent = r.data.retryIn ? L.pinBlocked.replace("{s}", r.data.retryIn) : L.pinWrong;
 };
 async function act(id, what) {
@@ -718,7 +846,17 @@ async function pinOnOpen() {
     session = ""; lockButton();
   }
   await firstRefresh;
-  if (!session && lastStatus && pinSet && $("sheet").hidden) openPin();
+  await loadPairInfo();
+  // Pede uma vez ao abrir quando o PS5 ja tem protecao (PIN ou aparelho pareado); senao, so na primeira acao.
+  if (!session && lastStatus && (pinSet || (pairInfo && pairInfo.devices > 0)) && $("sheet").hidden) openPin();
+}
+// GET /api/pair: o PIN antigo ligado? A pagina esta no proprio PS5 (127.0.0.1, isento)?
+async function loadPairInfo() {
+  let r = null;
+  try { r = await api("GET", "/api/pair"); } catch { return; }
+  if (!r || r.status !== 200 || !r.data || r.data.ok !== true) return; // payload antigo, sem pareamento
+  pairInfo = r.data; pinOn = r.data.pinOn !== false;
+  if (!session && r.data.local === true) { session = "local"; lockButton(); }
 }
 pinOnOpen();
 </script>
@@ -1072,7 +1210,7 @@ pinOnOpen();
 (() => {
   const D = {
     pt: { title: "Diagnóstico (enviar os logs)", text: "Manda os logs do PS5, sem chaves, senhas, links temporários e e-mails, para o repositório privado de diagnósticos no GitHub. Funciona com a Jobee'sLair fechada.",
-      unlock: "Liberar com o PIN", keyLabel: "Chave do GitHub para diagnóstico", keyHint: "Cole aqui a chave (github_pat_…) criada só para o repositório ps5-diagnosticos. Ela fica só no PS5.",
+      unlock: "Liberar os controles", keyLabel: "Chave do GitHub para diagnóstico", keyHint: "Cole aqui a chave (github_pat_…) criada só para o repositório ps5-diagnosticos. Ela fica só no PS5.",
       save: "Salvar chave", keySet: "Chave configurada ✓, termina em …{t}", noKey: "Nenhuma chave salva.", remove: "Remover", removed: "Chave removida.", saved: "Chave salva.",
       send: "Enviar diagnóstico", zip: "Baixar diagnóstico (.zip)", zipWait: "Montando o .zip…", zipFail: "Não deu para montar o .zip. Tente de novo.", zipApp: "O .zip só baixa pelo navegador do celular (o app JobeControle não salva arquivos). Aqui, use Enviar diagnóstico.",
       sending: "Enviando… {n} de {t}", sent: "Enviado ✓ (pasta {f})", fail: "Não deu. Tente de novo.",
@@ -1081,7 +1219,7 @@ pinOnOpen();
         "no-repo": "A chave não vê o repositório ps5-diagnosticos (404). Confira o repositório escolhido na chave.", network: "Sem internet: o PS5 não falou com o GitHub.",
         http: "O GitHub respondeu HTTP {h}.", nothing: "Nada para enviar.", memory: "O PS5 ficou sem memória para montar o envio." } },
     en: { title: "Diagnostics (send the logs)", text: "Sends the PS5 logs, without keys, passwords, temporary links or e-mails, to the private diagnostics repository on GitHub. Works with Jobee'sLair closed.",
-      unlock: "Unlock with the PIN", keyLabel: "GitHub key for diagnostics", keyHint: "Paste the key (github_pat_…) made only for the ps5-diagnosticos repository. It stays only on the PS5.",
+      unlock: "Unlock the controls", keyLabel: "GitHub key for diagnostics", keyHint: "Paste the key (github_pat_…) made only for the ps5-diagnosticos repository. It stays only on the PS5.",
       save: "Save key", keySet: "Key set ✓, ends in …{t}", noKey: "No key saved.", remove: "Remove", removed: "Key removed.", saved: "Key saved.",
       send: "Send diagnostics", zip: "Download diagnostics (.zip)", zipWait: "Building the .zip…", zipFail: "The .zip could not be built. Try again.", zipApp: "The .zip only downloads in the phone's browser (the JobeControle app does not save files). Here, use Send diagnostics.",
       sending: "Sending… {n} of {t}", sent: "Sent ✓ (folder {f})", fail: "It did not work. Try again.",
@@ -1196,13 +1334,13 @@ pinOnOpen();
 "use strict";
 (() => {
   const J = {
-    pt: { title: "Jobe (versão e atualização)", unlock: "Liberar com o PIN", installed: "Instalada: {v}", latest: "Última publicada: {v}", unknownV: "ainda não informada",
+    pt: { title: "Jobe (versão e atualização)", unlock: "Liberar os controles", installed: "Instalada: {v}", latest: "Última publicada: {v}", unknownV: "ainda não informada",
       notChecked: "Última publicada: a Jobe ainda não conferiu", update: "Atualizar a Jobe", upToDate: "A Jobe já está na versão mais nova.", fail: "Não deu. Tente de novo.",
       openApp: "Pedido guardado. Abra a Jobe para concluir (o pedido vale 24 h).", sent: "Pedido entregue à Jobe…", autoOn: "Instalação automática ligada: a Jobe conclui sozinha ao abrir.",
       phases: { checking: "Procurando a versão nova…", downloading: "Baixando a atualização: {p}%", ready: "Pronta: reiniciando…", restarting: "Pronto: reiniciando a Jobe para aplicar.", current: "A Jobe já está na versão mais nova." },
       errors: { "busy-convert": "Há uma conversão para .exfat em andamento: tente quando ela terminar.", "console-only": "Só dá para atualizar no PS5.", "check-failed": "Não deu para falar com o GitHub (sem internet?).",
         "download-failed": "O download da atualização falhou.", "restart-refused": "A Jobe ainda está ocupada e não reiniciou.", failed: "A atualização falhou." } },
-    en: { title: "Jobe (version and update)", unlock: "Unlock with the PIN", installed: "Installed: {v}", latest: "Latest release: {v}", unknownV: "not reported yet",
+    en: { title: "Jobe (version and update)", unlock: "Unlock the controls", installed: "Installed: {v}", latest: "Latest release: {v}", unknownV: "not reported yet",
       notChecked: "Latest release: Jobe has not checked yet", update: "Update Jobe", upToDate: "Jobe is already on the newest version.", fail: "It did not work. Try again.",
       openApp: "Request saved. Open Jobe to finish (the request lasts 24 h).", sent: "Request handed to Jobe…", autoOn: "Automatic install is on: Jobe finishes by itself when it opens.",
       phases: { checking: "Looking for the new version…", downloading: "Downloading the update: {p}%", ready: "Ready: restarting…", restarting: "Done: restarting Jobe to apply.", current: "Jobe is already on the newest version." },
@@ -1273,14 +1411,14 @@ pinOnOpen();
 "use strict";
 (() => {
   const P = {
-    pt: { title: "Payload de downloads (versão e atualização)", unlock: "Liberar com o PIN", running: "Em uso: {v} ({s})", embedded: "a que vem com a Jobe", downloaded: "baixada e assinada",
+    pt: { title: "Payload de downloads (versão e atualização)", unlock: "Liberar os controles", running: "Em uso: {v} ({s})", embedded: "a que vem com a Jobe", downloaded: "baixada e assinada",
       latest: "Última conferida: {v}", update: "Procurar e atualizar o payload", revert: "Voltar ao payload embutido", fail: "Não deu. Tente de novo.",
       reverted: "Pronto: as versões baixadas ficaram de lado; o embutido volta quando nada estiver baixando.",
       phases: { checking: "Procurando a versão nova…", downloading: "Baixando {v}: {p}%", ready: "Versão {v} pronta: entra quando nada estiver baixando nem convertendo.",
         waiting: "Versão {v} pronta, esperando: {w} em andamento.", swapping: "Trocando para {v}…", current: "O payload já está na versão mais nova.",
         "needs-app": "A versão {v} precisa de uma Jobe mais nova: atualize a Jobe primeiro." },
       waits: { download: "download", convert: "conversão", quiet: "pausa depois de fechar o app" }, failed: "Não atualizou: {e}" },
-    en: { title: "Download payload (version and update)", unlock: "Unlock with the PIN", running: "Running: {v} ({s})", embedded: "the one built into Jobe", downloaded: "downloaded and signed",
+    en: { title: "Download payload (version and update)", unlock: "Unlock the controls", running: "Running: {v} ({s})", embedded: "the one built into Jobe", downloaded: "downloaded and signed",
       latest: "Last checked: {v}", update: "Look for and install a payload update", revert: "Back to the built-in payload", fail: "It did not work. Try again.",
       reverted: "Done: the downloaded versions were set aside; the built-in one comes back when nothing is downloading.",
       phases: { checking: "Looking for the new version…", downloading: "Downloading {v}: {p}%", ready: "Version {v} is ready: it takes over when nothing is downloading or converting.",
@@ -2759,6 +2897,106 @@ body.fopen{overflow:hidden}
     if (hash.startsWith("#loja=")) { try { history.replaceState(null, "", "#loja"); history.pushState({ jl: "loja" }, "", hash); } catch {} }
     show(true, true); routeStore();
   }
+})();
+</script>
+<!-- Pareamento por aparelho (bg_pair.c): "Aparelhos pareados": a lista (o mais novo primeiro, "este aparelho"
+     marcado), Remover com confirmacao na propria pagina (sem caixa do navegador: a WebView do JobeControle nao mostra
+     prompt/alert/confirm) e ligar/desligar o PIN antigo. So um aparelho pareado ou o proprio PS5 ve e muda. -->
+<style>
+.pair-box .pd{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid var(--line)}
+.pair-box .pd:first-child{border-top:0}
+.pair-box .pd b{font-weight:600;overflow-wrap:anywhere}
+.pair-box .pd small{color:var(--subtle);font-size:12.5px;overflow-wrap:anywhere}
+.pair-box .pd .me{display:inline-block;margin-inline-start:6px;padding:0 6px;border:1px solid var(--ice);border-radius:999px;color:var(--ice);font-size:11.5px;font-weight:700}
+.pair-box .row{display:flex;gap:8px}
+.pair-box .ask{font-size:14px;overflow-wrap:anywhere}
+</style>
+<script>
+"use strict";
+(() => {
+  const box = document.createElement("details"); box.className = "diag pair-box"; box.id = "pairBox";
+  const head = document.createElement("summary"); head.textContent = PL.devices;
+  const body = document.createElement("div"); body.className = "dg-body";
+  box.append(head, body);
+  $("foot").before(box);
+  let data = null, need = false, asking = "", msg = "";
+  const demo = { devices: [{ id: "0123456789abcdef", name: "Android", at: Math.floor(Date.now() / 1000) - 86400, self: true }, { id: "fedcba9876543210", name: "PC Windows", at: Math.floor(Date.now() / 1000) - 3600, self: false }], pinOn: true, pinSet: true };
+  async function call(method, path, payload) {
+    if (DEMO) {
+      if (path === "/api/pair/remove") demo.devices = demo.devices.filter((d) => d.id !== payload.id);
+      if (path === "/api/pair/pin") demo.pinOn = payload.on;
+      return { status: 200, data: { ok: true, devices: demo.devices.map((d) => ({ ...d })), pinOn: demo.pinOn, pinSet: demo.pinSet } };
+    }
+    return await api(method, path, payload).catch(() => ({ status: 0, data: {} }));
+  }
+  const line = (text, cls) => { const d = document.createElement("div"); d.className = cls || "dg-note"; d.textContent = text; body.append(d); return d; };
+  const button = (text, cls, onclick) => { const b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = text; b.onclick = onclick; return b; };
+  const when = (at) => { try { return new Date(at * 1000).toLocaleDateString(document.documentElement.lang); } catch { return ""; } };
+  async function load() {
+    const r = await call("GET", "/api/pair/devices");
+    need = r.status === 401;
+    data = r.status === 200 ? r.data : null;
+    render();
+  }
+  async function remove(dev) {
+    asking = ""; msg = "";
+    const r = await call("POST", "/api/pair/remove", { id: dev.id });
+    if (r.status === 401) { need = true; render(); return; }
+    if (r.status !== 200) { msg = PL.failed; render(); return; }
+    if (r.data && r.data.self === true) { session = ""; lockButton(); data = null; need = true; render(); openPair(PL.removedSelf); return; }
+    await load();
+  }
+  async function setPin(on) {
+    msg = "";
+    const r = await call("POST", "/api/pair/pin", { on });
+    if (r.status === 401) { need = true; render(); return; }
+    if (r.status !== 200) { msg = PL.failed; render(); return; }
+    pinOn = on;
+    await load();
+  }
+  function render() {
+    body.textContent = "";
+    if (session === "local") line(PL.local, "dg-ok");
+    if (need || (!session && !DEMO)) {
+      line(PL.needPair);
+      const row = document.createElement("div"); row.className = "row";
+      row.append(button(PL.title, "btn primary", () => openPair("")));
+      body.append(row);
+    } else if (data) {
+      const list = Array.isArray(data.devices) ? data.devices : [];
+      if (!list.length) line(PL.none);
+      for (const dev of list) {
+        const item = document.createElement("div"); item.className = "pd";
+        const name = document.createElement("b"); name.textContent = String(dev.name || "");
+        if (dev.self === true) { const me = document.createElement("span"); me.className = "me"; me.textContent = PL.self; name.append(me); }
+        const at = document.createElement("small"); at.textContent = pfill(PL.pairedOn, { d: when(Number(dev.at) || 0) });
+        item.append(name, at);
+        if (asking === dev.id) {
+          const ask = document.createElement("div"); ask.className = "ask"; ask.textContent = pfill(PL.removeAsk, { name: String(dev.name || "") });
+          const row = document.createElement("div"); row.className = "row";
+          row.append(button(PL.no, "btn", () => { asking = ""; render(); }), button(PL.yes, "btn solid-danger", () => remove(dev)));
+          item.append(ask, row);
+        } else {
+          const row = document.createElement("div"); row.className = "row";
+          row.append(button(PL.remove, "btn danger", () => { asking = dev.id; render(); }));
+          item.append(row);
+        }
+        body.append(item);
+      }
+      // O PIN antigo: so quando ha um definido na Jobee'sLair ou ele ja foi desligado.
+      if (data.pinSet === true || data.pinOn === false) {
+        line(data.pinOn === false ? PL.pinOff : PL.pinOn, data.pinOn === false ? "dg-ok" : "dg-note");
+        const row = document.createElement("div"); row.className = "row";
+        row.append(button(data.pinOn === false ? PL.pinTurnOn : PL.pinTurnOff, "btn", () => setPin(data.pinOn === false)));
+        body.append(row);
+      }
+    }
+    if (msg) line(msg, "dg-err");
+  }
+  window.openDevices = () => { box.open = true; load(); box.scrollIntoView({ block: "start", behavior: "smooth" }); };
+  window.pairHook = () => { if (box.open) load(); else render(); };
+  box.addEventListener("toggle", () => { if (box.open) load(); });
+  render();
 })();
 </script>
 </body>

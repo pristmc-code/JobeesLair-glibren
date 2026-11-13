@@ -43,6 +43,7 @@
 #define CONV_MARGIN (64ull * 1024 * 1024)
 
 static int session_ok(const char* given);
+static int monitor_allowed(const Request* r); // pareamento (bg_pair.c): 127.0.0.1, aparelho pareado ou sessao do PIN
 static void monitor_json(int fd, int status, const char* body);
 static void monitor_send(int fd, int status, const char* type, const void* body, size_t size); // glibren.20: /api/log
 static const char* base_name(const char* path);
@@ -1355,7 +1356,7 @@ static int backup_delete_field(JP* jp, const char* key, void* ctx) {
 }
 
 static void conv_backup_delete(int fd, Request* r, int app) {
-  if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!app && !monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   BackupDelete d = {{0}, {0}};
   JP jp = {r->body, r->body + r->content_length, 0};
   if (!r->content_length || !jp_object(&jp, backup_delete_field, &d)) { backup_reply(fd, app, 400, "{\"error\":\"expected {root, name}\"}"); return; }
@@ -1784,7 +1785,7 @@ static void conv_extract_in_place(Conv* c) {
 
 // POST /api/backup/convert {root, name} (com o PIN): "Converter agora" na lista do BACKUP.
 static void conv_backup_convert(int fd, Request* r, int app) {
-  if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!app && !monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   BackupDelete d = {{0}, {0}};
   JP jp = {r->body, r->body + r->content_length, 0};
   if (!r->content_length || !jp_object(&jp, backup_delete_field, &d)) { backup_reply(fd, app, 400, "{\"error\":\"expected {root, name}\"}"); return; }
@@ -1844,7 +1845,7 @@ static void conv_backup_convert(int fd, Request* r, int app) {
 // glibren.20: POST /api/backup/convert-all (com o PIN): "Converter todos" na lista do BACKUP: cada jogo de PS5 ainda nao
 // convertido entra na fila (os que nao derem direto o payload extrai em BACKUP/_temp). {queued, ps4, converted, nothing}.
 static void conv_backup_convert_all(int fd, Request* r, int app) {
-  if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!app && !monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   char roots[24][256];
   const int count = conv_backup_roots(roots, 24);
   int queued = 0, ps4 = 0, converted = 0, nothing = 0;
@@ -1876,7 +1877,7 @@ static void conv_backup_convert_all(int fd, Request* r, int app) {
 // glibren.20: GET /api/log (com o PIN): o diario do payload (bgdl.log.old + bgdl.log, os ultimos ~1,5 MiB), para ver no
 // celular por que uma conversao ou um download falhou e mandar a quem for ajudar.
 static void conv_log(int fd, Request* r, int app) {
-  if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!app && !monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   // R2-12: o app le no maximo 1 MiB (background-downloads.js); o texto vai num JSON (as quebras de linha dobram), entao
   // para ele so os ultimos 512 KiB. A pagina do celular segue com ~1,5 MiB.
   const size_t cap = app ? 512 * 1024 : 1536 * 1024;

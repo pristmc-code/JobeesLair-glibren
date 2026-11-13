@@ -1877,5 +1877,16 @@
     "crash.suggest": "If it happens again during conversions, try Pause between conversions or Write in chunks (Settings > Downloads).",
     "crash.details": "See details",
     "crash.hideDetails": "Hide details",
-    "crash.ok": "OK"
+    "crash.ok": "OK",
+    "pair.notify": "Jobe: pairing code {code} for \"{name}\" (valid for 2 min)",
+    "pair.notice.title": "Pairing code for \"{name}\"",
+    "pair.notice.detail": "Type it on the device. Valid for {seconds} s more.",
+    "settings.devices": "Paired devices",
+    "settings.devicesHint": "Phones and computers that use the phone page's controls. Removing one ends its access at once.",
+    "settings.devicesNone": "No paired devices yet. On the phone page, tap a control and choose to pair the device.",
+    "settings.devicesOff": "The download payload is not running: the list shows up once it is.",
+    "settings.deviceAt": "Paired on {date}",
+    "settings.deviceRemove": "Press again to remove",
+    "settings.legacyPin": "Accept the old PIN",
+    "settings.legacyPinHint": "While moving to pairing, the PIN still unlocks the phone page. Turn it off to allow only paired devices."
 }

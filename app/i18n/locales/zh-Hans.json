@@ -1877,5 +1877,16 @@
   "crash.suggest": "如果转换时再次发生，请尝试“转换之间暂停”或“分块写入”（设置 > 下载）。",
   "crash.details": "查看详情",
   "crash.hideDetails": "隐藏详情",
-  "crash.ok": "确定"
+  "crash.ok": "确定",
+  "pair.notify": "Jobe：“{name}”的配对代码 {code}（2 分钟内有效）",
+  "pair.notice.title": "“{name}”的配对代码",
+  "pair.notice.detail": "请在设备上输入。还剩 {seconds} 秒。",
+  "settings.devices": "已配对的设备",
+  "settings.devicesHint": "使用手机页面控制功能的手机和电脑。移除后会立即失去访问权限。",
+  "settings.devicesNone": "还没有已配对的设备。在手机页面上点按一个控制项，然后选择配对设备。",
+  "settings.devicesOff": "下载载荷没有运行：运行后会显示列表。",
+  "settings.deviceAt": "配对于 {date}",
+  "settings.deviceRemove": "再按一次以移除",
+  "settings.legacyPin": "接受旧 PIN",
+  "settings.legacyPinHint": "在改用配对期间，PIN 仍可解锁手机页面。关闭后只允许已配对的设备。"
 }

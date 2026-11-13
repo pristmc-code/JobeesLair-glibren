@@ -13,7 +13,7 @@
 
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useState } from 'react';
-import { AppRegistry, FocusScope, ReleaseImages, View, motion } from '@ps5-react/core';
+import { AppRegistry, FocusScope, Platform, ReleaseImages, View, motion } from '@ps5-react/core';
 // First of the app's own imports: the earlier version's files are carried over before any module reads one.
 import { migrationLog } from './state/title-migration-run.js';
 // Second: light motion on the PS4 is set before anything animates.
@@ -54,6 +54,8 @@ import { installLogger } from './services/logger.js';
 import { startMemoryMeter } from './state/memory-meter.js';
 import { startPower } from './state/power.js';
 import { startJobeRemote } from './state/jobe-remote-run.js'; // glibren.44
+import { startPairingWatch } from './state/device-pairing.js'; // pareamento por aparelho
+import { PairCodeNotice } from './ui/PairCodeNotice.jsx';
 import { VERSION } from './version.js';
 import { HOMEBREW_ONLY } from './edition.js';
 import { deviceFacts } from './state/device.js';
@@ -223,6 +225,8 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
       });
     }, []);
     (0, useEffect)(() => startJobeRemote(), []); // glibren.44: "Atualizar a Jobe" pela pagina do celular
+    // Pareamento por aparelho: o codigo de 6 digitos na tela enquanto vale (GET /pair do payload a cada 3 s, so no PS5).
+    (0, useEffect)(() => startPairingWatch({ platform: Platform.OS }), []);
     // The Homebrew section's live index, fetched once a while after launch (state/homebrew-store.js).
     (0, useEffect)(() => startHomebrewRefresh(), []);
     // 0.5.2: the live count, announcements and (unless turned off) the anonymous stats (state/online.js).
@@ -259,7 +263,9 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
         ] }),
         // 0.5.0 Pre Release 4: the one-time What's new, and the screen saver over everything.
         HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(WhatsNew, {}),
-        HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(ScreenSaver, {})
+        HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(ScreenSaver, {}),
+        // Pareamento: o codigo por cima de tudo (ate do protetor de tela), sem pegar o foco.
+        jsx(PairCodeNotice, {})
       ] })
     );
   }

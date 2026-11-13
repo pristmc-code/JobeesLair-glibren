@@ -1877,5 +1877,16 @@
   "crash.suggest": "Se succede di nuovo durante le conversioni, prova la Pausa tra le conversioni o Scrivi a blocchi (Impostazioni > Download).",
   "crash.details": "Vedi dettagli",
   "crash.hideDetails": "Nascondi dettagli",
-  "crash.ok": "OK"
+  "crash.ok": "OK",
+  "pair.notify": "Jobe: codice di associazione {code} per \"{name}\" (vale 2 min)",
+  "pair.notice.title": "Codice di associazione per \"{name}\"",
+  "pair.notice.detail": "Inseriscilo sul dispositivo. Vale ancora {seconds} s.",
+  "settings.devices": "Dispositivi associati",
+  "settings.devicesHint": "Telefoni e computer che usano i controlli della pagina del telefono. Rimuoverne uno ne blocca subito l'accesso.",
+  "settings.devicesNone": "Ancora nessun dispositivo associato. Nella pagina del telefono, tocca un controllo e scegli di associare il dispositivo.",
+  "settings.devicesOff": "Il payload dei download non è attivo: l'elenco appare quando lo sarà.",
+  "settings.deviceAt": "Associato il {date}",
+  "settings.deviceRemove": "Premi di nuovo per rimuovere",
+  "settings.legacyPin": "Accetta il vecchio PIN",
+  "settings.legacyPinHint": "Durante il passaggio all'associazione, il PIN sblocca ancora la pagina del telefono. Disattivalo per accettare solo i dispositivi associati."
 }

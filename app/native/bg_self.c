@@ -898,7 +898,7 @@ static int self_app_route(int fd, Request* r) {
 static int self_monitor_route(int fd, Request* r) {
   if (strncmp(r->path, "/api/payload", 12) || (r->path[12] && r->path[12] != '/')) return 0;
   self_init();
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/payload")) { self_reply(fd, 1); return 1; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/payload/update")) {
     logk_("self-update: procura pedida pela pagina do celular");

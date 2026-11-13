@@ -158,7 +158,7 @@ static int teste_monitor_route(int fd, Request* r) {
   }
   if (strncmp(r->path, "/api/teste", 10) || (r->path[10] && r->path[10] != '/')) return 0;
   diag_init();
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
   if (get && !strcmp(r->path, "/api/teste/estado")) teste_estado(fd);
   else if (post && !strcmp(r->path, "/api/teste/enviar")) teste_enviar(fd, r);
   else monitor_json(fd, 404, "{\"error\":\"not found\"}");

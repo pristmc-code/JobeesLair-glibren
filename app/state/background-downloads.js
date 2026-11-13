@@ -60,6 +60,7 @@ import { setLibraryPayload } from './torbox-library-payload.js';
 import { setDiagnosticsSource } from './diagnostics.js';
 import { setJobeSource } from './jobe-remote.js';
 import { setPayloadSelfSource } from './payload-self.js';
+import { setPairingSource } from './device-pairing.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
@@ -1294,6 +1295,14 @@ function createBackgroundDownloads({
       revert: () => backupCall(false, "POST", "/self-update", { action: "revert" })
     };
     setPayloadSelfSource(wrapper.payloadSelf);
+    // Pareamento por aparelho (state/device-pairing.js, app/native/bg_pair.c): o codigo para a tela da Jobe, os aparelhos
+    // pareados e o PIN antigo. So com um payload no ar (nunca o sobe); um payload antigo responde 404 e nada aparece.
+    wrapper.pairing = {
+      status: () => backupCall(false, "GET", "/pair"),
+      remove: (id) => backupCall(false, "POST", "/pair/remove", { id }),
+      pin: (on) => backupCall(false, "POST", "/pair/pin", { on: on === true })
+    };
+    setPairingSource(wrapper.pairing);
     // glibren.44: o foco do controle pelo kern.msgbuf (GET /focus, so leitura): { ok, known, jobe, focus, at }, ou null sem
     // payload no ar (ou um antigo, api < 31). jobe === true: o foco esta na propria Jobe.
     wrapper.focus = async () => {

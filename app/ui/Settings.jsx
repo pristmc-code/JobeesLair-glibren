@@ -42,6 +42,7 @@ import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { memorySample, memorySnapshot, subscribeMemory } from '../state/memory-meter.js';
 import { DiagnosticsRow } from './DiagnosticsRow.jsx'; // glibren.44
 import { PayloadRows } from './PayloadRows.jsx'; // glibren.49 (Fase 2)
+import { PairedDevicesRows } from './PairedDevicesRows.jsx'; // pareamento por aparelho
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
 import { setScreenSaver, showScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
@@ -649,6 +650,8 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       // glibren: a pagina do celular (state/phone-monitor.js): ver os downloads do segundo plano e, com o PIN, controla-los.
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitor", name: t2("settings.phoneMonitor"), hint: phoneHint, end: /* @__PURE__ */ (0, jsx)(Switch, { on: phone.on }), onPress: () => setPhoneMonitor(!phone.on) }),
       phone.on ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:phoneMonitorPin", name: t2(phone.hasPin ? "settings.phoneMonitorPinChange" : "settings.phoneMonitorPin"), hint: t2(phone.hasPin ? "settings.phoneMonitorPinDetail" : "settings.phoneMonitorNoPin"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "chevronRight", color: colors.muted }), onPress: () => onPhonePin(phone.hasPin ? "change" : "create") }) : null,
+      // Pareamento por aparelho: os aparelhos pareados (Remover) e o PIN antigo na transicao (ui/PairedDevicesRows.jsx).
+      phone.on ? jsx(PairedDevicesRows, { Switch }) : null,
       /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),
       /* @__PURE__ */ (0, jsx)(SimultaneousRow, {}),
       /* @__PURE__ */ (0, jsx)(View, { style: { height: 1, marginVertical: 8, backgroundColor: colors.line } }),

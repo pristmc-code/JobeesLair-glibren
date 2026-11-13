@@ -777,7 +777,7 @@ static void diag_key_save(int fd, Request* r) {
 static int diag_monitor_route(int fd, Request* r) {
   if (strncmp(r->path, "/api/diag", 9) || (r->path[9] && r->path[9] != '/')) return 0;
   diag_init();
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
   const int get = !strcmp(r->method, "GET"), post = !strcmp(r->method, "POST");
   if (get && !strcmp(r->path, "/api/diag")) diag_reply_status(fd, 0);
   else if (post && !strcmp(r->path, "/api/diag/key")) diag_key_save(fd, r);

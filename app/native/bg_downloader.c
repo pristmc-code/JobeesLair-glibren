@@ -43,6 +43,9 @@
 //     GET  /jobe, POST /jobe/state glibren.44: o pedido "Atualizar a Jobe" da pagina do celular e o estado do app: ver bg_jobe.c
 //     GET  /focus                  glibren.44: o foco do controle (kern.msgbuf; so leitura): ver bg_jobe.c
 //   glibren.47: GET /teste (a pagina de testes da Fase 0) e /api/teste/* na pagina do celular: ver bg_teste.c
+//   Pareamento por aparelho: GET /pair, POST /pair/remove|pin (app) e /api/pair* (pagina): ver bg_pair.c. As rotas da
+//   pagina que mudam algo ou mostram dados sensiveis pedem monitor_allowed (127.0.0.1, aparelho pareado ou, na
+//   transicao, a sessao do PIN antigo); a lista esta em bg_pair.c ("Rotas protegidas").
 // - Fila persistida em <dir>/jobs.json (tmp + fsync + rename + fsync da pasta). Um download por vez.
 // - Varias conexoes por arquivo (faixas HTTP Range + If-Range, janela AIMD) e retomada no MESMO formato
 //   .part/.resume/.complete do motor nativo do ps5-react (native/shared/network.cpp): o app e o payload
@@ -938,6 +941,7 @@ static int g_dirty;
 // da notificacao com o endereco ("{address}") no idioma do jogador. Tudo em config.json.
 static volatile int g_monitor_on = 1;
 static char g_pin_salt[65], g_pin_hash[65], g_monitor_text[300];
+static char g_pair_text[240]; // pareamento: o aviso do codigo no idioma do jogador ("pairText"; bg_pair.c), com g_lock
 static int g_monitor_announced;
 static void monitor_clear_sessions(const char* pin_hash, int persist);
 static int g_monitor_port_now(void);
@@ -3159,6 +3163,9 @@ typedef struct {
   uint64_t concurrency, pause_seconds, speed;
   int found, has_concurrency, has_monitor, monitor, has_pin_salt, has_pin_hash, has_text, has_power, power, has_pause, has_speed;
   char pin_salt[65], pin_hash[65], monitor_text[300];
+  // pareamento: o aviso do codigo no idioma do jogador ({code} e {name}; bg_pair.c)
+  int has_pair_text;
+  char pair_text[240];
   // glibren.8: so de config.json (from_disk): quem escolheu os downloads simultaneos e o stamp do celular.
   // glibren.13: e o mesmo para o limite de velocidade.
   int from_disk, has_by, has_speed_by;
@@ -3181,6 +3188,7 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "pinSalt")) { c->found = c->has_pin_salt = 1; return jp_text(jp, c->pin_salt, sizeof c->pin_salt) ? 1 : -1; }
   if (!strcmp(key, "pinHash")) { c->found = c->has_pin_hash = 1; return jp_text(jp, c->pin_hash, sizeof c->pin_hash) ? 1 : -1; }
   if (!strcmp(key, "monitorText")) { c->found = c->has_text = 1; return jp_text(jp, c->monitor_text, sizeof c->monitor_text) ? 1 : -1; }
+  if (!strcmp(key, "pairText")) { c->found = c->has_pair_text = 1; return jp_text(jp, c->pair_text, sizeof c->pair_text) ? 1 : -1; }
   if (!strcmp(key, "powerTick")) { c->found = c->has_power = 1; return jp_bool(jp, &c->power) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "concurrencyBy")) { c->has_by = 1; return jp_text(jp, c->by, sizeof c->by) ? 1 : -1; }
   if (c->from_disk && !strcmp(key, "concurrencyStamp")) return jp_uint(jp, &c->stamp) ? 1 : -1;
@@ -3286,6 +3294,10 @@ static int config_apply_locked(const ConfigBody* c) {
     snprintf(g_monitor_text, sizeof g_monitor_text, "%s", c->monitor_text);
     changed = 1;
   }
+  if (c->has_pair_text && strcmp(g_pair_text, c->pair_text)) {
+    snprintf(g_pair_text, sizeof g_pair_text, "%s", c->pair_text);
+    changed = 1;
+  }
   if (c->has_power && g_power_tick != (c->power ? 1 : 0)) {
     g_power_tick = c->power ? 1 : 0;
     logk_("sceSystemServicePowerTick: %s", g_power_tick ? "LIGADO (teste)" : "desligado");
@@ -3333,6 +3345,8 @@ static void save_config_locked(void) {
   buf_json(&b, g_pin_hash);
   buf_str(&b, ",\"monitorText\":");
   buf_json(&b, g_monitor_text);
+  buf_str(&b, ",\"pairText\":");
+  buf_json(&b, g_pair_text);
   buf_fmt(&b, ",\"powerTick\":%s", g_power_tick ? "true" : "false");
   buf_fmt(&b, ",\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u", g_concurrency_remote ? "remote" : "app", g_concurrency_stamp);
   buf_fmt(&b, ",\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u", g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp);
@@ -3352,7 +3366,9 @@ static void save_config_locked(void) {
 typedef struct {
   char method[8], path[1024]; // glibren: 1024 para a busca e os filtros da Biblioteca TorBox na URL
   char token[128];
-  char session[48]; // X-Session: a sessao aberta pelo PIN na pagina do celular
+  char session[72]; // X-Session: a sessao aberta pelo PIN (32 hex) ou o token de um aparelho pareado (64 hex; bg_pair.c)
+  char origin[96];  // Origin (cortado): um pedido de 127.0.0.1 so e "do PS5" sem Origin ou com Origin de 127.x/localhost
+  int local;        // pareamento: o pedido veio do proprio PS5 (127.0.0.1) e fica isento (serve_monitor)
   char host[96];    // glibren.42 (J6): o cabecalho Host (cortado), para a pagina do celular recusar nome de dominio
   int host_seen;
   size_t content_length;
@@ -3423,6 +3439,7 @@ static int read_request(int fd, Request* r) {
       if (!strcasecmp(line, "content-length")) { uint64_t n; if (!decimal(value, &n) || n > (strcmp(r->path, "/orbit") ? 64u : 256u) * 1024) return 413; r->content_length = (size_t)n; }
       else if (!strcasecmp(line, "x-jobe-token")) snprintf(r->token, sizeof r->token, "%s", value);
       else if (!strcasecmp(line, "x-session")) snprintf(r->session, sizeof r->session, "%s", value);
+      else if (!strcasecmp(line, "origin")) snprintf(r->origin, sizeof r->origin, "%s", value);
       else if (!strcasecmp(line, "host")) { snprintf(r->host, sizeof r->host, "%s", value); r->host_seen = 1; }
       else if (!strcasecmp(line, "authorization") && !strncasecmp(value, "Bearer ", 7)) snprintf(r->token, sizeof r->token, "%s", value + 7);
     }
@@ -4291,6 +4308,7 @@ static void auto_plan_route(int fd, const char* query); // glibren.18 (perto da 
 static int diag_app_route(int fd, Request* r); // glibren.44: o diagnostico pelo GitHub (bg_diag.c)
 static int jobe_app_route(int fd, Request* r); // glibren.44: a area Jobe (bg_jobe.c)
 static int self_app_route(int fd, Request* r); // glibren.49: a atualizacao propria (bg_self.c)
+static int pair_app_route(int fd, Request* r);  // pareamento por aparelho: /pair (bg_pair.c)
 static void self_health(int* replace); // glibren.49
 static void route(int fd, Request* r) {
   // glibren.31: a troca de app vem tambem do app de videos, sem o token (ver switch_route).
@@ -4304,6 +4322,7 @@ static void route(int fd, Request* r) {
   if (diag_app_route(fd, r)) return; // glibren.44: /diag e /diag/send
   if (jobe_app_route(fd, r)) return; // glibren.44: /jobe e /jobe/state
   if (self_app_route(fd, r)) return; // glibren.49: /self-update
+  if (pair_app_route(fd, r)) return; // pareamento: o codigo para a tela da Jobe, os aparelhos e o PIN antigo
   if (conv_app_route(fd, r)) return; // glibren.22: /backup e /log (a tela Pasta BACKUP do app)
   // glibren.18: o destino que o payload daria a um pedido do celular (o teste o compara com o do app).
   if (!strcmp(r->method, "GET") && !strncmp(r->path, "/auto/plan", 10) && (!r->path[10] || r->path[10] == '?')) {
@@ -4650,6 +4669,9 @@ static Peer g_peers[MONITOR_PEERS];
 
 static int g_monitor_port_now(void) { return g_monitor_port; }
 
+// Pareamento por aparelho (codigo de 6 digitos na TV, token so do aparelho; o PIN antigo na transicao): ver bg_pair.c.
+#include "bg_pair.c"
+
 // sessions.json: {"pin": pinHash, "sessions": [{"hash": sha256(token), "expires": s}]}: as sessoes abertas pelo PIN
 // sobrevivem a reiniciar o payload. Gravado de forma atomica; o pin amarra as sessoes ao PIN que as abriu.
 static void save_sessions_locked(void) { // com g_monitor_lock
@@ -4785,6 +4807,7 @@ static void new_session(char out[33]) {
 // Valida e renova: cada uso empurra a validade. O disco so e regravado quando a validade andou um trigesimo dela
 // (1 dia nos 30), para nao gravar a cada chamada.
 static int session_ok(const char* given) {
+  if (strlen(given) == 64) return pair_device_ok(given); // um aparelho pareado (bg_pair.c)
   if (strlen(given) != 32) return 0;
   char hash[65];
   session_hash(given, hash);
@@ -4792,7 +4815,8 @@ static int session_ok(const char* given) {
   const int64_t now = session_now();
   int ok = 0;
   pthread_mutex_lock(&g_monitor_lock);
-  for (int i = 0; i < MONITOR_SESSIONS; ++i)
+  // Pareamento: com o PIN antigo desligado, nenhuma sessao do PIN vale (pair_set_pin_off ja as apagou).
+  for (int i = 0; i < MONITOR_SESSIONS && !g_pair_pin_off; ++i)
     if (g_sessions[i].expires > now && same_text(g_sessions[i].hash, hash, 64)) {
       ok = 1;
       g_sessions[i].expires = now + g_session_seconds;
@@ -5017,6 +5041,13 @@ static void monitor_unlock(int fd, Request* r, uint32_t ip) {
   }
   const int64_t now = now_s();
   pthread_mutex_lock(&g_monitor_lock);
+  // Pareamento: o PIN antigo desligado nao abre mais sessao (so aparelhos pareados).
+  if (g_pair_pin_off) {
+    pthread_mutex_unlock(&g_monitor_lock);
+    memset(&u, 0, sizeof u);
+    monitor_json(fd, 403, "{\"pinOff\":true,\"retryIn\":0}");
+    return;
+  }
   Peer* peer = peer_of_locked(ip);
   peer->last = now;
   const int64_t wait = peer->blocked_until - now;
@@ -5067,7 +5098,7 @@ static void monitor_action(int fd, Request* r) {
   snprintf(action, sizeof action, "%s", slash + 1);
   const int connections_action = !strcmp(action, "connections");
   if (strcmp(action, "pause") && strcmp(action, "resume") && strcmp(action, "cancel") && !connections_action) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return; }
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   // glibren.8: POST /api/jobs/<id>/connections {"connections": 1..64, ou 0/null = as do app}: vale ja para um job
   // baixando, e quando comecar para um na fila (inclusive um "waiting-app", que o app comeca depois).
   if (connections_action) {
@@ -5118,7 +5149,7 @@ static int remote_config_field(JP* jp, const char* key, void* ctx) {
   return jp_number(jp, &d, &c->concurrency, &integer) && integer ? 1 : -1;
 }
 static void monitor_config(int fd, Request* r) {
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   RemoteConfig c = {0, 0, 0, 0, 0};
   JP jp = {r->body, r->body + r->content_length, 0};
   if (!jp_object(&jp, remote_config_field, &c) || !c.found ||
@@ -5215,7 +5246,7 @@ static int power_field(JP* jp, const char* key, void* ctx) {
 
 // POST /api/power {"action":"off"|"rest"} com X-Session.
 static void monitor_power(int fd, Request* r) {
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   PowerBody b;
   memset(&b, 0, sizeof b);
   JP jp = {r->body, r->body + r->content_length, 0};
@@ -6195,7 +6226,7 @@ static void lib_request_source(Job* j, const LibGame* g, const LibFile* from, in
   j->auto_retry_at = 0;
 }
 static void monitor_library_add(int fd, Request* r) {
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   AddBody a;
   memset(&a, 0, sizeof a);
   JP jp = {r->body, r->body + r->content_length, 0};
@@ -6894,6 +6925,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library")) { monitor_library(fd, query); return; }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library/game")) { monitor_library_game(fd, query); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/library/add")) { monitor_library_add(fd, r); return; }
+  if (pair_monitor_route(fd, r)) return; // pareamento por aparelho: /api/pair* (bg_pair.c)
   if (store_route(fd, r, query)) return; // glibren (item 2): /api/store
   if (diag_monitor_route(fd, r)) return; // glibren.44: /api/diag (chave do GitHub, enviar, .zip)
   if (jobe_monitor_route(fd, r)) return; // glibren.44: /api/jobe (versao e pedido de atualizacao)
@@ -6915,7 +6947,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/unlock")) { monitor_unlock(fd, r, ip); return; }
   // glibren.19: a pagina confere ao abrir se a sessao guardada ainda vale (e a renova): 200 {ok} ou 401 {error:"pin"}.
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/session")) {
-    if (!session_ok(r->session)) monitor_json(fd, 401, "{\"error\":\"pin\"}");
+    if (!monitor_allowed(r)) monitor_json(fd, 401, "{\"error\":\"pin\"}");
     else monitor_json(fd, 200, "{\"ok\":true}");
     return;
   }
@@ -6923,7 +6955,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/config")) { monitor_config(fd, r); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/power")) { monitor_power(fd, r); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/cancelled/clear")) {
-    if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+    if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
     pthread_mutex_lock(&g_lock);
     g_cancelled_count = 0;
     save_jobs_locked();
@@ -6979,6 +7011,27 @@ static int monitor_host_ok(const Request* r) {
   return parts == 4;
 }
 
+// Pareamento: o pedido e do proprio PS5 (a Jobe, o navegador do console) e fica isento? So de 127.x e sem Origin de
+// outro site (uma pagina qualquer aberta no navegador do PS5 nao pode usar a isencao com um POST text/plain, que o
+// navegador manda sem perguntar). No PC (testes) so com BGDL_TEST_LOCAL=1: os testes falam com a pagina por 127.0.0.1
+// fazendo o papel do celular.
+static int monitor_is_local(uint32_t ip, const Request* r) {
+  if ((ntohl(ip) >> 24) != 127) return 0;
+#ifndef __PROSPERO__
+  const char* test = getenv("BGDL_TEST_LOCAL");
+  if (!test || strcmp(test, "1")) return 0;
+#endif
+  if (!r->origin[0]) return 1;
+  char origin[96];
+  snprintf(origin, sizeof origin, "%s", r->origin);
+  for (char* c = origin; *c; ++c) if (*c >= 'A' && *c <= 'Z') *c = (char)(*c - 'A' + 'a');
+  if (strncmp(origin, "http://", 7)) return 0;
+  const char* host = origin + 7;
+  const size_t n = strspn(host, "0123456789.");
+  if (!strncmp(host, "127.", 4) && (host[n] == 0 || host[n] == ':')) return 1;
+  return !strncmp(host, "localhost", 9) && (host[9] == 0 || host[9] == ':');
+}
+
 static void* serve_monitor(void* arg) {
   int fd = (int)(intptr_t)arg;
   struct timeval timeout = {5, 0};
@@ -6995,6 +7048,7 @@ static void* serve_monitor(void* arg) {
   Request r;
   memset(&r, 0, sizeof r);
   int status = read_request(fd, &r);
+  if (status == 200) r.local = monitor_is_local(ip, &r);
   if (status == 200 && !monitor_host_ok(&r)) monitor_json(fd, 403, "{\"error\":\"host\"}");
   else if (status == 200) monitor_route(fd, &r, ip);
   else if (status) monitor_json(fd, status, "{\"error\":\"bad request\"}");
@@ -7161,6 +7215,7 @@ int main(void) {
   load_jobs();
   load_config();
   load_sessions_locked(); // glibren.19: as sessoes do PIN guardadas (depois do config: precisam do pinHash)
+  pair_load();            // pareamento: os aparelhos pareados e o PIN antigo ligado/desligado (devices.json)
   pthread_mutex_unlock(&g_lock);
   conv_start(); // glibren.12: conversions.json (uma parada no meio recomeca limpa)
   crash_record(g_lock_contended); // pac1: depois de ler a fila e as conversoes (o que estava rodando quando caiu)

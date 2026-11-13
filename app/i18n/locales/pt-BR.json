@@ -1877,5 +1877,16 @@
   "crash.suggest": "Se acontecer de novo durante conversões, experimente a Pausa entre conversões ou Gravar em pedaços (Configurações > Downloads).",
   "crash.details": "Ver detalhes",
   "crash.hideDetails": "Ocultar detalhes",
-  "crash.ok": "OK"
+  "crash.ok": "OK",
+  "pair.notify": "Jobe: código de pareamento {code} para \"{name}\" (vale 2 min)",
+  "pair.notice.title": "Código de pareamento para \"{name}\"",
+  "pair.notice.detail": "Digite no aparelho. Vale mais {seconds} s.",
+  "settings.devices": "Aparelhos pareados",
+  "settings.devicesHint": "Celulares e computadores que usam os controles da página do celular. Remover um corta o acesso dele na hora.",
+  "settings.devicesNone": "Nenhum aparelho pareado ainda. Na página do celular, toque num controle e escolha parear o aparelho.",
+  "settings.devicesOff": "O payload de downloads não está no ar: a lista aparece quando ele estiver.",
+  "settings.deviceAt": "Pareado em {date}",
+  "settings.deviceRemove": "Aperte de novo para remover",
+  "settings.legacyPin": "Aceitar o PIN antigo",
+  "settings.legacyPinHint": "Durante a troca para o pareamento, o PIN ainda libera a página do celular. Desligue para aceitar só aparelhos pareados."
 }

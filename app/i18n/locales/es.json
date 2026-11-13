@@ -1877,5 +1877,16 @@
   "crash.suggest": "Si vuelve a ocurrir durante conversiones, prueba la Pausa entre conversiones o Escribir por partes (Ajustes > Descargas).",
   "crash.details": "Ver detalles",
   "crash.hideDetails": "Ocultar detalles",
-  "crash.ok": "Aceptar"
+  "crash.ok": "Aceptar",
+  "pair.notify": "Jobe: código de vinculación {code} para \"{name}\" (vale 2 min)",
+  "pair.notice.title": "Código de vinculación para \"{name}\"",
+  "pair.notice.detail": "Escríbelo en el dispositivo. Vale {seconds} s más.",
+  "settings.devices": "Dispositivos vinculados",
+  "settings.devicesHint": "Teléfonos y computadoras que usan los controles de la página del teléfono. Quitar uno corta su acceso al momento.",
+  "settings.devicesNone": "Aún no hay dispositivos vinculados. En la página del teléfono, toca un control y elige vincular el dispositivo.",
+  "settings.devicesOff": "El payload de descargas no está en marcha: la lista aparece cuando lo esté.",
+  "settings.deviceAt": "Vinculado el {date}",
+  "settings.deviceRemove": "Pulsa de nuevo para quitar",
+  "settings.legacyPin": "Aceptar el PIN antiguo",
+  "settings.legacyPinHint": "Durante el cambio a la vinculación, el PIN todavía desbloquea la página del teléfono. Desactívalo para aceptar solo dispositivos vinculados."
 }

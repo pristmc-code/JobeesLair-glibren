@@ -1877,5 +1877,16 @@
   "crash.suggest": "Si cela se reproduit pendant des conversions, essayez la Pause entre les conversions ou Écrire par morceaux (Paramètres > Téléchargements).",
   "crash.details": "Voir les détails",
   "crash.hideDetails": "Masquer les détails",
-  "crash.ok": "OK"
+  "crash.ok": "OK",
+  "pair.notify": "Jobe : code d'association {code} pour « {name} » (valable 2 min)",
+  "pair.notice.title": "Code d'association pour « {name} »",
+  "pair.notice.detail": "Saisissez-le sur l'appareil. Encore {seconds} s.",
+  "settings.devices": "Appareils associés",
+  "settings.devicesHint": "Téléphones et ordinateurs qui utilisent les commandes de la page mobile. En retirer un coupe son accès aussitôt.",
+  "settings.devicesNone": "Aucun appareil associé pour l'instant. Sur la page mobile, touchez une commande et choisissez d'associer l'appareil.",
+  "settings.devicesOff": "Le payload de téléchargement ne tourne pas : la liste apparaîtra quand il tournera.",
+  "settings.deviceAt": "Associé le {date}",
+  "settings.deviceRemove": "Appuyez encore pour retirer",
+  "settings.legacyPin": "Accepter l'ancien PIN",
+  "settings.legacyPinHint": "Pendant le passage à l'association, le PIN déverrouille encore la page mobile. Désactivez-le pour n'accepter que les appareils associés."
 }

@@ -1877,5 +1877,16 @@
   "crash.suggest": "変換中にまた起きる場合は、「変換の間の休止」か「分割して書き込む」を試してください（設定 > ダウンロード）。",
   "crash.details": "詳細を見る",
   "crash.hideDetails": "詳細を隠す",
-  "crash.ok": "OK"
+  "crash.ok": "OK",
+  "pair.notify": "Jobe：「{name}」のペアリングコード {code}（2 分間有効）",
+  "pair.notice.title": "「{name}」のペアリングコード",
+  "pair.notice.detail": "デバイスで入力してください。残り {seconds} 秒です。",
+  "settings.devices": "ペアリング済みのデバイス",
+  "settings.devicesHint": "スマホページの操作を使うスマホやパソコンです。削除するとすぐにアクセスできなくなります。",
+  "settings.devicesNone": "ペアリング済みのデバイスはまだありません。スマホページで操作をタップし、デバイスのペアリングを選んでください。",
+  "settings.devicesOff": "ダウンロード用ペイロードが動いていません。動き出すと一覧が表示されます。",
+  "settings.deviceAt": "{date} にペアリング",
+  "settings.deviceRemove": "もう一度押すと削除します",
+  "settings.legacyPin": "以前の PIN を受け付ける",
+  "settings.legacyPinHint": "ペアリングへの移行中は、PIN でもスマホページのロックを解除できます。オフにするとペアリング済みのデバイスだけになります。"
 }

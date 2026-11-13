@@ -154,7 +154,7 @@ static void jobe_take_state(int fd, Request* r) {
 static int jobe_monitor_route(int fd, Request* r) {
   if (strncmp(r->path, "/api/jobe", 9) || (r->path[9] && r->path[9] != '/')) return 0;
   jobe_init();
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/jobe")) { jobe_reply_status(fd); return 1; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/jobe/update")) {
     pthread_mutex_lock(&g_jobe_lock);

@@ -939,7 +939,7 @@ static int st_add_field(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 static void store_add(int fd, Request* r) {
-  if (!session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   char id[32] = "";
   JP jp = {r->body, r->body + r->content_length, 0};
   if (!r->body || !jp_object(&jp, st_add_field, id) || !id[0]) { monitor_json(fd, 400, "{\"error\":\"id\"}"); return; }

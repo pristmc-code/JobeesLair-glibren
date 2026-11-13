@@ -1877,5 +1877,16 @@
   "crash.suggest": "Jika terjadi lagi saat konversi, coba Jeda antarkonversi atau Tulis per bagian (Pengaturan > Unduhan).",
   "crash.details": "Lihat detail",
   "crash.hideDetails": "Sembunyikan detail",
-  "crash.ok": "OK"
+  "crash.ok": "OK",
+  "pair.notify": "Jobe: kode pemasangan {code} untuk \"{name}\" (berlaku 2 menit)",
+  "pair.notice.title": "Kode pemasangan untuk \"{name}\"",
+  "pair.notice.detail": "Ketik di perangkat. Berlaku {seconds} dtk lagi.",
+  "settings.devices": "Perangkat yang dipasangkan",
+  "settings.devicesHint": "Ponsel dan komputer yang memakai kontrol halaman ponsel. Menghapus satu langsung mengakhiri aksesnya.",
+  "settings.devicesNone": "Belum ada perangkat yang dipasangkan. Di halaman ponsel, ketuk salah satu kontrol lalu pilih pasangkan perangkat.",
+  "settings.devicesOff": "Payload unduhan tidak berjalan: daftar muncul setelah berjalan.",
+  "settings.deviceAt": "Dipasangkan pada {date}",
+  "settings.deviceRemove": "Tekan lagi untuk menghapus",
+  "settings.legacyPin": "Terima PIN lama",
+  "settings.legacyPinHint": "Selama beralih ke pemasangan, PIN masih membuka halaman ponsel. Matikan agar hanya perangkat yang dipasangkan."
 }

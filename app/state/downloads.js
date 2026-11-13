@@ -75,7 +75,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       secret: debridSecret,
       text: t,
       concurrency: simultaneousDownloads,
-      monitor: () => ({ ...phoneMonitorConfig(), monitorText: t("downloads.background.monitorNotice", { address: "{address}" }) }),
+      // Pareamento: "pairText" e o aviso do codigo no idioma do jogador ({code} e {name}: o payload troca).
+      monitor: () => ({ ...phoneMonitorConfig(), monitorText: t("downloads.background.monitorNotice", { address: "{address}" }), pairText: t("pair.notify", { code: "{code}", name: "{name}" }) }),
       addressSeen: setPhoneMonitorAddress,
       // MODIFIED (glibren.8): com a chave do item da fila (um marcador nao tem caminho) e a acao "resume".
       onRemote: (destination, action, key) => instance?.remoteAction?.(destination, action, key),
