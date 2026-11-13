@@ -3,7 +3,8 @@
 // (ui/Header.jsx) and a dialog (ui/UpdateDialog.jsx). On the PS5 it can be installed from there
 // (state/auto-update.js): downloaded and checked in the background, then put in place by updater.elf once
 // the app closes. With "Install updates automatically" on (settings.json autoInstallUpdates), a newer
-// build downloads as soon as the check finds it and goes in the next time the app is closed. A check that
+// build downloads as soon as the check finds it and goes in the next time the app is closed; glibren.44: or, before
+// that, the app restarts to apply it by itself when nobody is using it (state/auto-restart.js). A check that
 // cannot reach GitHub changes nothing and the next one tries again.
 // 0.5.1: a newer build found at launch is offered at once, the way Prospero Store does: the dialog opens by
 // itself (once per release), with Download and install, then Restart to apply; it comes back once the
@@ -257,6 +258,8 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
     if (update.failed) return t2("settings.update.failed");
     return update.checkedAt ? t2("settings.update.current", { date: formatDate2(isoDate(update.checkedAt)) }) : t2("settings.update.never");
   }
+  /** glibren.44: the update dialog is open (the automatic restart waits for it). */
+  var updateDialogOpen = () => dialog;
   /** The update and its install as they are now, and whether updates install by themselves (the phone's Settings). */
   var updateSnapshot = () => ({ update: state, install: installer?.state() ?? IDLE, auto: automatic });
   /** Downloads and checks the newer release now. False when there is none it can install. */
@@ -297,4 +300,4 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
     return on;
   }
 
-export { canInstall, cancelUpdate, locate as locateOwnImage, stopRestart, checkForUpdate, closeUpdateDialog, downloadUpdate, openUpdateDialog, restartToApply, setAutoInstall, startInstaller, startUpdateChecks, updateDetail, updateSnapshot, useAutoInstall, useInstall, useUpdate, useUpdateDialog };
+export { updateDialogOpen, canInstall, cancelUpdate, locate as locateOwnImage, stopRestart, checkForUpdate, closeUpdateDialog, downloadUpdate, openUpdateDialog, restartToApply, setAutoInstall, startInstaller, startUpdateChecks, updateDetail, updateSnapshot, useAutoInstall, useInstall, useUpdate, useUpdateDialog };

@@ -14,6 +14,7 @@ import { Icon } from './Icon.jsx';
 import { JLMark } from './JLMark.jsx';
 import { LongText } from './LongText.jsx';
 import { colors, radius } from './colors.js';
+import { useAutoDismiss, withCountdown } from './useAutoDismiss.js';
 
   // After the store's reveal (index.jsx CURTAIN_MS) has finished.
   var DELAY_MS = 4500;
@@ -51,7 +52,6 @@ import { colors, radius } from './colors.js';
       const id = setTimeout(() => setOpen(true), DELAY_MS);
       return () => clearTimeout(id);
     }, []);
-    if (!open) return null;
     const close = (then) => {
       if (done.current) return;
       done.current = true;
@@ -59,6 +59,9 @@ import { colors, radius } from './colors.js';
       setOpen(false);
       then?.();
     };
+    // glibren.44: passa sozinho depois de 10 s sem nenhum botao (o mesmo que "Fechar").
+    const left = useAutoDismiss(open, () => close());
+    if (!open) return null;
     return jsx(View, { style: { position: "absolute", top: 0, left: 0, width: 1920, height: 1080, zIndex: 90, alignItems: "center", justifyContent: "center", backgroundColor: "#000000b3" }, children: jsx(FocusScope, { trap: true, autoFocus: true, onBack: () => (close(), true), children: jsxs(motion.View, { initial: { y: 24, opacity: 0 }, animate: { y: 0, opacity: 1 }, transition: { type: "tween", duration: 0.3, ease: [0.22, 1, 0.36, 1] }, style: { width: 1120, gap: 30, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.canvas2, paddingHorizontal: 56, paddingVertical: 48 }, children: [
       jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 20 }, children: [
         jsx(JLMark, { height: 34 }),
@@ -73,7 +76,7 @@ import { colors, radius } from './colors.js';
       ] }, item.title)) }),
       jsxs(View, { style: { flexDirection: "row", justifyContent: "flex-end", gap: 16 }, children: [
         jsx(View, { focusKey: "whatsnew:homebrew", onPress: () => close(() => push({ name: "homebrew" }, "nav:homebrew")), style: (state) => [{ position: "relative", height: 60, justifyContent: "center", borderRadius: radius.md, paddingHorizontal: 28, backgroundColor: state.focused ? colors.surface3 : colors.surface2 }], children: jsx(ButtonFace, { label: t2("whatsNew.openHomebrew") }) }),
-        jsx(View, { focusKey: "whatsnew:done", autoFocus: true, onPress: () => close(), style: (state) => [{ position: "relative", height: 60, justifyContent: "center", borderRadius: radius.md, paddingHorizontal: 34, backgroundColor: state.focused ? colors.accentHi : colors.accent }], children: jsx(ButtonFace, { label: t2("whatsNew.done"), primary: true }) })
+        jsx(View, { focusKey: "whatsnew:done", autoFocus: true, onPress: () => close(), style: (state) => [{ position: "relative", height: 60, justifyContent: "center", borderRadius: radius.md, paddingHorizontal: 34, backgroundColor: state.focused ? colors.accentHi : colors.accent }], children: jsx(ButtonFace, { label: withCountdown(t2("whatsNew.done"), left), primary: true }) })
       ] })
     ] }) }) });
   }

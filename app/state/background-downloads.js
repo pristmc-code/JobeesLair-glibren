@@ -158,6 +158,18 @@ import { setDiagnosticsSource } from './diagnostics.js';
   function sayByeToPayload() {
     return current?.bye ? current.bye() : Promise.resolve(false);
   }
+  /**
+   * glibren.44: o foco do controle agora, pelo payload (GET /focus, kern.msgbuf): true quando e a Jobee'sLair, false
+   * quando e outro app, null quando nao se sabe (sem payload, um antigo, sem a linha no msgbuf).
+   */
+  async function payloadFocus() {
+    try {
+      const answer = current?.focus ? await current.focus() : null;
+      return answer?.known ? answer.jobe === true ? true : answer.jobe === false ? false : null : null;
+    } catch {
+      return null;
+    }
+  }
   /** glibren.31: pede ao payload a troca de app (POST /switch): { ok } ou { ok: false, error } (sem payload configurado). */
   function switchAppVia(to, from) {
     return current?.switchApp ? current.switchApp(to, from) : Promise.resolve({ ok: false, error: "the background payload is not set up" });
@@ -1193,4 +1205,4 @@ function createBackgroundDownloads({
     return wrapper;
   }
 
-export { PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, switchAppVia, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };
+export { payloadFocus, PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, switchAppVia, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };

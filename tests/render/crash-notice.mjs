@@ -61,7 +61,8 @@ assert.ok(shown.includes(en['crash.title']), shown.join('|'));
 assert.ok(shown.some((line) => line.includes('turned off at 14:32 during the conversion of Astro Bot')), shown.join('|'));
 assert.ok(shown.includes(en['crash.suggest']), 'during a conversion it suggests the conversion options');
 const buttons = labels({ type: CrashNotice, props: {} });
-assert.ok(buttons.includes(en['crash.ok']) && buttons.includes(en['crash.details']), buttons.join('|'));
+// glibren.44: o OK mostra a contagem de 10 s (ui/useAutoDismiss.js): passa sozinho se ninguem apertar nada.
+assert.ok(buttons.includes(`${en['crash.ok']} (10)`) && buttons.includes(en['crash.details']), buttons.join('|'));
 
 // 3) Em portugues (o mesmo texto com as mesmas variaveis; a tela le o idioma pelo LocaleProvider).
 const fillPt = (key, vars) => pt[key].replace(/\{(\w+)\}/g, (_, name) => vars[name]);

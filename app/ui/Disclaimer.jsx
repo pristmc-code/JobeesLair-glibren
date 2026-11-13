@@ -12,6 +12,7 @@ import { FocusScope, Text, View, useIsFocused } from '@ps5-react/core';
 import { t } from '../i18n/core.js';
 import { CREATOR } from '../version.js';
 import { ButtonGlyph } from './ButtonHints.jsx';
+import { useAutoDismiss, withCountdown } from './useAutoDismiss.js';
 import { JLMark } from './JLMark.jsx';
 import { colors, radius } from './colors.js';
 
@@ -26,11 +27,11 @@ import { colors, radius } from './colors.js';
     ] });
   }
   // The button inverts with focus: white with dark text when selected, the reverse otherwise.
-  function ContinueFace() {
+  function ContinueFace({ left = null }) {
     const focused = useIsFocused();
     return /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 12 }, children: [
       /* @__PURE__ */ (0, jsx)(ButtonGlyph, { button: "cross", size: 20 }),
-      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 23, fontWeight: 600, lineHeight: 32, color: focused ? colors.canvas : colors.fg }, children: t("notice.continue") })
+      /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 23, fontWeight: 600, lineHeight: 32, color: focused ? colors.canvas : colors.fg }, children: withCountdown(t("notice.continue"), left) })
     ] });
   }
   function Disclaimer({ onDone }) {
@@ -40,6 +41,8 @@ import { colors, radius } from './colors.js';
       done.current = true;
       onDone();
     };
+    // glibren.44: passa sozinho depois de 10 s sem nenhum botao (ui/useAutoDismiss.js).
+    const left = useAutoDismiss(true, acknowledge);
     return /* @__PURE__ */ (0, jsx)(View, {
       style: { width: 1920, height: 1080, alignItems: "center", justifyContent: "center", backgroundColor: colors.canvas },
       children: /* @__PURE__ */ (0, jsx)(FocusScope, { trap: true, autoFocus: true, onBack: () => true, children: /* @__PURE__ */ (0, jsxs)(View, { style: { width: WIDTH, gap: 28, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.canvas2, paddingHorizontal: 56, paddingVertical: 50 }, children: [
@@ -59,7 +62,7 @@ import { colors, radius } from './colors.js';
             autoFocus: true,
             onPress: acknowledge,
             style: (_state) => [{ height: 60, justifyContent: "center", borderRadius: radius.md, paddingHorizontal: 30, borderWidth: 2, borderColor: colors.fg }, _state.focused ? { backgroundColor: colors.fg } : { backgroundColor: colors.canvas }],
-            children: /* @__PURE__ */ (0, jsx)(ContinueFace, {})
+            children: /* @__PURE__ */ (0, jsx)(ContinueFace, { left })
           })
         ] })
       ] }) })

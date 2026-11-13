@@ -58,6 +58,8 @@ export const Linking = {};
 // glibren-tube: o player de video (app/tube/TubePlayer.jsx) e os eventos do controle.
 export const Video = 'Video';
 export const useControllerEvents = () => {};
+// glibren.44: o controle (state/activity.js ouve os botoes).
+export const Controller = { subscribe: () => () => {} };
 export default {};
 `;
 const app = new URL('../app/', import.meta.url).pathname;

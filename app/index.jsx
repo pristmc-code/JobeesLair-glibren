@@ -42,7 +42,11 @@ import { downloadQueue, reportPastLaunches, startBackgroundAtLaunch } from './st
 import { colors, useThemeEpoch } from './ui/colors.js';
 import { watchQueue } from './ui/lightBar.js';
 import { createRestWake } from './state/rest-wake.js';
-import { startInstaller, startUpdateChecks } from './state/update.js';
+import { restartToApply, startInstaller, startUpdateChecks, updateDialogOpen, updateSnapshot } from './state/update.js';
+import { startAutoRestart } from './state/auto-restart.js';
+import { AutoRestartNotice } from './ui/AutoRestartNotice.jsx';
+import { payloadFocus } from './state/background-downloads.js';
+import { conversionActive, payloadConversions } from './state/payload-conversions.js';
 import { startOnline, watchInstalls } from './state/online.js';
 import { startSharedLinks } from './state/links.js';
 import { applySpeedLimit } from './state/speed-limit.js';
@@ -190,6 +194,30 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
     }, []);
     // The update check: once at launch (after the store is up), then every 24 hours.
     (0, useEffect)(() => startUpdateChecks(), []);
+    // glibren.44: com "Instalar atualizacoes automaticamente", a versao pronta entra reiniciando sozinha quando ninguem
+    // usa a Jobee'sLair (state/auto-restart.js; o aviso de 10 s e o AutoRestartNotice abaixo).
+    (0, useEffect)(() => {
+      startAutoRestart({
+        snapshot: updateSnapshot,
+        foreground: payloadFocus,
+        converting: () => {
+          try {
+            return downloadQueue().snapshot().some((job) => job.state === "converting") || payloadConversions().some(conversionActive);
+          } catch {
+            return true;
+          }
+        },
+        busy: () => {
+          try {
+            return downloadQueue().appWork?.() ?? null;
+          } catch {
+            return { kind: "unknown" };
+          }
+        },
+        dialog: updateDialogOpen,
+        restart: restartToApply
+      });
+    }, []);
     // The Homebrew section's live index, fetched once a while after launch (state/homebrew-store.js).
     (0, useEffect)(() => startHomebrewRefresh(), []);
     // 0.5.2: the live count, announcements and (unless turned off) the anonymous stats (state/online.js).
@@ -217,6 +245,7 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
           immersive ? null : /* @__PURE__ */ (0, jsx)(Legend, { screen: top.name }),
           immersive ? null : jsx(AnnouncementBar, {}),
           /* @__PURE__ */ (0, jsx)(UpdateDialog, {}),
+          jsx(AutoRestartNotice, {}),
           HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(AutoReportAsk, {}),
           // glibren.16: "This PS5 .pkg won't open", asked by Install on a PS5 package (state/ps5-pkg-warning.js).
           HOMEBREW_ONLY ? null : jsx(Ps5PkgWarning, {}),

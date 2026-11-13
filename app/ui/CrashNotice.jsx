@@ -10,6 +10,7 @@ import { crashTime, dismissCrash, usePendingCrash } from '../state/crash-notice.
 import { Button2 } from './Button.jsx';
 import { LongText } from './LongText.jsx';
 import { colors, radius } from './colors.js';
+import { useAutoDismiss, withCountdown } from './useAutoDismiss.js';
 import { FocusScope, Text, View, motion } from '@ps5-react/core';
 
   var ENTER = { type: "tween", duration: 0.24, ease: [0.22, 1, 0.36, 1] };
@@ -19,12 +20,14 @@ import { FocusScope, Text, View, motion } from '@ps5-react/core';
     const t2 = useT();
     const crash = usePendingCrash();
     const [details, setDetails] = useState(false);
-    if (!crash) return null;
     const ok = () => {
       setDetails(false);
       dismissCrash();
       return true;
     };
+    // glibren.44: passa sozinho depois de 10 s sem nenhum botao (o mesmo que "OK": marca como visto).
+    const left = useAutoDismiss(Boolean(crash), ok);
+    if (!crash) return null;
     const activity = t2(`crash.activity.${crash.activity}`, { name: crash.name || "?" });
     const time = crashTime(crash);
     const said = time ? t2("crash.detail", { time, activity }) : t2("crash.detailNoTime", { activity });
@@ -43,7 +46,7 @@ import { FocusScope, Text, View, motion } from '@ps5-react/core';
           details && crash.milestone ? jsx(Text, { style: sans(21, AMBER, { numberOfLines: 2, ellipsizeMode: "tail" }), children: t2("crash.milestone", { step: crash.milestone }) }) : null,
           details ? jsx(View, { style: { gap: 2, borderRadius: radius.md, backgroundColor: colors.surface2, padding: 16 }, children: crash.lines.map((line, index) => jsx(Text, { style: sans(15, colors.subtle, { numberOfLines: 1, ellipsizeMode: "tail", lineHeight: 21 }), children: line }, index)) }) : null,
           jsxs(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 16 }, children: [
-            jsx(Button2, { variant: "primary", size: "lg", label: t2("crash.ok"), autoFocus: true, focusKey: "crash:ok", onPress: ok }, "ok"),
+            jsx(Button2, { variant: "primary", size: "lg", label: withCountdown(t2("crash.ok"), left), autoFocus: true, focusKey: "crash:ok", onPress: ok }, "ok"),
             crash.lines.length || crash.milestone ? jsx(Button2, { variant: "secondary", size: "lg", label: t2(details ? "crash.hideDetails" : "crash.details"), focusKey: "crash:details", onPress: () => setDetails(!details) }, "details") : null
           ] })
         ]
