@@ -4,6 +4,10 @@
 import { useEffect, useState } from 'react';
 import { createThroughput } from './rates.js';
 import { subscribe2 } from './useQueue.js';
+import { paced } from '../state/power.js';
+
+  // glibren.45: a sample a second as before; the chart is redrawn with them every 5 s at rest and every 2 s with
+  // "Economizar energia" (state/power.js paced), without losing any.
 
   var SAMPLES = 60;
   var EMPTY = { network: [], disk: [] };
@@ -11,15 +15,22 @@ import { subscribe2 } from './useQueue.js';
     const [history, setHistory] = (0, useState)(EMPTY);
     (0, useEffect)(() => {
       const measure = createThroughput();
-      return subscribe2((jobs) => {
+      let kept = EMPTY;
+      const pace = paced(setHistory, 0);
+      const stop = subscribe2((jobs) => {
         const job2 = jobs.find((item) => item.id === id);
         const sample = job2 && measure(job2, Date.now());
         if (!sample) return;
-        setHistory((previous) => ({
-          network: [...previous.network, sample.network].slice(-SAMPLES),
-          disk: [...previous.disk, sample.disk].slice(-SAMPLES)
-        }));
+        kept = {
+          network: [...kept.network, sample.network].slice(-SAMPLES),
+          disk: [...kept.disk, sample.disk].slice(-SAMPLES)
+        };
+        pace.feed(kept);
       });
+      return () => {
+        pace.stop();
+        stop?.();
+      };
     }, [id]);
     return history;
   }

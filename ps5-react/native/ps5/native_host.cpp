@@ -627,9 +627,11 @@ bool run_proof() {
       // While the system keyboard is up every frame is presented, as titles that show it do.
       const bool still = !typing && first_present &&
                          presenter.unchanged(damage_tracker_rects(), damage_tracker_moves(), display.width(), display.height());
-      if (!still)
+      if (!still) {
         ok = presenter.draw(er_software_framebuffer(), damage_tracker_rects(), damage_tracker_moves(),
                             display.width(), display.height());
+        stats.note_shown();
+      }
       er_perf_phase_end(ER_PERF_PHASE_PRESENT);
       {
         const GlPresenter::Timing& t = presenter.last_timing();

@@ -1938,12 +1938,12 @@ test('a set of images unpacked into one folder moves image by image, and the emp
   assert.deepEqual(state.manual, [`${usb}/Game.exfat`, `${usb}/Game-Update-1.05.exfat`]);
 });
 
-test('versions: 0.2.0 is newer than every 0.1.1 beta and 0.1.1, and the app now reports 0.5.5-glibren.44 (glibren fork)', async () => {
+test('versions: 0.2.0 is newer than every 0.1.1 beta and 0.1.1, and the app now reports 0.5.5-glibren.45 (glibren fork)', async () => {
   assert.equal(newer('v0.2.0', '0.1.1-beta.4'), true);
   assert.equal(newer('v0.2.0', '0.1.1'), true);
   assert.equal(newer('0.1.1-beta.4', '0.2.0'), false);
   const { VERSION, VERSION_LABEL } = await load('app/version.js');
-  assert.deepEqual([VERSION, VERSION_LABEL], ['0.5.5-glibren.44', '0.5.5-glibren.44']);
+  assert.deepEqual([VERSION, VERSION_LABEL], ['0.5.5-glibren.45', '0.5.5-glibren.45']);
 });
 
 
@@ -1963,12 +1963,12 @@ const releaseJson = (overrides = {}) => ({
 });
 
 test('versions: 0.5.0 is newer than 0.4.1 and every 0.5.0 pre-release, and older than 0.5.1; 0.5.5 is newer than 0.5.4', () => {
-  assert.equal(VERSION, '0.5.5-glibren.44');
+  assert.equal(VERSION, '0.5.5-glibren.45');
   assert.equal(newer(VERSION, '0.5.4'), true, 'it is newer than 0.5.4');
   assert.equal(newer('v0.5.4', VERSION), false, 'so 0.5.4 is not offered to it');
-  assert.equal(newer('v0.5.5-glibren.44', VERSION), false, 'not to itself');
-  assert.equal(newer(VERSION, '0.5.5-glibren.43'), true, 'offered to glibren.43');
-  assert.equal(newer('v0.5.5-glibren.45', VERSION), true, 'the next fork build is offered to it');
+  assert.equal(newer('v0.5.5-glibren.45', VERSION), false, 'not to itself');
+  assert.equal(newer(VERSION, '0.5.5-glibren.44'), true, 'offered to glibren.44');
+  assert.equal(newer('v0.5.5-glibren.46', VERSION), true, 'the next fork build is offered to it');
   assert.equal(newer('v0.5.5', '0.5.5-pre.1'), true, '0.5.5 is offered to its testers');
   assert.equal(newer(VERSION, '0.5.3'), true, 'it is newer than 0.5.3');
   assert.equal(newer('v0.5.3', VERSION), false, 'so 0.5.3 is not offered to it');
@@ -2644,11 +2644,11 @@ const sampleFeed = (count) => ({
   })),
 });
 
-// A clock that moves 1 ms each time it is read, for the paced steps' 6 ms of work between frames.
-async function withSteppingClock(run) {
+// A clock that moves `step` ms each time it is read (0: stands still, as the console's does inside a frame).
+async function withSteppingClock(run, step = 1) {
   const realNow = Date.now;
   let clock = 0;
-  Date.now = () => clock++;
+  Date.now = () => (clock += step);
   try {
     return await run();
   } finally {
@@ -2656,21 +2656,30 @@ async function withSteppingClock(run) {
   }
 }
 
-test('feeds: the paced check gives exactly what the one-shot check gives, a frame after each 6 ms of it', async () => {
+test('feeds: the paced check gives exactly what the one-shot check gives, in parts with a frame between them', async () => {
   const document = sampleFeed(5100);
   const once = feedFormat.parseFeed(document, 'https://example.com/feed.json');
   let pauses = 0;
   const paced = await withSteppingClock(() => feedFormat.parseFeedAsync(document, 'https://example.com/feed.json', async () => { pauses++; }));
   assert.deepEqual(paced, once);
   assert.equal(once.games.length, 5000, 'the 5000-game cap holds (glibren.20; it was 1500)');
-  // Steps of 4 games, one clock read each: a frame after every 6 of them.
-  assert.equal(pauses, Math.floor(5000 / 4 / 6));
+  // glibren.45: parts counted in steps of 4 games (state/frame-pace.js), growing while the frames stay short.
+  assert.ok(pauses > 5 && pauses < 5000 / 4, `${pauses} frames`);
+  // glibren.45: the console's clock stands still inside a frame: the parts must come all the same (they never did, and
+  // a refresh ran whole in one frame).
+  let still = 0;
+  assert.deepEqual(await withSteppingClock(() => feedFormat.parseFeedAsync(document, 'https://example.com/feed.json', async () => { still++; }), 0), once);
+  assert.ok(still > 5, `${still} frames with the clock standing still`);
+  // Frames that run long (40 ms between parts) keep the parts small: more frames than with short ones.
+  let slow = 0;
+  assert.deepEqual(await withSteppingClock(() => feedFormat.parseFeedAsync(document, 'https://example.com/feed.json', async () => { slow++; }), 40), once);
+  assert.ok(slow > pauses * 3, `${slow} frames when each takes 40 ms, ${pauses} when 1 ms`);
   // On the real clock a fast check needs few frames or none, and gives the same.
   assert.deepEqual(await feedFormat.parseFeedAsync(document, 'https://example.com/feed.json', async () => {}), once);
   await assert.rejects(feedFormat.parseFeedAsync({ version: 2 }, 'https://example.com/feed.json', async () => {}), /Not a catalog feed/);
 });
 
-test('feeds: the paced hash is the same key, a frame after each 6 ms of it', async () => {
+test('feeds: the paced hash is the same key, in parts with a frame between them', async () => {
   const text = JSON.stringify(feedFormat.feedDocument(feedFormat.parseFeed(sampleFeed(1500), 'https://example.com/feed.json')));
   let pauses = 0;
   const key = await withSteppingClock(() => feedFormat.stableKeyAsync(text, async () => { pauses++; }));

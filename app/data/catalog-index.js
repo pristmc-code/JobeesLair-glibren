@@ -4,8 +4,12 @@
 // covers) is in data/catalog/art/<n>.json, read the first time a game's is asked for. `games`, `twins` and
 // `features` are what data/catalog.js exported, the same arrays every importer shares (state/catalog.js adds
 // the feeds' games to them).
+// glibren.45: on the console (and in the PC preview) the index is read in parts by state/catalog.js, a frame at a time
+// (indexSteps, CATALOG_PACED): the arrays start empty and are filled in place. Anywhere else (the tests, the qjs
+// measurements) it is read whole as this module loads, as before.
 
 import { FileSystem } from '@ps5-react/core';
+import { energySaverOn } from '../state/power.js';
 
   var DIR = "/app0/data/catalog";
   // The fields index.json gives as places in its `names` lists, and the art read when asked for, in the order of
@@ -13,7 +17,9 @@ import { FileSystem } from '@ps5-react/core';
   var NAMED = ["platform", "providers", "developer", "publisher", "genres", "features"];
   var LAZY_ART = ["hero", "logo", "logoAspect", "logoDark", "coverFallbacks"];
   // Covers are asked of the PlayStation Store at the width a card draws them (state/catalog.js).
-  var COVER_WIDTH = 440;
+  // glibren.45: smaller with "Economizar energia" (state/power.js), read at launch: under half the pixels to fetch,
+  // decode and keep, still as wide as a card draws one (152 to 189 x 1.5 = 228 to 284 px, 298 lifted by focus).
+  var COVER_WIDTH = energySaverOn() ? 300 : 440;
   var coverSize = (url) => url.startsWith("https://image.api.playstation.com/") ? url.replace(/([?&]w=)\d+/, `$1${COVER_WIDTH}`) : url;
   // Where a game's art waits in the art files: [file, place, mask].
   var LAZY = Symbol("lazy art");
@@ -69,8 +75,10 @@ import { FileSystem } from '@ps5-react/core';
     const where = art?.[LAZY];
     return where ? Boolean(where[2] & 1 << LAZY_ART.indexOf(name)) : Boolean(art?.[name]);
   }
-  function decode(list, names) {
-    for (const game of list) {
+  // How many games are decoded between two looks at the clock (state/catalog.js gives the frame back when it is time).
+  var DECODE_BATCH = 200;
+  function decodeOne(game, names) {
+    {
       for (const field of NAMED) {
         const at = game[field];
         if (typeof at === "number") game[field] = names[field][at];
@@ -82,30 +90,61 @@ import { FileSystem } from '@ps5-react/core';
       if (raw.lazy) art[LAZY] = raw.lazy;
       game.art = art;
     }
-    return list;
+  }
+  function* decodeSteps(list, names, into) {
+    for (let at = 0; at < list.length; at += DECODE_BATCH) {
+      const part = list.slice(at, at + DECODE_BATCH);
+      for (const game of part) decodeOne(game, names);
+      into.push(...part);
+      yield;
+    }
   }
   // How the launch read the index, for the debug log (it opens after this module loads; state/catalog.js
   // warmCovers writes it there): { ms, games, twins, bytes, error }.
   var catalogLoad = { ms: 0, games: 0, twins: 0, bytes: 0, error: "" };
-  function readIndex() {
-    const started = Date.now();
+  // The shared arrays, filled in place by indexSteps.
+  var games = [], twins = [], features = [];
+  var indexDone = false;
+  // glibren.45: whether this run reads the catalog in parts: in a ps5-react host (the console, the PC preview), or when a
+  // test asks for it (globalThis.__jobeCatalogPaced).
+  var CATALOG_PACED = (() => {
+    try {
+      return globalThis.__jobeCatalogPaced === true || globalThis.__jobeCatalogPaced !== false && typeof globalThis.__ps5ReactNative === "object" && globalThis.__ps5ReactNative !== null;
+    } catch {
+      return false;
+    }
+  })();
+  /** glibren.45: the index read in parts (each `yield` is a place to give the frame back); once only. */
+  function* indexSteps() {
+    if (indexDone) return;
+    indexDone = true;
+    let started = Date.now(), spent = 0;
     try {
       const text = FileSystem.readFile(`${DIR}/index.json`);
       const index = JSON.parse(text);
       if (index?.version !== 1 || !Array.isArray(index.games)) throw new Error("not a version 1 index; run tools/catalog/catalog-index.mjs");
-      const games2 = decode(index.games, index.names);
-      const twins2 = decode(index.twins ?? [], index.names);
-      Object.assign(catalogLoad, { ms: Date.now() - started, games: games2.length, twins: twins2.length, bytes: text.length });
-      return { games: games2, twins: twins2, features: index.features ?? [] };
+      const bytes = text.length;
+      features.push(...index.features ?? []);
+      spent += Date.now() - started;
+      yield;
+      for (const [list, into] of [[index.games, games], [index.twins ?? [], twins]]) {
+        const steps = decodeSteps(list, index.names, into);
+        for (started = Date.now(); !steps.next().done; started = Date.now()) {
+          spent += Date.now() - started;
+          yield;
+        }
+        spent += Date.now() - started;
+      }
+      Object.assign(catalogLoad, { ms: spent, games: games.length, twins: twins.length, bytes });
     } catch (error) {
       // The store opens with the feeds' games alone rather than not at all: downloads and the library still work.
       catalogLoad.error = error.message;
       console.log(`[catalog] the bundled catalog is not read: ${error.message}`);
-      return { games: [], twins: [], features: [] };
+      games.length = twins.length = features.length = 0;
     }
   }
-  var { games, twins, features } = readIndex();
+  if (!CATALOG_PACED) for (const steps = indexSteps(); !steps.next().done; ) ;
   /** How many art files were read since launch (tests). */
   var artFilesRead = () => artReads;
 
-export { COVER_WIDTH, artFilesRead, catalogLoad, coverSize, features, games, hasArt, twins };
+export { CATALOG_PACED, COVER_WIDTH, artFilesRead, catalogLoad, coverSize, features, games, hasArt, indexSteps, twins };

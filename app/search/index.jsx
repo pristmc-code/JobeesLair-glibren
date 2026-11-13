@@ -36,6 +36,7 @@ import { homebrew } from '../state/homebrew-store.js';
 import { useNavActions, useNavState } from '../state/nav.jsx';
 import { useStore, useStoreActions } from '../state/store.jsx';
 import { useStoreMode } from '../state/store-mode.js';
+import { usePower } from '../state/power.js';
 import { ButtonGlyph } from '../ui/ButtonHints.jsx';
 import { FocusRing } from '../ui/FocusRing.jsx';
 import { useFavoriteAction } from '../ui/GameCard.jsx';
@@ -70,11 +71,13 @@ import { FocusScope, ScrollView, Text, View, motion } from '@ps5-react/core';
     const t2 = useT();
     const { rtl } = useLocale();
     const tone = side === "homebrew" ? hb().hi : colors.accentHi;
+    const { quiet } = usePower();
     return jsxs(View, { focusKey: "search:field", onPress, style: (state) => [{ position: "relative", flex: 1, height: 84, flexDirection: "row", alignItems: "center", gap: 18, borderRadius: radius.lg, borderWidth: 2, borderColor: typing || state.focused ? tone : colors.line, backgroundColor: colors.surface, paddingHorizontal: 30 }], children: [
       jsx(FocusRing, { round: "lg", color: tone }),
       jsx(Icon, { name: side === "homebrew" ? "package" : "search", size: 22, color: tone }),
       query ? jsx(Text, { style: [text(30, colors.fg, { fontWeight: 600 }), { writingDirection: "ltr" }], children: query }) : null,
-      typing ? jsx(motion.View, { style: [{ width: 3, height: 34, backgroundColor: tone }, rtl ? { marginRight: -12 } : { marginLeft: -12 }], initial: { opacity: 1 }, animate: { opacity: 0 }, transition: blink }) : null,
+      // glibren.45: a steady cursor at rest and with "Economizar energia" (state/power.js).
+      typing ? quiet ? jsx(View, { style: [{ width: 3, height: 34, backgroundColor: tone }, rtl ? { marginRight: -12 } : { marginLeft: -12 }] }) : jsx(motion.View, { style: [{ width: 3, height: 34, backgroundColor: tone }, rtl ? { marginRight: -12 } : { marginLeft: -12 }], initial: { opacity: 1 }, animate: { opacity: 0 }, transition: blink }) : null,
       query ? null : jsx(Text, { style: text(28, colors.subtle, { flex: 1 }), children: side === "homebrew" ? t2("homebrew.searchPlaceholder") : t2("search.placeholder") }),
       typing ? null : jsxs(View, { style: { marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 10 }, children: [
         jsx(ButtonGlyph, { button: "triangle", size: 16 }),

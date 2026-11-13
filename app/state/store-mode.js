@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { games } from '../data/catalog-index.js';
-import { allListed, catalogSources, editionsOf, refreshDerived, sourcesOfGame } from './catalog.js';
+import { allListed, catalogSources, editionsOf, refreshDerived, sourcesOfGame, whenCatalogReady } from './catalog.js';
 import { DATA_DIR } from './data-dir.js';
 import { loadList, saveList } from './saved.js';
 import { libraryPaths, readConfirmedIds } from './torbox-library.js';
@@ -159,16 +159,30 @@ import { FileSystem, Platform } from '@ps5-react/core';
     return { mode, epoch, count: torBoxStoreCount() };
   }
   // A versão escolhida antes, ao carregar: a lista da loja já sai certa para quem a lê depois.
-  try {
-    const saved = loadList(SETTINGS, "settings").storeMode;
-    if (saved === "torbox" && !applyStoreMode("torbox", { save: false }).ok) console.log("[store-mode] the TorBox store has no games; the full store is shown");
-    // glibren.25: com catálogos escondidos, a loja completa já sai sem eles (todos escondidos não acontece: o último fica).
-    if (mode === "full" && hidden.size) {
-      if (!catalogSources().some((source) => !hidden.has(source.id))) hidden.clear();
-      applyStoreMode("full", { save: false });
+  // glibren.45: com a loja pronta (state/catalog.js whenCatalogReady: na hora, ou no console depois da montagem em partes).
+  // Montada em partes, os módulos que tiraram linhas e índices da lista enquanto ela estava vazia refazem os seus
+  // (applyStoreMode chama os onStoreMode), antes de a loja aparecer.
+  whenCatalogReady((paced) => {
+    let applied = false;
+    try {
+      const saved = loadList(SETTINGS, "settings").storeMode;
+      if (saved === "torbox") {
+        applied = true;
+        if (!applyStoreMode("torbox", { save: false }).ok) {
+          console.log("[store-mode] the TorBox store has no games; the full store is shown");
+          applied = false;
+        }
+      }
+      // glibren.25: com catálogos escondidos, a loja completa já sai sem eles (todos escondidos não acontece: o último fica).
+      if (mode === "full" && hidden.size) {
+        if (!catalogSources().some((source) => !hidden.has(source.id))) hidden.clear();
+        applyStoreMode("full", { save: false });
+        applied = true;
+      }
+    } catch (error) {
+      console.log(`[store-mode] saved choice not read: ${error?.message || error}`);
     }
-  } catch (error) {
-    console.log(`[store-mode] saved choice not read: ${error?.message || error}`);
-  }
+    if (paced && !applied) applyStoreMode(mode, { save: false });
+  });
 
 export { MODES, applyStoreMode, setSourceShown, shownVersion, sourceShown, subscribeStore, libraryChanged, onStoreMode, storeEpoch, storeMode, toggleStoreMode, torBoxGames, torBoxStoreCount, useStoreMode };

@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { downloadQueue } from '../state/downloads.js';
 import { shapeOf } from './shape.js';
+import { paced } from '../state/power.js';
 
   function subscribe2(listener) {
     try {
@@ -32,16 +33,22 @@ import { shapeOf } from './shape.js';
     }, []);
     return state;
   }
+  // glibren.45: redrawn as it comes in use, every 5 s at rest and every 2 s with "Economizar energia" (state/power.js).
   function useProgress(id) {
     const [progress, setProgress] = (0, useState)(null);
     (0, useEffect)(() => {
       let last = null;
-      return subscribe2((jobs) => {
+      const pace = paced(setProgress, 0);
+      const stop = subscribe2((jobs) => {
         const job2 = jobs.find((item) => item.id === id);
         if (!job2 || last && last.written === job2.written && last.total === job2.total && last.bytesPerSecond === (job2.bytesPerSecond || 0)) return;
         last = { written: job2.written, total: job2.total, bytesPerSecond: job2.bytesPerSecond || 0 };
-        setProgress(last);
+        pace.feed(last);
       });
+      return () => {
+        pace.stop();
+        stop?.();
+      };
     }, [id]);
     return progress;
   }

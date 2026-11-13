@@ -30,7 +30,7 @@ import { GameScreen } from './game/index.jsx';
 import { LocaleProvider, useLocale } from './i18n/index.js';
 import { SearchScreen } from './search/index.jsx';
 import { TubeScreen } from './tube/TubeScreen.jsx';
-import { getGame, warmCovers } from './state/catalog.js';
+import { getGame, hurryCatalog, isCatalogReady, warmCovers, whenCatalogReady } from './state/catalog.js';
 import { startStoreExport } from './state/store-export.js';
 import { refreshFeeds } from './state/feeds.js';
 import { startOrbitFeed } from './state/orbit-feed.js';
@@ -52,6 +52,7 @@ import { startSharedLinks } from './state/links.js';
 import { applySpeedLimit } from './state/speed-limit.js';
 import { installLogger } from './services/logger.js';
 import { startMemoryMeter } from './state/memory-meter.js';
+import { startPower } from './state/power.js';
 import { startJobeRemote } from './state/jobe-remote-run.js'; // glibren.44
 import { VERSION } from './version.js';
 import { HOMEBREW_ONLY } from './edition.js';
@@ -158,6 +159,8 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
     (0, useEffect)(() => HOMEBREW_ONLY ? void 0 : startCompanionIfEnabled(), []);
     // glibren (medidor de memoria): uma amostra a cada 30 s com a tela da vez (state/memory-meter.js).
     (0, useEffect)(() => startMemoryMeter(), []);
+    // glibren.45: 15 s sem botao = repouso (state/power.js): as animacoes continuas param e as telas ao vivo ficam calmas.
+    (0, useEffect)(() => startPower(), []);
     // The drives and their space are read once at launch, on the probe worker, so the first screen that
     // wants them finds them in the cache.
     (0, useEffect)(() => {
@@ -266,7 +269,16 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
     const [introDone, setIntroDone] = (0, useState)(false);
     // The intro starts leaving (it slides up) while the startup notice is already mounted under it.
     const [introLeaving, setIntroLeaving] = (0, useState)(false);
-    const [booted, setBooted] = (0, useState)(false);
+    // glibren.45: the store mounts once the notice is passed AND the catalog is built (state/catalog.js builds it in parts
+    // from the launch, while the intro and the notice show; past the notice, in longer parts).
+    const [noticed, setNoticed] = (0, useState)(false);
+    const [catalogBuilt, setCatalogBuilt] = (0, useState)(isCatalogReady);
+    (0, useEffect)(() => whenCatalogReady(() => setCatalogBuilt(true)), []);
+    const booted = noticed && catalogBuilt;
+    const setBooted = () => {
+      hurryCatalog();
+      setNoticed(true);
+    };
     // The PS4 skips the vortex (light-motion.js): the store comes up right after the startup notice.
     const [curtain, setCurtain] = (0, useState)(!LIGHT);
     const theme = useThemeEpoch();

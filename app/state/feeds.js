@@ -16,7 +16,7 @@
 // the link never touches the file itself. No mirrors for a file.
 
 import { useEffect, useState } from 'react';
-import { MAX_MIRRORS, feedDocument, parseFeed, parseFeedAsync, checkFeedTextAsync, parseFeedText, stableKey, stableKeyAsync } from './feed-format.js';
+import { MAX_MIRRORS, feedDocument, feedTextSteps, parseFeed, parseFeedAsync, checkFeedTextAsync, parseFeedText, stableKey, stableKeyAsync } from './feed-format.js';
 import { isoStamp } from './clock.js';
 import { readJlxAsync } from './jlx.js';
 import { askListsHome, listsAddress, listsGone } from './lists-home.js';
@@ -197,16 +197,19 @@ import { FileSystem, Http } from '@ps5-react/core';
     }
     return null;
   }
+  // glibren.45: na abertura os feeds sao lidos em partes (state/catalog.js da o quadro de volta entre elas): LOAD_BATCH
+  // jogos entre duas olhadas no relogio. loadFeedGames() continua lendo tudo de uma vez.
+  var LOAD_BATCH = 8;
   // glibren.27: o arquivo lido como texto (parseFeedText, um jogo por vez); o cache so quando o arquivo nao pode ser
   // lido, tambem como texto (readWebCache). O feed sai igual ao de antes.
-  function loadLocal(url) {
+  function* loadLocalSteps(url) {
     const cache = readCacheHead(url);
     let failure = null;
     try {
       const info = statLocal(url);
       const stamp = stampOf(info);
       let text2 = readLocalText(url);
-      const feed = parseFeedText(text2, url);
+      const feed = yield* feedTextSteps(text2, url, LOAD_BATCH);
       if (!feed.games.length) throw new Error("No usable games in this file.");
       if (cache && cache.stamp === stamp) {
         text2 = null;
@@ -228,7 +231,7 @@ import { FileSystem, Http } from '@ps5-react/core';
     if (!cache) return null;
     const kept = readWebCache(url);
     if (!kept) return null;
-    const feed = parseFeedText(kept.text, url, kept.from, kept.to);
+    const feed = yield* feedTextSteps(kept.text, url, LOAD_BATCH, kept.from, kept.to);
     loaded.set(url, cache.hash);
     meta.set(url, summary(cache));
     setIndex(url, feed.games);
@@ -237,7 +240,7 @@ import { FileSystem, Http } from '@ps5-react/core';
   // Every listed feed's cached games, validated again: { game, page, releases } as parseFeed gives them.
   // The store ratings the feeds carry (0.5.1), [stars, count] by title ID; the live catalog's first, as it is listed first.
   var feedRatings = {};
-  function loadFeedGames() {
+  function* loadFeedGamesSteps() {
     const out = [];
     for (const url of allFeeds()) {
       // glibren (item 2): o que esta leitura deixou de cada feed (status, resumo, indice, notas), para o retrato da loja
@@ -258,14 +261,14 @@ import { FileSystem, Http } from '@ps5-react/core';
       try {
         let feed;
         if (isLocalFeed(url)) {
-          feed = loadLocal(url);
+          feed = yield* loadLocalSteps(url);
           if (!feed) {
             seen();
             continue;
           }
         } else {
           const { cache } = kept;
-          feed = parseFeedText(kept.text, url, kept.from, kept.to);
+          feed = yield* feedTextSteps(kept.text, url, LOAD_BATCH, kept.from, kept.to);
           kept = null; // o texto do cache sai antes do proximo feed
           loaded.set(url, cache.hash);
           meta.set(url, summary(cache));
@@ -281,8 +284,16 @@ import { FileSystem, Http } from '@ps5-react/core';
       }
       seen();
       memorySample(memoryAction(url, "abrir"));
+      yield;
     }
     return out;
+  }
+  function loadFeedGames() {
+    const steps = loadFeedGamesSteps();
+    for (; ; ) {
+      const step = steps.next();
+      if (step.done) return step.value;
+    }
   }
   // glibren (item 2): o retrato da loja (state/feed-snapshot.js). `states` e o que a ultima loadFeedGames deixou de cada
   // feed; ratingsOf, as notas de cada um (so para o retrato).
@@ -679,4 +690,4 @@ import { FileSystem, Http } from '@ps5-react/core';
 /** glibren.9: a feed's name as its last good copy says (null when none is cached). */
 var feedName = (url) => meta.get(url)?.name ?? null;
 
-export { LIVE_FEED, MAX_FEEDS, NET_MAX_BYTES, feedIndexEntries, orbitFeedSnapshot, refreshOrbitFeed, refreshFeedsNow, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, feedSnapshotParts, loadFeedGames, restoreFeedStates, takeFeedStates, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };
+export { LIVE_FEED, MAX_FEEDS, NET_MAX_BYTES, feedIndexEntries, orbitFeedSnapshot, refreshOrbitFeed, refreshFeedsNow, feedName, MAX_MIRRORS, addFeed, addLocalFeed, addMirror, feedIndexVersion, feedIndexes, feedRatings, feedsSnapshot, feedSnapshotParts, loadFeedGames, loadFeedGamesSteps, restoreFeedStates, takeFeedStates, refreshFeeds, removeFeed, removeMirror, replaceFeed, subscribeFeeds, useFeeds };

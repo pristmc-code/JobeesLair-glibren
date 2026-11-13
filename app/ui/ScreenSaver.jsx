@@ -1,6 +1,6 @@
 // The screen saver (0.5.0 Pre Release 4). After ten minutes without a button press (IDLE_MS), a slideshow of the
 // catalog's most popular games fills the screen: full-screen screenshots from their own store pages
-// (data/screensaver.js), each drifting slowly while the next fades in, the game's name, the time, and how a
+// (data/screensaver.js), each fading in over the last (glibren.45: without the slow drift), the game's name, the time, and how a
 // download is going if one is. Any button brings the store back, and that press does nothing else. It stays
 // away while a browser capture is open or a video plays, and when Settings turns it off.
 // One picture is drawn at a time (two while they cross), well inside the engine's image budget.
@@ -15,6 +15,7 @@ import { downloadQueue } from '../state/downloads.js';
 import { useIsImmersive } from '../state/nav.jsx';
 import { IDLE_MS, onShowScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
 import { JLMark } from './JLMark.jsx';
+import { usePower } from '../state/power.js';
 
   var CHECK_MS = 15e3;
   var SLIDE_MS = 9e3;
@@ -60,10 +61,14 @@ import { JLMark } from './JLMark.jsx';
     if (String(locale || "en").startsWith("en")) return `${hours % 12 || 12}:${minutes} ${hours < 12 ? "AM" : "PM"}`;
     return `${String(hours).padStart(2, "0")}:${minutes}`;
   }
-  // One slide: the screenshot fading in over the one before, and drifting while it shows.
-  function Slide({ slide, index, onShown, onFail }) {
-    const drift = index % 2 ? DRIFT : -DRIFT;
-    return jsx(motion.View, { style: FULL, initial: { opacity: 0 }, animate: { opacity: 1 }, transition: FADE, children: jsx(motion.View, { style: SHOT, initial: { x: 0 }, animate: { x: drift }, transition: { type: "tween", duration: (SLIDE_MS + 1600) / 1e3, ease: "linear" }, children: jsx(Image, { source: { uri: slide.url }, resizeMode: "cover", style: SLIDE_SIZE, onLoad: onShown, onError: onFail }) }) });
+  // One slide: the screenshot fading in over the one before.
+  // glibren.45: it no longer drifts while it shows: the drift repainted the whole screen every frame for as long as the
+  // saver was up (measured on the PC preview: ~52 frames a second of 2 million pixels each), the fan's worst case with
+  // nobody there. The fade stays (1.4 s a slide); with "Economizar energia" (state/power.js) the slide comes in at once.
+  function Slide({ slide, onShown, onFail, still }) {
+    const picture = jsx(View, { style: SHOT, children: jsx(Image, { source: { uri: slide.url }, resizeMode: "cover", style: SLIDE_SIZE, onLoad: onShown, onError: onFail }) });
+    if (still) return jsx(View, { style: FULL, children: picture });
+    return jsx(motion.View, { style: FULL, initial: { opacity: 0 }, animate: { opacity: 1 }, transition: FADE, children: picture });
   }
   // The download in progress, if any: its name and how far along.
   function useDownloading() {
@@ -91,6 +96,7 @@ import { JLMark } from './JLMark.jsx';
     const [index, setIndex] = useState(() => Math.floor(Math.random() * slides.length));
     const [time, setTime] = useState(() => clock(locale));
     const downloading = useDownloading();
+    const { saver } = usePower();
     // Any button wakes the store: a press here is taken by the saver's own scope, so it does nothing else.
     useController(() => onWake());
     useEffect(() => {
@@ -133,7 +139,7 @@ import { JLMark } from './JLMark.jsx';
     const previous = tight ? null : slides[(index - 1 + slides.length) % slides.length];
     return jsx(View, { style: { ...FULL, zIndex: 100, backgroundColor: "#000000" }, children: jsx(FocusScope, { trap: true, autoFocus: true, onBack: () => (onWake(), true), onAction: () => (onWake(), true), children: jsxs(View, { focusKey: "screensaver", onPress: onWake, style: FULL, children: [
       previous ? jsx(View, { style: FULL, children: jsx(View, { style: SHOT, children: jsx(Image, { source: { uri: previous.url }, resizeMode: "cover", style: SLIDE_SIZE }) }) }, `under:${index}`) : null,
-      jsx(Slide, { slide, index, onShown: shown, onFail: () => skip(index) }, `slide:${index}`),
+      jsx(Slide, { slide, index, onShown: shown, onFail: () => skip(index), still: saver }, `slide:${index}`),
       jsx(View, { style: { position: "absolute", left: 0, right: 0, top: 0, height: 220, backgroundGradient: { type: "linear", to: "bottom", stops: [{ color: "#000000aa", offset: 0 }, { color: "#00000000", offset: 1 }] } } }),
       jsx(View, { style: { position: "absolute", left: 0, right: 0, bottom: 0, height: 320, backgroundGradient: { type: "linear", to: "top", stops: [{ color: "#000000cc", offset: 0 }, { color: "#00000000", offset: 1 }] } } }),
       jsxs(View, { style: { position: "absolute", left: 80, top: 64, flexDirection: "row", alignItems: "center", gap: 16 }, children: [

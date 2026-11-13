@@ -20,6 +20,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { GameRail } from '../browse/GameRail.jsx';
 import { LATIN_IN_RTL, latin, useLocale, useT } from '../i18n/index.js';
 import { homebrew, useHomebrew } from '../state/homebrew-store.js';
+import { usePower } from '../state/power.js';
 import { useNavActions, useNavState } from '../state/nav.jsx';
 import { Button2 } from '../ui/Button.jsx';
 import { ButtonGlyph } from '../ui/ButtonHints.jsx';
@@ -123,11 +124,13 @@ import { FocusScope, Image, ScrollView, Text, View, VirtualList, motion, useFocu
     const index = homebrew().index;
     const tone = hb();
     const [at, setAt] = useState(0);
+    // glibren.45: stands still at rest and with "Economizar energia" (state/power.js).
+    const { quiet } = usePower();
     useEffect(() => {
-      if (apps.length < 2) return void 0;
+      if (apps.length < 2 || quiet) return void 0;
       const id = setInterval(() => setAt((n) => (n + 1) % apps.length), SPOT_MS);
       return () => clearInterval(id);
-    }, [apps.length]);
+    }, [apps.length, quiet]);
     const app = apps[at % Math.max(1, apps.length)];
     if (!app) return null;
     const category = index.categories.find((c) => c.id === app.category);

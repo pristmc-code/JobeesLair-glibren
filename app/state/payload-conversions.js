@@ -11,6 +11,7 @@
 // a lista fica como estava (vazia). A tela le a lista enquanto esta aberta, a cada 2 s (usePayloadConversions).
 
 import { useEffect, useState } from 'react';
+import { redrawEvery, usePower } from './power.js';
 
   // glibren.22: "extracting" (o payload descompacta antes de converter, glibren.20) tambem esta em andamento.
   var ACTIVE_CONVERSION = ["queued", "extracting", "converting", "verifying"];
@@ -83,18 +84,23 @@ import { useEffect, useState } from 'react';
       for (const listener of [...listeners]) listener(latest);
     }
   }
-  /** A lista, lida a cada `ms` enquanto o componente esta na tela. */
+  /**
+   * A lista, lida a cada `ms` enquanto o componente esta na tela. glibren.45: em repouso a cada 5 s e com "Economizar
+   * energia" a cada 2 s no minimo (state/power.js): cada leitura e um pedido ao payload.
+   */
   function usePayloadConversions(ms = 2e3) {
     const [list, setList] = useState(payloadConversions);
+    usePower();
+    const every = redrawEvery(ms);
     useEffect(() => {
       listeners.add(setList);
       void refreshConversions();
-      const timer = setInterval(() => void refreshConversions(), ms);
+      const timer = setInterval(() => void refreshConversions(), every);
       return () => {
         listeners.delete(setList);
         clearInterval(timer);
       };
-    }, [ms]);
+    }, [every]);
     return list;
   }
   var conversionActive = (item) => ACTIVE_CONVERSION.includes(item.state);
@@ -114,18 +120,20 @@ import { useEffect, useState } from 'react';
   var conversionWaitSeconds = (now = Date.now()) => waitUntil > now ? Math.ceil((waitUntil - now) / 1e3) : 0;
   /** "m:ss" de uma espera em segundos. */
   var waitClock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-  /** Os segundos de espera, redesenhados a cada segundo enquanto houver espera. */
+  /** Os segundos de espera, redesenhados a cada segundo enquanto houver espera (glibren.45: so enquanto houver). */
   function useConversionWait() {
     const [seconds, setSeconds] = useState(() => conversionWaitSeconds());
+    const waiting = seconds > 0;
     useEffect(() => {
       const update = () => setSeconds(conversionWaitSeconds());
       waitListeners.add(update);
-      const timer = setInterval(update, 1e3);
+      update();
+      const timer = waiting ? setInterval(update, 1e3) : null;
       return () => {
         waitListeners.delete(update);
-        clearInterval(timer);
+        if (timer) clearInterval(timer);
       };
-    }, []);
+    }, [waiting]);
     return seconds;
   }
   /**

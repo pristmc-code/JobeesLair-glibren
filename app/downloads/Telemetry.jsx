@@ -3,6 +3,7 @@
 // meter, sizes and time left), the job counts by state as square tiles, and each drive's free space from
 // the drive cache (state/drives.js; nothing here asks a drive itself).
 // It follows the queue through one subscription and redraws at most twice a second.
+// glibren.45: every 5 s at rest (15 s without a button) and every 2 s with "Economizar energia" (state/power.js paced).
 
 import '../assets/Exo2.ttf';
 import '../assets/JetBrainsMono-Regular.ttf';
@@ -21,6 +22,7 @@ import { useDrives } from '../state/drives.js';
 import { formatBytes } from '../state/size.js';
 import { useSpeedLimit } from '../state/speed-limit.js';
 import { colors, radius } from '../ui/colors.js';
+import { paced } from '../state/power.js';
 import { Text, View } from '@ps5-react/core';
 
   var REDRAW_MS = 500, SAMPLE_MS = 1e3;
@@ -41,12 +43,8 @@ import { Text, View } from '@ps5-react/core';
     const [shown, setShown] = (0, useState)(EMPTY);
     (0, useEffect)(() => {
       const measure = createActivity();
-      let samples = [], sampledAt = 0, drawnAt = 0, latest = EMPTY, timer = null;
-      const draw = () => {
-        timer = null;
-        drawnAt = Date.now();
-        setShown(latest);
-      };
+      let samples = [], sampledAt = 0, latest = EMPTY;
+      const pace = paced(setShown, REDRAW_MS);
       const stop = subscribe2((jobs) => {
         const now = Date.now();
         const activity = measure(jobs, now);
@@ -72,13 +70,10 @@ import { Text, View } from '@ps5-react/core';
           },
           samples
         };
-        if (timer) return;
-        const wait = Math.max(0, REDRAW_MS - (now - drawnAt));
-        if (wait === 0) draw();
-        else timer = setTimeout(draw, wait);
+        pace.feed(latest);
       });
       return () => {
-        clearTimeout(timer);
+        pace.stop();
         stop?.();
       };
     }, []);

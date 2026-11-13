@@ -6,6 +6,24 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.45** (fork): less CPU while the app sits open (the PS5's fan sped up with it open). Measured on the PC
+  preview (same JavaScript and CPU renderer as the console; `tools/perf/idle.mjs`, which now counts the frames actually
+  drawn, `shown`): idle on the store 118.8 → 0 frames drawn a second, idle on Downloads with two announcements
+  103.6 → 0, the screen saver 80.7 → 8.4 (2,070 → 306 thousand pixels a frame; 0.2 with "Save energy"). After 15 s without a button press
+  (always, `state/power.js`) the announcement bar keeps the note it shows and its dots stand still, the store's banner
+  and the Homebrew spotlight stop turning, a pulsing placeholder and the search cursor stand still, and the Downloads
+  numbers, speed charts and card progress are redrawn every 5 s (the payload's conversion list is asked for every 5 s
+  too); any button brings it all back at once. The screen saver no longer drifts (it repainted the whole screen every
+  frame); the slides still fade in. New "Save energy" setting (Settings > Look, off by default, 14 languages): short
+  animations (the runtime's light motion, as on the PS4), no launch vortex, still charts, live screens every 2 s,
+  smaller covers (300 px wide instead of 440, from the next launch) and a screen saver without fades. Launch: the
+  bundled index, the feeds (or the store snapshot) and everything worked out from them are built in parts a frame at a
+  time while the intro and the terms show, and the store mounts once it is done (qjs, Orbit list on, 2,639 games: the
+  first launch after a feed changes went from one 2.6 s block to ~110 parts of at most ~80 ms; a usual launch from 306
+  ms in one block to ~22 parts; peak heap 34.7 → 28.8 MB and 21.3 → 17.6 MB, the snapshot now read and written a game
+  at a time). Found on the way: the runtime's clock (`Date.now()`, `performance.now()`) does not move inside a frame,
+  so the old "give the frame back after 6 ms" in the feed refresh (8 s after launch) and the store export (20 s after)
+  never did on the console; both now count steps (`state/frame-pace.js`) and fit them to how long the frames take.
 - **glibren.44** (fork): less memory in the TorBox library, the YouTube account always reachable, clearer download
   cards and diagnostics sent from the phone. TorBox library: on the console the JS heap reached 50.5 of 64 MB while
   building it. The background payload now writes the account list with only the files the build uses (plus the

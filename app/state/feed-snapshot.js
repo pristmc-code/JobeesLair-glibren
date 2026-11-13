@@ -15,6 +15,7 @@
 import { FileSystem } from '@ps5-react/core';
 import { DATA_DIR } from './data-dir.js';
 import { stableKey } from './feed-format.js';
+import { jsonMembers } from './json-scan.js';
 import { VERSION } from '../version.js';
 
   var DIR = `${DATA_DIR}/feed-store`;
@@ -28,11 +29,36 @@ import { VERSION } from '../version.js';
   /** A chave do retrato: a versao do app, o console (PS4 so lista os dele) e cada feed com o carimbo dos seus arquivos. */
   var snapshotKey = (parts, ps4) => stableKey(JSON.stringify([FORMAT, VERSION, Boolean(ps4), parts]));
 
+  // glibren.45: lido e gravado em partes na abertura (state/catalog.js devolve o quadro entre elas): PART jogos por vez.
+  var PART = 100;
+  var finish = (steps) => {
+    for (; ; ) {
+      const step = steps.next();
+      if (step.done) return step.value;
+    }
+  };
   /** O retrato gravado, se a chave e a mesma: { games:[{game, page, feed}], states, kinds:{id:[...]}, buckets:[[id...]] }. */
-  function readSnapshot(key) {
+  var readSnapshot = (key) => finish(readSnapshotSteps(key));
+  function* readSnapshotSteps(key) {
     try {
       if (!FileSystem.exists(SNAPSHOT)) return null;
-      const value = JSON.parse(FileSystem.readFile(SNAPSHOT));
+      // Um membro por vez (state/json-scan.js) e os jogos PART de cada vez: sem um JSON.parse do retrato inteiro.
+      let text = FileSystem.readFile(SNAPSHOT);
+      const value = {};
+      const games = [];
+      for (const part of jsonMembers(text, 0, text.length, "games")) {
+        if (part.key === "games" && part.open) continue;
+        if (part.key === "games" && part.item) {
+          games.push(JSON.parse(text.slice(part.start, part.end)));
+          if (games.length % PART === 0) yield;
+          continue;
+        }
+        value[part.key] = JSON.parse(text.slice(part.start, part.end));
+        yield;
+      }
+      text = null;
+      if (Array.isArray(value.games)) games.push(...value.games);
+      value.games = games;
       if (value?.format !== FORMAT || value.key !== key || !Array.isArray(value.games) || !Array.isArray(value.buckets)) return null;
       // Os textos repetidos de jogo para jogo (generos, estudios, hosts, datas) viram um so, como na leitura dos feeds
       // (feed-format.js `same`): o JSON.parse faz uma copia por jogo.
@@ -62,7 +88,15 @@ import { VERSION } from '../version.js';
    * Grava os links (`releases`: Map id -> lista) em baldes na ordem `order` (os ids na ordem do catalogo) e depois o
    * retrato. -> os baldes ([[id...]]) ou null quando nao gravou (a loja fica com os links na memoria, como antes).
    */
-  function writeSnapshot(key, { games, states, kinds, releases, order }) {
+  // glibren.45: em partes, na abertura (state/catalog.js): um `yield` depois de cada balde gravado.
+  function writeSnapshot(key, parts) {
+    const steps = writeSnapshotSteps(key, parts);
+    for (; ; ) {
+      const step = steps.next();
+      if (step.done) return step.value;
+    }
+  }
+  function* writeSnapshotSteps(key, { games, states, kinds, releases, order }) {
     try {
       FileSystem.mkdir(DIR, { recursive: true });
       const buckets = [];
@@ -78,15 +112,29 @@ import { VERSION } from '../version.js';
       for (const id of order) {
         if (!releases.has(id)) continue;
         current.push(id);
-        if (current.length >= BUCKET) flush();
+        if (current.length >= BUCKET) {
+          flush();
+          yield;
+        }
       }
       flush();
       // Um balde relido antes de contar com eles (um disco que nao guardou nada deixa os links na memoria).
       if (buckets.length && JSON.parse(FileSystem.readFile(bucketFile(buckets.length - 1)) || "null")?.key !== key) throw new Error("links file not kept");
       // O retrato por ultimo (tmp + rename): um retrato inteiro so existe com os baldes dele ja gravados.
-      const lean = games.map(({ game, page, feed }) => ({ game, page, feed }));
-      FileSystem.writeFile(`${SNAPSHOT}.tmp`, JSON.stringify({ format: FORMAT, key, games: lean, states, kinds, buckets }));
-      FileSystem.rename(`${SNAPSHOT}.tmp`, SNAPSHOT);
+      // glibren.45: os jogos PART de cada vez (appendFile), por ultimo no objeto; sem appendFile, tudo de uma vez.
+      const tmp = `${SNAPSHOT}.tmp`;
+      const leanOf = ({ game, page, feed }) => ({ game, page, feed });
+      if (typeof FileSystem.appendFile === "function") {
+        FileSystem.writeFile(tmp, `{"format":${FORMAT},"key":${JSON.stringify(key)},"states":${JSON.stringify(states ?? null)},"kinds":${JSON.stringify(kinds ?? {})},"buckets":${JSON.stringify(buckets)},"games":[`);
+        for (let at = 0; at < games.length; at += PART) {
+          FileSystem.appendFile(tmp, `${at ? "," : ""}${games.slice(at, at + PART).map((item) => JSON.stringify(leanOf(item))).join(",")}`);
+          yield;
+        }
+        FileSystem.appendFile(tmp, "]}");
+      } else {
+        FileSystem.writeFile(tmp, JSON.stringify({ format: FORMAT, key, games: games.map(leanOf), states, kinds, buckets }));
+      }
+      FileSystem.rename(tmp, SNAPSHOT);
       return buckets;
     } catch (error) {
       console.log(`[feed-snapshot] not written: ${error?.message ?? error}`);
@@ -132,4 +180,4 @@ import { VERSION } from '../version.js';
     return releasesOf;
   }
 
-export { BUCKET, SNAPSHOT, bucketReader, readSnapshot, snapshotKey, writeSnapshot };
+export { BUCKET, SNAPSHOT, bucketReader, readSnapshot, snapshotKey, writeSnapshot, writeSnapshotSteps, readSnapshotSteps };

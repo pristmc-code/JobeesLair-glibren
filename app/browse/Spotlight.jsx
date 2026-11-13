@@ -14,6 +14,7 @@ import { featured } from './featured.js';
 import { FIRST_FEATURED } from './Lanes.jsx';
 import { HeroThumbs } from './HeroThumbs.jsx';
 import { useSlides } from './useSlides.js';
+import { usePower } from '../state/power.js';
 import { LATIN_IN_RTL, focusEnd, useLocale, useT } from '../i18n/index.js';
 import { genreLabel, summaryOf } from '../state/catalog.js';
 import { useNavActions, useNavState } from '../state/nav.jsx';
@@ -132,7 +133,10 @@ import { colors, radius } from '../ui/colors.js';
   var Carousel = (0, memo)(function Carousel2({ shown }) {
     const t2 = useT();
     const { rtl } = useLocale();
-    const slides = useSlides(featured.length, shown);
+    // glibren.45: the slides stop turning by themselves at rest and with "Economizar energia" (state/power.js): each one
+    // swapped the 1824x600 banner and its progress bar repainted every frame with nobody looking.
+    const { quiet } = usePower();
+    const slides = useSlides(featured.length, shown && !quiet);
     const { openGame } = useNavActions();
     // Back from the game page returns to its thumbnail.
     const [open] = (0, useState)(() => (index) => openGame(featured[index].id, `spotlight:${index}`));

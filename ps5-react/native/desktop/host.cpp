@@ -543,6 +543,7 @@ struct Host {
         const GlPresenter::Timing& t = presenter.last_timing();
         stats.note_present(t.upload_us, t.draw_us, t.upload_bytes);
       }
+      stats.note_shown();
     }
     if (sw > 0 && sh > 0) damage_tracker_clear();
     stats.lap(FrameStats::present, now_us());

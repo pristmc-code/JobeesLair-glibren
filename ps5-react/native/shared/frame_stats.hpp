@@ -32,6 +32,9 @@ public:
     upload_us_ = upload_us; draw_us_ = draw_us;
     upload_sum_ += upload_us; draw_sum_ += draw_us; upload_bytes_sum_ += upload_bytes;
   }
+  // glibren.45: a frame the presenter drew (one that changed something); the summary gives them per second as
+  // "shown", beside "fps" (every pass of the loop, drawn or not).
+  void note_shown() { ++shown_; }
   // How many slow frames a window reports (default 8).
   void set_slow_line_limit(std::uint32_t limit) { slow_line_limit_ = limit; }
 
@@ -43,7 +46,7 @@ private:
 
   std::uint32_t totals_[capacity] = {}, scratch_[capacity] = {};
   std::uint64_t phase_sum_[phase_count] = {}, total_sum_ = 0;
-  std::uint32_t total_max_ = 0, frames_ = 0;
+  std::uint32_t total_max_ = 0, frames_ = 0, shown_ = 0;
   std::int64_t window_start_ = 0, frame_start_ = 0, mark_ = 0;
   // er_perf sums over the window; perf_frames_ stays 0 when ER_PERF_STATS is off.
   std::uint64_t engine_sum_[ER_PERF_PHASE_COUNT] = {}, js_sub_sum_[ER_PERF_JS_COUNT] = {},
@@ -52,5 +55,5 @@ private:
   std::uint64_t upload_sum_ = 0, draw_sum_ = 0, upload_bytes_sum_ = 0;
   std::uint32_t upload_us_ = 0, draw_us_ = 0;
   std::uint64_t process_cpu_start_ = 0, thread_cpu_start_ = 0, thread_cpu_mark_ = 0, thread_cpu_sum_[phase_count] = {};
-  char line_[512] = {}, slow_line_[352] = {};
+  char line_[640] = {}, slow_line_[352] = {};
 };

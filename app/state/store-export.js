@@ -29,6 +29,7 @@ import { PS4 } from './ps4.js';
 import { VERSION } from '../version.js';
 import { exclusive } from './heavy-work.js';
 import { isoStamp } from './clock.js';
+import { createFramePace } from './frame-pace.js';
 
   var STORE_DIR = Platform.OS === "ps5" ? "/data/JobeesLair/store" : `${DATA_DIR}/store`;
   var INDEX = `${STORE_DIR}/store-index.json`;
@@ -36,7 +37,6 @@ import { isoStamp } from './clock.js';
   // O que ja foi gravado: { key, solo: {id: bool} } (o store-games.json inteiro e grande demais para reler).
   var DONE = `${STORE_DIR}/store-games.done.json`;
   var FORMAT = 1;
-  var SLICE_MS = 6;
   var CHUNK = 64 * 1024;
 
   /** Os jogos que a loja completa mostra (store-mode.js: sem os que so vem de catalogos escondidos). */
@@ -212,12 +212,14 @@ import { isoStamp } from './clock.js';
   async function exportOnce(pause, log) {
     const list = shownGames();
     const done = readJson(DONE);
-    // Cede o quadro a cada SLICE_MS de trabalho.
-    let started = Date.now();
+    // Cede o quadro a cada parte (glibren.45: contada em jogos, state/frame-pace.js; o relogio nao anda dentro do quadro
+    // no console e os SLICE_MS de antes nunca chegavam: a chave da loja inteira saia num quadro so, 20 s depois de abrir).
+    const pace = createFramePace();
+    pace.begin();
     const breathe = async () => {
-      if (Date.now() - started < SLICE_MS) return;
+      if (!pace.spend()) return;
       await pause();
-      started = Date.now();
+      pace.begin();
     };
     const ranks = await ranksOf(list, pause);
     let key = keySeed();
@@ -262,7 +264,6 @@ import { isoStamp } from './clock.js';
     FileSystem.writeFile(tmp, `{"version":${FORMAT},"key":${JSON.stringify(key)},"games":[`);
     const solo = {};
     let chunk = "", first = true;
-    started = Date.now();
     for (const game of list) {
       const entry = storeGameEntry(game);
       solo[game.id] = entry.links.some((link) => link.solo);
@@ -272,9 +273,9 @@ import { isoStamp } from './clock.js';
         FileSystem.appendFile(tmp, chunk);
         chunk = "";
       }
-      if (Date.now() - started >= SLICE_MS) {
+      if (pace.spend()) {
         await pause();
-        started = Date.now();
+        pace.begin();
         // A loja mudou no meio (um catalogo escondido): comeca de novo com a lista nova.
         if (again) return { key, games: list.length, written: "index" };
       }

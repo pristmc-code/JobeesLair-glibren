@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.45**: Quieter when nobody is using it (fan): animations stop after 15 s idle, the catalog is built in small parts, the screen saver no longer redraws the whole screen every frame, and a "Save energy" setting.
 > **glibren.44**: Less memory in the TorBox library, YouTube account always reachable, clearer download cards, diagnostics and updates from the phone, automatic updates that restart by themselves.
 > **glibren.43**: App switch by the real foreground (kern.msgbuf), one TorBox pace for the whole payload, YouTube service 0.2.1 with its own DNS.
 > **glibren.42**: YouTube account sign-in in Settings > Videos, safer background downloads and moves, lighter store export.

@@ -146,6 +146,11 @@ const settingsLook = await screen('Settings (Look, glibren.32)', { type: Setting
 assert.ok(settingsLook.includes('Play the first video automatically'), settingsLook.join('|'));
 assert.ok(settingsLook.includes('Trailer and Gameplay open the first video found right away, without showing the list.'), settingsLook.join('|'));
 assert.equal((await load('app/state/auto-play-first.js')).autoPlayFirst(), false, 'off by default');
+// glibren.45: Settings > Look has the Energy card: "Save energy" (off by default) and both notes, whole.
+assert.ok(settingsLook.includes('Save energy'), settingsLook.join('|'));
+assert.ok(settingsLook.includes('Off'), settingsLook.join('|'));
+assert.ok(settingsLook.some((line) => line.startsWith('Even when it is off, after 15 s without a button press')), settingsLook.join('|'));
+assert.ok(settingsLook.some((line) => line.startsWith('On: short animations, still charts')), settingsLook.join('|'));
 // glibren-tube-update: "Update the YouTube service automatically" (on by default) and the service in use.
 assert.ok(settingsLook.includes('Update the YouTube service automatically'), settingsLook.join('|'));
 assert.ok(settingsLook.includes('YouTube service'), settingsLook.join('|'));

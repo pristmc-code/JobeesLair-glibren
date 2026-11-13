@@ -73,9 +73,9 @@ const char* FrameStats::start_frame(std::int64_t now_us) {
     const std::uint64_t thread_cpu = thread_cpu_mark_ - thread_cpu_start_;
     const Tenths cores = tenths(process_cpu - process_cpu_start_, static_cast<std::uint64_t>(elapsed));
     const int length = std::snprintf(line_, sizeof line_,
-                  "frame: fps=%u.%u total avg=%u.%ums p95=%u.%u max=%u.%u | input=%u.%u update=%u.%u present=%u.%u"
+                  "frame: fps=%u.%u shown=%u.%u total avg=%u.%ums p95=%u.%u max=%u.%u | input=%u.%u update=%u.%u present=%u.%u"
                   " (upload=%u.%u draw=%u.%u up=%lluKB) swap=%u.%u | cpu=%u.%u cores (main=%u.%u present=%u.%u swap=%u.%u)",
-                  MS(fps), MS(avg), MS(p), MS(max), MS(phase[input]), MS(phase[update]), MS(phase[present]),
+                  MS(fps), MS(tenths(std::uint64_t{shown_} * 1000000, static_cast<std::uint64_t>(elapsed))), MS(avg), MS(p), MS(max), MS(phase[input]), MS(phase[update]), MS(phase[present]),
                   MS(tenths(upload_sum_, std::uint64_t{frames_} * 1000)), MS(tenths(draw_sum_, std::uint64_t{frames_} * 1000)),
                   static_cast<unsigned long long>(upload_bytes_sum_ / frames_ / 1024), MS(phase[swap]), MS(cores),
                   MS(tenths(thread_cpu, std::uint64_t{frames_} * 1000)),
@@ -98,7 +98,7 @@ const char* FrameStats::start_frame(std::int64_t now_us) {
     }
     summary = line_;
     std::fill(std::begin(phase_sum_), std::end(phase_sum_), 0);
-    total_sum_ = 0; total_max_ = 0; frames_ = 0;
+    total_sum_ = 0; total_max_ = 0; frames_ = 0; shown_ = 0;
     upload_sum_ = draw_sum_ = upload_bytes_sum_ = 0;
     std::fill(std::begin(thread_cpu_sum_), std::end(thread_cpu_sum_), 0);
     process_cpu_start_ = process_cpu;

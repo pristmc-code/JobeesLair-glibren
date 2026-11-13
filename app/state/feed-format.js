@@ -10,6 +10,7 @@
 import { isMagnetLink, sourceKind, webURL } from './download-sources.js';
 import { youtubeId } from './youtube.js';
 import { jsonMembers, skipSpace } from './json-scan.js';
+import { finishFramed } from './frame-pace.js';
 
   // MAX_TOTAL_RELEASES bounds a whole feed: 1500 games × 64 releases would be ~96 000 records, far
   // more than the 32 MiB JS heap holds beside the catalog; real feeds list a few per game.
@@ -35,27 +36,18 @@ import { jsonMembers, skipSpace } from './json-scan.js';
     }
     return `${(first >>> 0).toString(16)}${(second >>> 0).toString(16)}`;
   }
-  // Runs steps to the end at once, or (with `pause`) gives the screen a frame, awaiting `pause()`, whenever
-  // they have run for FRAME_WORK_MS. 0.5.3: it paused at every step, and a step (32 KiB hashed, 40 games
-  // checked) took the console 20 ms and more: the screen dropped a frame at each of them for over a second
-  // after every launch, as the live catalog refreshed.
-  var FRAME_WORK_MS = 6;
+  // Runs steps to the end at once, or (with `pause`) gives the screen a frame, awaiting `pause()`, between parts.
+  // 0.5.3: it paused at every step, and a step (32 KiB hashed, 40 games checked) took the console 20 ms and more:
+  // the screen dropped a frame at each of them for over a second after every launch, as the live catalog refreshed.
   function finish(steps) {
     for (; ; ) {
       const step = steps.next();
       if (step.done) return step.value;
     }
   }
-  async function finishPaced(steps, pause) {
-    for (let since = Date.now(); ; ) {
-      const step = steps.next();
-      if (step.done) return step.value;
-      if (Date.now() - since >= FRAME_WORK_MS) {
-        await pause();
-        since = Date.now();
-      }
-    }
-  }
+  // glibren.45: on the console the clock does not move inside a frame (state/frame-pace.js), so "6 ms of work" never
+  // came and a refresh ran whole in one frame: now a number of steps a frame, fitted to how long the frames take.
+  var finishPaced = (steps, pause) => finishFramed(steps, pause);
   var HASH_SLICE = 4 * 1024;
   var stableKey = (value) => finish(hashSteps(value, Infinity));
   var stableKeyAsync = (value, pause) => finishPaced(hashSteps(value, HASH_SLICE), pause);
@@ -399,4 +391,4 @@ import { jsonMembers, skipSpace } from './json-scan.js';
     };
   }
 
-export { MAX_GAMES, MAX_MIRRORS, feedDocument, pageSummary, parseFeed, parseFeedAsync, checkFeedTextAsync, parseFeedText, parseFeedTextAsync, stableKey, stableKeyAsync };
+export { MAX_GAMES, MAX_MIRRORS, feedDocument, feedTextSteps, pageSummary, parseFeed, parseFeedAsync, checkFeedTextAsync, parseFeedText, parseFeedTextAsync, stableKey, stableKeyAsync };

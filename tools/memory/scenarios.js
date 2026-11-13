@@ -103,6 +103,27 @@ if (scenario === 'prep-loja' || scenario === 'prep-orbit') {
   const feeds = await import('../../app/state/feeds.js');
   await feeds.refreshFeeds();
   note = `feeds ${feeds.feedsSnapshot().map((feed) => `${feed.state ?? ''}`).join(',')}`;
+} else if (scenario === 'tempo') {
+  // glibren.45: o tempo de CPU da montagem da loja (tools/perf/startup.mjs): o indice embutido, depois o resto
+  // (feeds ou retrato, formatos, notas, facetas). os.now() do qjs-ng em microssegundos. MEM_PACED=1: em partes, como no
+  // console (a .45 em diante; state/catalog.js). "cpu" = o trabalho (a carga dos modulos e as partes, sem as esperas);
+  // "longest" = a maior parte que roda sem devolver o quadro (sem partes, a abertura inteira).
+  if (std.getenv('MEM_PACED')) globalThis.__jobeCatalogPaced = true;
+  const t0 = os.now();
+  const index = await import('../../app/data/catalog-index.js');
+  const t1 = os.now();
+  const catalog = await store();
+  const t2 = os.now();
+  if (catalog.catalogReady) await catalog.catalogReady();
+  const t3 = os.now();
+  const stats = catalog.catalogBuildStats?.() ?? {};
+  const ms = (n) => (n / 1e3).toFixed(1);
+  const paced = Boolean(stats.paced);
+  const cpu = paced ? (t2 - t0) / 1e3 + stats.total : (t3 - t0) / 1e3;
+  const longest = paced ? Math.max(stats.longest, (t2 - t0) / 1e3) : (t3 - t0) / 1e3;
+  std.err.puts(`TIME index=${ms(t1 - t0)} store=${ms(t2 - t1)} rest=${ms(t3 - t2)} total=${cpu.toFixed(1)} longest=${longest.toFixed(1)} steps=${paced ? stats.steps : 1}\n`);
+  if (stats.phases) std.err.puts(`PHASES ${Object.entries(stats.phases).map(([name, n]) => `${name}=${n}`).join(' ')}${stats.slowest ? ` slowest=${stats.slowest.phase}:${stats.slowest.ms}` : ''}\n`);
+  note = `games ${catalog.catalogEntries().length} index ${index.games.length}`;
 } else if (scenario === 'loja' || scenario === 'orbit') {
   const catalog = await store();
   note = `games ${catalog.catalogEntries().length}`;

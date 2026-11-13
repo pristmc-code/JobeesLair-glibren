@@ -11,17 +11,23 @@
 // banners, logos and other covers from its art files when first drawn; nothing here reads those for every game.
 // MODIFIED (0.5.1): each game carries its PlayStation Store star rating, `stars` and `ratingCount` (the live
 // catalog's when it has one, else data/ratings.js), and the rating sort and Top Rated go by ratingScore.
+// MODIFIED (glibren.45): the store is built in parts (buildSteps): on the console the parts run a frame at a time
+// (state/frame-pace.js: a number of steps, then the frame goes back), from the launch, while the intro and the terms
+// notice show; index.jsx mounts the store once it is done (whenCatalogReady), and state/store-mode.js rebuilds what
+// other modules worked out from the lists while they were empty. Elsewhere (tests, qjs measurements) it all runs as
+// this module loads, as before. catalogBuildStats says how long it took, in how many parts and the longest one.
 
-import { catalogLoad, coverSize, features, games, twins } from '../data/catalog-index.js';
+import { CATALOG_PACED, catalogLoad, coverSize, features, games, indexSteps, twins } from '../data/catalog-index.js';
 import { formats as bundledFormats } from '../data/formats.js';
 import { formatDate2, t } from '../i18n/core.js';
 import { createPageCache } from './page-cache.js';
-import { feedRatings, feedSnapshotParts, loadFeedGames, restoreFeedStates, takeFeedStates } from './feeds.js';
-import { bucketReader, readSnapshot, snapshotKey, writeSnapshot } from './feed-snapshot.js';
+import { feedRatings, feedSnapshotParts, loadFeedGamesSteps, restoreFeedStates, takeFeedStates } from './feeds.js';
+import { bucketReader, readSnapshotSteps, snapshotKey, writeSnapshotSteps } from './feed-snapshot.js';
 import { ORBIT_FEED, setOrbitKnown } from './orbit-feed.js';
 import { pageSummary } from './feed-format.js';
 import { ratings as bundledRatings } from '../data/ratings.js';
 import { createReleaseCache } from './release-cache.js';
+import { createFramePace } from './frame-pace.js';
 import { readJlx } from './jlx.js';
 import { KINDS, gameFormats, ready1360 } from './formats.js';
 import { deviceFacts } from './device.js';
@@ -122,115 +128,176 @@ import { memorySample } from './memory-meter.js';
   var feedReleases = /* @__PURE__ */ new Map();
   var feedLinks = null;
   var feedReleasesOf = (id) => feedReleases.get(id) ?? (feedLinks ? feedLinks(id) : []);
-  // The PS4 lists its own games only: every PS4 edition, a game the PS5 lists under its PS5 edition too, and no
-  // PS5 edition at all (state/ps4.js).
-  // glibren.27: todo codigo do catalogo embutido (no PS4 tambem os de PS5): conhecidos para a lista Orbit.
-  var bundledKnown = [...games, ...twins].map((game) => game.id);
-  if (PS4) {
-    const own = [...games, ...twins].filter((game) => game.platform === "ps4");
-    games.splice(0, games.length, ...own);
-    twins.splice(0, twins.length);
-  }
-  // The bundled titles as [id, direct] pairs, taken before any feed is merged in: the live game counter
-  // (state/library-count.js) adds the feeds' own lists to these.
-  var bundledIndex = games.map((game) => [game.id, game.direct ? 1 : 0]);
-  var catalogIds = new Map([...games, ...twins].map((game) => [game.id, game]));
-  // glibren.9: where each game comes from, for the TorBox library (state/torbox-library.js): "bundled" (the catalog
-  // in the package) and the address of each feed (the live catalog's too) that lists it.
+  // glibren.45: what the build fills (buildSteps); empty until then.
   var BUNDLED = "bundled";
-  var sourcesById = new Map([...games, ...twins].map((game) => [game.id, [BUNDLED]]));
-  var sourceCounts = /* @__PURE__ */ new Map([[BUNDLED, games.length + twins.length]]);
-  // glibren (item 2): o retrato da loja (state/feed-snapshot.js): com os arquivos dos feeds iguais aos da ultima
-  // montagem, os jogos dos feeds vem dele, sem ler os feeds, e os links ficam no disco. Senao, os feeds sao lidos como
-  // antes e o retrato e gravado depois de montada a lista (mais abaixo).
-  var snapKey = snapshotKey(feedSnapshotParts(), PS4);
-  var snapshot = readSnapshot(snapKey);
-  var feedKinds = snapshot ? snapshot.kinds ?? {} : {};
-  var feedGames = snapshot ? snapshot.games : loadFeedGames();
-  var feedStates = snapshot ? null : takeFeedStates();
-  if (snapshot) {
-    restoreFeedStates(snapshot.states ?? []);
-    feedLinks = bucketReader(snapKey, snapshot.buckets);
-  }
-  // O que o retrato guarda de cada jogo de feed: o registro inteiro (e a pagina) so de um jogo novo; de um que o catalogo
-  // ja tem, so o que esta montagem usa dele (providers e direct).
-  var snapItems = snapshot ? null : [];
-  for (const { game: feedGame, page, releases = [], feed } of feedGames) {
-    if (snapItems && !(PS4 && feedGame.platform !== "ps4")) snapItems.push(catalogIds.has(feedGame.id) ? { game: { id: feedGame.id, platform: feedGame.platform, providers: feedGame.providers, ...feedGame.direct ? { direct: true } : {} }, feed } : { game: feedGame, page, feed });
-    if (PS4 && feedGame.platform !== "ps4") continue;
-    if (feed) {
-      const from = sourcesById.get(feedGame.id) ?? [];
-      if (!from.includes(feed)) {
-        sourcesById.set(feedGame.id, [...from, feed]);
-        sourceCounts.set(feed, (sourceCounts.get(feed) ?? 0) + 1);
+  var bundledKnown = [];
+  var bundledIndex = [];
+  var catalogIds = /* @__PURE__ */ new Map();
+  var sourcesById = /* @__PURE__ */ new Map();
+  var sourceCounts = /* @__PURE__ */ new Map();
+  var entries = [];
+  var editionsByWork = /* @__PURE__ */ new Map();
+  var listed = /* @__PURE__ */ new Set();
+  var genres = [];
+  var allListed = [];
+  var byId = /* @__PURE__ */ new Map();
+  var hosts = [];
+  // Games a step (a `yield`): a part runs a number of steps (state/frame-pace.js).
+  var BATCH = 200, FORMATS_BATCH = 20, MERGE_BATCH = 50;
+  var stats = { total: 0, longest: 0, steps: 0, frames: 0, paced: CATALOG_PACED, phases: {}, slowest: { phase: "", ms: 0 } };
+  var current = "index";
+  var phase = (name) => {
+    current = name;
+  };
+  // The build, in parts: each `yield` is a place where the frame can go back.
+  function* buildSteps() {
+    phase("index");
+    yield* indexSteps();
+    phase("bundled");
+    // The PS4 lists its own games only: every PS4 edition, a game the PS5 lists under its PS5 edition too, and no
+    // PS5 edition at all (state/ps4.js).
+    // glibren.27: todo codigo do catalogo embutido (no PS4 tambem os de PS5): conhecidos para a lista Orbit.
+    bundledKnown = [...games, ...twins].map((game) => game.id);
+    if (PS4) {
+      const own = [...games, ...twins].filter((game) => game.platform === "ps4");
+      games.splice(0, games.length, ...own);
+      twins.splice(0, twins.length);
+    }
+    // The bundled titles as [id, direct] pairs, taken before any feed is merged in: the live game counter
+    // (state/library-count.js) adds the feeds' own lists to these.
+    bundledIndex.push(...games.map((game) => [game.id, game.direct ? 1 : 0]));
+    catalogIds = new Map([...games, ...twins].map((game) => [game.id, game]));
+    // glibren.9: where each game comes from, for the TorBox library (state/torbox-library.js): "bundled" (the catalog
+    // in the package) and the address of each feed (the live catalog's too) that lists it.
+    sourcesById = new Map([...games, ...twins].map((game) => [game.id, [BUNDLED]]));
+    sourceCounts = /* @__PURE__ */ new Map([[BUNDLED, games.length + twins.length]]);
+    // glibren (item 2): o retrato da loja (state/feed-snapshot.js): com os arquivos dos feeds iguais aos da ultima
+    // montagem, os jogos dos feeds vem dele, sem ler os feeds, e os links ficam no disco. Senao, os feeds sao lidos como
+    // antes e o retrato e gravado depois de montada a lista (mais abaixo).
+    phase("feeds");
+    let snapKey = snapshotKey(feedSnapshotParts(), PS4);
+    let snapshot = yield* readSnapshotSteps(snapKey);
+    const feedKinds = snapshot ? snapshot.kinds ?? {} : {};
+    let feedGames = snapshot ? snapshot.games : yield* loadFeedGamesSteps();
+    let feedStates = snapshot ? null : takeFeedStates();
+    if (snapshot) {
+      restoreFeedStates(snapshot.states ?? []);
+      feedLinks = bucketReader(snapKey, snapshot.buckets);
+    }
+    // O que o retrato guarda de cada jogo de feed: o registro inteiro (e a pagina) so de um jogo novo; de um que o catalogo
+    // ja tem, so o que esta montagem usa dele (providers e direct).
+    phase("merge");
+    let snapItems = snapshot ? null : [];
+    let n = 0;
+    for (const { game: feedGame, page, releases = [], feed } of feedGames) {
+      if (++n % MERGE_BATCH === 0) yield;
+      if (snapItems && !(PS4 && feedGame.platform !== "ps4")) snapItems.push(catalogIds.has(feedGame.id) ? { game: { id: feedGame.id, platform: feedGame.platform, providers: feedGame.providers, ...feedGame.direct ? { direct: true } : {} }, feed } : { game: feedGame, page, feed });
+      if (PS4 && feedGame.platform !== "ps4") continue;
+      if (feed) {
+        const from = sourcesById.get(feedGame.id) ?? [];
+        if (!from.includes(feed)) {
+          sourcesById.set(feedGame.id, [...from, feed]);
+          sourceCounts.set(feed, (sourceCounts.get(feed) ?? 0) + 1);
+        }
+      }
+      if (releases.length) feedReleases.set(feedGame.id, [...feedReleases.get(feedGame.id) ?? [], ...releases]);
+      const known = catalogIds.get(feedGame.id);
+      if (known) {
+        known.providers = [.../* @__PURE__ */ new Set([...known.providers ?? [], ...feedGame.providers])];
+        if (feedGame.direct) known.direct = true;
+      } else {
+        const entry = { ...feedGame, feedPage: page };
+        games.push(entry);
+        catalogIds.set(feedGame.id, entry);
       }
     }
-    if (releases.length) feedReleases.set(feedGame.id, [...feedReleases.get(feedGame.id) ?? [], ...releases]);
-    const known = catalogIds.get(feedGame.id);
-    if (known) {
-      known.providers = [.../* @__PURE__ */ new Set([...known.providers ?? [], ...feedGame.providers])];
-      if (feedGame.direct) known.direct = true;
-    } else {
-      const entry = { ...feedGame, feedPage: page };
-      games.push(entry);
-      catalogIds.set(feedGame.id, entry);
+    yield;
+    // glibren.27: o que o app conhece sem a lista Orbit (o embutido e o que um outro feed lista) vai ao payload, que grava
+    // esses jogos so com os links: acima, um jogo conhecido so ganha providers, direct e releases dela.
+    setOrbitKnown([...bundledKnown, ...[...sourcesById].filter(([, from]) => from.some((source) => source !== ORBIT_FEED)).map(([id]) => id)]);
+    entries = [...games, ...twins];
+    let _a;
+    phase("prepare");
+    n = 0;
+    for (const game of entries) {
+      if (++n % BATCH === 0) yield;
+      Object.setPrototypeOf(game, game.feedPage ? FeedEntry : Entry);
+      game.genres = [...new Set(game.genres.flatMap((genre) => genre.split(" / ")).map((genre) => SYNONYMS[genre] ?? genre))];
+      (_a = game.art).cover && (_a.cover = coverSize(game.art.cover));
+      // A bundled game's other covers wait in its art file (data/catalog-index.js sizes them when read): only a
+      // feed game's own are sized here.
+      if (Object.hasOwn(game.art, "coverFallbacks") && game.art.coverFallbacks) game.art.coverFallbacks = game.art.coverFallbacks.map(coverSize);
     }
-  }
-  // glibren.27: o que o app conhece sem a lista Orbit (o embutido e o que um outro feed lista) vai ao payload, que grava
-  // esses jogos so com os links: acima, um jogo conhecido so ganha providers, direct e releases dela.
-  setOrbitKnown([...bundledKnown, ...[...sourcesById].filter(([, from]) => from.some((source) => source !== ORBIT_FEED)).map(([id]) => id)]);
-  var entries = [...games, ...twins];
-  var _a;
-  for (const game of entries) {
-    Object.setPrototypeOf(game, game.feedPage ? FeedEntry : Entry);
-    game.genres = [...new Set(game.genres.flatMap((genre) => genre.split(" / ")).map((genre) => SYNONYMS[genre] ?? genre))];
-    (_a = game.art).cover && (_a.cover = coverSize(game.art.cover));
-    // A bundled game's other covers wait in its art file (data/catalog-index.js sizes them when read): only a
-    // feed game's own are sized here.
-    if (Object.hasOwn(game.art, "coverFallbacks") && game.art.coverFallbacks) game.art.coverFallbacks = game.art.coverFallbacks.map(coverSize);
-  }
-  for (const game of entries) {
-    const bundled = bundledFormats[game.id]?.split(" ") ?? [];
-    const fed = feedReleases.get(game.id);
-    // glibren (item 2): os formatos tirados dos links de feed, guardados no retrato (o retrato nao tem os links na memoria).
-    const fromFeed = fed?.length ? feedKinds[game.id] = gameFormats(fed, game.platform) : feedKinds[game.id] ?? [];
-    game.formats = fromFeed.length ? KINDS.filter((kind) => bundled.includes(kind) || fromFeed.includes(kind)) : bundled;
-    // The PS4 installs packages; the disk images and folders are the PS5's ShadowMount's.
-    if (PS4) game.formats = game.formats.filter((kind) => kind === "fpkg");
-  }
-  // glibren (item 2): montada a lista lendo os feeds, o retrato e gravado (os links em baldes, na ordem do catalogo) e os
-  // links saem da memoria; sem gravar, ficam nela como antes.
-  if (!snapshot && feedReleases.size) {
-    // A chave de agora: ler um feed do PS5 regrava o cache dele (feeds.js saveLocal), e a proxima abertura ve esse cache.
-    snapKey = snapshotKey(feedSnapshotParts(), PS4);
-    const buckets = writeSnapshot(snapKey, { games: snapItems, states: feedStates, kinds: feedKinds, releases: feedReleases, order: entries.map((game) => game.id) });
-    if (buckets) {
-      feedLinks = bucketReader(snapKey, buckets);
-      feedReleases.clear();
+    phase("formats");
+    n = 0;
+    for (const game of entries) {
+      // Reading a feed game's links for its formats is the dearest part per game: a few at a time.
+      if (++n % FORMATS_BATCH === 0) yield;
+      const bundled = bundledFormats[game.id]?.split(" ") ?? [];
+      const fed = feedReleases.get(game.id);
+      // glibren (item 2): os formatos tirados dos links de feed, guardados no retrato (o retrato nao tem os links na memoria).
+      const fromFeed = fed?.length ? feedKinds[game.id] = gameFormats(fed, game.platform) : feedKinds[game.id] ?? [];
+      game.formats = fromFeed.length ? KINDS.filter((kind) => bundled.includes(kind) || fromFeed.includes(kind)) : bundled;
+      // The PS4 installs packages; the disk images and folders are the PS5's ShadowMount's.
+      if (PS4) game.formats = game.formats.filter((kind) => kind === "fpkg");
     }
+    // glibren (item 2): montada a lista lendo os feeds, o retrato e gravado (os links em baldes, na ordem do catalogo) e os
+    // links saem da memoria; sem gravar, ficam nela como antes.
+    if (!snapshot && feedReleases.size) {
+      // A chave de agora: ler um feed do PS5 regrava o cache dele (feeds.js saveLocal), e a proxima abertura ve esse cache.
+      snapKey = snapshotKey(feedSnapshotParts(), PS4);
+      phase("snapshot");
+      const buckets = yield* writeSnapshotSteps(snapKey, { games: snapItems, states: feedStates, kinds: feedKinds, releases: feedReleases, order: entries.map((game) => game.id) });
+      if (buckets) {
+        feedLinks = bucketReader(snapKey, buckets);
+        feedReleases.clear();
+      }
+    }
+    feedGames = feedStates = snapshot = snapItems = null;
+    yield;
+    phase("ratings");
+    editionsByWork = /* @__PURE__ */ new Map();
+    n = 0;
+    for (const game of entries) {
+      if (++n % BATCH === 0) yield;
+      if (game.work) editionsByWork.set(game.work, [...editionsByWork.get(game.work) ?? [], game]);
+    }
+    yield;
+    for (const game of entries) {
+      const pair = feedRatings[game.id] ?? bundledRatings[game.id];
+      if (pair) [game.stars, game.ratingCount] = pair;
+    }
+    // An edition the store has no rating for takes its work's best-known one (the PS4 and PS5 versions of a game).
+    yield;
+    n = 0;
+    for (const game of entries) {
+      if (++n % BATCH === 0) yield;
+      if (game.ratingCount || !game.work) continue;
+      const rated = (editionsByWork.get(game.work) ?? []).filter((edition2) => edition2.ratingCount).sort((a, b) => b.ratingCount - a.ratingCount)[0];
+      if (rated) [game.stars, game.ratingCount] = [rated.stars, rated.ratingCount];
+    }
+    listed = new Set(games);
+    phase("platforms");
+    n = 0;
+    for (const game of entries) {
+      if (++n % BATCH === 0) yield;
+      game.platforms = [...new Set(editionsOf(game).map((edition2) => edition2.platform))].sort();
+    }
+    phase("lists");
+    genres = [...new Set(games.flatMap((game) => game.genres))].sort();
+    // glibren.9: every listed game, as loaded: the store's list (`games`) can be narrowed to the TorBox store's
+    // (state/store-mode.js), and this keeps the whole one.
+    allListed.push(...games);
+    byId = new Map(entries.map((game) => [game.id, game]));
+    // glibren (medidor de memoria): a loja montada (o catalogo embutido com os feeds), state/memory-meter.js.
+    memorySample("loja:montar");
+    yield;
+    phase("facets");
+    yield* facetSteps();
   }
-  feedGames = feedStates = snapshot = snapItems = null;
-  var editionsByWork = /* @__PURE__ */ new Map();
-  for (const game of entries) if (game.work) editionsByWork.set(game.work, [...editionsByWork.get(game.work) ?? [], game]);
-  for (const game of entries) {
-    const pair = feedRatings[game.id] ?? bundledRatings[game.id];
-    if (pair) [game.stars, game.ratingCount] = pair;
-  }
-  // An edition the store has no rating for takes its work's best-known one (the PS4 and PS5 versions of a game).
-  for (const game of entries) {
-    if (game.ratingCount || !game.work) continue;
-    const rated = (editionsByWork.get(game.work) ?? []).filter((edition2) => edition2.ratingCount).sort((a, b) => b.ratingCount - a.ratingCount)[0];
-    if (rated) [game.stars, game.ratingCount] = [rated.stars, rated.ratingCount];
-  }
-  var listed = new Set(games);
-  for (const game of entries) game.platforms = [...new Set(editionsOf(game).map((edition2) => edition2.platform))].sort();
   function editionsOf(game) {
     return [...editionsByWork.get(game.work) ?? [game]].sort((a, b) => b.platform.localeCompare(a.platform) || Number(listed.has(b)) - Number(listed.has(a)) || a.titleId.localeCompare(b.titleId));
   }
-  var genres = [...new Set(games.flatMap((game) => game.genres))].sort();
-  // glibren.9: every listed game, as loaded: the store's list (`games`) can be narrowed to the TorBox store's
-  // (state/store-mode.js), and this keeps the whole one.
-  var allListed = [...games];
   /** The catalog's games and where they come from, for the TorBox library: [{ game, sources }], other editions too. */
   var catalogEntries = () => entries.map((game) => ({ game, sources: sourcesById.get(game.id) ?? [BUNDLED] }));
   /** The sources the catalog has games from: [{ id: "bundled" | "<feed url>", count }]. */
@@ -248,9 +315,7 @@ import { memorySample } from './memory-meter.js';
     genres = [...new Set(games.flatMap((game) => game.genres))].sort();
     memorySample("loja:trocar");
   }
-  var byId = new Map(entries.map((game) => [game.id, game]));
-  // glibren (medidor de memoria): a loja montada (o catalogo embutido com os feeds), state/memory-meter.js.
-  memorySample("loja:montar");
+
   var getGame = (id) => byId.get(id);
   function listedId(id) {
     const game = byId.get(id);
@@ -339,14 +404,17 @@ import { memorySample } from './memory-meter.js';
   };
   var MIN_HOST_GAMES = 20;
   var MIN_KIND_GAMES = 5;
-  var hostCounts = /* @__PURE__ */ new Map();
-  for (const game of games) for (const host2 of game.providers ?? []) hostCounts.set(host2, (hostCounts.get(host2) ?? 0) + 1);
   function slug(value) {
     const words = value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
     return words.map((word, i) => i ? word[0].toUpperCase() + word.slice(1) : word).join("");
   }
   var CDN_HOST = "overdrive cdn";
-  var hosts = [...hostCounts].filter(([host2, count]) => count >= MIN_HOST_GAMES || host2 === CDN_HOST).sort((a, b) => (b[0] === CDN_HOST) - (a[0] === CDN_HOST) || b[1] - a[1]).map(([host2]) => ({ value: host2, name: HOST_NAMES[host2] ?? host2 }));
+  // glibren.45: worked out by the build (facetSteps), from the listed games.
+  function hostOptions() {
+    const hostCounts = /* @__PURE__ */ new Map();
+    for (const game of games) for (const host2 of game.providers ?? []) hostCounts.set(host2, (hostCounts.get(host2) ?? 0) + 1);
+    return [...hostCounts].filter(([host2, count]) => count >= MIN_HOST_GAMES || host2 === CDN_HOST).sort((a, b) => (b[0] === CDN_HOST) - (a[0] === CDN_HOST) || b[1] - a[1]).map(([host2]) => ({ value: host2, name: HOST_NAMES[host2] ?? host2 }));
+  }
   var onCdn = (game) => Boolean(game.providers?.includes(CDN_HOST));
   var SIZES = [
     { value: "small", label: "filters.size.small", test: (gb) => gb < 10 },
@@ -375,7 +443,8 @@ import { memorySample } from './memory-meter.js';
     {
       key: "format",
       any: true,
-      options: [
+      options: [],
+      optionsOf: () => [
         { value: "ready", label: "release.compat.ready", name: "13.60 Ready" },
         ...KINDS.filter((kind) => games.filter((game) => game.formats.includes(kind)).length >= MIN_KIND_GAMES).map((kind) => ({ value: kind, label: `release.type.${kind}`, name: kind }))
       ],
@@ -385,10 +454,16 @@ import { memorySample } from './memory-meter.js';
     { key: "access", options: [{ value: "direct", label: "filters.access.direct" }], has: (game) => Boolean(game.direct) },
     {
       key: "genre",
-      options: named(byGames(genres, (game, genre) => game.genres.includes(genre)), "genre"),
+      options: [],
+      // glibren.45: the counts in one pass over the games (it was a pass per genre); the same order as byGames.
+      optionsOf: () => {
+        const counts = /* @__PURE__ */ new Map();
+        for (const game of games) for (const genre of game.genres) counts.set(genre, (counts.get(genre) ?? 0) + 1);
+        return named([...genres].sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0) || a.localeCompare(b)), "genre");
+      },
       has: (game, value) => game.genres.includes(value)
     },
-    { key: "feature", options: named(features, "feature"), has: (game, value) => game.features.includes(value) },
+    { key: "feature", options: [], optionsOf: () => named(features, "feature"), has: (game, value) => game.features.includes(value) },
     {
       key: "release",
       any: true,
@@ -401,8 +476,19 @@ import { memorySample } from './memory-meter.js';
       options: SIZES,
       has: (game, value) => game.sizeGb != null && SIZES.find((size) => size.value === value).test(game.sizeGb)
     },
-    { key: "provider", any: true, options: hosts, has: (game, value) => game.providers?.includes(value) }
+    { key: "provider", any: true, options: hosts, optionsOf: () => hosts, has: (game, value) => game.providers?.includes(value) }
   ];
+  // glibren.45: the facets' options from the listed games, one facet a part; the arrays are filled in place (search/index.jsx
+  // keeps the format facet from when it loaded). The hosts first: the provider facet shows them.
+  function* facetSteps() {
+    hosts.splice(0, hosts.length, ...hostOptions());
+    for (const facet of FACETS) {
+      if (!facet.optionsOf) continue;
+      const options = facet.optionsOf();
+      if (options !== facet.options) facet.options.splice(0, facet.options.length, ...options);
+      yield;
+    }
+  }
   var facetTitle = (key) => t(`filters.facet.${key}`);
   function optionLabel(option) {
     if (!option.label) return option.name;
@@ -482,5 +568,79 @@ import { memorySample } from './memory-meter.js';
     return result;
   }
   var formatDate3 = (iso) => iso ? formatDate2(iso) : "\u2014";
+  // ---- glibren.45: the build, run as the module loads or a frame at a time ----------------------------------------
+  // On the console the clock stands still inside a frame (state/frame-pace.js): each part runs a number of steps, more
+  // while the frames stay short, fewer when one ran long. Times per phase are only measured where the clock moves (the
+  // qjs measurements, tests); on the console the log gives the parts and the slowest frame while it built.
+  var ready = false;
+  var waiters = [];
+  var pace = createFramePace({ start: 8 });
+  /** `fn(paced)` once the store is built (at once if it is): paced says it was built in parts after the modules loaded. */
+  function whenCatalogReady(fn) {
+    if (ready) fn(CATALOG_PACED);
+    else waiters.push(fn);
+  }
+  var isCatalogReady = () => ready;
+  var catalogReady = () => new Promise((resolve) => whenCatalogReady(() => resolve()));
+  /** { total, longest, steps, frames, paced, phases: { name: ms }, slowest }: the build's work in ms (the waits between parts not counted). */
+  var catalogBuildStats = () => ({ ...stats, phases: { ...stats.phases }, slowest: { ...stats.slowest } });
+  /** The player is waiting on the store (past the terms notice): longer parts until it is built. */
+  function hurryCatalog() {
+    pace.hurry();
+  }
+  // One part: up to `budget` steps, noting each phase's time. -> true when the build is over.
+  function runPart(steps, budget) {
+    const begun = Date.now();
+    let over = false;
+    for (let done = 0; done < budget; done++) {
+      const at = Date.now();
+      const step = steps.next();
+      const spent = Date.now() - at;
+      stats.phases[current] = (stats.phases[current] ?? 0) + spent;
+      if (spent > stats.slowest.ms) stats.slowest = { phase: current, ms: spent };
+      if (step.done) {
+        over = true;
+        break;
+      }
+    }
+    const took = Date.now() - begun;
+    stats.total += took;
+    stats.steps++;
+    if (took > stats.longest) stats.longest = took;
+    return over;
+  }
+  function built() {
+    ready = true;
+    stats.frames = pace.slowest();
+    console.log(`[catalog] built: ${entries.length} games in ${stats.steps} part(s)${CATALOG_PACED ? `, the slowest frame ${pace.slowest()} ms` : ""}; work ${stats.total} ms, the longest part ${stats.longest} ms, the slowest step ${stats.slowest.ms} ms in ${stats.slowest.phase || "-"} (${Object.entries(stats.phases).map(([name, ms]) => `${name} ${ms}`).join(", ")})`);
+    for (const fn of waiters.splice(0)) {
+      try {
+        fn(CATALOG_PACED);
+      } catch (error) {
+        console.log(`[catalog] after the build: ${error?.message || error}`);
+      }
+    }
+  }
+  {
+    const steps = buildSteps();
+    if (!CATALOG_PACED) {
+      runPart(steps, Infinity);
+      built();
+    } else {
+      // A frame a time: the runtime runs timers once a frame, so a 0 ms timer is the next frame.
+      const part = () => {
+        let over = false;
+        try {
+          over = runPart(steps, pace.begin());
+        } catch (error) {
+          console.log(`[catalog] the build failed: ${error?.message || error}`);
+          over = true;
+        }
+        if (over) built();
+        else setTimeout(part, 0);
+      };
+      setTimeout(part, 0);
+    }
+  }
 
-export { BUNDLED, allListed, catalogEntries, catalogSources, sourcesOfGame, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };
+export { BUNDLED, catalogBuildStats, catalogReady, hurryCatalog, isCatalogReady, whenCatalogReady, allListed, catalogEntries, catalogSources, sourcesOfGame, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };

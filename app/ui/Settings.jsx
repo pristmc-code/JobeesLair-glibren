@@ -44,6 +44,7 @@ import { DiagnosticsRow } from './DiagnosticsRow.jsx'; // glibren.44
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
 import { setScreenSaver, showScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
+import { setEnergySaver, usePower } from '../state/power.js';
 import { setTypingChoice, useTypingChoice } from '../state/system-keyboard.js';
 import { useNavActions } from '../state/nav.jsx';
 import { downloadQueue, driveName } from '../state/downloads.js';
@@ -203,6 +204,17 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       /* @__PURE__ */ (0, jsx)(CardHead, { icon: "disc", title: t2("settings.card.screenSaver") }),
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:screenSaver", name: t2("settings.screenSaver"), hint: t2("settings.screenSaverDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on }), onPress: () => setScreenSaver(!on) }),
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:screenSaverNow", name: t2("settings.screenSaverNow"), hint: t2("settings.screenSaverNowDetail"), end: /* @__PURE__ */ (0, jsx)(Icon, { name: "play", color: colors.muted }), onPress: showScreenSaver })
+    ] });
+  }
+  // glibren.45: "Economizar energia" (state/power.js), and what the app does by itself at rest whatever it is set to. The
+  // note wraps as long as it needs (ui/LongText.jsx), in every language.
+  function EnergyCard() {
+    const t2 = useT();
+    const { saver } = usePower();
+    return jsxs(View, { scrollAnchor: true, style: CARD, children: [
+      jsx(CardHead, { icon: "power", title: t2("settings.card.energy") }),
+      jsx(Row, { focusKey: "settings:energySaver", name: t2("settings.energySaver"), detail: saver ? t2("settings.energySaverOn") : t2("settings.energySaverOff"), end: jsx(Switch, { on: saver }), onPress: () => setEnergySaver(!saver) }),
+      ...["settings.energyWhat", "settings.energyRest"].map((key) => jsx(View, { style: { flexDirection: "row" }, children: jsx(LongText, { style: text(20, colors.muted), box: { flex: 1 }, children: t2(key) }) }, key))
     ] });
   }
   // glibren.32: the game page's Videos (game/VideosSheet.jsx): play the first result at once instead of the list.
@@ -1114,7 +1126,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onAddFile: () => setPickingFile(true), onMirror: setMirrorOf }, "feeds")],
       debrid: [/* @__PURE__ */ (0, jsx)(DebridCard, { onKey: () => setKeying(true), onAllDebridKey: () => setKeyingAll(true) }, "debrid")],
       torboxLibrary: [jsx(TorBoxLibraryCard, {}, "torboxLibrary")],
-      look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver"), jsx(VideosCard, {}, "videos")],
+      look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver"), jsx(EnergyCard, {}, "energy"), jsx(VideosCard, {}, "videos")],
       guide: [/* @__PURE__ */ (0, jsx)(GuideCard, {}, "guide")],
       about: [/* @__PURE__ */ (0, jsx)(AboutCard, {}, "about"), /* @__PURE__ */ (0, jsx)(NoticeCard, {}, "notice")]
     };

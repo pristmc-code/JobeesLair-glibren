@@ -4,6 +4,9 @@
 // warnings come first. The dots at the end say how many there are, and the one showing fills up until the next.
 // Pages start under it while it's up (index.jsx, useBarSpace). When it comes or goes, it fades and the pages glide
 // the 66 px to their new place: they used to jump there at once, under the gamer's eyes, wherever they were.
+// glibren.45: at rest (15 s without a button, state/power.js) the bar keeps the note it shows and its dots stand
+// still: the track filling over a turn repainted every frame while nobody looked. With "Economizar energia" the notes
+// still take turns, at once and without the track. Any button brings the turns back.
 
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -12,6 +15,7 @@ import { AnimatePresence, Text, View, motion } from '@ps5-react/core';
 import { LATIN_IN_RTL, useLocale, useT } from '../i18n/index.js';
 import { online, useOnline } from '../state/online.js';
 import { useOrbitStale } from '../state/orbit-feed.js';
+import { usePower } from '../state/power.js';
 import { Icon } from './Icon.jsx';
 import { colors, radius } from './colors.js';
 import { EASE_OUT } from './ease.js';
@@ -31,16 +35,17 @@ import { logical } from './scale.js';
   var DOT = 8, RUN = 28;
   var toneOf = (note) => note.level === "warning" ? AMBER : colors.glow;
   // The dots: one each, the one showing a short track that fills over its turn.
-  function Turns({ count, at, note, turn }) {
+  // glibren.45: `still`: the one showing a full track, drawn once (at rest and with "Economizar energia").
+  function Turns({ count, at, note, turn, still }) {
     const { rtl } = useLocale();
     const sign = rtl ? -1 : 1;
     return jsx(View, { style: { flexDirection: "row", alignItems: "center", gap: 8 }, children: Array.from({ length: count }, (_, i) => i === at
-      ? jsx(View, { style: { width: RUN, height: DOT, overflow: "hidden", roundedClip: true, borderRadius: radius.pill, backgroundColor: "#ffffff2e" }, children: jsx(motion.View, {
+      ? jsx(View, { style: { width: RUN, height: DOT, overflow: "hidden", roundedClip: true, borderRadius: radius.pill, backgroundColor: "#ffffff2e" }, children: still ? jsx(View, { style: { position: "absolute", top: 0, bottom: 0, left: 0, width: RUN, backgroundColor: toneOf(note) } }) : jsx(motion.View, {
         style: { position: "absolute", top: 0, bottom: 0, left: 0, width: RUN, backgroundColor: toneOf(note) },
         initial: { x: -RUN * sign },
         animate: { x: 0 },
         transition: { type: "tween", duration: turn / 1e3, ease: "linear" }
-      }, `${note.id}:${at}`) }, i)
+      }, `${note.id}:${at}:moving`) }, i)
       : jsx(View, { style: { width: DOT, height: DOT, borderRadius: radius.pill, backgroundColor: "#ffffff40" } }, i)) });
   }
   function AnnouncementBar() {
@@ -56,11 +61,13 @@ import { logical } from './scale.js';
     const at = count ? index % count : 0;
     const note = announcements[at];
     const turn = note ? turnOf(note) : 0;
+    const { resting, saver } = usePower();
     useEffect(() => {
-      if (count < 2) return void 0;
-      const id = setTimeout(() => setLeaving(true), turn);
+      if (count < 2 || resting) return void 0;
+      // Economizar energia: the next one comes in at once, without the fade.
+      const id = setTimeout(() => saver ? setIndex(at + 1) : setLeaving(true), turn);
       return () => clearTimeout(id);
-    }, [count, at, note?.id]);
+    }, [count, at, note?.id, resting, saver]);
     useEffect(() => {
       if (!leaving) return void 0;
       const id = setTimeout(() => {
@@ -81,7 +88,7 @@ import { logical } from './scale.js';
         jsx(View, { style: { width: 2, height: 20, borderRadius: radius.sm, backgroundColor: colors.line } }),
         jsx(Text, { style: [{ flex: 1, fontFamily: "Exo2", fontSize: 20, lineHeight: 26, color: colors.fg, numberOfLines: 1, ellipsizeMode: "tail" }, rtl ? LATIN_IN_RTL : void 0], children: note.text })
       ] }, note.id),
-      count > 1 ? jsx(Turns, { count, at, note, turn }) : null
+      count > 1 ? jsx(Turns, { count, at, note, turn, still: resting || saver }) : null
     ] }, "bar") });
   }
   /** How far pages move down for the bar: BAR_SPACE while announcements are up, else 0. */
