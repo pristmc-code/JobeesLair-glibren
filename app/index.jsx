@@ -54,6 +54,7 @@ import { installLogger } from './services/logger.js';
 import { startMemoryMeter } from './state/memory-meter.js';
 import { startPower } from './state/power.js';
 import { startJobeRemote } from './state/jobe-remote-run.js'; // glibren.44
+import { startSettingsSync } from './state/settings-apply.js'; // Fase 7: as configuracoes no payload
 import { startPairingWatch } from './state/device-pairing.js'; // pareamento por aparelho
 import { PairCodeNotice } from './ui/PairCodeNotice.jsx';
 import { VERSION } from './version.js';
@@ -225,6 +226,7 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
       });
     }, []);
     (0, useEffect)(() => startJobeRemote(), []); // glibren.44: "Atualizar a Jobe" pela pagina do celular
+    (0, useEffect)(() => startSettingsSync(), []); // Fase 7: configuracoes no payload (fallback: settings.json local)
     // Pareamento por aparelho: o codigo de 6 digitos na tela enquanto vale (GET /pair do payload a cada 3 s, so no PS5).
     (0, useEffect)(() => startPairingWatch({ platform: Platform.OS }), []);
     // The Homebrew section's live index, fetched once a while after launch (state/homebrew-store.js).

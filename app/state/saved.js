@@ -24,7 +24,24 @@ import { FileSystem } from '@ps5-react/core';
   // MODIFIED (glibren.8): those same files also get a copy on /data (data-dir.js backupDir), which an uninstall
   // of the title does not take with its download0; readPath reads it when the data folder came back empty.
   // The copy is written on its own: a full or missing download0 does not keep it from being saved.
+  // Fase 7 (state/settings-sync.js): cada gravacao do settings.json avisa o sincronizador (antes -> depois), que manda a
+  // mudanca ao payload. Sem ele (testes, ou antes de o modulo carregar), nada muda.
+  var settingsHook = null;
+  function setSettingsHook(hook) {
+    settingsHook = typeof hook === "function" ? hook : null;
+  }
   function saveList(name, what, list) {
+    const hook = name === "settings.json" ? settingsHook : null;
+    const before = hook ? loadList(name, what) : null;
+    writeList(name, what, list);
+    if (!hook) return;
+    try {
+      hook(before, list);
+    } catch (error2) {
+      console.log(`jobeeslair: ${what}: settings sync not told: ${error2.message}`);
+    }
+  }
+  function writeList(name, what, list) {
     const text = JSON.stringify(list);
     const sync = SYNCED.has(name);
     try {
@@ -68,4 +85,4 @@ import { FileSystem } from '@ps5-react/core';
     };
   }
 
-export { loadList, saveList, savedList };
+export { loadList, saveList, savedList, setSettingsHook };

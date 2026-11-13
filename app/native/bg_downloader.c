@@ -43,6 +43,8 @@
 //     GET  /jobe, POST /jobe/state glibren.44: o pedido "Atualizar a Jobe" da pagina do celular e o estado do app: ver bg_jobe.c
 //     GET  /focus                  glibren.44: o foco do controle (kern.msgbuf; so leitura): ver bg_jobe.c
 //   glibren.47: GET /teste (a pagina de testes da Fase 0) e /api/teste/* na pagina do celular: ver bg_teste.c
+//   Fase 7: GET/POST /settings (app) e GET/POST /api/settings (pagina, monitor_allowed): as configuracoes da Jobe ficam
+//   aqui (uma fonte so; "settings", "settingsRev" e "settingsStore" no /health): ver bg_settings.c
 //   Pareamento por aparelho: GET /pair, POST /pair/remove|pin (app) e /api/pair* (pagina): ver bg_pair.c. As rotas da
 //   pagina que mudam algo ou mostram dados sensiveis pedem monitor_allowed (127.0.0.1, aparelho pareado ou, na
 //   transicao, a sessao do PIN antigo); a lista esta em bg_pair.c ("Rotas protegidas").
@@ -4312,6 +4314,8 @@ static int diag_app_route(int fd, Request* r); // glibren.44: o diagnostico pelo
 static int jobe_app_route(int fd, Request* r); // glibren.44: a area Jobe (bg_jobe.c)
 static int self_app_route(int fd, Request* r); // glibren.49: a atualizacao propria (bg_self.c)
 static int pair_app_route(int fd, Request* r);  // pareamento por aparelho: /pair (bg_pair.c)
+static int settings_app_route(int fd, Request* r); // Fase 7: as configuracoes no payload (bg_settings.c)
+static int settings_health(uint64_t* rev, char store[33]);
 static void self_health(int* replace); // glibren.49
 static void route(int fd, Request* r) {
   // glibren.31: a troca de app vem tambem do app de videos, sem o token (ver switch_route).
@@ -4325,6 +4329,7 @@ static void route(int fd, Request* r) {
   if (diag_app_route(fd, r)) return; // glibren.44: /diag e /diag/send
   if (jobe_app_route(fd, r)) return; // glibren.44: /jobe e /jobe/state
   if (self_app_route(fd, r)) return; // glibren.49: /self-update
+  if (settings_app_route(fd, r)) return; // Fase 7: GET/POST /settings
   if (pair_app_route(fd, r)) return; // pareamento: o codigo para a tela da Jobe, os aparelhos e o PIN antigo
   if (conv_app_route(fd, r)) return; // glibren.22: /backup e /log (a tela Pasta BACKUP do app)
   // glibren.18: o destino que o payload daria a um pedido do celular (o teste o compara com o do app).
@@ -4338,17 +4343,22 @@ static void route(int fd, Request* r) {
     current_ip(ip, sizeof ip);
     int replace = 0;
     self_health(&replace); // glibren.49
+    uint64_t settings_rev = 0; // Fase 7: o app sabe por aqui que as configuracoes estao no payload e quando mudaram
+    char settings_store[33];
+    const int settings_schema = settings_health(&settings_rev, settings_store);
     pthread_mutex_lock(&g_lock);
     const Job* active = first_running_locked();
     snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"api\":%d,\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
              "\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u,"
              "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s,"
-             "\"convertPauseSeconds\":%d,\"convertWriteLimit\":%d,\"convertSyncMB\":%d,\"crash\":%s,\"minAppApi\":%d,\"replace\":%s}",
+             "\"convertPauseSeconds\":%d,\"convertWriteLimit\":%d,\"convertSyncMB\":%d,\"crash\":%s,\"minAppApi\":%d,\"replace\":%s,"
+             "\"settings\":%d,\"settingsRev\":%llu,\"settingsStore\":\"%s\"}",
              BG_VERSION, BG_API, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
              g_running_count, g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
              g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp, ip, g_monitor_on ? "true" : "false",
              g_monitor_port_now(), g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false",
-             g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb, g_crash_id[0] ? "true" : "false", BG_MIN_APP_API, replace ? "true" : "false");
+             g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb, g_crash_id[0] ? "true" : "false", BG_MIN_APP_API, replace ? "true" : "false",
+             settings_schema, (unsigned long long)settings_rev, settings_store);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
     return;
@@ -6914,6 +6924,7 @@ static void auto_after_download(Job* j) {
 #include "bg_jobe.c"
 #include "bg_teste.c" // glibren.47: a pagina de testes da Fase 0 (/teste)
 #include "bg_self.c"  // glibren.49: a atualizacao propria do payload, assinada (Fase 2)
+#include "bg_settings.c" // Fase 7: as configuracoes da Jobe no payload (uma fonte so)
 // glibren.49: o /health diz se o payload no ar foi posto de lado ("Voltar ao payload embutido"): o app sobe o embutido.
 static void self_health(int* replace) {
   self_init();
@@ -6933,6 +6944,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (diag_monitor_route(fd, r)) return; // glibren.44: /api/diag (chave do GitHub, enviar, .zip)
   if (jobe_monitor_route(fd, r)) return; // glibren.44: /api/jobe (versao e pedido de atualizacao)
   if (self_monitor_route(fd, r)) return; // glibren.49: /api/payload (versao do payload, atualizar, voltar ao embutido)
+  if (settings_monitor_route(fd, r)) return; // Fase 7: /api/settings (monitor_allowed)
   if (teste_monitor_route(fd, r)) return; // glibren.47: /teste e /api/teste (testes da Fase 0)
   if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {

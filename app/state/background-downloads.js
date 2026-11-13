@@ -1316,8 +1316,21 @@ function createBackgroundDownloads({
         return null;
       }
     };
+    // Fase 7: as configuracoes no payload (state/settings-sync.js, app/native/bg_settings.c). So com um payload no ar
+    // (nunca o sobe); health devolve o /health (com "settings", "settingsRev", "settingsStore") ou null.
+    wrapper.settings = {
+      health: async () => {
+        const token = readToken();
+        return token ? await health(token) : null;
+      },
+      get: () => backupCall(false, "GET", "/settings"),
+      post: (body) => backupCall(false, "POST", "/settings", body)
+    };
     current = wrapper;
     return wrapper;
   }
 
-export { BG_EMBEDDED_VERSION, payloadFocus, PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, switchAppVia, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };
+  /** Fase 7: as rotas de configuracoes do payload desta abertura (wrapper.settings), ou null antes de a fila existir. */
+  var payloadSettings = () => current?.settings ?? null;
+
+export { BG_EMBEDDED_VERSION, payloadFocus, payloadSettings, PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, switchAppVia, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };

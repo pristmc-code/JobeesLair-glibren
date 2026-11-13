@@ -33,6 +33,8 @@
   // every launch, and the update dialog forgot it had already offered a release.
   var SAVED_FILES = {
     "settings.json": isRecord,
+    // Fase 7: o que falta mandar ao payload e o que ja se sabe dele (state/settings-sync.js).
+    "settings-sync.json": isRecord,
     "wishlist.json": isStringList,
     "recent.json": isStringList,
     "searches.json": isStringList,
