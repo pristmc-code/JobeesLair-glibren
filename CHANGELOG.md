@@ -6,6 +6,18 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.43** (fork): app switch by the real foreground, one TorBox pace and a sturdier YouTube service. Switching
+  apps (POST /switch, used by Videos and by "Back to Jobee'sLair"): after the old app closes, the background payload
+  reads the kernel message buffer (kern.msgbuf) and, when the system writes SetControllerFocus there and the focus was
+  on the old app when the switch was asked, opens the new app 3 s after the focus leaves the old one instead of always
+  waiting 15 s; the 15 s stay as the limit and as the wait when there is no signal (or a line that doesn't match the
+  old app). An app is still never opened over another one. Idea from ps-game-state-lib by StonedModder (MIT); own
+  code, the same reading as glibren 0.9.16. TorBox: the library build, the phone requests started with the app closed
+  and the link renewal of downloads now share one pace (one call every 300 ms for the whole payload) and a 429 seen by
+  any of them makes all of them wait; a renewal that would wait long gives up for the moment instead of holding the
+  download thread. Payload api 28 (the app swaps a .42 payload still running). YouTube service 0.2.1 built in: its
+  own DNS resolver (UDP, then TCP, then DNS over HTTPS with a file cache) for YouTube and Google hosts only, when the
+  console's DNS fails (idea from ps5-patchdl).
 - **glibren.42** (fork): Etapa 4 do plano de ação (revisões de 12/11) e a conta do YouTube. YouTube account: Settings >
   Videos signs in with a TV code (the code, the address and a QR of it; the app asks until it is confirmed, refused or
   expired), shows the connected account and Sign out; the sign-in stays only in the YouTube service on the console

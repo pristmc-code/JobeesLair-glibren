@@ -76,7 +76,9 @@ import { setLibraryPayload } from './torbox-library-payload.js';
   // pac1: 24, a pausa entre conversoes e o limite de escrita da conversao (POST /config "convertPauseSeconds",
   // "convertWriteLimit"; GET /convert "waitSeconds") e a queda da sessao anterior (GET /crash, last-crash.json).
   // glibren.38: 27, a rede da Biblioteca TorBox (GET/POST /library/build).
-  var PAYLOAD_API = 27;
+  // glibren.43: 28, /switch pelo primeiro plano (kern.msgbuf) e um ritmo so para o TorBox: sobe para o app trocar o
+  // payload da .42 que ainda estiver no ar (sem rota nova).
+  var PAYLOAD_API = 28;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 

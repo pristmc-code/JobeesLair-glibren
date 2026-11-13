@@ -32,8 +32,8 @@
 // Como o app (state/torbox-library.js): 50 links web por grupo (um link vira ate 2 MD5) e 100 magnets, 10 hashes por
 // chamada (LIST_GROUP), um grupo recusado (414, resposta grande demais, ou outro erro do TorBox) e partido ao meio ate
 // um link sozinho, que fica com o erro; 429 espera 61 s, 2 e 4 min (5 tentativas), rede/5xx 5 e 10 s (3); passou disso a
-// rodada para ("failed") e o "Continuar" do app retoma dos blocos que faltam. Uma chamada por vez, LB_PACE_MS entre
-// elas (o TorBox da 300 por minuto), e nada no modo quieto (app fechando).
+// rodada para ("failed") e o "Continuar" do app retoma dos blocos que faltam. Uma chamada por vez, no ritmo unico do TorBox (glibren.43:
+// tb_turn, junto com o resto do payload; o TorBox da 300 por minuto), e nada no modo quieto (app fechando).
 //
 // Rotas (com o token do app):
 //   GET  /library/build          {ok, api, run, state: ""|running|done|failed|cancelled, phase, busy, blocks, done,
@@ -67,8 +67,7 @@ static LbState g_lb;
 static pthread_mutex_t g_lb_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_lb_wake = PTHREAD_COND_INITIALIZER;
 static char g_lb_dir[600], g_lb_state_path[700], g_lb_plan_path[700];
-static int g_lb_pace_ms = 300, g_lb_rate_ms = 61000, g_lb_retry_ms = 5000;
-static int64_t g_lb_last_call;
+static int g_lb_rate_ms = 61000, g_lb_retry_ms = 5000;
 
 // ---- MD5 (o hash de um link web no TorBox; RFC 1321) ----
 static void lb_md5(const char* text, size_t n, char out[33]) {
@@ -448,8 +447,23 @@ static int lb_get(const char* path, const char* key, Buf* body, LbAnswer* a, LbE
 // Como polite() do app: o ritmo e as esperas. 1 ok; 0 erro definitivo (`err`); -1 parou.
 static int lb_polite(const char* path, const char* key, Buf* body, LbAnswer* a, LbErr* err) {
   for (int attempt = 0;; ++attempt) {
-    if (!lb_wait_until(g_lb_last_call + g_lb_pace_ms)) return -1;
-    g_lb_last_call = mono_ms();
+    // glibren.43: o ritmo unico do TorBox (tb_turn, em bg_downloader.c), junto com os pedidos do celular e a renovacao
+    // de links; uma espera de 429 de outra parte aparece no estado (waitMs).
+    const int64_t cool = tb_cooldown_left();
+    if (cool > 0) {
+      pthread_mutex_lock(&g_lb_lock);
+      g_lb.wait_until = mono_ms() + cool;
+      lb_save_state_locked();
+      pthread_mutex_unlock(&g_lb_lock);
+    }
+    if (!lb_wait_until(0)) return -1;
+    const int turn = tb_turn(-1, lb_stopping);
+    if (cool > 0) {
+      pthread_mutex_lock(&g_lb_lock);
+      g_lb.wait_until = 0;
+      pthread_mutex_unlock(&g_lb_lock);
+    }
+    if (turn != 1) return -1;
     pthread_mutex_lock(&g_lb_lock);
     ++g_lb.calls;
     pthread_mutex_unlock(&g_lb_lock);
@@ -457,6 +471,7 @@ static int lb_polite(const char* path, const char* key, Buf* body, LbAnswer* a, 
     if ((err->rate && attempt < 4) || (err->transient && attempt < 2)) {
       const int64_t ms = err->rate ? (int64_t)g_lb_rate_ms << (attempt < 2 ? attempt : 2) : (int64_t)g_lb_retry_ms * (attempt + 1);
       logf_("biblioteca: %s; esperando %lld s", err->code, (long long)(ms / 1000));
+      if (err->rate) tb_slow_down(ms, "biblioteca"); // glibren.43: segura tambem as outras partes
       pthread_mutex_lock(&g_lb_lock);
       g_lb.wait_until = mono_ms() + ms;
       lb_save_state_locked();
@@ -1223,7 +1238,6 @@ static void lb_setup(void) {
   snprintf(g_lb_plan_path, sizeof g_lb_plan_path, "%s/plan.ndjson", g_lb_dir);
 #ifndef __PROSPERO__
   // Nos testes: sem as esperas de verdade.
-  g_lb_pace_ms = atoi(env_or("BGDL_LIB_PACE_MS", "300"));
   g_lb_rate_ms = atoi(env_or("BGDL_LIB_RATE_WAIT_MS", "61000"));
   g_lb_retry_ms = atoi(env_or("BGDL_LIB_RETRY_MS", "5000"));
 #endif

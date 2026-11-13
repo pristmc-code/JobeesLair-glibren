@@ -200,7 +200,7 @@ test('glibren.38: no payload, or an old one (api < 27): the whole run in the app
   // background-downloads.js so entrega o payload com api >= 27 (o que um payload antigo responde vira null).
   const text = readFileSync(path.join(repo, 'app/state/background-downloads.js'), 'utf8');
   assert.match(text, /Number\(answer\.data\.api\) >= 27/);
-  assert.match(text, /var PAYLOAD_API = 27;/);
+  assert.match(text, /var PAYLOAD_API = 28;/);
 });
 
 // ======================================================================================================================
@@ -225,7 +225,7 @@ async function startPayload(torboxPort, env = {}, base = null) {
   writeFileSync(path.join(base, 'debrid.json'), JSON.stringify({ torbox: { key: KEY } }));
   const api = await freePort(), monitor = await freePort();
   const child = spawn(binary, [], { env: { ...process.env, BGDL_DIR: path.join(base, 'state'), BGDL_PORT: String(api), BGDL_MONITOR_PORT: String(monitor), BGDL_ORBIT_DIR: path.join(base, 'orbit'),
-    BGDL_LIBRARY: path.join(base, 'lista.json'), BGDL_KEYFILE: path.join(base, 'debrid.json'), BGDL_TORBOX_BASE: `http://127.0.0.1:${torboxPort}/v1/api`, BGDL_LIB_PACE_MS: '0', BGDL_LIB_RATE_WAIT_MS: '40',
+    BGDL_LIBRARY: path.join(base, 'lista.json'), BGDL_KEYFILE: path.join(base, 'debrid.json'), BGDL_TORBOX_BASE: `http://127.0.0.1:${torboxPort}/v1/api`, BGDL_TB_PACE_MS: '0', BGDL_LIB_RATE_WAIT_MS: '40',
     BGDL_LIB_RETRY_MS: '20', BGDL_NOTIFY_FILE: path.join(base, 'notify.txt'), ...env }, stdio: ['ignore', 'pipe', 'ignore'] });
   children.add(child);
   child.on('exit', () => children.delete(child));
@@ -366,6 +366,26 @@ test('glibren.38: a TorBox without the key (BAD_TOKEN) or a 429 that never ends 
   const log = readFileSync(path.join(payload.base, 'state/bgdl.log'), 'utf8');
   assert.ok(!log.includes(KEY) && !log.includes('wrong-key-wrong-key-1234'), 'no key in the log');
   assert.match(log, /biblioteca: RATE_LIMITED; esperando/);
+  payload.child.kill('SIGKILL');
+  await tb.close();
+});
+
+// glibren.43: um ritmo so para o TorBox no payload inteiro (tb_turn): a Biblioteca respeita o intervalo entre chamadas
+// e um 429 dela segura as outras partes (o diario diz quem pediu a espera).
+test('glibren.43: the library calls the TorBox at the one payload-wide pace, and its 429 becomes a payload-wide wait', { skip, timeout: 60000 }, async () => {
+  const tb = await torbox();
+  const payload = await startPayload(tb.port, { BGDL_TB_PACE_MS: '120' });
+  const times = [];
+  tb.server.prependListener('request', () => times.push(performance.now()));
+  const games = catalog(12);
+  const remote = createLibraryRemote({ fs: diskFs, link: () => payload.link, poll: 20 });
+  await lib.buildLibrary({ entries: entriesOf(games), api: {}, remote, pace: 0, sleep: async () => {} });
+  assert.ok(times.length >= 3, `poucas chamadas: ${times.length}`);
+  const gaps = times.slice(1).map((at, i) => at - times[i]);
+  assert.ok(Math.min(...gaps) >= 105, `intervalo menor que o ritmo: ${gaps.map(Math.round).join(', ')}`);
+  const log = readFileSync(path.join(payload.base, 'state/bgdl.log'), 'utf8');
+  assert.match(log, /TorBox: 429 \(devagar\) em biblioteca; ninguem chama por/);
+  assert.ok(!log.includes(KEY), 'no key in the log');
   payload.child.kill('SIGKILL');
   await tb.close();
 });

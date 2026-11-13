@@ -2098,3 +2098,97 @@ test('glibren.31: POST /switch espera o app fechar, abre o outro (com novas tent
     await stop(child);
   }
 });
+
+// glibren.43: primeiro plano real pelo kern.msgbuf (ideia do ps-game-state-lib, StonedModder, MIT; a mesma leitura do
+// glibren 0.9.16). Com o foco no app antigo quando o pedido chega, a troca espera o foco sair dele (+ margem) em vez
+// dos 15 s fixos; os 15 s continuam como limite. Sem sinal, ou com uma linha que nao confere, a espera fixa de antes.
+// No desktop: BGDL_MSGBUF_FILE e o "msgbuf" e BGDL_APPIDS o appId de cada titulo.
+test('glibren.43: POST /switch espera o foco sair do app antigo (kern.msgbuf); sem sinal ou sinal que nao confere, a espera fixa; nunca passa do limite', { skip }, async () => {
+  const base = workspace();
+  const flag = path.join(base, 'app-running');
+  const running = path.join(base, 'running');
+  const launched = path.join(base, 'launched.txt');
+  const msgbuf = path.join(base, 'msgbuf.txt');
+  mkdirSync(running, { recursive: true });
+  const SETTLE = 4000;
+  const child = start(base, { BGDL_APP_RUNNING: flag, BGDL_RUNNING_DIR: running, BGDL_LAUNCH_FILE: launched, BGDL_MSGBUF_FILE: msgbuf,
+    BGDL_APPIDS: '0x60000010=PPSA99471,0x60000020=PPSA99991', BGDL_SWITCH_SETTLE_MS: String(SETTLE), BGDL_SWITCH_MARGIN_MS: '200',
+    BGDL_SWITCH_PAUSE_MS: '100', BGDL_SWITCH_GIVEUP_MS: '20000', BGDL_APP_SILENCE_MS: '600000' });
+  const log = () => readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+  const launches = () => existsSync(launched) ? readFileSync(launched, 'utf8').split('\n').filter(Boolean) : [];
+  const logged = async (text, ms = 20000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(25)) if (log().includes(text)) return;
+    throw new Error(`diario sem "${text}":\n${log()}`);
+  };
+  const launchedAfter = async (count, ms = 20000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(25)) if (launches().length >= count) return;
+    throw new Error(`sem abertura ${count}:\n${log()}`);
+  };
+  const ask = (body) => call(base, 'POST', '/switch', body, '');
+  // O buffer circular tem lixo e zeros no meio; vale a ultima SetControllerFocus.
+  const buffer = (...lines) => writeFileSync(msgbuf, Buffer.concat([Buffer.from('[boot] lixo\0\0'), Buffer.from(lines.join('\n') + '\n')]));
+  try {
+    await up(base);
+
+    // 1) Sinal confere: o foco sai da Jobe logo depois de ela fechar -> abre com a margem, bem antes dos 4 s.
+    writeFileSync(flag, '');
+    buffer('SetControllerFocus(0x7)', 'VideoOut: shared (pid=0x5f, appId=0x60000010)', 'SetControllerFocus(0x60000010)');
+    assert.deepEqual((await ask({ to: 'PPSA99991', from: 'PPSA99471' })).data, { ok: true });
+    await logged('troca: primeiro plano: foco em PPSA99471 (0x60000010), 2 linhas; video com pid 95 appId 0x60000010');
+    await wait(300);
+    assert.deepEqual(launches(), [], 'nunca com o from aberto');
+    rmSync(flag);
+    await logged('troca: PPSA99471 fechou; abrindo PPSA99991 em ate 4 s');
+    await wait(400);
+    assert.deepEqual(launches(), [], 'o foco ainda na Jobe: espera');
+    const left = Date.now();
+    buffer('SetControllerFocus(0x60000010)', 'SetControllerFocus(0x7)');
+    await launchedAfter(1);
+    assert.ok(Date.now() - left < 2500, `demorou ${Date.now() - left} ms depois do foco sair`);
+    await logged('troca: foco saiu do app antigo (0x60000010 -> 0x00000007)');
+    assert.ok(log().includes('margem de 200 ms'));
+    await logged('troca: PPSA99991 aberto (tentativa 1 de 4)');
+
+    // 2) O foco nunca sai: segue no limite (4 s aqui, 15 s no console), nao antes.
+    writeFileSync(flag, '');
+    buffer('SetControllerFocus(0x60000010)');
+    await ask({ to: 'PPSA99991', from: 'PPSA99471' });
+    await logged('troca: primeiro plano: foco em PPSA99471 (0x60000010), 1 linhas');
+    rmSync(flag);
+    const closed = Date.now();
+    await launchedAfter(2);
+    assert.ok(Date.now() - closed >= SETTLE - 300, `abriu cedo: ${Date.now() - closed} ms`);
+    await logged('troca: o foco continuou no app antigo por 4 s - segue (limite)');
+
+    // 3) Uma linha velha que nao e o app antigo: nao adianta nada (espera fixa).
+    writeFileSync(flag, '');
+    buffer('SetControllerFocus(0x60000099)');
+    await ask({ to: 'PPSA99991', from: 'PPSA99471' });
+    await logged('troca: o foco (0x60000099) nao e PPSA99471 (0x60000010) - espera fixa de 4 s');
+    rmSync(flag);
+    const fixed = Date.now();
+    await launchedAfter(3);
+    assert.ok(Date.now() - fixed >= SETTLE - 300, `abriu cedo: ${Date.now() - fixed} ms`);
+
+    // 4) Sem msgbuf (firmware que nao escreve, ou nao deu para ler): espera fixa.
+    rmSync(msgbuf);
+    writeFileSync(flag, '');
+    await ask({ to: 'PPSA99991', from: 'PPSA99471' });
+    await logged('troca: kern.msgbuf nao lido - espera fixa de 4 s');
+    rmSync(flag);
+    const none = Date.now();
+    await launchedAfter(4);
+    assert.ok(Date.now() - none >= SETTLE - 300, `abriu cedo: ${Date.now() - none} ms`);
+
+    // 5) Buffer sem as linhas: "sem sinal".
+    buffer('outra coisa qualquer');
+    writeFileSync(flag, '');
+    await ask({ to: 'PPSA99991', from: 'PPSA99471' });
+    await logged('troca: sem sinal de primeiro plano (msgbuf) - espera fixa de 4 s');
+    rmSync(flag);
+    await launchedAfter(5);
+    assert.deepEqual(launches(), ['PPSA99991', 'PPSA99991', 'PPSA99991', 'PPSA99991', 'PPSA99991']);
+  } finally {
+    await stop(child);
+  }
+});

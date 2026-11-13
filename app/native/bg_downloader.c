@@ -97,7 +97,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 27 // glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#define BG_API 28 // glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -122,6 +122,7 @@
 
 #ifdef __PROSPERO__
 #include <sys/syscall.h>
+#include <sys/sysctl.h> // glibren.43: kern.msgbuf (primeiro plano)
 typedef struct {
   char reserved[45];
   char message[3075];
@@ -2108,6 +2109,57 @@ static int torbox_field(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 
+// ---- glibren.43: um ritmo so para a API do TorBox ------------------------------------------------------------
+// Ate a .42 cada parte do payload chamava o TorBox no seu passo: a Biblioteca (bg_library.c, 300 ms entre chamadas e
+// esperas proprias no 429), os pedidos do celular com o app fechado (auto_loop/tb_request, 400 ms e 61 s no 429) e a
+// renovacao de links dos downloads (renew_link, sem ritmo nenhum). Juntas, podiam passar do limite do TorBox (300 por
+// minuto), e um 429 recebido por uma nao segurava as outras. Agora todas pedem a vez em tb_turn(): uma chamada a cada
+// g_tbr_gap_ms para o payload inteiro e, depois de um 429 em qualquer parte (tb_slow_down), ninguem chama ate a espera
+// acabar. A renovacao (que roda na thread do download) nao fica presa numa espera longa: devolve "tente depois".
+static pthread_mutex_t g_tbr_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_tbr_gap_ms = 300;          // BGDL_TB_PACE_MS nos testes
+static int g_tb_rate_wait_ms = 61000;   // a espera depois de um 429 (BGDL_TB_RATE_WAIT_MS nos testes)
+static int64_t g_tbr_next_ms, g_tbr_cool_ms;
+static unsigned long g_tbr_calls, g_tbr_limited;
+// Espera a vez de chamar o TorBox. max_ms < 0: espera o quanto for preciso. 1 = a vez e sua (ja contada); 0 = mandaram
+// parar (g_stop ou `stop`); -1 = a espera passaria de max_ms (nada reservado).
+static int tb_turn(int64_t max_ms, int (*stop)(void)) {
+  for (;;) {
+    pthread_mutex_lock(&g_tbr_lock);
+    const int64_t now = mono_ms();
+    const int64_t at = g_tbr_next_ms > g_tbr_cool_ms ? g_tbr_next_ms : g_tbr_cool_ms;
+    if (now >= at) {
+      g_tbr_next_ms = now + g_tbr_gap_ms;
+      ++g_tbr_calls;
+      pthread_mutex_unlock(&g_tbr_lock);
+      return 1;
+    }
+    pthread_mutex_unlock(&g_tbr_lock);
+    if (max_ms >= 0 && at - now > max_ms) return -1;
+    if (g_stop || (stop && stop())) return 0;
+    const int64_t left = at - now;
+    sleep_ms(left > 200 ? 200 : left > 0 ? (int)left : 1);
+  }
+}
+// Um 429 (em qualquer parte): ninguem chama o TorBox pelos proximos `ms`.
+static void tb_slow_down(int64_t ms, const char* who) {
+  pthread_mutex_lock(&g_tbr_lock);
+  const int64_t until = mono_ms() + ms;
+  if (until > g_tbr_cool_ms) g_tbr_cool_ms = until;
+  ++g_tbr_limited;
+  const unsigned long calls = g_tbr_calls, limited = g_tbr_limited;
+  pthread_mutex_unlock(&g_tbr_lock);
+  logf_("TorBox: 429 (devagar) em %s; ninguem chama por %lld s (%lu chamadas, %lu pedidos de espera nesta vida)", who,
+        (long long)(ms / 1000), calls, limited);
+}
+// Quanto falta da espera de um 429 (0 = nenhuma).
+static int64_t tb_cooldown_left(void) {
+  pthread_mutex_lock(&g_tbr_lock);
+  const int64_t left = g_tbr_cool_ms - mono_ms();
+  pthread_mutex_unlock(&g_tbr_lock);
+  return left > 0 ? left : 0;
+}
+
 enum { RENEW_OK, RENEW_NEEDS_APP, RENEW_RETRY, RENEW_FAILED };
 
 // Pede ao TorBox um link novo para o mesmo arquivo (requestdl). A chave vai so na query desse pedido (e assim
@@ -2131,8 +2183,15 @@ static int renew_link(Job* j, char* why, size_t cap) {
     snprintf(url, sizeof url, "%s/webdl/requestdl?token=%s&web_id=%s&file_id=%s&zip_link=false", g_torbox_base, key, j->item_id, j->file_id);
   }
   memset(key, 0, sizeof key);
+  // glibren.43: a vez no ritmo unico; depois de um 429 recente, nao espera aqui (a thread e a do download).
+  if (tb_turn(5000, NULL) != 1) {
+    memset(url, 0, sizeof url);
+    snprintf(why, cap, "TorBox asked to slow down; trying again in a moment");
+    logf_("job %s: TorBox pediu para esperar (429 recente); renovacao depois", j->id);
+    return RENEW_RETRY;
+  }
   CURL* curl = curl_easy_init();
-  if (!curl) { snprintf(why, cap, "out of memory"); return RENEW_RETRY; }
+  if (!curl) { memset(url, 0, sizeof url); snprintf(why, cap, "out of memory"); return RENEW_RETRY; }
   Body body = {0};
   configure_transport(curl, url);
   memset(url, 0, sizeof url);
@@ -2154,6 +2213,7 @@ static int renew_link(Job* j, char* why, size_t cap) {
     return RENEW_RETRY;
   }
   logf_("job %s: requestdl -> HTTP %ld %s", j->id, status, answer.success ? "ok" : answer.code);
+  if (status == 429) tb_slow_down(g_tb_rate_wait_ms, "renovacao de link"); // glibren.43
   if (status == 429 || status >= 500 || !parsed) { snprintf(why, cap, "TorBox isn't answering right now (HTTP %ld)", status); return RENEW_RETRY; }
   // O link novo tem de ser https (como o app exige); http so quando a propria API de teste e http (Linux).
   int scheme_ok = !strncmp(answer.data, "https://", 8) || (!strncmp(g_torbox_base, "http://", 7) && !strncmp(answer.data, "http://", 7));
@@ -3915,6 +3975,100 @@ static void crash_route(int fd) {
   free(text);
 }
 
+// ---- glibren.43: primeiro plano pelo kern.msgbuf -------------------------------------------------------------
+// Ideia do ps-game-state-lib (StonedModder, licenca MIT, https://github.com/StonedModder/ps-game-state-lib); codigo
+// proprio, a mesma leitura do glibren 0.9.16 (src/primeiro_plano.c). O sistema escreve no diario do kernel
+// (kern.msgbuf) linhas como "SetControllerFocus(0x60000123)" (o app com o foco do controle; 0x7 = a tela do sistema,
+// ShellUI) e "VideoOut: shared (pid=0x5f, appId=0x60000123)". A ultima SetControllerFocus do buffer e o foco atual.
+// O que o sistema imprime pode mudar com o firmware: sem essas linhas e "sem sinal" e a troca segue com a espera fixa.
+// No desktop: BGDL_MSGBUF_FILE = arquivo com o "msgbuf"; BGDL_APPIDS = "0x60000010=PPSA99471,..." (o appId de cada titulo).
+#define FG_SYSTEM 0x7u
+#define FG_MSGBUF_MAX (512 * 1024)
+typedef struct {
+  int read, signal, focuses, video;
+  uint32_t focus, video_pid, video_app;
+} Foreground;
+// O msgbuf inteiro (malloc; quem chama libera), ou NULL.
+static char* fg_msgbuf(size_t* n) {
+  *n = 0;
+#ifdef __PROSPERO__
+  size_t size = 0;
+  if (sysctlbyname("kern.msgbuf", NULL, &size, NULL, 0) || !size) size = 256 * 1024; // alguns kernels nao dizem o tamanho
+  if (size > FG_MSGBUF_MAX) size = FG_MSGBUF_MAX;
+  char* b = malloc(size + 1);
+  if (!b) return NULL;
+  if (sysctlbyname("kern.msgbuf", b, &size, NULL, 0)) { free(b); return NULL; }
+  if (size > FG_MSGBUF_MAX) size = FG_MSGBUF_MAX;
+#else
+  const char* path = getenv("BGDL_MSGBUF_FILE");
+  if (!path || !*path) return NULL;
+  FILE* f = fopen(path, "rb");
+  if (!f) return NULL;
+  char* b = malloc(FG_MSGBUF_MAX + 1);
+  if (!b) { fclose(f); return NULL; }
+  size_t size = fread(b, 1, FG_MSGBUF_MAX, f);
+  fclose(f);
+#endif
+  b[size] = 0;
+  for (size_t i = 0; i < size; ++i) if (!b[i]) b[i] = '\n'; // o buffer circular pode ter zeros no meio
+  *n = size;
+  return b;
+}
+static int fg_number(const char* text, uint32_t* out) {
+  char* end;
+  errno = 0;
+  const unsigned long v = strtoul(text, &end, 0);
+  if (errno || end == text) return 0;
+  *out = (uint32_t)v;
+  return 1;
+}
+// Le o msgbuf agora. 1 = leu (veja .signal); 0 = nao leu.
+static int fg_read(Foreground* f) {
+  memset(f, 0, sizeof *f);
+  size_t n;
+  char* b = fg_msgbuf(&n);
+  if (!b) return 0;
+  f->read = 1;
+  for (char* line = b; line < b + n;) {
+    char* end = memchr(line, '\n', (size_t)(b + n - line));
+    const size_t len = end ? (size_t)(end - line) : (size_t)(b + n - line);
+    const char saved = line[len];
+    line[len] = 0;
+    const char* p = strstr(line, "SetControllerFocus(");
+    uint32_t v;
+    if (p && p[19] != '-' && fg_number(p + 19, &v)) { f->signal = 1; f->focus = v; ++f->focuses; }
+    p = strstr(line, "VideoOut: shared (pid=");
+    if (p) {
+      uint32_t pid, app;
+      const char* a = strstr(p, "appId=");
+      if (fg_number(p + 22, &pid) && a && fg_number(a + 6, &app)) { f->video = 1; f->video_pid = pid; f->video_app = app; }
+    }
+    line[len] = saved;
+    if (!end) break;
+    line = end + 1;
+  }
+  free(b);
+  return 1;
+}
+// O appId de um titulo aberto (para comparar com o foco), ou -1 (fechado ou sem a consulta).
+static int64_t switch_app_id(const char* title) {
+#ifdef __PROSPERO__
+  if (!sceLncUtilGetAppId) return -1;
+  const int id = sceLncUtilGetAppId(title);
+  return id >= 0 ? id : -1;
+#else
+  const char* map = getenv("BGDL_APPIDS");
+  for (const char* p = map ? map : ""; *p;) {
+    char* end;
+    const unsigned long v = strtoul(p, &end, 0);
+    if (end != p && *end == '=' && strlen(end + 1) >= 9 && !strncmp(end + 1, title, 9) && (end[10] == ',' || !end[10])) return (int64_t)v;
+    p += strcspn(p, ",");
+    if (*p == ',') ++p;
+  }
+  return -1;
+#endif
+}
+
 // ---- glibren.31: troca de app (POST /switch) -------------------------------------------------------------
 // O PS5 so tem um app em primeiro plano: abrir outro (sceLncUtilLaunchApp) com a Jobe aberta foi recusado
 // (0x80940011, 0x80940031 nos logs de 11/11/2026) e o console caiu minutos depois de uma dessas tentativas. Agora quem
@@ -4015,20 +4169,64 @@ static int switch_wait(unsigned gen, int64_t ms) {
   }
   return switch_current(gen);
 }
+// glibren.43: a espera depois que o `from` fechou. Com sinal de primeiro plano (o foco era o `from` quando o pedido
+// chegou), espera o foco sair dele e mais `margin`; nunca mais que `settle` no total (o limite de antes). Sem sinal,
+// ou se o sinal nao conferia com o `from`, a espera fixa de `settle`, como ate a .42. 1 = pode abrir; 0 = substituido.
+static int switch_settle(unsigned gen, int64_t from_app, int trusted, int64_t settle, int64_t margin) {
+  if (!trusted) return switch_wait(gen, settle);
+  const int64_t start = mono_ms();
+  for (Foreground f;;) {
+    if (!switch_current(gen)) return 0;
+    const int64_t spent = mono_ms() - start;
+    if (spent >= settle) {
+      logk_("troca: o foco continuou no app antigo por %lld s - segue (limite)", (long long)(settle / 1000));
+      return 1;
+    }
+    if (!fg_read(&f) || !f.signal) {
+      logk_("troca: sinal de primeiro plano sumiu - completa a espera fixa");
+      return switch_wait(gen, settle - spent);
+    }
+    if (f.focus != (uint32_t)from_app) {
+      const int64_t wait = margin < settle - spent ? margin : settle - spent;
+      logk_("troca: foco saiu do app antigo (0x%08x -> 0x%08x) em %lld ms; margem de %lld ms", (unsigned)from_app,
+            (unsigned)f.focus, (long long)spent, (long long)wait);
+      return switch_wait(gen, wait);
+    }
+    if (!switch_wait(gen, 250)) return 0;
+  }
+}
 static void* switch_thread(void* arg) {
   SwitchBody s = *(SwitchBody*)arg;
   free(arg);
   const int64_t settle = atoll(env_or("BGDL_SWITCH_SETTLE_MS", "15000"));
   const int64_t giveup = atoll(env_or("BGDL_SWITCH_GIVEUP_MS", "120000"));
   const int64_t pause = atoll(env_or("BGDL_SWITCH_PAUSE_MS", "5000")); // 5, 10, 20 s
+  const int64_t margin = atoll(env_or("BGDL_SWITCH_MARGIN_MS", "3000")); // glibren.43: depois que o foco sai
   const int64_t start = mono_ms();
+  // glibren.43: o appId do `from` e o foco agora, antes de ele fechar (depois o sistema nao sabe mais o appId). O sinal
+  // so vale se o foco for o proprio `from` agora: uma linha velha no buffer nao adianta a troca.
+  const int64_t from_app = switch_app_id(s.from);
+  Foreground fg;
+  int trusted = 0;
+  if (from_app < 0) logk_("troca: sem o appId de %s - espera fixa de %lld s", s.from, (long long)(settle / 1000));
+  else if (!fg_read(&fg)) logk_("troca: kern.msgbuf nao lido - espera fixa de %lld s", (long long)(settle / 1000));
+  else if (!fg.signal) logk_("troca: sem sinal de primeiro plano (msgbuf) - espera fixa de %lld s", (long long)(settle / 1000));
+  else if (fg.focus != (uint32_t)from_app)
+    logk_("troca: o foco (0x%08x) nao e %s (0x%08x) - espera fixa de %lld s", (unsigned)fg.focus, s.from, (unsigned)from_app,
+          (long long)(settle / 1000));
+  else {
+    trusted = 1;
+    if (fg.video) logk_("troca: primeiro plano: foco em %s (0x%08x), %d linhas; video com pid %u appId 0x%08x", s.from,
+                        (unsigned)fg.focus, fg.focuses, (unsigned)fg.video_pid, (unsigned)fg.video_app);
+    else logk_("troca: primeiro plano: foco em %s (0x%08x), %d linhas", s.from, (unsigned)fg.focus, fg.focuses);
+  }
   while (switch_running(s.from)) {
     if (!switch_current(s.gen)) { logk_("troca: pedido %s -> %s substituido por outro", s.from, s.to); return NULL; }
     if (mono_ms() - start >= giveup) { logk_("troca: %s nao fechou em %lld s; desisti de abrir %s", s.from, (long long)(giveup / 1000), s.to); return NULL; }
     sleep_ms(250);
   }
-  logk_("troca: %s fechou; abrindo %s em %lld s", s.from, s.to, (long long)(settle / 1000));
-  if (!switch_wait(s.gen, settle)) { logk_("troca: pedido %s -> %s substituido por outro", s.from, s.to); return NULL; }
+  logk_("troca: %s fechou; abrindo %s em ate %lld s", s.from, s.to, (long long)(settle / 1000));
+  if (!switch_settle(s.gen, from_app, trusted, settle, margin)) { logk_("troca: pedido %s -> %s substituido por outro", s.from, s.to); return NULL; }
   for (int attempt = 1; attempt <= SWITCH_TRIES; ++attempt) {
     if (attempt > 1 && !switch_wait(s.gen, pause << (attempt - 2))) { logk_("troca: pedido %s -> %s substituido por outro", s.from, s.to); return NULL; }
     if (strcmp(s.to, SWITCH_LINK_ONLY) && switch_running(s.to)) { logk_("troca: %s ja esta aberto; nada a fazer", s.to); return NULL; }
@@ -6092,8 +6290,7 @@ static void monitor_library_add(int fd, Request* r) {
 // que acha a parcial e acompanha este job; POST /jobs/<id>/adopt). Terminado com o app ainda fechado: jogo de PS5
 // compactado ou .pkg vira .exfat aqui (bg_convert, que pede a varredura ao ShadowMount+); .pkg de PS4 fica em PS4/ para
 // instalar pela Jobee'sLair (aba Arquivos); imagem vai para homebrew/ (place_image).
-static int g_tb_pace_ms = 400, g_tb_rate_wait_ms = 61000, g_tb_poll_ms = 5000, g_tb_ready_ms = 300000, g_auto_retry_ms = 120000;
-static int64_t g_tb_last_ms;
+static int g_tb_poll_ms = 5000, g_tb_ready_ms = 300000, g_auto_retry_ms = 120000;
 // glibren.23: como o Orbit Store: no maximo um createwebdownload a cada g_tb_create_gap_ms, e antes de criar o link e
 // procurado na conta (mylist, pelo original_url): um que ja esta la e usado de novo, nao criado outra vez.
 static int g_tb_create_gap_ms = 61000;
@@ -6197,8 +6394,7 @@ static int tb_top_field(JP* jp, const char* key, void* ctx) {
 // diario. 1 = respondeu (r preenchido); 0 = sem resposta util; o 429 espera e repete (ate 3 vezes).
 static int tb_request(const char* path, const char* field, const char* value, int multipart, const char* key, TbReply* r, long* status) {
   for (int attempt = 0; attempt < 4 && !g_stop; ++attempt) {
-    for (int64_t gap; (gap = g_tb_last_ms + g_tb_pace_ms - mono_ms()) > 0;) sleep_ms((int)gap);
-    g_tb_last_ms = mono_ms();
+    if (tb_turn(-1, NULL) != 1) return 0; // glibren.43: o ritmo unico (e a espera de um 429 de qualquer parte)
     memset(r, 0, sizeof *r);
     char url[2048];
     snprintf(url, sizeof url, "%s%s", g_torbox_base, path);
@@ -6239,8 +6435,7 @@ static int tb_request(const char* path, const char* field, const char* value, in
     if (result != CURLE_OK) { free(body.data); return 0; }
     if (*status == 429) {
       free(body.data);
-      logf_("TorBox: 429 (devagar); esperando %d s", g_tb_rate_wait_ms / 1000);
-      for (int64_t until = mono_ms() + g_tb_rate_wait_ms; mono_ms() < until && !g_stop;) sleep_ms(200);
+      tb_slow_down(g_tb_rate_wait_ms, "pedidos do celular"); // a proxima volta do laco espera em tb_turn
       continue;
     }
     int parsed = 0;
@@ -6498,8 +6693,6 @@ static void auto_note_locked(Job* j, const char* note, const char* why) {
 
 static void* auto_loop(void* arg) {
   (void)arg;
-  g_tb_pace_ms = atoi(env_or("BGDL_TB_PACE_MS", "400"));
-  g_tb_rate_wait_ms = atoi(env_or("BGDL_TB_RATE_WAIT_MS", "61000"));
   g_tb_create_gap_ms = atoi(env_or("BGDL_TB_CREATE_GAP_MS", "61000")); // glibren.23
   g_tb_poll_ms = atoi(env_or("BGDL_TB_POLL_MS", "5000"));
   g_tb_ready_ms = atoi(env_or("BGDL_TB_READY_MS", "300000"));
@@ -6872,6 +7065,8 @@ int main(void) {
   snprintf(g_cainfo, sizeof g_cainfo, "%s", env_or("BGDL_CAINFO", ""));
   snprintf(g_torbox_base, sizeof g_torbox_base, "%s", env_or("BGDL_TORBOX_BASE", g_torbox_base));
 #endif
+  g_tbr_gap_ms = atoi(env_or("BGDL_TB_PACE_MS", "300"));          // glibren.43: o ritmo unico do TorBox
+  g_tb_rate_wait_ms = atoi(env_or("BGDL_TB_RATE_WAIT_MS", "61000"));
   if (mkdir_p(g_dir)) return 1;
   snprintf(g_log_path, sizeof g_log_path, "%s/bgdl.log", g_dir);
   set_process_name();

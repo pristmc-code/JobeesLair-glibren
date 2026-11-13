@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.43**: App switch by the real foreground (kern.msgbuf), one TorBox pace for the whole payload, YouTube service 0.2.1 with its own DNS.
 > **glibren.42**: YouTube account sign-in in Settings > Videos, safer background downloads and moves, lighter store export.
 > **glibren.41**: Downloads cap while watching that expires by itself, conversions held after a crash, 149 new links and 43 new games in the catalog.
 > **glibren.40**: Downloads capped at a chosen speed while a YouTube video plays.
@@ -331,6 +332,8 @@ release tagged with the same version (`v0.5.0`). Attach `JobeesLair.exfat` and `
 - **PS5 React — created by half144 and PS5 React contributors.**
   The original repository is gone; the framework continues at
   [github.com/JVK3R/ps5-react](https://github.com/JVK3R/ps5-react), where the changes made for Jobee'sLair live.
+- **StonedModder** ([ps-game-state-lib](https://github.com/StonedModder/ps-game-state-lib), MIT): the idea of reading
+  the foreground app from kern.msgbuf, used by the app switch of the background payload
 - **Nick** and **all testers**: thank you
 
 Distributed under the GPL-3.0-or-later ([LICENSE](LICENSE)). Third-party notices are in `notices/` inside the
