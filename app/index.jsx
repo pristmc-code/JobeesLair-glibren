@@ -52,6 +52,7 @@ import { startSharedLinks } from './state/links.js';
 import { applySpeedLimit } from './state/speed-limit.js';
 import { installLogger } from './services/logger.js';
 import { startMemoryMeter } from './state/memory-meter.js';
+import { startJobeRemote } from './state/jobe-remote-run.js'; // glibren.44
 import { VERSION } from './version.js';
 import { HOMEBREW_ONLY } from './edition.js';
 import { deviceFacts } from './state/device.js';
@@ -218,6 +219,7 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
         restart: restartToApply
       });
     }, []);
+    (0, useEffect)(() => startJobeRemote(), []); // glibren.44: "Atualizar a Jobe" pela pagina do celular
     // The Homebrew section's live index, fetched once a while after launch (state/homebrew-store.js).
     (0, useEffect)(() => startHomebrewRefresh(), []);
     // 0.5.2: the live count, announcements and (unless turned off) the anonymous stats (state/online.js).

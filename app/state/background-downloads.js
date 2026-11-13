@@ -58,6 +58,7 @@ import { setCrashSource } from './crash-notice.js';
 import { setOrbitSource } from './orbit-feed.js';
 import { setLibraryPayload } from './torbox-library-payload.js';
 import { setDiagnosticsSource } from './diagnostics.js';
+import { setJobeSource } from './jobe-remote.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
@@ -82,7 +83,8 @@ import { setDiagnosticsSource } from './diagnostics.js';
   // glibren.44: 29, account.json da Biblioteca TorBox so com os arquivos que o app usa (+ "codes"): o payload da .43
   // mandava todos os arquivos de cada item da conta e o app segurava ~20 MB (sem rota nova).
   // glibren.44: 30, o diagnostico pelo GitHub (GET /diag, POST /diag/send; /api/diag* na pagina do celular; bg_diag.c).
-  var PAYLOAD_API = 30;
+  // glibren.44: 31, a area Jobe da pagina do celular (GET /jobe, POST /jobe/state; /api/jobe*; bg_jobe.c) e GET /focus.
+  var PAYLOAD_API = 31;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -1201,6 +1203,25 @@ function createBackgroundDownloads({
       send: (body) => backupCall(true, "POST", "/diag/send", body)
     };
     setDiagnosticsSource(wrapper.diagnostics);
+    // glibren.44: "Atualizar a Jobe" pela pagina do celular (state/jobe-remote.js): so com um payload no ar (nunca o sobe).
+    wrapper.jobe = {
+      request: () => backupCall(false, "GET", "/jobe"),
+      report: (body) => backupCall(false, "POST", "/jobe/state", body),
+      conversions: () => wrapper.conversions()
+    };
+    setJobeSource(wrapper.jobe);
+    // glibren.44: o foco do controle pelo kern.msgbuf (GET /focus, so leitura): { ok, known, jobe, focus, at }, ou null sem
+    // payload no ar (ou um antigo, api < 31). jobe === true: o foco esta na propria Jobe.
+    wrapper.focus = async () => {
+      const token = readToken();
+      if (!token) return null;
+      try {
+        const answer = await call(token, "GET", "/focus");
+        return answer.status === 200 && answer.data?.ok === true && typeof answer.data.known === "boolean" ? answer.data : null;
+      } catch {
+        return null;
+      }
+    };
     current = wrapper;
     return wrapper;
   }

@@ -1188,6 +1188,82 @@ pinOnOpen();
   render();
 })();
 </script>
+<!-- glibren.44: area "Jobe": a versao instalada, a ultima publicada e "Atualizar a Jobe" (o payload so guarda o pedido; a
+     Jobe aberta atualiza e manda o estado de volta). Com o PIN, como o Diagnostico. Usa os estilos .diag. -->
+<script>
+"use strict";
+(() => {
+  const J = {
+    pt: { title: "Jobe (versão e atualização)", unlock: "Liberar com o PIN", installed: "Instalada: {v}", latest: "Última publicada: {v}", unknownV: "ainda não informada",
+      notChecked: "Última publicada: a Jobe ainda não conferiu", update: "Atualizar a Jobe", upToDate: "A Jobe já está na versão mais nova.", fail: "Não deu. Tente de novo.",
+      openApp: "Pedido guardado. Abra a Jobe para concluir (o pedido vale 24 h).", sent: "Pedido entregue à Jobe…", autoOn: "Instalação automática ligada: a Jobe conclui sozinha ao abrir.",
+      phases: { checking: "Procurando a versão nova…", downloading: "Baixando a atualização: {p}%", ready: "Pronta: reiniciando…", restarting: "Pronto: reiniciando a Jobe para aplicar.", current: "A Jobe já está na versão mais nova." },
+      errors: { "busy-convert": "Há uma conversão para .exfat em andamento: tente quando ela terminar.", "console-only": "Só dá para atualizar no PS5.", "check-failed": "Não deu para falar com o GitHub (sem internet?).",
+        "download-failed": "O download da atualização falhou.", "restart-refused": "A Jobe ainda está ocupada e não reiniciou.", failed: "A atualização falhou." } },
+    en: { title: "Jobe (version and update)", unlock: "Unlock with the PIN", installed: "Installed: {v}", latest: "Latest release: {v}", unknownV: "not reported yet",
+      notChecked: "Latest release: Jobe has not checked yet", update: "Update Jobe", upToDate: "Jobe is already on the newest version.", fail: "It did not work. Try again.",
+      openApp: "Request saved. Open Jobe to finish (the request lasts 24 h).", sent: "Request handed to Jobe…", autoOn: "Automatic install is on: Jobe finishes by itself when it opens.",
+      phases: { checking: "Looking for the new version…", downloading: "Downloading the update: {p}%", ready: "Ready: restarting…", restarting: "Done: restarting Jobe to apply.", current: "Jobe is already on the newest version." },
+      errors: { "busy-convert": "A conversion to .exfat is running: try again when it ends.", "console-only": "Updating only works on the PS5.", "check-failed": "GitHub could not be reached (no internet?).",
+        "download-failed": "The update download failed.", "restart-refused": "Jobe is still busy and did not restart.", failed: "The update failed." } }
+  }[L === T.pt ? "pt" : "en"];
+  const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+  const box = document.createElement("details"); box.className = "diag jobe";
+  const head = document.createElement("summary"); head.textContent = J.title;
+  const body = document.createElement("div"); body.className = "dg-body";
+  box.append(head, body);
+  $("foot").before(box);
+  let info = null, polling = null, msg = "";
+  let demo = { installed: "0.5.5-glibren.44", latest: "0.5.5-glibren.45", checkedAt: 1, phase: "idle", percent: 0, error: "", detail: "", auto: false, appOpen: true, requested: false };
+  async function call(method, path) {
+    if (DEMO) {
+      if (path === "/api/jobe/update") Object.assign(demo, { phase: "downloading", percent: 42 });
+      return { status: 200, data: { ok: true, ...demo } };
+    }
+    return await api(method, path, method === "POST" ? {} : undefined).catch(() => ({ status: 0, data: {} }));
+  }
+  const relock = (again) => { session = ""; lockButton(); pending = again; openPin(); };
+  async function load() {
+    const r = await call("GET", "/api/jobe");
+    if (r.status === 401) return relock(load);
+    if (r.status === 200) info = r.data;
+    const busy = info && (info.requested || ["checking", "downloading", "ready"].includes(info.phase));
+    if (busy && !polling) polling = setInterval(load, 2000);
+    if (!busy && polling) { clearInterval(polling); polling = null; }
+    render();
+  }
+  async function ask() {
+    msg = "";
+    const r = await call("POST", "/api/jobe/update");
+    if (r.status === 401) return relock(ask);
+    if (r.status !== 200) { msg = J.fail; render(); return; }
+    info = r.data;
+    await load();
+  }
+  function line(text, cls = "dg-note") { const d = document.createElement("div"); d.className = cls; d.textContent = text; body.append(d); }
+  function render() {
+    body.textContent = "";
+    if (!session && !DEMO) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn primary"; b.textContent = J.unlock; b.onclick = () => guarded(load); body.append(b);
+    } else if (info) {
+      line(fill(J.installed, { v: info.installed || J.unknownV }), "");
+      line(info.latest ? fill(J.latest, { v: info.latest }) : J.notChecked, "");
+      const phase = J.phases[info.phase];
+      if (info.phase === "failed") line(`${J.errors[info.error] || J.errors.failed}${info.detail ? ` (${info.detail})` : ""}`, "dg-err");
+      else if (phase) line(fill(phase, { p: info.percent || 0 }), info.phase === "restarting" || info.phase === "current" ? "dg-ok" : "dg-note");
+      if (info.requested && !info.appOpen) { line(J.openApp, "dg-err"); if (info.auto) line(J.autoOn); }
+      else if (info.requested) line(J.sent);
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn primary"; b.textContent = J.update;
+      b.disabled = Boolean(info.requested) || ["checking", "downloading", "ready", "restarting"].includes(info.phase);
+      b.onclick = () => guarded(ask);
+      body.append(b);
+    }
+    if (msg) line(msg, "dg-err");
+  }
+  box.addEventListener("toggle", () => { if (box.open && (session || DEMO)) load(); else if (!box.open && polling) { clearInterval(polling); polling = null; } render(); });
+  render();
+})();
+</script>
 <!-- glibren: Biblioteca TorBox (a lista de jogos confirmados no TorBox que o app monta): ver, filtrar e incluir downloads.
      Bloco separado; usa o api/guarded/openPin/session da pagina. glibren.9: capas e fotos direto dos enderecos do catalogo
      (o celular tem internet; a CSP do payload libera img-src https:), ficha do jogo ao tocar (fotos, videos do YouTube,

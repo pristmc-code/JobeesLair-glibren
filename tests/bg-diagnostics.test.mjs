@@ -276,7 +276,7 @@ test('glibren.44: envio pelo app contra o GitHub falso: um PUT por arquivo, past
   assert.equal(info.app.title, 'PPSA99471');
   assert.equal(info.app.memory.peak.action, 'biblioteca-torbox:gravar');
   assert.equal(info.app.memory.top.length, 2);
-  assert.equal(info.payload.api, 30);
+  assert.equal(info.payload.api, 31);
   assert.equal(info.files.find((f) => f.name === 'jobeeslair.log').cut, true);
   // o config.json do payload vai sem o sal/hash do PIN
   assert.ok(!/[0-9a-f]{64}/.test(file('config.json')), file('config.json'));
