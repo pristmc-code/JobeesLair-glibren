@@ -6,6 +6,27 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.44** (fork): less memory in the TorBox library, the YouTube account always reachable, clearer download
+  cards and diagnostics sent from the phone. TorBox library: on the console the JS heap reached 50.5 of 64 MB while
+  building it. The background payload now writes the account list with only the files the build uses (plus the
+  PPSA/CUSA codes of all of them), the app reads it one item at a time, and a game TorBox doesn't have is kept as just
+  its id, title and result; measured on the PC with the same QuickJS (Orbit list on, 2,639 games, an account with big
+  folders, built twice): 50.1 → 26.2 MB. YouTube: an older service still running (0.1.x, no sign-in) is replaced by
+  the newer one ready as soon as nothing uses it, a video that needs an account swaps it and tries again once, the
+  "YouTube account" row never disappears (it says which service is in use and offers "Update the service now"), focus
+  goes to the account row after signing in, a Google account whose age is not confirmed says so, and error codes with a
+  suffix are shown whole. Downloads: one waiting on its own next try has one state (WAITING section and chip, who is
+  busy, the time and a countdown, "Try now", not counted as failed); before the first byte through TorBox the card
+  says "TorBox preparing the file: N%" (or that it waits for it); card texts wrap instead of being cut. Diagnostics: a
+  fine-grained GitHub key pasted once on the phone page (JobeControle) lets the payload send the logs, cleaned of keys,
+  tokens, cookies, temporary links and e-mails, to a private repository, even with the app closed; a .zip from the
+  phone's browser as a fallback. Updates from the phone: the phone page (and JobeControle) shows the installed and the
+  latest version and "Update Jobee'sLair"; the payload only keeps the request and the open app checks, downloads and
+  restarts to apply it with the usual locks (never with a conversion running). "Install updates automatically" now also
+  restarts by itself when nobody is using the app (in front, nothing playing or converting, no dialog, the controller
+  untouched for a minute), after a 10 s notice that (O) postpones; never over another app. The startup notices that only
+  have OK (terms, What's new, the crash notice) go by themselves after 10 s without a button ("OK (10)"). Payload api 31
+  (the app swaps an older payload still running).
 - **glibren.43** (fork): app switch by the real foreground, one TorBox pace and a sturdier YouTube service. Switching
   apps (POST /switch, used by Videos and by "Back to Jobee'sLair"): after the old app closes, the background payload
   reads the kernel message buffer (kern.msgbuf) and, when the system writes SetControllerFocus there and the focus was
