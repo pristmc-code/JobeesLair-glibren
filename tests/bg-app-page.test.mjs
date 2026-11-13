@@ -48,19 +48,25 @@ async function startPayload() {
   children.add(child);
   child.on('exit', () => children.delete(child));
   // Um pedido cru (o Host e o metodo escolhidos aqui; fetch nao deixa trocar o Host).
-  const raw = (route, { method = 'GET', host } = {}) => new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: monitor, path: route, method, headers: host ? { Host: host } : {} }, (res) => {
+  const raw = (route, { method = 'GET', host, body, session, port = monitor, headers = {} } = {}) => new Promise((resolve, reject) => {
+    const h = { ...headers };
+    if (host) h.Host = host;
+    if (session) h['X-Session'] = session;
+    if (body !== undefined) h['Content-Type'] = 'application/json';
+    const req = http.request({ host: '127.0.0.1', port, path: route, method, headers: h }, (res) => {
       let text = ''; res.setEncoding('utf8'); res.on('data', (c) => { text += c; }); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text }));
     });
     req.on('error', reject);
-    req.end();
+    req.end(body === undefined ? undefined : JSON.stringify(body));
   });
+  // a API local (127.0.0.1:BGDL_PORT, com o token do app): o que a Jobe mostraria na TV
+  const local = (route) => raw(route, { port: api, headers: { 'X-Jobe-Token': readFileSync(path.join(base, 'state/token'), 'utf8').trim() } });
   for (const end = performance.now() + 30000; ; await wait(50)) {
     try { if ((await raw('/api/session')).status === 401) break; } catch {}
     if (performance.now() > end) throw new Error('payload did not start');
   }
   const stop = async () => { const gone = new Promise((resolve) => child.once('exit', resolve)); child.kill('SIGTERM'); await gone; };
-  return { raw, stop };
+  return { raw, local, stop };
 }
 
 test('bg_app.c compila junto com o payload, sem avisos (-Wall -Wextra -Werror)', { skip: !compiler || missing ? 'no compiler or headers' : false }, () => {
@@ -169,4 +175,26 @@ test('Fase 8: a pagina monta contra a API falsa nos 5 tamanhos e na area util do
     assert.equal(m.montagem.estado.lista, m.tamanho === '360x780' || m.tamanho === '412x915', `${m.tamanho}: lista em pe, grade deitado/PC/TV`);
     for (const shot of ['loja', 'ficha', 'parear', 'downloads']) assert.ok(existsSync(path.join(out, `app-${m.tamanho}-${shot}.png`)), `${m.tamanho} ${shot}.png`);
   }
+});
+
+test('Fase 8 + pareamento: o fluxo da janela da /app no payload de verdade (codigo na TV -> token -> Baixar e acoes da fila)', { skip }, async () => {
+  const p = await startPayload();
+  const info = JSON.parse((await p.raw('/api/pair')).text);
+  assert.equal(info.ok, true, 'GET /api/pair: a pagina sabe que ha pareamento');
+  // um celular na rede chega pelo IP do PS5 (no PC o 127.0.0.1 so e isento com BGDL_TEST_LOCAL=1: aqui vale o token)
+  const remoto = { host: '192.168.0.20:34201' };
+  assert.equal((await p.raw('/api/store/add', { method: 'POST', body: { id: 'PPSA00001' }, ...remoto })).status, 401, 'sem token: a janela de pareamento abre');
+  const pedido = await p.raw('/api/pair/request', { method: 'POST', body: { name: 'Celular de teste' }, ...remoto });
+  assert.equal(pedido.status, 200, pedido.text);
+  const codigo = JSON.parse((await p.local('/pair')).text).code;
+  assert.match(codigo, /^\d{6}$/, 'o codigo que a TV mostra');
+  const ok = await p.raw('/api/pair/confirm', { method: 'POST', body: { code: codigo, name: 'Celular de teste' }, ...remoto });
+  assert.equal(ok.status, 200, ok.text);
+  const token = JSON.parse(ok.text).token;
+  assert.match(token, /^[0-9a-f]{64}$/, 'o token que a pagina guarda em jobe.session');
+  // o token (em X-Session, como a pagina manda) passa nas rotas protegidas que a /app usa
+  assert.notEqual((await p.raw('/api/store/add', { method: 'POST', body: { id: 'PPSA00001' }, session: token })).status, 401, 'Baixar com o token');
+  assert.notEqual((await p.raw('/api/jobs/x/pause', { method: 'POST', session: token })).status, 401, 'acoes da fila com o token');
+  assert.notEqual((await p.raw('/api/store/add', { method: 'POST', body: { id: 'PPSA00001' }, headers: { Authorization: `Bearer ${token}` } })).status, 401, 'Bearer tambem');
+  await p.stop();
 });
