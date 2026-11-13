@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.52**: The download payload now builds the store catalog itself (bundled catalog, live catalog, your lists and the Orbit list) and the phone page's store uses it; the TV still builds its own until Phase 4. Download payload 1.36.0.
 > **glibren.51**: Settings live in the download payload: the phone page can read and change them, secret keys only show as "set"; the app falls back to its own settings.json without the payload. Download payload 1.35.0.
 > **glibren.50**: Phone page: per-device pairing with a 6-digit code shown on the TV (JobeControle and the phone ask for it once); the old PIN keeps working until turned off; "Paired devices" in Settings > Downloads. Download payload 1.34.0.
 > **glibren.49**: Download payload: updates itself with signed releases (bg-downloader-*), switches only when idle, falls back to the previous or built-in one; "Back to the built-in payload" in Settings > About and on the phone page. Homebrew: the six darkxex apps hidden in glibren.48 are back, each with an informative line.

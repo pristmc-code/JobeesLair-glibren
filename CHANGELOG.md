@@ -6,6 +6,24 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.52** (fork): the store catalog is built inside the download payload (Phase 3, C core in
+  `app/native/bg_catalog*.c`). A thread builds it from the bundled catalog (copied by the app to
+  `/data/JobeesLair/catalog/bundled` with `FileSystem.copyAsync` on each new version, `state/catalog-payload.js`), the live
+  catalog, the player's feeds (web with mirrors and ETag, Pegasus `packages`, files on the PS5) and the Orbit list, and
+  swaps it under a lock when any of them changes. The payload downloads the live catalog and the web feeds itself
+  (lists-home, If-None-Match, 8 MiB cap, never in quiet mode). Same rules as the app: sorts with QuickJS's
+  `localeCompare` (NFC, code points; full Unicode lower case and NFC/NFD tables generated from qjs 0.15), filters and
+  counts, the home rows, related games, the Search screen's accent-free match, links in Jobe's order, hidden catalogs,
+  PS4 mode and the console's firmware. New local API: `GET /api/catalog`, `/options`, `/search`, `/home`, `/related`,
+  `/game`, `/sources`, `/status`, `POST /api/catalog/rebuild|refresh`. The phone page's store (`/api/store`) now comes
+  from it; without it (no copy, or over the 32 MiB memory cap) it falls back to the app's `store-index.json`. The known
+  codes of the Orbit list are the union of the app's and the payload's. `/teste` gains section 6 (catalog build time,
+  memory and query times on the console). `BG_API`/`PAYLOAD_API` 36, payload 1.36.0 (`BG_MIN_APP_API` stays 33: the
+  local API only gained routes). The TV still builds its own store until Phase 4.
+- Tests: app x payload parity on a fixture in the repository (`tools/fase3/parity.mjs`, `tests/fase3-nucleo.test.mjs`:
+  36 queries, filter counts, search, home rows, 60 game pages, the phone store's "solo"; PS5, 9.60 firmware, PS4 and a
+  hidden list; again under ASan + UBSan), `tests/bg-catalog.test.mjs`, `tests/catalog-payload.test.mjs`,
+  `tests/catalog-text.test.mjs` (against Node and qjs).
 - **glibren.51** (fork): Jobe's settings live in the download payload (Phase 7, `app/native/bg_settings.c`). The
   payload keeps `<bg>/settings.json` (`{schema, rev, store, migratedFrom, values}`, written with `.part` + fsync +
   rename + fsync of the folder; a leftover `.part` is dropped on read), validated key by key (`SETTING_SPECS`: type and
