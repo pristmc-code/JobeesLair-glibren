@@ -21,7 +21,7 @@ const WEB = 'https://feeds.example/fase3.json';
 const PKG = 'https://pegasus.example/catalogs/fase3.json';
 const LOCAL = '/data/fixture/feed-local.json';
 const reply = (status, body, url) => ({ status, ok: status >= 200 && status < 300, url, headers: { etag: '"fixture"' }, text: async () => body, json: async () => JSON.parse(body) });
-const files = { [WEB]: 'feed-web.json', [PKG]: 'feed-pegasus.json' };
+const files = { [WEB]: 'feed-web.jlx', [PKG]: 'feed-pegasus.jlx' };
 globalThis.__MEM_HTTP = async (url) => {
   if (/live\.(jlx|json)$/.test(url)) return reply(200, std.loadFile(`${fixture}/live.jlx`), url);
   if (files[url]) return reply(200, std.loadFile(`${fixture}/${files[url]}`), url);
@@ -34,7 +34,8 @@ if (mode === 'prep') {
   FileSystem.writeFile(LOCAL, std.loadFile(`${fixture}/feed-local.json`));
   if (variant !== 'ps4') {
     const orbit = await import('../../app/state/orbit-feed.js');
-    FileSystem.writeFile(orbit.ORBIT_FEED, std.loadFile(`${fixture}/orbit-store.json`));
+    const { readJlx } = await import('../../app/state/jlx.js');
+    FileSystem.writeFile(orbit.ORBIT_FEED, readJlx(std.loadFile(`${fixture}/orbit-store.jlx`)));
     FileSystem.writeFile(orbit.ORBIT_STATUS, JSON.stringify({ conv: 3, known: 50, ok: 1763000000, rev: 96 }));
     orbit.setOrbitFeed(true);
   }

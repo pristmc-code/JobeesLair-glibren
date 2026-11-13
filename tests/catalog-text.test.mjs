@@ -11,6 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { decodeJlx } from '../app/state/jlx.js';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-cattext-'));
@@ -25,8 +26,9 @@ function corpus() {
   const index = JSON.parse(readFileSync(path.join(repo, 'app/data/catalog/index.json'), 'utf8'));
   for (const game of [...index.games, ...index.twins]) lines.add(game.title);
   for (const list of [index.names.developer, index.names.publisher, index.names.genres]) for (const name of list) lines.add(name);
-  for (const file of ['feed-web.json', 'feed-pegasus.json', 'feed-local.json']) {
-    const doc = JSON.parse(readFileSync(path.join(repo, 'tests/fixtures/fase3', file), 'utf8'));
+  for (const file of ['feed-web.jlx', 'feed-pegasus.jlx', 'feed-local.json']) {
+    const text = readFileSync(path.join(repo, 'tests/fixtures/fase3', file), 'utf8');
+    const doc = JSON.parse(text.startsWith('JLX1:') ? decodeJlx(text) : text);
     for (const game of doc.games ?? doc.packages ?? []) lines.add(game.title ?? '');
   }
   // cada letra composta dos blocos latino, grego, cirilico e vietnamita, nas duas formas, sozinha e numa palavra

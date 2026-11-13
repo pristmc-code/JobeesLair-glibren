@@ -147,7 +147,7 @@ test('monta numa thread, troca quando um feed muda e a loja do celular sai do ca
 
 test('os feeds pelo payload: ETag (304), espelho do jogador, estado de cada lista', { skip }, async () => {
   const live = readFileSync(path.join(FIXTURE, 'live.jlx'));
-  const web = readFileSync(path.join(FIXTURE, 'feed-web.json'));
+  const web = readFileSync(path.join(FIXTURE, 'feed-web.jlx'));
   const seen = [];
   const port = await freePort();
   const server = http.createServer((req, res) => {
@@ -172,9 +172,13 @@ test('os feeds pelo payload: ETag (304), espelho do jogador, estado de cada list
   assert.ok(webState.games >= 6);
   const meta = JSON.parse(readFileSync(path.join(base, `state/catalog/feeds/${stableKey(LIVE)}.meta`), 'utf8'));
   assert.equal(meta.etag, '"v1"');
-  await p.status((x) => x.listed > 1500 && x.builds >= 1);
-  const pokemon = (await p.call('GET', '/api/catalog/search?q=pokemon')).data;
-  assert.ok(pokemon.games.some((game) => game.id === 'PPSA90001'), 'o jogo da lista da web entrou na loja');
+  // a copia nova da lista da web faz o payload montar de novo (o arquivo mudou): o jogo dela aparece na loja
+  let found = false;
+  for (const end = performance.now() + 30000; !found && performance.now() < end; await wait(200)) {
+    const pokemon = (await p.call('GET', '/api/catalog/search?q=pokemon')).data;
+    found = Boolean(pokemon.games?.some((game) => game.id === 'PPSA90001'));
+  }
+  assert.ok(found, 'o jogo da lista da web entrou na loja');
   // de novo: o catalogo ao vivo responde 304 ao If-None-Match e nao e baixado de novo
   seen.length = 0;
   await p.call('POST', '/api/catalog/refresh');

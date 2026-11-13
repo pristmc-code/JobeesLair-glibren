@@ -37,7 +37,7 @@ writeFileSync(path.join(out, 'live.jlx'), `${encodeJlx(liveOut)}\n`);
 const orbit = JSON.parse(readFileSync(path.join(src, 'run/orbit/orbit-store.json'), 'utf8'));
 const known = orbit.games.filter((game) => bundled.has(game.id)).slice(0, full >= 0 ? Infinity : 45);
 const fresh = orbit.games.filter((game) => !bundled.has(game.id) && (full >= 0 || !pick.has(game.id))).slice(0, full >= 0 ? Infinity : 45);
-writeFileSync(path.join(out, 'orbit-store.json'), JSON.stringify(full >= 0 ? orbit : { ...orbit, games: [...known, ...fresh] }));
+writeFileSync(path.join(out, 'orbit-store.jlx'), encodeJlx(full >= 0 ? orbit : { ...orbit, games: [...known, ...fresh] }));
 writeFileSync(path.join(out, 'orbit-known.txt'), `${[...bundled].sort().slice(0, 50).join('\n')}\n`);
 
 // Uma lista do jogador na web (formato da Jobe).
@@ -74,7 +74,7 @@ const web = {
     { id: 'XXXX00000', title: 'codigo invalido', releases: [rel('https://example.com/x.exfat')] },
   ],
 };
-writeFileSync(path.join(out, 'feed-web.json'), JSON.stringify(web, null, 1));
+writeFileSync(path.join(out, 'feed-web.jlx'), `${encodeJlx(web)}\n`);
 
 // Uma lista Pegasus ("packages"): codigo repetido junta os links; partes viram um conjunto; fpkg e dlc.
 const pegasus = {
@@ -92,7 +92,7 @@ const pegasus = {
     { titleId: 'PPSA90012', title: 'Sem links', downloadLinks: 'nao e lista' },
   ],
 };
-writeFileSync(path.join(out, 'feed-pegasus.json'), JSON.stringify(pegasus, null, 1));
+writeFileSync(path.join(out, 'feed-pegasus.jlx'), `${encodeJlx(pegasus)}\n`);
 
 // Um arquivo do PS5 (feed da Jobe).
 const local = {

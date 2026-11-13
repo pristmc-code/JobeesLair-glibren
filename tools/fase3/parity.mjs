@@ -74,15 +74,15 @@ async function startPayload(binary, work, variant, ports) {
   mkdirSync(path.join(cat, 'feeds'), { recursive: true });
   stageBundled(path.join(repo, 'app'), path.join(cat, 'bundled'), '0.5.5-fixture');
   copyFileSync(path.join(FIXTURE, 'live.jlx'), path.join(cat, `feeds/${stableKey(LIVE)}.json`));
-  copyFileSync(path.join(FIXTURE, 'feed-web.json'), path.join(cat, `feeds/${stableKey(WEB)}.json`));
-  copyFileSync(path.join(FIXTURE, 'feed-pegasus.json'), path.join(cat, `feeds/${stableKey(PKG)}.json`));
+  copyFileSync(path.join(FIXTURE, 'feed-web.jlx'), path.join(cat, `feeds/${stableKey(WEB)}.json`));
+  copyFileSync(path.join(FIXTURE, 'feed-pegasus.jlx'), path.join(cat, `feeds/${stableKey(PKG)}.json`));
   mkdirSync(path.join(base, 'root/data/fixture'), { recursive: true });
   copyFileSync(path.join(FIXTURE, 'feed-local.json'), path.join(base, 'root', LOCAL));
   const orbitDir = path.join(base, 'orbit');
   mkdirSync(orbitDir, { recursive: true });
   const orbit = variant !== 'ps4';
   if (orbit) {
-    copyFileSync(path.join(FIXTURE, 'orbit-store.json'), path.join(orbitDir, 'orbit-store.json'));
+    copyFileSync(path.join(FIXTURE, 'orbit-store.jlx'), path.join(orbitDir, 'orbit-store.json'));
     copyFileSync(path.join(FIXTURE, 'orbit-known.txt'), path.join(orbitDir, 'orbit-known.txt'));
     writeFileSync(path.join(orbitDir, 'orbit-store-status.json'), JSON.stringify({ enabled: false, conv: 3, known: 50, lastOk: 1763000000, lastTry: 1763000000, revision: 96 }));
   }
