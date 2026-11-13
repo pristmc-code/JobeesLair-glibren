@@ -1,0 +1,1182 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Jobee'sLair</title>
+<link rel="icon" href="data:,">
+<!--
+  Fase 8 (ESTUDO-jobe-como-payload.md): a Jobe web completa, servida pelo payload em /app (bg_app.c; embutida em
+  bg_app_html.h por tools/bg-monitor/embed.mjs). NAO substitui a pagina do celular ("/", bg_monitor.html): convive
+  com ela e usa as mesmas rotas (/api/store, /api/store/game, /api/store/add, /api/status, /api/jobs/<id>/<acao>,
+  /api/unlock, /api/session).
+  Layouts: celular em pe (lista e ficha empilhadas), celular deitado e PC (barra lateral, grade de capas e ficha ao
+  lado), navegador do PS5 (html.ps5: cabecalho baixo no alto, sem barra lateral, fonte pela area util real, porque o
+  navegador tem moldura e a area e menor que 1920x1080). Navegacao por controle (Gamepad API), teclado, toque e
+  mouse. A grade e virtual (so as linhas visiveis existem no DOM) e a loja vem em paginas de 100 do payload.
+  Regras do dono: texto longo quebra a linha (nada de reticencias), botoes da mesma linha com a mesma largura, nada
+  rola de lado, "<- JOGOS"/voltar primeiro. Sem ?. nem ?? (navegador do PS5) e sem innerHTML no script.
+-->
+<style>
+:root{--bg:#0e1015;--bg2:#171a22;--bg3:#202530;--linha:#2d3340;--tx:#eceff4;--tx2:#a8b0be;--ac:#4f8cff;--ac2:#2c66d6;--ok:#3fbf7f;--av:#e0a83a;--ruim:#e05656;--foco:#ffd34d;--r:.55rem;--lado:12.5rem;--ficha:27rem}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{font-size:16px;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html.ps5{font-size:22px}
+body{margin:0;background:var(--bg);color:var(--tx);font:1rem/1.35 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",sans-serif;height:100vh;height:100dvh;overflow:hidden;overflow-wrap:break-word}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+h1,h2,h3,p{margin:0}
+a{color:var(--ac)}
+:focus{outline:3px solid var(--foco);outline-offset:2px}
+html.toque :focus{outline:none}
+html.kb :focus{outline:3px solid var(--foco);outline-offset:2px}
+.btn{background:var(--bg3);border:1px solid var(--linha);border-radius:var(--r);padding:.55rem .8rem;min-height:2.6rem;text-align:center;overflow-wrap:anywhere}
+.btn:disabled{opacity:.55;cursor:default}
+.btn.prim{background:var(--ac2);border-color:var(--ac);font-weight:600}
+.btn.perigo{border-color:var(--ruim);color:#ffd0d0}
+.fila{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:.5rem}
+.rolar{overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+
+/* ---- Estrutura: celular em pe (o padrao) ---- */
+#app{display:flex;flex-direction:column;height:100%;width:100%;max-width:100%}
+#nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.3rem;padding:.4rem .5rem;background:var(--bg2);border-bottom:1px solid var(--linha);flex:0 0 auto}
+#nav .marca{display:none}
+/* em pe: icone em cima e rotulo embaixo (3 colunas iguais de ~115 px cabem "Configuracoes" inteiro em 360 px) */
+#nav .nb{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.15rem;background:transparent;border:1px solid transparent;border-radius:var(--r);padding:.3rem .2rem;min-height:2.9rem;font-size:.76rem;line-height:1.15;color:var(--tx2);text-decoration:none;min-width:0}
+#nav .nb svg{width:1.15rem;height:1.15rem;flex:0 0 auto}
+#nav .nb span{min-width:0;overflow-wrap:break-word;text-align:center}
+#nav .nb.on{background:var(--bg3);border-color:var(--linha);color:var(--tx);font-weight:600}
+main{flex:1 1 auto;min-height:0;min-width:0;display:flex;flex-direction:column}
+.sec{flex:1 1 auto;min-height:0;min-width:0;display:flex;flex-direction:column}
+#ficha{position:fixed;top:0;left:0;right:0;bottom:0;z-index:20;background:var(--bg);display:flex;flex-direction:column}
+.fbar{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.6rem;align-items:center;padding:.45rem .6rem;background:var(--bg2);border-bottom:1px solid var(--linha);flex:0 0 auto}
+.fbar b{font-size:.95rem;overflow-wrap:anywhere}
+#fCorpo{flex:1 1 auto;min-height:0;padding:.8rem}
+
+/* ---- Celular deitado: barra lateral estreita, grade e ficha ao lado ---- */
+@media (max-height:500px) and (min-width:600px){
+  :root{--lado:6.6rem;--ficha:46%}
+  #app{display:grid;grid-template-columns:var(--lado) minmax(0,1fr);grid-template-rows:100%}
+  body.comFicha #app{grid-template-columns:var(--lado) minmax(0,1fr) var(--ficha)}
+  #nav{display:flex;flex-direction:column;border-bottom:0;border-right:1px solid var(--linha);padding:.3rem;gap:.2rem;overflow-y:auto}
+  #nav .nb{flex-direction:column;gap:.1rem;font-size:.7rem;padding:.25rem .15rem;min-height:2.6rem}
+  #nav .nb span{text-align:center}
+  #ficha{position:static;z-index:auto;border-left:1px solid var(--linha);min-width:0}
+  .fbar{padding:.3rem .5rem}
+  #fCorpo{padding:.6rem}
+}
+/* ---- PC e TV: barra lateral, grade de capas e ficha ao lado ---- */
+@media (min-width:761px) and (min-height:501px){
+  #app{display:grid;grid-template-columns:var(--lado) minmax(0,1fr);grid-template-rows:100%}
+  body.comFicha #app{grid-template-columns:var(--lado) minmax(0,1fr) minmax(0,var(--ficha))}
+  #nav{display:flex;flex-direction:column;border-bottom:0;border-right:1px solid var(--linha);padding:.7rem .6rem;gap:.3rem;overflow-y:auto}
+  #nav .marca{display:block;font-weight:700;font-size:1.1rem;padding:.2rem .5rem .7rem}
+  #nav .nb{flex-direction:row;gap:.5rem;justify-content:flex-start;font-size:.95rem;line-height:1.3;padding:.55rem .7rem;min-height:2.8rem}
+  #nav .nb span{text-align:left}
+  #nav .nb.antiga{margin-top:auto}
+  #ficha{position:static;z-index:auto;border-left:1px solid var(--linha);min-width:0}
+}
+/* PC mais baixo (1280x800): ficha um pouco mais estreita para a grade ter 4+ colunas */
+@media (min-width:761px) and (min-height:501px) and (max-width:1100px){:root{--lado:10.5rem;--ficha:22rem}}
+
+/* ---- Loja ---- */
+.barra{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.5rem;padding:.55rem .6rem .4rem;flex:0 0 auto}
+.barra input{width:100%;min-width:0;background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);padding:.5rem .7rem;min-height:2.6rem}
+#bFiltros{display:flex;align-items:center;justify-content:center;gap:.4rem}
+#bFiltros b{background:var(--ac2);border-radius:1rem;padding:0 .45rem;font-size:.8rem;min-width:1.4rem}
+#filtros{display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:.5rem;padding:.2rem .6rem .6rem;flex:0 0 auto;max-height:45vh;overflow-y:auto}
+#filtros label{display:flex;flex-direction:column;gap:.2rem;font-size:.75rem;color:var(--tx2);min-width:0}
+#filtros select{background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);padding:.4rem .5rem;min-height:2.4rem;width:100%;min-width:0;color:var(--tx);font-size:.9rem}
+#filtros .so{flex-direction:row;align-items:center;gap:.5rem;font-size:.85rem;color:var(--tx)}
+#filtros .so input{width:20px;height:20px;flex:0 0 auto}
+html.ps5 #filtros .so input{width:24px;height:24px}
+#filtros .btn{align-self:end}
+.contagem{padding:0 .7rem .35rem;font-size:.8rem;color:var(--tx2);flex:0 0 auto;min-height:1.4rem}
+#grade{flex:1 1 auto;min-height:0;position:relative}
+#espaco{position:relative;width:100%}
+.lin{position:absolute;left:0;right:0;top:0;display:grid;grid-template-columns:repeat(var(--cols,1),minmax(0,1fr));gap:.6rem;padding:0 .6rem .6rem}
+.card{display:flex;flex-direction:column;align-items:stretch;text-align:left;background:var(--bg2);border:2px solid transparent;border-radius:var(--r);padding:0;min-width:0;overflow:hidden;color:var(--tx)}
+.card:focus{outline:none;border-color:var(--foco);box-shadow:0 0 0 3px rgba(255,211,77,.35)}
+html.toque .card:focus{border-color:transparent;box-shadow:none}
+.card.sel{border-color:var(--ac)}
+.capa{position:relative;width:100%;padding-top:100%;background:var(--bg3);flex:0 0 auto}
+.capa img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
+.capa .ini{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:var(--tx2)}
+.capa.ok .ini{display:none}
+.card .t{padding:.4rem .5rem 0;font-weight:600;font-size:.88rem;line-height:1.25;overflow-wrap:anywhere}
+.card .m{display:flex;flex-wrap:wrap;padding:.3rem .5rem .4rem;font-size:.72rem;color:var(--tx2)}
+.m>span{margin:0 .3rem .2rem 0}
+.card.vazio .t{color:transparent;background:var(--bg3);margin:.5rem;border-radius:.3rem;padding:0;min-height:1rem}
+.tag{display:inline-block;border:1px solid var(--linha);border-radius:.3rem;padding:0 .3rem;font-size:.7rem;color:var(--tx2)}
+.tag.ps5{color:#9cc2ff;border-color:#33507f}.tag.ps4{color:#b9a6ff;border-color:#4d3f80}
+.tag.pronto{color:#9be3bd;border-color:#2f6b4c}.tag.jobe{color:#ffd59a;border-color:#7a5a22}.tag.fila{color:#fff;background:var(--ac2);border-color:var(--ac)}
+/* Lista (celular em pe): capa pequena a esquerda e o texto ao lado */
+.lista .lin{gap:.45rem}
+.lista .card{flex-direction:row;align-items:flex-start}
+.lista .capa{width:4.6rem;height:4.6rem;padding-top:0;flex:0 0 4.6rem}
+.lista .card .txt{flex:1 1 auto;min-width:0}
+.lista .card .t{padding:.45rem .6rem 0;font-size:.95rem}
+.lista .card .m{padding:.3rem .6rem .45rem}
+.msg{margin:1rem .7rem;padding:.9rem;background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);color:var(--tx2)}
+.msg .fila{margin-top:.7rem}
+
+/* ---- Ficha ---- */
+.fcab{display:grid;grid-template-columns:8.5rem minmax(0,1fr);gap:.8rem;align-items:start}
+.fcab .capa{border-radius:var(--r);overflow:hidden}
+.fcab h2{font-size:1.25rem;line-height:1.25;overflow-wrap:anywhere}
+.fcab .m{display:flex;flex-wrap:wrap;margin-top:.45rem;font-size:.8rem;color:var(--tx2)}
+.facao{margin:.9rem 0 .4rem}
+.nota{font-size:.82rem;color:var(--tx2);margin:.35rem 0 .2rem}
+.fsec{margin-top:1.1rem}
+.fsec h3{font-size:.95rem;margin-bottom:.4rem;color:var(--tx2);font-weight:600}
+.fsec p{margin:0 0 .5rem;font-size:.92rem;line-height:1.45}
+.info{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:.3rem .8rem;margin:0;font-size:.88rem}
+.info dt{color:var(--tx2)}.info dd{margin:0;overflow-wrap:anywhere}
+.fontes{list-style:none;margin:0;padding:0;display:grid;gap:.4rem}
+.fontes li{background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);padding:.5rem .6rem;font-size:.85rem;overflow-wrap:anywhere}
+.fontes li b{display:block;margin-bottom:.15rem}
+.fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(10rem,1fr));gap:.5rem}
+.fotos .foto{position:relative;padding-top:56.25%;background:var(--bg3);border-radius:var(--r);overflow:hidden}
+.fotos img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
+
+/* ---- Downloads ---- */
+.resumo{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.5rem;padding:.6rem;flex:0 0 auto}
+.resumo div{background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);padding:.45rem .6rem;min-width:0}
+.resumo small{display:block;font-size:.72rem;color:var(--tx2)}
+.resumo b{display:block;font-size:1.05rem;font-variant-numeric:tabular-nums;min-width:4.5em}
+#dLista{flex:1 1 auto;min-height:0;padding:0 .6rem .6rem}
+.job{background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);padding:.6rem;margin-bottom:.5rem}
+.job .topo{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.5rem;align-items:start}
+.job .nome{font-weight:600;overflow-wrap:anywhere}
+.job .est{font-size:.75rem;border:1px solid var(--linha);border-radius:.3rem;padding:.05rem .35rem;color:var(--tx2)}
+.job .est.baixando{color:#9cc2ff;border-color:#33507f}.job .est.falhou{color:#ffb4b4;border-color:#7a2f2f}.job .est.pronto{color:#9be3bd;border-color:#2f6b4c}
+.barraP{height:.45rem;background:var(--bg3);border-radius:.3rem;margin:.5rem 0 .35rem;overflow:hidden}
+.barraP i{display:block;height:100%;background:var(--ac);width:0}
+.job .nums{display:flex;flex-wrap:wrap;font-size:.8rem;color:var(--tx2);font-variant-numeric:tabular-nums}
+.job .nums span{margin-right:.9rem;min-width:4.5em}
+.job .erro{color:#ffb4b4;font-size:.82rem;margin-top:.3rem;overflow-wrap:anywhere}
+.job .fila{margin-top:.5rem}
+
+/* ---- Em breve ---- */
+.breve{margin:1rem .7rem;padding:1.1rem;background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r)}
+.breve h2{font-size:1.2rem;margin-bottom:.5rem}
+.breve p{color:var(--tx2);margin-bottom:.8rem;line-height:1.45}
+
+/* ---- PIN e aviso ---- */
+.modal{position:fixed;top:0;left:0;right:0;bottom:0;z-index:40;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:1rem}
+.caixa{background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);padding:1rem;width:100%;max-width:24rem}
+.caixa h2{font-size:1.1rem;margin-bottom:.4rem}
+.caixa p{color:var(--tx2);font-size:.9rem;margin-bottom:.6rem}
+.caixa input{width:100%;background:var(--bg);border:1px solid var(--linha);border-radius:var(--r);padding:.55rem .7rem;font-size:1.2rem;letter-spacing:.2em;margin-bottom:.4rem}
+.caixa .erro{color:#ffb4b4;min-height:1.3em;font-size:.85rem}
+.caixa .campo{display:flex;flex-direction:column;gap:.2rem;font-size:.8rem;color:var(--tx2)}
+.caixa .campo input{color:var(--tx);letter-spacing:normal;font-size:1rem}
+.caixa #parCodigo{letter-spacing:.3em;font-size:1.3rem}
+.caixa .outra{margin-top:.5rem}
+#aviso{position:fixed;left:.6rem;right:.6rem;bottom:.6rem;z-index:50;background:var(--bg3);border:1px solid var(--linha);border-radius:var(--r);padding:.65rem .8rem;font-size:.9rem;max-width:36rem;margin:0 auto}
+#aviso.ok{border-color:#2f6b4c}#aviso.ruim{border-color:#7a2f2f}
+.medidas{white-space:pre-wrap;overflow-wrap:anywhere;font:.82rem/1.45 ui-monospace,Consolas,monospace;background:var(--bg);border:1px solid var(--linha);border-radius:var(--r);padding:.6rem;margin:0 0 .8rem;color:var(--tx)}
+
+/* ---- Navegador do PS5 (html.ps5): a moldura do navegador come parte da tela (area util < 1920x1080, PS5 real) e a
+   tela cheia nao e garantida. Ideias da Orbit Store 1.8.5 (GPL-3, src/styles.css e src/controller.ts, reescritas):
+   fonte-base pela LARGURA real (clamp(15px, 1.04vw, 20px)) - aqui tambem pela altura, para 1280x720 caber -, cabecalho
+   no alto em vez de barra lateral, sem transicoes (o navegador do PS5 repinta sombras a cada movimento do direcional).
+   Nada usa 1080 fixo: tudo sai de innerWidth/innerHeight (vw/vh) e a grade calcula as colunas pela largura real. ---- */
+html.ps5{font-size:16px;font-size:clamp(15px,min(1.04vw,1.95vh),20px);--ficha:min(27rem,40vw)}
+html.ps5 *{transition:none!important}
+html.ps5 #app{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+html.ps5 body.comFicha #app{grid-template-columns:minmax(0,1fr) minmax(0,var(--ficha))}
+html.ps5 #nav{grid-column:1/-1;grid-row:1;display:grid;grid-template-columns:auto repeat(6,minmax(0,1fr));gap:.3rem;padding:.3rem .6rem;border-right:0;border-bottom:1px solid var(--linha);overflow:visible}
+html.ps5 #nav .marca{display:block;align-self:center;padding:0 .5rem 0 .2rem;font-size:1rem}
+html.ps5 #nav .nb{flex-direction:row;justify-content:center;gap:.4rem;font-size:.9rem;line-height:1.2;min-height:2.3rem;padding:.25rem .4rem}
+html.ps5 #nav .nb span{text-align:center}
+html.ps5 #nav .nb.antiga{margin-top:0}
+html.ps5 main{grid-column:1;grid-row:2}
+html.ps5 #ficha{position:static;z-index:auto;grid-column:2;grid-row:2;border-left:1px solid var(--linha);min-width:0}
+html.ps5 .barra{padding:.4rem .6rem .3rem}
+</style>
+</head>
+<body>
+<div id="app">
+  <nav id="nav" aria-label="Jobee'sLair">
+    <div class="marca">Jobee'sLair</div>
+    <button type="button" class="nb" data-sec="loja"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="4"/><path d="M7 10v4M5 12h4M15 11h.01M18 13h.01"/></svg><span id="navLoja">Jogos</span></button>
+    <button type="button" class="nb" data-sec="downloads"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></svg><span data-t="navDown">Downloads</span></button>
+    <button type="button" class="nb" data-sec="biblioteca"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h4v16H4zM10 4h4v16h-4zM16 5l4 1-3 14-4-1z"/></svg><span data-t="navBib">Biblioteca</span></button>
+    <button type="button" class="nb" data-sec="homebrew"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg><span data-t="navHb">Homebrew</span></button>
+    <button type="button" class="nb" data-sec="config"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9L7 7M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span data-t="navCfg">Configurações</span></button>
+    <a class="nb antiga" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg><span data-t="navAntiga">Página do celular</span></a>
+  </nav>
+  <main>
+    <section class="sec" id="secLoja" aria-labelledby="navLoja">
+      <div class="barra">
+        <input id="busca" type="search" enterkeyhint="search" autocomplete="off" spellcheck="false" placeholder="Buscar na loja" aria-label="Buscar na loja">
+        <div class="fila"><button type="button" class="btn" id="bFiltros" aria-expanded="false"><span data-t="filtros">Filtros</span><b id="nFiltros" hidden>0</b></button><button type="button" class="btn" id="bTela" hidden data-t="telaCheia">Tela cheia</button></div>
+      </div>
+      <div id="filtros" hidden>
+        <label><span data-t="ordem">Ordem</span><select id="fOrdem"></select></label>
+        <label><span data-t="plataforma">Plataforma</span><select id="fPlat"></select></label>
+        <label><span data-t="formato">Formato</span><select id="fFormato"></select></label>
+        <label><span data-t="genero">Gênero</span><select id="fGenero"></select></label>
+        <label><span data-t="tamanho">Tamanho</span><select id="fTam"></select></label>
+        <label class="so"><input type="checkbox" id="fSolo"><span data-t="solo">Só os que baixam com a Jobe fechada</span></label>
+        <button type="button" class="btn" id="fLimpar" data-t="limpar">Limpar filtros</button>
+      </div>
+      <div class="contagem" id="contagem" aria-live="polite"></div>
+      <div id="grade" class="rolar" tabindex="-1"><div id="espaco"></div></div>
+      <div class="msg" id="lojaMsg" hidden><p id="lojaMsgTxt"></p><div class="fila"><button type="button" class="btn" id="lojaDeNovo" data-t="deNovo">Tentar de novo</button></div></div>
+    </section>
+    <section class="sec" id="secDownloads" hidden>
+      <div class="resumo">
+        <div><small data-t="ativos">Ativos</small><b id="dAtivos">–</b></div>
+        <div><small data-t="velocidade">Velocidade</small><b id="dVel">–</b></div>
+        <div><small data-t="restante">Restante</small><b id="dResta">–</b></div>
+      </div>
+      <div id="dLista" class="rolar"></div>
+    </section>
+    <section class="sec rolar" id="secBreve" hidden>
+      <div class="breve"><h2 id="breveTit"></h2><p id="breveTxt"></p><div class="fila"><a class="btn" href="/" data-t="abrirAntiga">Abrir a página do celular</a></div></div>
+      <div class="breve" id="medidasBox" hidden><h2 data-t="medidasTit">Medidas desta tela</h2><p data-t="medidasTxt">Para calibrar a página no navegador do PS5. O mesmo texto entra nos resultados da página /teste.</p><pre class="medidas" id="medidasTxt"></pre><p class="nota" id="medidasOut" aria-live="polite"></p><div class="fila"><button type="button" class="btn" id="medidasEnviar" data-t="medidasEnviar">Enviar ao diagnóstico</button><a class="btn" href="/teste" data-t="abrirTeste">Abrir a página /teste</a></div></div>
+    </section>
+  </main>
+  <aside id="ficha" hidden aria-labelledby="fTitulo">
+    <div class="fbar"><button type="button" class="btn" id="fVoltar">← JOGOS</button><b id="fTitulo"></b></div>
+    <div id="fCorpo" class="rolar"></div>
+  </aside>
+</div>
+<div class="modal" id="acesso" role="dialog" aria-modal="true" aria-labelledby="parTit" hidden>
+  <form class="caixa" id="parForm">
+    <h2 id="parTit" data-t="parTit">Parear este aparelho</h2>
+    <p id="parTxt"></p>
+    <label class="campo" id="parNomeL"><span data-t="nomeAparelho">Nome deste aparelho</span><input id="parNome" type="text" maxlength="40" autocomplete="off" spellcheck="false"></label>
+    <label class="campo" id="parCodL" hidden><span data-t="codigoTv">Código da TV</span><input id="parCodigo" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label>
+    <p class="erro" id="parErro" aria-live="polite"></p>
+    <div class="fila"><button type="button" class="btn" id="parNao" data-t="cancelar">Cancelar</button><button type="submit" class="btn prim" id="parSim" data-t="pedirCodigo">Pedir código</button></div>
+    <div class="fila outra"><button type="button" class="btn" id="usarPin" data-t="usarPin">Usar o PIN</button></div>
+  </form>
+  <form class="caixa" id="pinForm" hidden>
+    <h2 id="pinTit">PIN</h2>
+    <p id="pinTxt"></p>
+    <input id="pinIn" type="password" inputmode="numeric" autocomplete="off" maxlength="8" aria-labelledby="pinTit">
+    <p class="erro" id="pinErro" aria-live="polite"></p>
+    <div class="fila"><button type="button" class="btn" id="pinNao" data-t="cancelar">Cancelar</button><button type="submit" class="btn prim" id="pinSim" data-t="entrar">Entrar</button></div>
+    <div class="fila outra"><button type="button" class="btn" id="usarPar" data-t="parTit">Parear este aparelho</button></div>
+  </form>
+</div>
+<div id="aviso" role="status" hidden></div>
+<script>
+"use strict";
+(function () {
+  var T0 = performance.now();
+  var $ = function (id) { return document.getElementById(id); };
+  var root = document.documentElement;
+  if (/PlayStation/.test(navigator.userAgent)) root.classList.add("ps5");
+
+  // ---- Textos (pt-BR e en; as outras linguas da Jobe ficam para depois) ----
+  var EN = !/^pt/i.test(navigator.language || "pt");
+  var L = EN ? {
+    jogos: "Games", voltarJogos: "← GAMES", navDown: "Downloads", navBib: "Library", navHb: "Homebrew", navCfg: "Settings", navAntiga: "Phone page",
+    busca: "Search the store", filtros: "Filters", ordem: "Sort", plataforma: "Platform", formato: "Format", genero: "Genre", tamanho: "Size",
+    solo: "Only those that download with Jobe closed", limpar: "Clear filters", deNovo: "Try again", ativos: "Active", velocidade: "Speed", restante: "Left",
+    abrirAntiga: "Open the phone page", cancelar: "Cancel", entrar: "Unlock",
+    todas: "All", ps5ps4: "PS5 and PS4", todoFormato: "Any format", pronto: "Ready for {v}", todoGenero: "All genres", todoTam: "Any size",
+    pequeno: "up to 10 GB", medio: "10–50 GB", grande: "over 50 GB",
+    ordens: { relevance: "Most popular", newest: "Newest", rating: "Top rated", size: "Largest", title: "Title" },
+    nJogos: "{n} games", nDe: "{n} of {t} games", carregando: "Loading…", nenhum: "No game with these filters.",
+    semLoja: "The store hasn't reached the payload yet. Open Jobee'sLair once and come back.", lojaRuim: "The store list has a problem. Open Jobee'sLair so it writes it again.",
+    semResposta: "The PS5 did not answer.", baixar: "Download", naFila: "Queued", incluindo: "Adding…",
+    viaPayload: "{t}: the PS5 is downloading it, even with Jobee'sLair closed.", viaApp: "{t}: queued in Jobee'sLair.", espera: "{t}: request saved. It starts when you open Jobee'sLair.",
+    semDisco: "{t}: request saved. Open Jobee'sLair once so the payload knows which drive to use.", jaNaFila: "{t} is already queued.", existe: "That file is already on the drive.",
+    cheia: "The PS5 queue is full.", falhou: "Couldn't add it. Try again.", fichaFalhou: "Couldn't open this game's details.",
+    sozinho: "The PS5 downloads it by itself, even with Jobee'sLair closed.", precisaApp: "Needs Jobe open to start the download (a host that needs the browser, a torrent or parts). The request is saved and starts when you open Jobee'sLair.",
+    semFicha: "Jobee'sLair is still preparing this game's details and sources; the download goes through Jobee'sLair.",
+    sobre: "About", informacoes: "Details", fontes: "Sources", fotos: "Photos", codigo: "Code", tamanhoL: "Size", formatos: "Formats", generos: "Genres",
+    lancamento: "Released", dev: "Developer", editora: "Publisher", nota: "PS Store rating", avaliacoes: "{n} ratings", partes: "{n} parts",
+    fonteSo: "downloads with Jobe closed", fonteApp: "needs Jobe open", kinds: { direct: "direct link", browser: "host with browser", torrent: "torrent", set: "parts", unavailable: "unavailable" },
+    telaCheia: "Full screen", sairTela: "Exit full screen", medidasTit: "This screen's measurements", medidasTxt: "To fit the page to the PS5 browser. The same text goes into the /teste page results.",
+    medidasEnviar: "Send to diagnostics", abrirTeste: "Open the /teste page", medidasEnviado: "Sent: GitHub folder {f}.", medidasSemChave: "Diagnostics need the GitHub key (phone page, Downloads).",
+    medidasOcupado: "A diagnostics upload is already running.", medidasFalhou: "Couldn't send ({e}).", medidasEnviando: "Sending…",
+    parTit: "Pair this device", nomeAparelho: "This device's name", codigoTv: "Code on the TV", pedirCodigo: "Get code", parear: "Pair", voltar: "Back", usarPin: "Use the PIN",
+    parTxt: "To download and control the queue from here, pair this device once. Give it a name and ask for a code: it shows up on the TV (PS5 notification and Jobe's screen).",
+    parTxtCod: "Type the 6-digit code shown on the TV. It is valid for 2 minutes.",
+    parErrado: "Wrong code. {n} tries left.", parBloq: "Too many tries. Wait {s} s.", parEspera: "Wait {s} s to ask for another code.", parVenceu: "The code expired. Ask for another one.",
+    parFalhou: "Couldn't pair. Try again.",
+    pinTxt: "Type the PIN set in Jobee'sLair (Settings) to download and control the queue from here.", pinErrado: "Wrong PIN.", pinBloq: "Too many tries. Wait {s} s.",
+    semPin: "No PIN set yet. Set one in Jobee'sLair (Settings) to control the PS5 from here.",
+    estados: { downloading: "Downloading", connecting: "Connecting", verifying: "Checking", queued: "Queued", paused: "Paused", failed: "Failed", completed: "Done",
+      "waiting-app": "Waiting for Jobe", extracting: "Extracting", converting: "Converting", cancelled: "Cancelled" },
+    pausar: "Pause", retomar: "Resume", cancelarDl: "Cancel", confirmar: "Confirm cancel", de: "of", semDownloads: "No downloads in the PS5 queue.",
+    esperaApp: "Starts when Jobee'sLair opens.",
+    breve: {
+      biblioteca: ["Library (coming soon)", "The TorBox Library moves to the payload in Phase 6. Until then, use it in Jobee'sLair or on the phone page."],
+      homebrew: ["Homebrew (coming soon)", "The homebrew list comes with the catalog in the payload (Phase 3). Until then, use the Homebrew tab in Jobee'sLair."],
+      config: ["Settings (coming soon)", "Settings move to the payload in Phase 7 (one settings file for the app and the web). Device pairing comes with it."]
+    }
+  } : {
+    jogos: "Jogos", voltarJogos: "← JOGOS", navDown: "Downloads", navBib: "Biblioteca", navHb: "Homebrew", navCfg: "Configurações", navAntiga: "Página do celular",
+    busca: "Buscar na loja", filtros: "Filtros", ordem: "Ordem", plataforma: "Plataforma", formato: "Formato", genero: "Gênero", tamanho: "Tamanho",
+    solo: "Só os que baixam com a Jobe fechada", limpar: "Limpar filtros", deNovo: "Tentar de novo", ativos: "Ativos", velocidade: "Velocidade", restante: "Restante",
+    abrirAntiga: "Abrir a página do celular", cancelar: "Cancelar", entrar: "Entrar",
+    todas: "Todas", ps5ps4: "PS5 e PS4", todoFormato: "Todo formato", pronto: "Pronto para {v}", todoGenero: "Todos os gêneros", todoTam: "Qualquer tamanho",
+    pequeno: "até 10 GB", medio: "10–50 GB", grande: "mais de 50 GB",
+    ordens: { relevance: "Mais populares", newest: "Mais novos", rating: "Melhor avaliados", size: "Maiores", title: "Título" },
+    nJogos: "{n} jogos", nDe: "{n} de {t} jogos", carregando: "Carregando…", nenhum: "Nenhum jogo com esses filtros.",
+    semLoja: "A loja ainda não chegou ao payload. Abra a Jobee'sLair uma vez e volte aqui.", lojaRuim: "A lista da loja está com problema. Abra a Jobee'sLair para ela gravar de novo.",
+    semResposta: "O PS5 não respondeu.", baixar: "Baixar", naFila: "Na fila", incluindo: "Incluindo…",
+    viaPayload: "{t}: o PS5 já está baixando, mesmo com a Jobee'sLair fechada.", viaApp: "{t}: na fila da Jobee'sLair.", espera: "{t}: pedido guardado. Começa quando você abrir a Jobee'sLair.",
+    semDisco: "{t}: pedido guardado. Abra a Jobee'sLair uma vez para o payload saber em que disco baixar.", jaNaFila: "{t} já está na fila.", existe: "Esse arquivo já está no disco.",
+    cheia: "A fila do PS5 está cheia.", falhou: "Não deu para incluir. Tente de novo.", fichaFalhou: "Não deu para abrir a ficha deste jogo.",
+    sozinho: "O PS5 baixa sozinho, mesmo com a Jobee'sLair fechada.", precisaApp: "Precisa da Jobe aberta para começar o download (host com navegador, torrent ou partes). O pedido fica guardado e começa quando você abrir a Jobee'sLair.",
+    semFicha: "A Jobee'sLair ainda está preparando a ficha e as fontes deste jogo; o download vai pela Jobee'sLair.",
+    sobre: "Sobre", informacoes: "Informações", fontes: "Fontes", fotos: "Fotos", codigo: "Código", tamanhoL: "Tamanho", formatos: "Formatos", generos: "Gêneros",
+    lancamento: "Lançamento", dev: "Desenvolvedora", editora: "Editora", nota: "Nota na PS Store", avaliacoes: "{n} avaliações", partes: "{n} partes",
+    fonteSo: "baixa com a Jobe fechada", fonteApp: "precisa da Jobe aberta", kinds: { direct: "link direto", browser: "host com navegador", torrent: "torrent", set: "partes", unavailable: "indisponível" },
+    telaCheia: "Tela cheia", sairTela: "Sair da tela cheia", medidasTit: "Medidas desta tela", medidasTxt: "Para calibrar a página no navegador do PS5. O mesmo texto entra nos resultados da página /teste.",
+    medidasEnviar: "Enviar ao diagnóstico", abrirTeste: "Abrir a página /teste", medidasEnviado: "Enviado: pasta {f} no GitHub.", medidasSemChave: "O diagnóstico precisa da chave do GitHub (página do celular, Downloads).",
+    medidasOcupado: "Já tem um envio do diagnóstico em andamento.", medidasFalhou: "Não deu para enviar ({e}).", medidasEnviando: "Enviando…",
+    parTit: "Parear este aparelho", nomeAparelho: "Nome deste aparelho", codigoTv: "Código da TV", pedirCodigo: "Pedir código", parear: "Parear", voltar: "Voltar", usarPin: "Usar o PIN",
+    parTxt: "Para baixar e controlar a fila daqui, pareie este aparelho uma vez. Dê um nome e peça o código: ele aparece na TV (notificação do PS5 e tela da Jobe).",
+    parTxtCod: "Digite o código de 6 dígitos que apareceu na TV. Ele vale 2 minutos.",
+    parErrado: "Código errado. Restam {n} tentativas.", parBloq: "Tentativas demais. Espere {s} s.", parEspera: "Espere {s} s para pedir outro código.", parVenceu: "O código venceu. Peça outro.",
+    parFalhou: "Não deu para parear. Tente de novo.",
+    pinTxt: "Digite o PIN definido na Jobee'sLair (Configurações) para baixar e controlar a fila daqui.", pinErrado: "PIN errado.", pinBloq: "Tentativas demais. Espere {s} s.",
+    semPin: "Nenhum PIN definido. Defina um na Jobee'sLair (Configurações) para controlar o PS5 daqui.",
+    estados: { downloading: "Baixando", connecting: "Conectando", verifying: "Conferindo", queued: "Na fila", paused: "Pausado", failed: "Falhou", completed: "Concluído",
+      "waiting-app": "Espera a Jobe", extracting: "Extraindo", converting: "Convertendo", cancelled: "Cancelado" },
+    pausar: "Pausar", retomar: "Retomar", cancelarDl: "Cancelar", confirmar: "Confirmar", de: "de", semDownloads: "Nenhum download na fila do PS5.",
+    esperaApp: "Começa quando a Jobee'sLair abrir.",
+    breve: {
+      biblioteca: ["Biblioteca (em breve)", "A Biblioteca TorBox passa para o payload na Fase 6. Até lá, use-a na Jobee'sLair ou na página do celular."],
+      homebrew: ["Homebrew (em breve)", "A lista de homebrew chega junto com o catálogo no payload (Fase 3). Até lá, use a aba Homebrew da Jobee'sLair."],
+      config: ["Configurações (em breve)", "As configurações passam para o payload na Fase 7 (um arquivo só para o app e a web). O pareamento por aparelho vem junto."]
+    }
+  };
+  if (EN) root.lang = "en";
+  var lang = root.lang;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-t]"), function (e) { if (L[e.getAttribute("data-t")]) e.textContent = L[e.getAttribute("data-t")]; });
+  $("busca").placeholder = L.busca; $("busca").setAttribute("aria-label", L.busca);
+  $("fVoltar").textContent = L.voltarJogos;
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined && text !== null) e.textContent = String(text); return e; }
+  function fill(text, vars) { return text.replace(/\{(\w+)\}/g, function (_, k) { return vars[k] === undefined ? "" : vars[k]; }); }
+  function nf(v, d) { return Number(v).toLocaleString(lang, { minimumFractionDigits: d, maximumFractionDigits: d }); }
+  var GB = 1024 * 1024 * 1024, MB = 1024 * 1024;
+  function bytes(b) { return b >= GB ? nf(b / GB, 1) + " GB" : nf(b / MB, 0) + " MB"; }
+  function gb(v) { return v >= 1 ? nf(v, 1) + " GB" : nf(v * 1024, 0) + " MB"; }
+  function speed(b) { return b >= MB ? nf(b / MB, b >= 10 * MB ? 0 : 1) + " MB/s" : b > 0 ? nf(Math.max(1, b / 1024), 0) + " KB/s" : "–"; }
+  function eta(s) { if (!isFinite(s) || s <= 0) return "–"; s = Math.round(s); var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? h + " h " + (m < 10 ? "0" : "") + m + " min" : m ? m + " min" : s + " s"; }
+  function okURL(u) { return typeof u === "string" && (/^https:\/\/[^\s"'<>\\`]+$/i.test(u) || /^data:image\//.test(u) || /^\/[^\s"'<>\\`]*$/.test(u)); }
+  function sized(u, w) { return /^https:\/\/image\.api\.playstation\.com\//.test(u) ? (/[?&]w=\d+/.test(u) ? u.replace(/([?&]w=)\d+/, "$1" + w) : u + (u.indexOf("?") >= 0 ? "&" : "?") + "w=" + w) : u; }
+  function iniciais(t) { var p = String(t || "?").replace(/[^A-Za-z0-9À-ɏ ]+/g, " ").split(/\s+/).filter(Boolean).slice(0, 2); return p.map(function (w) { return w.charAt(0); }).join("").toUpperCase() || "?"; }
+  var RANK = ["exfat", "ffpkg", "ffpfsc", "ffpfs", "pkg", "fpkg", "rar", "7z", "zip"];
+  function melhorFormato(fs) { var l = (fs || []).slice(); l.sort(function (a, b) { return (RANK.indexOf(a) + 1 || 99) - (RANK.indexOf(b) + 1 || 99); }); return l[0] || ""; }
+
+  var aviso = $("aviso"), avisoT = 0;
+  function avisar(texto, tom) { aviso.textContent = texto; aviso.className = tom || ""; aviso.hidden = false; clearTimeout(avisoT); avisoT = setTimeout(function () { aviso.hidden = true; }, 5200); }
+
+  // ---- Autenticacao: pareamento por aparelho (bg_pair.c, .50) e, na transicao, o PIN antigo ----
+  // Credencial guardada em "jobe.session" (a mesma chave da pagina do celular: parear ou desbloquear numa vale na outra):
+  // o token SO deste aparelho (64 hex, POST /api/pair/confirm) ou a sessao do PIN (32 hex, POST /api/unlock). Vai em
+  // X-Session (o payload aceita tambem Authorization: Bearer). Toda acao que muda algo passa por Auth.com(fn): com
+  // credencial (ou com a pagina aberta no proprio PS5, 127.0.0.1, que e isento: GET /api/pair "local") executa ja; sem,
+  // abre a janela de pareamento (nome -> codigo na TV -> token; nada de prompt/alert) e executa depois. Um 401 de qualquer
+  // rota chama Auth.esquecer() + Auth.pedir(). Payload sem /api/pair (antes da .50): so o PIN, como antes.
+  // No payload as rotas de /app nao tem regra propria: /app sai livre como "/" e as acoes sao as rotas de sempre, que a
+  // .50 protege com monitor_allowed (o Host e conferido, J6, em todo pedido da porta).
+  var CRED = /^([0-9a-f]{32}|[0-9a-f]{64})$/;
+  var Auth = {
+    CHAVE: "jobe.session", sessao: "", local: false, pareamento: null, pinOn: true, pinSet: true, depois: null, passo: "nome",
+    carregar: function () { try { var s = localStorage.getItem(this.CHAVE); if (CRED.test(s || "")) this.sessao = s; } catch (e) {} },
+    info: function () {
+      var self = this;
+      return api("GET", "/api/pair").then(function (r) {
+        if (r.status === 200 && r.data.ok === true) {
+          self.pareamento = true; self.local = r.data.local === true; self.pinOn = r.data.pinOn !== false; self.pinSet = r.data.pinSet !== false;
+          // Como a Orbit (App.tsx: platform "ps5" + sessao local), aberta em 127.0.0.1 = o navegador do proprio PS5
+          if (self.local && !root.classList.contains("ps5")) { root.classList.add("ps5"); medidas(true); anotarTela(); }
+        }
+        else if (r.status === 404) self.pareamento = false;
+      });
+    },
+    headers: function () { var h = {}; if (this.sessao) h["X-Session"] = this.sessao; return h; },
+    guardar: function (s) { this.sessao = s; try { localStorage.setItem(this.CHAVE, s); } catch (e) {} },
+    esquecer: function () { this.sessao = ""; try { localStorage.removeItem(this.CHAVE); } catch (e) {} },
+    // Executa `fn` com permissao: ja tem = agora; senao abre a janela e executa depois.
+    com: function (fn) { if (this.sessao || this.local) fn(); else this.pedir(fn); },
+    pedir: function (fn) { this.depois = fn || null; if (this.pareamento === false) abrirPin(); else abrirPareamento(""); }
+  };
+  Auth.carregar();
+  function api(method, path, body) {
+    var h = Auth.headers();
+    if (body !== undefined) h["Content-Type"] = "application/json";
+    return fetch(path, { method: method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), cache: "no-store" }).then(function (r) {
+      return r.text().then(function (t) { var d = null; try { d = JSON.parse(t); } catch (e) {} return { status: r.status, data: d || {} }; });
+    }).catch(function () { return { status: 0, data: {} }; });
+  }
+  var ultimoFoco = null;
+  function abrirJanela(qual) {
+    if ($("acesso").hidden) ultimoFoco = document.activeElement;
+    $("parForm").hidden = qual !== "par"; $("pinForm").hidden = qual !== "pin";
+    $("acesso").setAttribute("aria-labelledby", qual === "par" ? "parTit" : "pinTit");
+    $("acesso").hidden = false;
+  }
+  function fecharJanela() { $("acesso").hidden = true; Auth.depois = null; Auth.passo = "nome"; if (ultimoFoco && ultimoFoco.focus) ultimoFoco.focus(); }
+  function concluir(cred) {
+    if (cred) Auth.guardar(cred);
+    var f = Auth.depois; Auth.depois = null; Auth.passo = "nome";
+    $("acesso").hidden = true; if (ultimoFoco && ultimoFoco.focus) ultimoFoco.focus();
+    if (f) f();
+  }
+  // -- pareamento --
+  function nomePadrao() {
+    var salvo = ""; try { salvo = localStorage.getItem("jobe.deviceName") || ""; } catch (e) {}
+    if (salvo) return salvo;
+    var ua = navigator.userAgent || "";
+    if (window.JobeApp) return "JobeControle";
+    if (/PlayStation/.test(ua)) return "PS5";
+    if (/iPhone/.test(ua)) return "iPhone";
+    if (/iPad/.test(ua)) return "iPad";
+    if (/Android/.test(ua)) return "Android";
+    if (/Windows/.test(ua)) return "PC Windows";
+    if (/Mac OS/.test(ua)) return "Mac";
+    if (/Linux/.test(ua)) return "Linux";
+    return EN ? "Browser" : "Navegador";
+  }
+  function passoPareamento(msg) {
+    var cod = Auth.passo === "codigo";
+    $("parTxt").textContent = cod ? L.parTxtCod : L.parTxt;
+    $("parNomeL").hidden = cod; $("parCodL").hidden = !cod;
+    $("parSim").textContent = cod ? L.parear : L.pedirCodigo;
+    $("parNao").textContent = cod ? L.voltar : L.cancelar;
+    $("usarPin").parentNode.hidden = !(Auth.pinOn && Auth.pinSet);
+    $("parErro").textContent = msg || "";
+    setTimeout(function () { (cod ? $("parCodigo") : $("parNome")).focus(); }, 30);
+  }
+  function abrirPareamento(msg) {
+    Auth.passo = "nome";
+    if (!$("parNome").value) $("parNome").value = nomePadrao();
+    $("parCodigo").value = "";
+    abrirJanela("par");
+    passoPareamento(msg);
+  }
+  function erroPareamento(r) {
+    var d = r.data || {};
+    if (d.error === "blocked") return fill(L.parBloq, { s: d.retryIn || 0 });
+    if (d.error === "wait") return fill(L.parEspera, { s: d.retryIn || 0 });
+    if (d.error === "expired" || d.error === "no-code") return L.parVenceu;
+    return r.status ? L.parFalhou : L.semResposta;
+  }
+  $("parNao").onclick = function () { if (Auth.passo === "codigo") { Auth.passo = "nome"; passoPareamento(""); } else fecharJanela(); };
+  $("parCodigo").oninput = function () { var v = $("parCodigo").value.replace(/\D/g, "").slice(0, 6); if (v !== $("parCodigo").value) $("parCodigo").value = v; };
+  $("usarPin").onclick = function () { abrirPin(); };
+  $("usarPar").onclick = function () { abrirPareamento(""); };
+  $("parForm").onsubmit = function (e) {
+    e.preventDefault();
+    var nome = $("parNome").value.trim().slice(0, 40) || nomePadrao();
+    try { localStorage.setItem("jobe.deviceName", nome); } catch (x) {}
+    $("parSim").disabled = true;
+    if (Auth.passo === "nome") {
+      api("POST", "/api/pair/request", { name: nome }).then(function (r) {
+        $("parSim").disabled = false;
+        if (r.status === 200) { Auth.passo = "codigo"; $("parCodigo").value = ""; passoPareamento(""); }
+        else if (r.status === 404) { Auth.pareamento = false; abrirPin(); }
+        else $("parErro").textContent = erroPareamento(r);
+      });
+      return;
+    }
+    api("POST", "/api/pair/confirm", { code: $("parCodigo").value.replace(/\D/g, ""), name: nome }).then(function (r) {
+      $("parSim").disabled = false;
+      if (r.status === 200 && /^[0-9a-f]{64}$/.test(r.data.token || "")) { concluir(r.data.token); return; }
+      if (r.data.error === "wrong") { $("parCodigo").value = ""; $("parErro").textContent = fill(L.parErrado, { n: r.data.left || 0 }); return; }
+      Auth.passo = "nome"; passoPareamento(erroPareamento(r));
+    });
+  };
+  // -- PIN antigo --
+  function abrirPin(texto) {
+    var tem = Auth.pinSet !== false;
+    $("pinTxt").textContent = texto || (tem ? L.pinTxt : L.semPin); $("pinErro").textContent = ""; $("pinIn").value = "";
+    $("pinIn").hidden = $("pinSim").hidden = !tem;
+    $("usarPar").parentNode.hidden = Auth.pareamento === false;
+    abrirJanela("pin");
+    setTimeout(function () { (tem ? $("pinIn") : $("pinNao")).focus(); }, 30);
+  }
+  $("pinNao").onclick = fecharJanela;
+  $("pinForm").onsubmit = function (e) {
+    e.preventDefault();
+    api("POST", "/api/unlock", { pin: $("pinIn").value }).then(function (r) {
+      if (r.status === 200 && CRED.test(r.data.session || "")) { concluir(r.data.session); return; }
+      if (r.data.noPin) { Auth.pinSet = false; abrirPin(L.semPin); return; }
+      $("pinErro").textContent = r.data.retryIn ? fill(L.pinBloq, { s: r.data.retryIn }) : r.status ? L.pinErrado : L.semResposta;
+    });
+  };
+  Auth.info();
+
+  // ---- Secoes e rotas (#/loja, #/jogo/<id>, #/downloads, #/biblioteca, #/homebrew, #/config) ----
+  var SECOES = ["loja", "downloads", "biblioteca", "homebrew", "config"];
+  var secao = "", empurrou = false;
+  var navBtns = Array.prototype.slice.call(document.querySelectorAll("#nav .nb[data-sec]"));
+  navBtns.forEach(function (b) { b.onclick = function () { ir(b.getAttribute("data-sec")); }; });
+  // A troca e na hora (o hashchange chega depois e nao muda mais nada): um foco pedido logo em seguida (controle, L1/R1)
+  // ja encontra a secao nova na tela.
+  function ir(s) { var alvo = "#/" + s; if (location.hash !== alvo) location.hash = alvo; rota(); }
+  function rota() {
+    var h = location.hash, m = /^#\/jogo\/(.+)$/.exec(h), s = "loja";
+    if (m) s = "loja";
+    else { var x = /^#\/(\w+)/.exec(h); if (x && SECOES.indexOf(x[1]) >= 0) s = x[1]; }
+    mostrarSecao(s);
+    if (m) { var id = ""; try { id = decodeURIComponent(m[1]); } catch (e) {} if (id && id !== fx.id) abrirFicha(id); else if (id) document.body.classList.add("comFicha"); }
+    else fecharFicha(true);
+  }
+  function mostrarSecao(s) {
+    if (s === secao) return;
+    secao = s;
+    navBtns.forEach(function (b) { var on = b.getAttribute("data-sec") === s; b.classList.toggle("on", on); if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
+    // "<- JOGOS" primeiro: fora da loja o 1o botao vira o caminho de volta
+    $("navLoja").textContent = s === "loja" ? L.jogos : L.voltarJogos;
+    $("secLoja").hidden = s !== "loja";
+    $("secDownloads").hidden = s !== "downloads";
+    $("secBreve").hidden = ["biblioteca", "homebrew", "config"].indexOf(s) < 0;
+    if (L.breve[s]) { $("breveTit").textContent = L.breve[s][0]; $("breveTxt").textContent = L.breve[s][1]; }
+    $("medidasBox").hidden = s !== "config";
+    if (s === "config") anotarTela();
+    if (s === "downloads") atualizarDownloads();
+    if (s === "loja") agendar();
+  }
+  addEventListener("hashchange", rota);
+
+  // ---- Loja: estado, filtros e paginas ----
+  var PAGINA = 100;
+  var loja = { q: "", platform: "", format: "", genre: "", size: "", solo: false, sort: "relevance", seq: 0, count: -1, total: 0, items: [], pedidas: {}, facets: null, ready: "", estado: "" };
+  function consulta(offset, limit) {
+    var p = [];
+    if (loja.q) p.push("q=" + encodeURIComponent(loja.q.toLowerCase()));
+    ["platform", "format", "genre", "size"].forEach(function (k) { if (loja[k]) p.push(k + "=" + encodeURIComponent(loja[k])); });
+    if (loja.solo) p.push("solo=1");
+    p.push("sort=" + loja.sort, "offset=" + offset, "limit=" + limit);
+    return "/api/store?" + p.join("&");
+  }
+  function ativos() { return [loja.platform, loja.format, loja.genre, loja.size, loja.solo].filter(Boolean).length; }
+  function contaDe(k, v) { var l = loja.facets && loja.facets[k] ? loja.facets[k] : []; for (var i = 0; i < l.length; i++) if (l[i].value === v) return l[i].count; return 0; }
+  function opcao(sel, v, rot, escolhido) { var o = el("option", "", rot); o.value = v; o.selected = v === escolhido; sel.appendChild(o); }
+  function desenharFiltros() {
+    var n = ativos(); $("nFiltros").hidden = !n; $("nFiltros").textContent = String(n);
+    var s = $("fOrdem"); s.textContent = ""; ["relevance", "newest", "rating", "size", "title"].forEach(function (k) { opcao(s, k, L.ordens[k], loja.sort); });
+    s = $("fPlat"); s.textContent = ""; opcao(s, "", L.ps5ps4, loja.platform);
+    ["ps5", "ps4"].forEach(function (p) { opcao(s, p, p.toUpperCase() + " (" + contaDe("platform", p) + ")", loja.platform); });
+    s = $("fFormato"); s.textContent = ""; opcao(s, "", L.todoFormato, loja.format);
+    (loja.facets && loja.facets.format ? loja.facets.format : []).forEach(function (o) { opcao(s, o.value, (o.value === "ready" ? fill(L.pronto, { v: loja.ready }) : String(o.value).toUpperCase()) + " (" + o.count + ")", loja.format); });
+    s = $("fGenero"); s.textContent = ""; opcao(s, "", L.todoGenero, loja.genre);
+    (loja.facets && loja.facets.genre ? loja.facets.genre : []).forEach(function (o) { if (o.count || o.value === loja.genre) opcao(s, o.value, (o.name || o.value) + " (" + o.count + ")", loja.genre); });
+    s = $("fTam"); s.textContent = ""; opcao(s, "", L.todoTam, loja.size);
+    [["small", L.pequeno], ["medium", L.medio], ["large", L.grande]].forEach(function (x) { opcao(s, x[0], x[1] + " (" + contaDe("size", x[0]) + ")", loja.size); });
+    $("fSolo").checked = loja.solo;
+  }
+  function mudar(c) { for (var k in c) loja[k] = c[k]; desenharFiltros(); recomecar(); }
+  $("fOrdem").onchange = function (e) { mudar({ sort: e.target.value }); };
+  $("fPlat").onchange = function (e) { mudar({ platform: e.target.value }); };
+  $("fFormato").onchange = function (e) { mudar({ format: e.target.value }); };
+  $("fGenero").onchange = function (e) { mudar({ genre: e.target.value }); };
+  $("fTam").onchange = function (e) { mudar({ size: e.target.value }); };
+  $("fSolo").onchange = function (e) { mudar({ solo: e.target.checked }); };
+  $("fLimpar").onclick = function () { $("busca").value = ""; mudar({ q: "", platform: "", format: "", genre: "", size: "", solo: false }); };
+  $("bFiltros").onclick = function () { var f = $("filtros"); f.hidden = !f.hidden; $("bFiltros").setAttribute("aria-expanded", String(!f.hidden)); layout(); };
+  var digitando = 0;
+  $("busca").oninput = function (e) { clearTimeout(digitando); digitando = setTimeout(function () { var v = e.target.value.trim(); if (v !== loja.q) mudar({ q: v }); }, 300); };
+  $("busca").onkeydown = function (e) { if (e.key === "Enter") { clearTimeout(digitando); var v = e.target.value.trim(); if (v !== loja.q) mudar({ q: v }); if (loja.count > 0) focarCartao(0); } };
+  $("lojaDeNovo").onclick = function () { recomecar(); };
+
+  function recomecar() {
+    loja.seq++; loja.items = []; loja.pedidas = {}; loja.count = -1; loja.estado = "";
+    V.alturas = []; V.topos = [0]; limparLinhas(); $("grade").scrollTop = 0;
+    contagem(); carregarPagina(0);
+  }
+  function carregarPagina(p) {
+    var seq = loja.seq;
+    loja.pedidas[p] = 1;
+    if (p === 0) contagem();
+    api("GET", consulta(p * PAGINA, PAGINA)).then(function (r) {
+      if (seq !== loja.seq) return;
+      if (r.status === 200 && r.data.games && r.data.games.length !== undefined) {
+        var primeira = loja.count < 0;
+        loja.estado = "ok"; loja.count = Number(r.data.count) || 0; loja.total = Number(r.data.total) || 0;
+        if (r.data.facets) loja.facets = r.data.facets;
+        if (r.data.readyFirmware) loja.ready = r.data.readyFirmware;
+        for (var i = 0; i < r.data.games.length; i++) loja.items[p * PAGINA + i] = r.data.games[i];
+        loja.pedidas[p] = 2;
+        if (primeira) { desenharFiltros(); medidas(true); }
+        contagem(); agendar();
+      } else {
+        loja.pedidas[p] = 0;
+        if (loja.count < 0) { loja.estado = r.data.error === "no-store" ? "semLoja" : r.data.error === "bad-store" ? "lojaRuim" : "semResposta"; contagem(); }
+      }
+    });
+  }
+  function contagem() {
+    var c = $("contagem"), m = $("lojaMsg");
+    m.hidden = true;
+    if (loja.count < 0 && !loja.estado) { c.textContent = L.carregando; return; }
+    if (loja.estado && loja.estado !== "ok") { c.textContent = ""; $("lojaMsgTxt").textContent = L[loja.estado]; $("lojaDeNovo").parentNode.hidden = false; m.hidden = false; return; }
+    c.textContent = fill(loja.count === loja.total ? L.nJogos : L.nDe, { n: loja.count.toLocaleString(lang), t: loja.total.toLocaleString(lang) });
+    if (!loja.count) { $("lojaMsgTxt").textContent = L.nenhum; $("lojaDeNovo").parentNode.hidden = true; m.hidden = false; }
+  }
+
+  // ---- Grade virtual: so as linhas visiveis (mais 2 de folga em cima e embaixo) existem no DOM ----
+  // A altura de cada linha e medida depois de desenhada (o titulo quebra a linha, entao varia); as nao vistas usam uma
+  // estimativa. Quando uma linha acima da tela muda de altura, o scroll e corrigido para nada "pular".
+  var grade = $("grade"), espaco = $("espaco");
+  var V = { cols: 1, lista: true, est: 120, alturas: [], topos: [0], linhas: {}, largura: 0, pend: 0 };
+  function rem() { return parseFloat(getComputedStyle(root).fontSize) || 16; }
+  function nLinhas() { return loja.count > 0 ? Math.ceil(loja.count / V.cols) : 0; }
+  function medidas(forcar) {
+    var w = grade.clientWidth, r = rem();
+    if (!w) return;
+    var lista = w < 30 * r, pad = 0.6 * r, gap = 0.6 * r, min = (root.classList.contains("ps5") ? 10.5 : 8.6) * r;
+    var cols = lista ? 1 : Math.max(2, Math.floor((w - 2 * pad + gap) / (min + gap)));
+    if (!forcar && cols === V.cols && lista === V.lista && Math.abs(w - V.largura) < 1) return;
+    var celula = (w - 2 * pad - (cols - 1) * gap) / cols;
+    // o 1o jogo visivel continua no topo depois de trocar o numero de colunas (abrir a ficha, girar o celular)
+    var primeiro = nLinhas() && V.topos.length > 1 ? linhaEm(grade.scrollTop) * V.cols : 0;
+    V.cols = cols; V.lista = lista; V.largura = w;
+    V.est = lista ? 5.3 * r + gap : celula + 4.4 * r + gap;
+    espaco.classList.toggle("lista", lista); espaco.style.setProperty("--cols", String(cols));
+    V.alturas = []; V.topos = [0]; limparLinhas();
+    if (primeiro && nLinhas()) grade.scrollTop = topo(Math.floor(primeiro / cols));
+    agendar();
+  }
+  function altura(i) { var a = V.alturas[i]; return a === undefined ? V.est : a; }
+  function topo(i) { // calcula os topos ate i (preguicoso)
+    for (var k = V.topos.length; k <= i; k++) V.topos[k] = V.topos[k - 1] + altura(k - 1);
+    return V.topos[i];
+  }
+  function linhaEm(y) { // a linha que contem y (busca binaria sobre os topos)
+    var n = nLinhas(); if (!n) return 0;
+    topo(n);
+    var a = 0, b = n - 1;
+    while (a < b) { var m = (a + b + 1) >> 1; if (V.topos[m] <= y) a = m; else b = m - 1; }
+    return a;
+  }
+  function limparLinhas() { for (var k in V.linhas) V.linhas[k].remove(); V.linhas = {}; }
+  function agendar() { if (!V.pend) V.pend = requestAnimationFrame(desenhar); }
+  var montado = false;
+  function desenhar() {
+    V.pend = 0;
+    if (secao !== "loja") return;
+    var n = nLinhas();
+    if (!n) { espaco.style.height = "0px"; limparLinhas(); return; }
+    espaco.style.height = topo(n) + "px";
+    var st = grade.scrollTop, h = grade.clientHeight;
+    var a = Math.max(0, linhaEm(st) - 2), b = Math.min(n - 1, linhaEm(st + h) + 2);
+    for (var k in V.linhas) { var i0 = +k; if (i0 < a || i0 > b) { V.linhas[k].remove(); delete V.linhas[k]; } }
+    for (var i = a; i <= b; i++) {
+      var lin = V.linhas[i];
+      if (!lin || (!lin._cheia && linhaCheia(i))) { var nova = criarLinha(i); if (lin) lin.replaceWith(nova); else espaco.appendChild(nova); V.linhas[i] = lin = nova; }
+      lin.style.transform = "translateY(" + topo(i) + "px)";
+    }
+    // mede; uma linha que mudou de altura acima da tela corrige o scroll
+    var mudou = -1, ajuste = 0;
+    for (i = a; i <= b; i++) {
+      var hh = V.linhas[i].offsetHeight;
+      if (Math.abs(hh - altura(i)) > 0.5) { if (topo(i) + altura(i) <= st) ajuste += hh - altura(i); V.alturas[i] = hh; if (mudou < 0) mudou = i; }
+    }
+    if (mudou >= 0) {
+      V.topos.length = mudou + 1;
+      for (i = a; i <= b; i++) V.linhas[i].style.transform = "translateY(" + topo(i) + "px)";
+      espaco.style.height = topo(n) + "px";
+      if (ajuste) grade.scrollTop = st + ajuste;
+    }
+    var p0 = Math.floor(a * V.cols / PAGINA), p1 = Math.floor(Math.min(loja.count - 1, (b + 1) * V.cols - 1) / PAGINA);
+    for (var p = p0; p <= p1; p++) if (!loja.pedidas[p]) carregarPagina(p);
+    agendarCapas();
+    if (!montado && espaco.querySelector(".card:not(.vazio)")) {
+      montado = true;
+      window.jobeApp.montadoMs = performance.now();
+      window.jobeApp.montagemMs = performance.now() - T0;
+    }
+  }
+  function linhaCheia(i) { var fim = Math.min(loja.count, (i + 1) * V.cols); for (var j = i * V.cols; j < fim; j++) if (!loja.items[j]) return false; return true; }
+  function criarLinha(i) {
+    var lin = el("div", "lin"); lin.setAttribute("role", "presentation");
+    var fim = Math.min(loja.count, (i + 1) * V.cols);
+    for (var j = i * V.cols; j < fim; j++) lin.appendChild(cartao(loja.items[j], j));
+    lin._cheia = linhaCheia(i);
+    return lin;
+  }
+  // `adiar`: a capa so e pedida quando a rolagem para (pedirCapas); rolando rapido (controle segurado, dedo jogando a
+  // lista) nenhuma imagem e baixada nem decodificada no caminho. A ficha pede na hora.
+  function capa(g, w, adiar) {
+    var box = el("div", "capa"); box.appendChild(el("span", "ini", iniciais(g ? g.title : "")));
+    if (g && g.cover && okURL(g.cover)) {
+      var img = el("img"); img.alt = ""; img.decoding = "async"; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
+      img.onload = function () { box.classList.add("ok"); };
+      img.onerror = function () { img.remove(); };
+      if (adiar) img.setAttribute("data-src", sized(g.cover, w)); else img.src = sized(g.cover, w);
+      box.appendChild(img);
+    }
+    return box;
+  }
+  // Rolagem devagar (ate ~1,5 tela por segundo: lendo a lista) pede as capas no caminho, no maximo a cada 200 ms; mais
+  // rapido que isso, so quando parar (140 ms sem rolar).
+  var capasT = 0, capasEm = 0, rolou = { y: 0, t: 0, v: 0 };
+  function agendarCapas() {
+    var agora = performance.now(), y = grade.scrollTop, dt = agora - rolou.t;
+    if (dt > 0) rolou.v = Math.abs(y - rolou.y) / dt;
+    rolou.y = y; rolou.t = agora;
+    clearTimeout(capasT);
+    if (!montado || (rolou.v < grade.clientHeight * 1.5 / 1000 && agora - capasEm > 200)) { capasEm = agora; pedirCapas(); }
+    capasT = setTimeout(pedirCapas, 140);
+  }
+  function pedirCapas() {
+    var q = grade.getBoundingClientRect(), imgs = espaco.querySelectorAll("img[data-src]");
+    for (var k = 0; k < imgs.length; k++) {
+      var r = imgs[k].parentNode.getBoundingClientRect();
+      if (r.bottom < q.top - q.height * 0.5 || r.top > q.bottom + q.height * 0.5) continue; // so a tela e meia tela de folga
+      imgs[k].src = imgs[k].getAttribute("data-src"); imgs[k].removeAttribute("data-src");
+    }
+  }
+  function tag(cls, texto, titulo) { var t = el("span", "tag " + cls, texto); if (titulo) t.title = titulo; return t; }
+  function metas(g, box) {
+    if (g.platform) box.appendChild(tag(g.platform, g.platform.toUpperCase()));
+    if (g.sizeGb) box.appendChild(el("span", "", gb(g.sizeGb)));
+    var f = melhorFormato(g.formats); if (f) box.appendChild(tag("", f.toUpperCase()));
+    if (g.ready && loja.ready) box.appendChild(tag("pronto", "✓ " + loja.ready, fill(L.pronto, { v: loja.ready })));
+    if (g.solo === false) box.appendChild(tag("jobe", "Jobe", L.fonteApp));
+    if (g.queued) box.appendChild(tag("fila", L.naFila));
+  }
+  function cartao(g, i) {
+    var b = el("button", g ? "card" : "card vazio"); b.type = "button"; b.setAttribute("data-i", String(i));
+    if (!g) { b.appendChild(capa(null)); var tx0 = el("div", "txt"); tx0.appendChild(el("div", "t", "·")); b.appendChild(tx0); b.setAttribute("aria-busy", "true"); return b; }
+    if (g.id === fx.id) b.classList.add("sel");
+    b.appendChild(capa(g, V.lista ? 160 : 320, true));
+    var tx = el("div", "txt"), m = el("div", "m");
+    tx.appendChild(el("div", "t", g.title)); tx.appendChild(m); metas(g, m);
+    b.appendChild(tx);
+    b.onclick = function () { abrirJogo(g.id, i); };
+    return b;
+  }
+  grade.addEventListener("scroll", agendar, { passive: true });
+  if (window.ResizeObserver) new ResizeObserver(function () { medidas(false); }).observe(grade);
+  addEventListener("resize", function () { medidas(false); });
+  function layout() { requestAnimationFrame(function () { medidas(false); }); }
+
+  // Rola a grade ate o cartao i e o foca (controle e teclado).
+  function focarCartao(i) {
+    if (i < 0 || i >= loja.count) return;
+    var r = Math.floor(i / V.cols), t = topo(r), h = grade.clientHeight, st = grade.scrollTop;
+    if (t < st) grade.scrollTop = t;
+    else if (t + altura(r) > st + h) grade.scrollTop = t + altura(r) - h;
+    if (V.pend) { cancelAnimationFrame(V.pend); V.pend = 0; }
+    desenhar();
+    var c = espaco.querySelector('[data-i="' + i + '"]');
+    if (c) { try { c.focus({ preventScroll: true }); } catch (e) { c.focus(); } }
+  }
+
+  // ---- Ficha do jogo ----
+  var fx = { id: "", i: -1, seq: 0, jogo: null };
+  function abrirJogo(id, i) {
+    fx.i = i;
+    var alvo = "#/jogo/" + encodeURIComponent(id);
+    // com a ficha ja aberta (PC: outro jogo da grade) troca no lugar, sem empilhar historico
+    if (!$("ficha").hidden) { try { history.replaceState(null, "", alvo); } catch (e) { location.hash = alvo; return; } rota(); return; }
+    empurrou = true;
+    location.hash = alvo;
+    rota();
+  }
+  function marcarSel() { Array.prototype.forEach.call(espaco.querySelectorAll(".card"), function (c) { var g = loja.items[+c.getAttribute("data-i")]; c.classList.toggle("sel", Boolean(g && g.id === fx.id)); }); }
+  function abrirFicha(id) {
+    var seq = ++fx.seq;
+    fx.id = id; fx.jogo = null;
+    var known = null;
+    for (var i = 0; i < loja.items.length; i++) if (loja.items[i] && loja.items[i].id === id) { known = loja.items[i]; fx.i = i; break; }
+    $("ficha").hidden = false; document.body.classList.add("comFicha");
+    $("fTitulo").textContent = known ? known.title : "";
+    var corpo = $("fCorpo"); corpo.textContent = ""; corpo.scrollTop = 0;
+    corpo.appendChild(el("p", "nota", L.carregando));
+    marcarSel(); layout();
+    if (root.classList.contains("kb")) setTimeout(function () { $("fVoltar").focus(); }, 0);
+    api("GET", "/api/store/game?id=" + encodeURIComponent(id)).then(function (r) {
+      if (seq !== fx.seq) return;
+      if (r.status !== 200 || !r.data.game) { corpo.textContent = ""; corpo.appendChild(el("p", "msg", L.fichaFalhou)); return; }
+      var g = r.data.game;
+      if (known) { known.queued = known.queued || g.queued; for (var k in g) if (known[k] === undefined) known[k] = g[k]; g = known; }
+      fx.jogo = g;
+      $("fTitulo").textContent = g.title;
+      montarFicha(g, r.data);
+    });
+  }
+  function fecharFicha(semHistorico) {
+    if ($("ficha").hidden) return;
+    $("ficha").hidden = true; document.body.classList.remove("comFicha");
+    fx.seq++; var volta = fx.i; fx.id = ""; fx.jogo = null;
+    $("fCorpo").textContent = "";
+    marcarSel(); layout();
+    if (semHistorico !== true && /^#\/jogo\//.test(location.hash)) { if (empurrou) history.back(); else location.hash = "#/loja"; }
+    empurrou = false;
+    if (volta >= 0) setTimeout(function () { focarCartao(volta); }, 30);
+  }
+  $("fVoltar").onclick = function () { fecharFicha(false); };
+  function secaoFicha(corpo, titulo) { var s = el("section", "fsec"); s.appendChild(el("h3", "", titulo)); corpo.appendChild(s); return s; }
+  function montarFicha(g, d) {
+    var corpo = $("fCorpo"); corpo.textContent = "";
+    var cab = el("div", "fcab"); cab.appendChild(capa(g, 480));
+    var lado = el("div", ""); lado.appendChild(el("h2", "", g.title)); var m = el("div", "m"); metas(g, m); lado.appendChild(m); cab.appendChild(lado);
+    corpo.appendChild(cab);
+    var acao = el("div", "fila facao"), bb = el("button", "btn prim"); bb.type = "button"; bb.id = "fBaixar";
+    acao.appendChild(bb); corpo.appendChild(acao);
+    pintarBaixar(bb, g, false);
+    bb.onclick = function () { if (!g.queued) Auth.com(function () { baixar(g, bb); }); };
+    corpo.appendChild(el("p", "nota", d.detailsState !== "ok" ? L.semFicha : d.download === "payload" ? L.sozinho : L.precisaApp));
+    var det = d.details;
+    if (det && (det.summary || (det.about && det.about.length))) {
+      var s = secaoFicha(corpo, L.sobre);
+      if (det.summary) s.appendChild(el("p", "", det.summary));
+      (det.about || []).forEach(function (t) { if (t) s.appendChild(el("p", "", t)); });
+    }
+    var info = el("dl", "info");
+    function par(k, v) { if (v === undefined || v === null || v === "" || (v.length !== undefined && typeof v !== "string" && !v.length)) return; info.appendChild(el("dt", "", k)); info.appendChild(el("dd", "", typeof v === "string" || typeof v === "number" ? v : v.join(", "))); }
+    par(L.codigo, g.code); par(L.plataforma, g.platform ? g.platform.toUpperCase() : "");
+    par(L.tamanhoL, g.sizeGb ? gb(g.sizeGb) : ""); par(L.formatos, (g.formats || []).map(function (f) { return String(f).toUpperCase(); }));
+    par(L.generos, g.genres || []); par(L.lancamento, g.releaseDate || (g.year ? String(g.year) : ""));
+    par(L.dev, g.developer); par(L.editora, g.publisher);
+    if (g.stars) par(L.nota, "★ " + nf(g.stars, 1) + (g.ratingCount ? " · " + fill(L.avaliacoes, { n: Number(g.ratingCount).toLocaleString(lang) }) : ""));
+    secaoFicha(corpo, L.informacoes).appendChild(info);
+    if (d.links && d.links.length) {
+      var ul = el("ul", "fontes");
+      d.links.forEach(function (l) {
+        var li = el("li"); li.appendChild(el("b", "", l.host || l.label || "?"));
+        var partes = [L.kinds[l.kind] || l.kind];
+        if (l.format) partes.push(String(l.format).toUpperCase());
+        if (l.size) partes.push(bytes(l.size));
+        if (l.parts > 1) partes.push(fill(L.partes, { n: l.parts }));
+        partes.push(l.solo ? L.fonteSo : L.fonteApp);
+        li.appendChild(el("span", "", partes.join(" · ")));
+        ul.appendChild(li);
+      });
+      secaoFicha(corpo, L.fontes).appendChild(ul);
+    }
+    if (det && det.shots && det.shots.length) {
+      var fotos = el("div", "fotos");
+      det.shots.forEach(function (u) { if (!okURL(u)) return; var f = el("div", "foto"), img = el("img"); img.alt = ""; img.loading = "lazy"; img.decoding = "async"; img.referrerPolicy = "no-referrer"; img.src = u; img.onerror = function () { f.remove(); }; f.appendChild(img); fotos.appendChild(f); });
+      if (fotos.childNodes.length) secaoFicha(corpo, L.fotos).appendChild(fotos);
+    }
+  }
+  function pintarBaixar(b, g, ocupado) { b.disabled = Boolean(g.queued || ocupado); b.textContent = ocupado ? L.incluindo : g.queued ? L.naFila : L.baixar; }
+  function baixar(g, b) {
+    pintarBaixar(b, g, true);
+    api("POST", "/api/store/add", { id: g.id }).then(function (r) {
+      pintarBaixar(b, g, false);
+      if (r.status === 401) { Auth.esquecer(); Auth.pedir(function () { baixar(g, b); }); return; }
+      if (r.status === 200 && r.data.ok) {
+        g.queued = true; pintarBaixar(b, g, false);
+        var t = r.data.already ? L.jaNaFila : r.data.via === "payload" ? L.viaPayload : r.data.appOpen ? L.viaApp : r.data.reason === "no-root" ? L.semDisco : L.espera;
+        avisar(fill(t, { t: g.title }), "ok");
+        refazerCartao(g);
+        return;
+      }
+      avisar(r.data.error === "exists" ? L.existe : r.data.error === "full" ? L.cheia : r.status ? L.falhou : L.semResposta, "ruim");
+    });
+  }
+  function refazerCartao(g) {
+    Array.prototype.forEach.call(espaco.querySelectorAll(".card"), function (c) {
+      var i = +c.getAttribute("data-i"); if (loja.items[i] !== g) return;
+      var m = c.querySelector(".m"); if (m) { m.textContent = ""; metas(g, m); }
+    });
+  }
+
+  // ---- Downloads: a fila ao vivo (GET /api/status a cada 2 s com a secao a vista) ----
+  var dl = { jobs: [], confirmar: "", falhas: 0, ocupado: false };
+  var ATIVOS = ["downloading", "connecting", "verifying"];
+  function atualizarDownloads() {
+    if (dl.ocupado) return;
+    dl.ocupado = true;
+    api("GET", "/api/status").then(function (r) {
+      dl.ocupado = false;
+      if (r.status === 200 && r.data.jobs) { dl.jobs = r.data.jobs; dl.falhas = 0; } else dl.falhas++;
+      desenharDownloads();
+    });
+  }
+  setInterval(function () { if (secao === "downloads" && !document.hidden) atualizarDownloads(); }, 2000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && secao === "downloads") atualizarDownloads(); });
+  function acaoJob(id, acao) {
+    Auth.com(function () {
+      api("POST", "/api/jobs/" + encodeURIComponent(id) + "/" + acao).then(function (r) {
+        if (r.status === 401) { Auth.esquecer(); Auth.pedir(function () { acaoJob(id, acao); }); return; }
+        if (r.status !== 200) avisar(r.status ? L.falhou : L.semResposta, "ruim");
+        atualizarDownloads();
+      });
+    });
+  }
+  function desenharDownloads() {
+    var lista = $("dLista"), foco = document.activeElement, focoId = foco && foco.getAttribute ? foco.getAttribute("data-acao") : null;
+    var ativosL = dl.jobs.filter(function (j) { return ATIVOS.indexOf(j.state) >= 0; });
+    var abertos = dl.jobs.filter(function (j) { return j.state !== "completed" && j.state !== "failed"; });
+    var bps = ativosL.reduce(function (s, j) { return s + (j.bytesPerSecond || 0); }, 0);
+    var resta = abertos.reduce(function (s, j) { return s + Math.max(0, (j.total || 0) - (j.written || 0)); }, 0);
+    $("dAtivos").textContent = ativosL.length + " / " + abertos.length; $("dVel").textContent = speed(bps); $("dResta").textContent = resta ? bytes(resta) : "–";
+    lista.textContent = "";
+    if (dl.falhas >= 2 && !dl.jobs.length) { lista.appendChild(el("p", "msg", L.semResposta)); return; }
+    if (!dl.jobs.length) { lista.appendChild(el("p", "msg", L.semDownloads)); return; }
+    dl.jobs.forEach(function (j) {
+      var c = el("article", "job"), topo1 = el("div", "topo");
+      topo1.appendChild(el("div", "nome", j.name || j.file || j.id));
+      var cls = ATIVOS.indexOf(j.state) >= 0 ? "baixando" : j.state === "failed" ? "falhou" : j.state === "completed" ? "pronto" : "";
+      topo1.appendChild(el("span", "est " + cls, L.estados[j.state] || j.state));
+      c.appendChild(topo1);
+      var pct = j.total ? Math.min(100, (j.written || 0) * 100 / j.total) : 0;
+      var barra = el("div", "barraP"), i = el("i"); i.style.width = pct.toFixed(1) + "%"; barra.appendChild(i); c.appendChild(barra);
+      var nums = el("div", "nums");
+      nums.appendChild(el("span", "", nf(pct, 0) + "%"));
+      nums.appendChild(el("span", "", bytes(j.written || 0) + " " + L.de + " " + (j.total ? bytes(j.total) : "?")));
+      if (ATIVOS.indexOf(j.state) >= 0) { nums.appendChild(el("span", "", speed(j.bytesPerSecond || 0))); nums.appendChild(el("span", "", eta(j.bytesPerSecond ? ((j.total || 0) - (j.written || 0)) / j.bytesPerSecond : 0))); }
+      var origem = [j.platform ? String(j.platform).toUpperCase() : "", j.format ? String(j.format).toUpperCase() : "", j.via || j.host || ""].filter(Boolean).join(" · ");
+      if (origem) nums.appendChild(el("span", "", origem));
+      c.appendChild(nums);
+      if (j.error) c.appendChild(el("div", "erro", j.error));
+      if (j.state === "waiting-app") c.appendChild(el("div", "nums", L.esperaApp));
+      if (j.state !== "completed" && j.state !== "extracting" && !(j.state === "waiting-app" && !j.requested)) {
+        var fila = el("div", "fila"), parado = j.state === "paused" || j.state === "failed";
+        if (j.state !== "waiting-app") { var bp = el("button", "btn", parado ? L.retomar : L.pausar); bp.type = "button"; bp.setAttribute("data-acao", j.id + ":p"); bp.onclick = function () { acaoJob(j.id, parado ? "resume" : "pause"); }; fila.appendChild(bp); }
+        var conf = dl.confirmar === j.id, bc = el("button", "btn perigo", conf ? L.confirmar : L.cancelarDl); bc.type = "button"; bc.setAttribute("data-acao", j.id + ":c");
+        bc.onclick = function () { if (dl.confirmar === j.id) { dl.confirmar = ""; acaoJob(j.id, "cancel"); } else { dl.confirmar = j.id; desenharDownloads(); setTimeout(function () { if (dl.confirmar === j.id) { dl.confirmar = ""; desenharDownloads(); } }, 4000); } };
+        fila.appendChild(bc); c.appendChild(fila);
+      }
+      lista.appendChild(c);
+    });
+    if (focoId) { var f = lista.querySelector('[data-acao="' + focoId + '"]'); if (f) f.focus(); }
+  }
+
+  // ---- Controle (Gamepad API), teclado, toque e mouse ----
+  // Foco visivel sempre que a navegacao e por controle/teclado (html.kb); toque/mouse tiram o anel (html.toque).
+  // Setas e direcional andam pela grade por indice (a grade e virtual: o cartao de destino e desenhado antes de focar);
+  // fora dela, o vizinho mais proximo na direcao. X/Enter = abrir; O/Esc/Backspace = voltar; L1/R1 = secao anterior/
+  // proxima; triangulo = filtros; quadrado = busca. O navegador do PS5 tem cursor proprio: um clique "de verdade" que
+  // chega logo depois do X do controle e o eco do cursor e e ignorado (como o controller.ts da Orbit).
+  function modoKb() { root.classList.add("kb"); root.classList.remove("toque"); GP.navegando = true; }
+  // Navegador do PS5 (ideia do controller.ts da Orbit, reescrita): enquanto o controle "e dono" do foco (navegando e o
+  // cursor nao se mexeu), o clique nativo do cursor e o X: nunca o alvo debaixo do cursor. Ele e descartado quando a
+  // pagina ja tratou o X (eco que chega ate 600 ms depois, mesmo depois de soltar) e vira o X do item focado quando o
+  // navegador so entrega o X como clique do cursor. Mexer o cursor de verdade (ou tocar) devolve o controle ao ponteiro.
+  function guardaCursor(e) {
+    if (!root.classList.contains("ps5") || !GP.navegando || !e.isTrusted) return;
+    if (e.pointerType && e.pointerType !== "mouse") return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.type !== "click") return;
+    var agora = performance.now();
+    if (agora - GP.cliqueEm < 600) return; // eco do X que a pagina ja tratou
+    ativar(); GP.cliqueEm = agora;
+  }
+  ["pointerdown", "mousedown", "mouseup", "click"].forEach(function (t) { addEventListener(t, guardaCursor, true); });
+  addEventListener("pointermove", function (e) { if (e.isTrusted && (Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0)) > 2) GP.navegando = false; }, true);
+  addEventListener("pointerdown", function () { root.classList.remove("kb"); root.classList.add("toque"); GP.navegando = false; }, true);
+  // A roda que o navegador do PS5 gera do analogico direito chega junto com a rolagem que a pagina ja fez: descartada.
+  addEventListener("wheel", function (e) { if (performance.now() < GP.rodaAte) e.preventDefault(); }, { capture: true, passive: false });
+  function painelAtual() {
+    if (!$("acesso").hidden) return null;
+    var a = document.activeElement;
+    while (a && a !== document.body && !(a.classList && a.classList.contains("rolar"))) a = a.parentNode;
+    if (a && a !== document.body && a.classList) return a;
+    return !$("ficha").hidden ? $("fCorpo") : secao === "downloads" ? $("dLista") : secao === "loja" ? grade : $("secBreve");
+  }
+  var FOCAVEIS = 'button:not([disabled]), a[href], input:not([type="hidden"]):not([hidden]), select';
+  function escopo() { if (!$("acesso").hidden) return $("acesso"); if (!$("ficha").hidden && getComputedStyle($("ficha")).position === "fixed") return $("ficha"); return document; }
+  function visivel(c) {
+    var r = c.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) return null;
+    var cx = c.parentNode; while (cx && cx !== document.body && !(cx.classList && cx.classList.contains("rolar"))) cx = cx.parentNode;
+    if (cx && cx.classList && cx.classList.contains("rolar")) { var q = cx.getBoundingClientRect(); if (r.bottom <= q.top + 2 || r.top >= q.bottom - 2) return null; }
+    return r;
+  }
+  function vizinho(de, dir) {
+    var lista = Array.prototype.slice.call(escopo().querySelectorAll(FOCAVEIS));
+    var r0 = de && de !== document.body && de.getBoundingClientRect ? de.getBoundingClientRect() : null;
+    if (!r0) { for (var k = 0; k < lista.length; k++) if (visivel(lista[k])) return lista[k]; return null; }
+    var cx = r0.left + r0.width / 2, cy = r0.top + r0.height / 2, melhor = null, nota = Infinity;
+    lista.forEach(function (c) {
+      if (c === de) return;
+      var r = visivel(c); if (!r) return;
+      var x = r.left + r.width / 2, y = r.top + r.height / 2, p, s;
+      // so o que esta inteiro do lado pedido (2 px de folga): o cartao de baixo nao e "a direita" do de cima
+      if (dir === "dir") { if (r.left < r0.right - 2) return; p = Math.max(0, r.left - r0.right); s = Math.max(0, r.top - r0.bottom, r0.top - r.bottom); }
+      else if (dir === "esq") { if (r.right > r0.left + 2) return; p = Math.max(0, r0.left - r.right); s = Math.max(0, r.top - r0.bottom, r0.top - r.bottom); }
+      else if (dir === "baixo") { if (r.top < r0.bottom - 2) return; p = Math.max(0, r.top - r0.bottom); s = Math.max(0, r.left - r0.right, r0.left - r.right); }
+      else { if (r.bottom > r0.top + 2) return; p = Math.max(0, r0.top - r.bottom); s = Math.max(0, r.left - r0.right, r0.left - r.right); }
+      var v = p + s * 3 + (Math.abs(x - cx) + Math.abs(y - cy)) * 0.01;
+      if (v < nota) { nota = v; melhor = c; }
+    });
+    return melhor;
+  }
+  function garantirVisivel(c) {
+    var cx = c.parentNode; while (cx && cx !== document.body && !(cx.classList && cx.classList.contains("rolar"))) cx = cx.parentNode;
+    if (!cx || !cx.classList || !cx.classList.contains("rolar")) return;
+    var r = c.getBoundingClientRect(), q = cx.getBoundingClientRect();
+    if (r.top < q.top) cx.scrollTop -= q.top - r.top + 8; else if (r.bottom > q.bottom) cx.scrollTop += r.bottom - q.bottom + 8;
+  }
+  function mover(dir) {
+    modoKb();
+    var a = document.activeElement;
+    if (a && a.classList && a.classList.contains("card") && escopo() === document) {
+      var i = +a.getAttribute("data-i"), c = V.cols, j = -1;
+      if (dir === "dir" && i % c < c - 1 && i + 1 < loja.count) j = i + 1;
+      else if (dir === "esq" && i % c > 0) j = i - 1;
+      else if (dir === "baixo" && Math.floor(i / c) < nLinhas() - 1) j = Math.min(loja.count - 1, i + c);
+      else if (dir === "cima" && i - c >= 0) j = i - c;
+      if (j >= 0) { focarCartao(j); return; }
+      if (dir === "baixo") return; // ultima linha
+    }
+    var alvo = vizinho(a, dir);
+    if (alvo) { try { alvo.focus({ preventScroll: true }); } catch (e) { alvo.focus(); } garantirVisivel(alvo); return; }
+    // Nada focavel na direcao: rola o painel (texto da ficha, lista de downloads) para o controle ler tudo.
+    if (dir === "cima" || dir === "baixo") {
+      var cx = a && a.parentNode ? a : null;
+      while (cx && cx !== document.body && !(cx.classList && cx.classList.contains("rolar"))) cx = cx.parentNode;
+      if (!cx || cx === document.body) cx = !$("ficha").hidden ? $("fCorpo") : secao === "downloads" ? $("dLista") : null;
+      if (cx && cx.classList && cx.classList.contains("rolar")) cx.scrollTop += (dir === "baixo" ? 1 : -1) * Math.round(cx.clientHeight * 0.6);
+    }
+  }
+  function voltar() {
+    if (!$("acesso").hidden) { if (Auth.passo === "codigo" && !$("parForm").hidden) $("parNao").click(); else fecharJanela(); return true; }
+    if (!$("ficha").hidden) { fecharFicha(false); return true; }
+    if (!$("filtros").hidden) { $("bFiltros").click(); $("bFiltros").focus(); return true; }
+    if (secao !== "loja") { ir("loja"); return true; }
+    return false;
+  }
+  function trocarSecao(passo) { var k = (SECOES.indexOf(secao) + passo + SECOES.length) % SECOES.length; ir(SECOES[k]); setTimeout(function () { var b = navBtns[k]; if (b) b.focus(); }, 0); }
+  window.jobeVoltar = voltar; // o app Android (Jobe Controle) chama no botao voltar, como na pagina do celular
+  var TECLAS = { ArrowUp: "cima", ArrowDown: "baixo", ArrowLeft: "esq", ArrowRight: "dir" };
+  document.addEventListener("keydown", function (e) {
+    var t = e.target, tag = t && t.tagName ? t.tagName : "", campo = tag === "INPUT" && t.type !== "checkbox", sel = tag === "SELECT";
+    var d = TECLAS[e.key];
+    if (d) {
+      if (sel && (d === "cima" || d === "baixo")) return; // o select troca o valor
+      if (campo && (d === "esq" || d === "dir")) return; // o cursor dentro do texto
+      e.preventDefault(); mover(d); return;
+    }
+    if (e.key === "Escape" || (e.key === "Backspace" && !campo)) { if (voltar()) e.preventDefault(); return; }
+    if (e.key === "Tab" || e.key === "Enter") modoKb();
+  });
+  // Eco do cursor: nos 350 ms depois do X, um clique "de verdade" (isTrusted) e descartado quando cai fora do elemento
+  // focado (o cursor estava em outro lugar) ou quando a pagina ja clicou nele (seria o 2o clique). So passa o clique
+  // nativo no proprio campo/select focado, que a pagina nao sabe abrir sozinha no navegador do PS5.
+  var GP = { ativo: false, antes: [], prox: {}, cliqueEm: 0, alvo: null, clicou: false, navegando: false, rodaAte: 0, quadro: 0 };
+  document.addEventListener("click", function (e) {
+    if (!e.isTrusted || performance.now() - GP.cliqueEm >= 350 || !GP.alvo) return;
+    var dentro = GP.alvo === e.target || (GP.alvo.contains && GP.alvo.contains(e.target));
+    if (!dentro || GP.clicou) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  function ativar() {
+    var a = document.activeElement;
+    if (!a || a === document.body) { mover("baixo"); return; }
+    GP.cliqueEm = performance.now(); GP.alvo = a; GP.clicou = false;
+    if (a.tagName === "INPUT" && a.type !== "checkbox") { a.blur(); a.focus(); return; } // o PS5 abre o teclado dele
+    if (a.tagName === "SELECT") { try { if (a.showPicker) { a.showPicker(); return; } } catch (e) {} a.focus(); return; }
+    GP.clicou = true;
+    a.click();
+  }
+  var DIR_BOTAO = { 12: "cima", 13: "baixo", 14: "esq", 15: "dir" };
+  function lerControle(t) {
+    var pads = navigator.getGamepads ? navigator.getGamepads() : [], algum = false;
+    for (var n = 0; n < pads.length; n++) {
+      var p = pads[n]; if (!p || !p.buttons) continue;
+      algum = true;
+      var ant = GP.antes[n] || [], agora = [];
+      for (var b = 0; b < p.buttons.length; b++) agora[b] = Boolean(p.buttons[b] && (p.buttons[b].pressed || p.buttons[b].value > 0.5));
+      var ax = p.axes && p.axes.length > 1 ? p.axes : [0, 0];
+      var dirs = { cima: agora[12] || ax[1] < -0.55, baixo: agora[13] || ax[1] > 0.55, esq: agora[14] || ax[0] < -0.55, dir: agora[15] || ax[0] > 0.55 };
+      for (var d in dirs) {
+        var chave = n + d;
+        if (dirs[d]) { if (!GP.prox[chave]) { mover(d); GP.prox[chave] = t + 380; } else if (t >= GP.prox[chave]) { mover(d); GP.prox[chave] = t + 95; } }
+        else GP.prox[chave] = 0;
+      }
+      var apertou = function (i) { return agora[i] && !ant[i]; };
+      // analogico direito: rola o painel (~0,9 px por ms no maximo, como a Orbit)
+      var dt = GP.quadro ? Math.min(50, Math.max(0, t - GP.quadro)) : 16, vy = ax.length > 3 ? ax[3] : 0;
+      if (Math.abs(vy) > 0.25) { var pn = painelAtual(); if (pn) { pn.scrollTop += vy * dt * 0.9; GP.rodaAte = t + 100; } }
+      if (apertou(0)) { modoKb(); ativar(); }
+      if (apertou(1)) { modoKb(); voltar(); }
+      if (apertou(4)) { modoKb(); trocarSecao(-1); }
+      if (apertou(5)) { modoKb(); trocarSecao(1); }
+      if (apertou(3) && secao === "loja") { modoKb(); $("bFiltros").click(); $("bFiltros").focus(); }
+      if (apertou(2) && secao === "loja") { modoKb(); $("busca").focus(); }
+      GP.antes[n] = agora;
+    }
+    GP.quadro = t;
+    if (algum) requestAnimationFrame(lerControle); else { GP.ativo = false; GP.quadro = 0; }
+  }
+  function ligarControle() { if (!GP.ativo) { GP.ativo = true; requestAnimationFrame(lerControle); } }
+  addEventListener("gamepadconnected", ligarControle);
+  try { var ja = navigator.getGamepads ? navigator.getGamepads() : []; for (var q = 0; q < ja.length; q++) if (ja[q]) ligarControle(); } catch (e) {}
+
+  // ---- Tela cheia (so aparece quando o navegador oferece) e as medidas da tela ----
+  // O navegador do PS5 tem moldura; se requestFullscreen/webkitRequestFullscreen existir, o botao tenta, e some se o
+  // pedido for recusado (o resultado vai para as medidas). Sem a API, o botao nem aparece. A Orbit nao tenta tela cheia
+  // no navegador: so o app nativo dela e tela cheia.
+  var tela = { suporte: "", resultado: "nao tentado" };
+  (function () {
+    var d = document, e = root;
+    if (e.requestFullscreen && d.fullscreenEnabled !== false) tela.suporte = "requestFullscreen";
+    else if (e.webkitRequestFullscreen) tela.suporte = "webkitRequestFullscreen";
+    else if (e.webkitRequestFullScreen) tela.suporte = "webkitRequestFullScreen";
+    $("bTela").hidden = !tela.suporte;
+  })();
+  function emTelaCheia() { return Boolean(document.fullscreenElement || document.webkitFullscreenElement || document.webkitCurrentFullScreenElement); }
+  function pintarTela() { $("bTela").textContent = emTelaCheia() ? L.sairTela : L.telaCheia; }
+  function falhouTela(motivo) { tela.resultado = "recusado: " + motivo; $("bTela").hidden = true; anotarTela(); }
+  $("bTela").onclick = function () {
+    try {
+      if (emTelaCheia()) { if (document.exitFullscreen) document.exitFullscreen(); else if (document.webkitExitFullscreen) document.webkitExitFullscreen(); return; }
+      var p = root[tela.suporte](), antes = innerWidth + "x" + innerHeight;
+      if (p && p.then) p.then(function () { tela.resultado = "aceito (" + antes + " -> " + innerWidth + "x" + innerHeight + ")"; anotarTela(); }, function (x) { falhouTela(String(x && x.name || x)); });
+      else setTimeout(function () { if (emTelaCheia()) { tela.resultado = "aceito (" + antes + " -> " + innerWidth + "x" + innerHeight + ")"; anotarTela(); } else falhouTela("sem efeito"); }, 600);
+    } catch (x) { falhouTela(String(x && x.name || x)); }
+  };
+  ["fullscreenchange", "webkitfullscreenchange"].forEach(function (t) { document.addEventListener(t, function () { pintarTela(); medidas(false); anotarTela(); }); });
+  ["fullscreenerror", "webkitfullscreenerror"].forEach(function (t) { document.addEventListener(t, function () { falhouTela("fullscreenerror"); }); });
+  // As medidas: guardadas em localStorage "jobe.app.tela" (a pagina /teste, mesma origem, poe nos resultados dela),
+  // mostradas em Configuracoes e enviadas ao diagnostico pelo botao (POST /api/teste/enviar, com credencial).
+  function textoTela() {
+    var vv = window.visualViewport, st = V || {};
+    return ["Jobee'sLair /app " + new Date().toISOString(),
+      "navegador: " + navigator.userAgent,
+      "ps5: " + (root.classList.contains("ps5") ? "sim" : "nao") + " (ua " + (/PlayStation/.test(navigator.userAgent) ? "sim" : "nao") + ", 127.0.0.1 " + (Auth.local ? "sim" : "nao") + ")",
+      "janela (innerWidth x innerHeight): " + innerWidth + "x" + innerHeight + (vv ? ", visualViewport " + Math.round(vv.width) + "x" + Math.round(vv.height) + " escala " + vv.scale : ""),
+      "documento (clientWidth x clientHeight): " + root.clientWidth + "x" + root.clientHeight + ", tela " + screen.width + "x" + screen.height + ", disponivel " + screen.availWidth + "x" + screen.availHeight + ", dpr " + (window.devicePixelRatio || 1),
+      "fonte-base: " + getComputedStyle(root).fontSize + "; grade: " + (st.lista ? "lista" : (st.cols || "?") + " colunas") + ", " + Math.round(grade.clientWidth) + "x" + Math.round(grade.clientHeight) + " px",
+      "tela cheia: " + (tela.suporte || "sem API") + "; " + tela.resultado + "; agora " + (emTelaCheia() ? "em tela cheia" : "com moldura")].join("\n");
+  }
+  var telaT = 0;
+  function anotarTela() {
+    var t = textoTela();
+    try { localStorage.setItem("jobe.app.tela", t); } catch (e) {}
+    if (secao === "config") $("medidasTxt").textContent = t;
+    return t;
+  }
+  addEventListener("resize", function () { clearTimeout(telaT); telaT = setTimeout(anotarTela, 400); });
+  $("medidasEnviar").onclick = function () {
+    Auth.com(function enviar() {
+      $("medidasOut").textContent = L.medidasEnviando;
+      api("POST", "/api/teste/enviar", { texto: anotarTela() }).then(function (r) {
+        if (r.status === 401) { Auth.esquecer(); Auth.pedir(enviar); return; }
+        if (r.status === 200) { $("medidasOut").textContent = fill(L.medidasEnviado, { f: r.data.folder || "-" }); return; }
+        $("medidasOut").textContent = r.data.error === "no-key" ? L.medidasSemChave : r.status === 409 ? L.medidasOcupado : fill(L.medidasFalhou, { e: r.data.error || r.status });
+      });
+    });
+  };
+
+  // ---- Para os testes e a medicao (tools/web-app/medir.mjs) ----
+  window.jobeApp = { t0: T0, montadoMs: null, montagemMs: null,
+    cartoes: function () { return espaco.querySelectorAll(".card").length; },
+    estado: function () { return { count: loja.count, total: loja.total, cols: V.cols, lista: V.lista, secao: secao, ficha: fx.id, linhas: nLinhas(), altura: espaco.offsetHeight }; },
+    focarCartao: focarCartao, tela: textoTela };
+
+  desenharFiltros();
+  if (!location.hash) { try { history.replaceState(null, "", "#/loja"); } catch (e) {} }
+  rota();
+  medidas(true);
+  recomecar();
+  setTimeout(anotarTela, 800);
+})();
+</script>
+</body>
+</html>

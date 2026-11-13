@@ -6933,6 +6933,7 @@ static void auto_after_download(Job* j) {
 #include "bg_teste.c" // glibren.47: a pagina de testes da Fase 0 (/teste)
 #include "bg_self.c"  // glibren.49: a atualizacao propria do payload, assinada (Fase 2)
 #include "bg_settings.c" // Fase 7: as configuracoes da Jobe no payload (uma fonte so)
+#include "bg_app.c"   // Fase 8: a Jobe web completa (/app), esqueleto; convive com a pagina do celular
 // glibren.49: o /health diz se o payload no ar foi posto de lado ("Voltar ao payload embutido"): o app sobe o embutido.
 static void self_health(int* replace) {
   self_init();
@@ -6954,6 +6955,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (self_monitor_route(fd, r)) return; // glibren.49: /api/payload (versao do payload, atualizar, voltar ao embutido)
   if (settings_monitor_route(fd, r)) return; // Fase 7: /api/settings (monitor_allowed)
   if (teste_monitor_route(fd, r)) return; // glibren.47: /teste e /api/teste (testes da Fase 0)
+  if (app_monitor_route(fd, r)) return;   // Fase 8: /app (a Jobe web completa; so usa as rotas de sempre)
   if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {
     monitor_send(fd, 200, "text/html; charset=utf-8", BG_MONITOR_HTML, BG_MONITOR_HTML_SIZE);

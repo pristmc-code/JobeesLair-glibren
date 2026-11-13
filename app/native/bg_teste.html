@@ -477,6 +477,9 @@ function results() {
   lines.push("Jobee'sLair /teste (Fase 0) " + new Date().toISOString());
   lines.push("navegador: " + navigator.userAgent);
   lines.push("janela: " + window.innerWidth + "x" + window.innerHeight + ", tela " + screen.width + "x" + screen.height + ", dpr " + (window.devicePixelRatio || 1));
+  // Fase 8: as medidas que a Jobe web completa (/app) guardou nesta origem (area util, colunas, tela cheia)
+  var app = null; try { app = localStorage.getItem("jobe.app.tela"); } catch (e) {}
+  if (app) lines.push("[/app] " + String(app).slice(0, 2000).split("\n").join(" | "));
   lines.push("[1 tela cheia] " + (R.fullscreen ? R.fullscreen.method + ": " + R.fullscreen.result + " | antes: " + R.fullscreen.before + " | depois: " + R.fullscreen.after + (R.fullscreen.change ? " | eventos: " + R.fullscreen.change : "") : "nao feito"));
   var pads = Object.keys(g.seen);
   lines.push("[2 controle] gamepad api: " + (g.api === undefined ? "nao feito" : g.api ? "sim" : "nao") + "; controles: " + (pads.length ? pads.map(function (id) { var s = g.seen[id]; return id + " (mapping " + s.mapping + ", " + s.buttons + " botoes, " + s.axes + " eixos)"; }).join("; ") : "nenhum") +
