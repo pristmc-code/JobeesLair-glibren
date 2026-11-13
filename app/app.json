@@ -32,6 +32,6 @@
   "filesystemAccess": "console",
   "networking": true,
   "video": true,
-  "userAgent": "JobeesLair/0.5.5-glibren.49 (PS5)",
+  "userAgent": "JobeesLair/0.5.5-glibren.50 (PS5)",
   "timeoutSeconds": 0
 }

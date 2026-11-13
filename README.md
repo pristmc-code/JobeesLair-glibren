@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.50**: Phone page: per-device pairing with a 6-digit code shown on the TV (JobeControle and the phone ask for it once); the old PIN keeps working until turned off; "Paired devices" in Settings > Downloads. Download payload 1.34.0.
 > **glibren.49**: Download payload: updates itself with signed releases (bg-downloader-*), switches only when idle, falls back to the previous or built-in one; "Back to the built-in payload" in Settings > About and on the phone page. Homebrew: the six darkxex apps hidden in glibren.48 are back, each with an informative line.
 > **glibren.48**: Homebrew: also lists darkxex's PS5 Homebrew Catalog (one entry per app, the newer version, "darkxex" on the card; files checked by the catalog's Ed25519 signature and SHA-256); switch in Settings > Catalog feeds > Homebrew.
 > **glibren.47**: Smaller image: the catalog's releases and store pages ship as two pack files read one item at a time (530 MB -> under 250 MB); new /teste page on the phone page (full screen, controller, big store, memory, rest mode).

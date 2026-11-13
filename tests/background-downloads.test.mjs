@@ -8,6 +8,13 @@ const { createBackgroundDownloads, PAYLOAD_API } = await import('../app/state/ba
 const TOKEN = 'a'.repeat(64);
 const MiB = 1024 * 1024;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// glibren.50: espera uma condicao pelo relogio monotonico (o Date.now() do WSL anda devagar sob carga e um prazo fixo de
+// 250 ms falhava com a suite inteira rodando); o prazo so vale para o teste nao ficar preso.
+async function until(check, what, ms = 10000) {
+  for (const end = performance.now() + ms; performance.now() < end; await wait(5)) if (check()) return;
+  assert.fail(`timed out waiting for ${what}`);
+}
+const delivered = (payload) => payload.calls.some((call) => call.method === 'POST' && call.path === '/jobs');
 
 // Um payload falso: guarda os jobs e responde a API (GET /health, GET /jobs, POST /jobs, /secret, acoes).
 function fakePayload({ up = true, pid = 7 } = {}) {
@@ -202,10 +209,12 @@ test('o payload que para de responder: o app continua sozinho do ultimo checkpoi
   const payload = fakePayload();
   const engine = fakeEngine();
   make(payload, engine).enqueue(queueOptions());
-  await wait(30);
+  await until(() => delivered(payload), 'o job entregue ao payload');
+  assert.equal(engine.started.length, 0);
   payload.up = false;
-  await wait(250);
-  assert.equal(engine.started.length, 1);
+  await until(() => engine.started.length > 0, 'o app assumir do checkpoint');
+  await wait(50);
+  assert.equal(engine.started.length, 1, 'uma vez so');
 });
 
 // glibren.42 (A2): calado mas vivo (a parcial ainda cresce), o payload continua dono do arquivo; o app so assume quando
@@ -217,13 +226,14 @@ test('o payload calado que ainda grava a parcial continua com ela; o app so assu
   payload.fs.stat = (path) => path.endsWith('.part') ? { size: growing ? (size += 7) : size } : null;
   const engine = fakeEngine();
   make(payload, engine).enqueue(queueOptions());
-  await wait(30);
+  await until(() => delivered(payload), 'o job entregue ao payload');
   payload.up = false;
   await wait(400);
   assert.equal(engine.started.length, 0, 'vivo e gravando: o app nao escreve na mesma parcial');
   growing = false;
-  await wait(400);
-  assert.equal(engine.started.length, 1, 'a parcial parou: o app continua do checkpoint');
+  await until(() => engine.started.length > 0, 'a parcial parada: o app continua do checkpoint');
+  await wait(50);
+  assert.equal(engine.started.length, 1, 'a parcial parou: o app continua do checkpoint (uma vez)');
 });
 
 test('"Baixar pelo app" sem resposta do payload que ainda grava: ele fica com o download', async () => {

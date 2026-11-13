@@ -24,15 +24,29 @@ const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url)
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-self-'));
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
 const source = path.join(repo, 'app/native/bg_downloader.c');
-// As versoes do payload usadas nos testes (o "base" e o embutido do app: o BG_VERSION do fonte).
+// As versoes do payload usadas nos testes, relativas ao fonte (glibren.50: nada fixo, o BG_VERSION/BG_API sobem a cada
+// versao): "base" e o embutido do app (o BG_VERSION do fonte); NEWER uma correcao dele; OLDER uma versao anterior; HIGH
+// uma versao bem mais nova (com api acima: compativel ou exigindo app novo; ou com api abaixo).
+const SOURCE_TEXT = readFileSync(source, 'utf8');
+const BASE_VERSION = /#define BG_VERSION "([^"]+)"/.exec(SOURCE_TEXT)[1];
+const BASE_API = Number(/#define BG_API (\d+)/.exec(SOURCE_TEXT)[1]);
+const BASE_MIN_APP_API = Number(/#define BG_MIN_APP_API (\d+)/.exec(SOURCE_TEXT)[1]);
+const [MAJ, MID, MIN] = BASE_VERSION.split('.').map(Number);
+const NEWER = `${MAJ}.${MID}.${MIN + 5}`;
+const OLDER = `${MAJ}.${MID - 1}.9`;
+const EMBEDDED_NEWER = `${MAJ}.${MID}.${MIN + 7}`; // uma Jobe nova com o embutido acima do NEWER
+const HIGH = `${MAJ}.${MID + 6}.0`;
+const UP = BASE_API + 2;
 const VARIANTS = {
   base: [],
-  v1335: ['-DBG_VERSION="1.33.5"'],
-  v1329: ['-DBG_VERSION="1.32.9"'],
-  api35min33: ['-DBG_VERSION="1.40.0"', '-DBG_API=35', '-DBG_MIN_APP_API=33'],
-  api35min34: ['-DBG_VERSION="1.40.0"', '-DBG_API=35', '-DBG_MIN_APP_API=34'],
-  api32: ['-DBG_VERSION="1.40.0"', '-DBG_API=32', '-DBG_MIN_APP_API=32']
+  newer: [`-DBG_VERSION="${NEWER}"`],
+  older: [`-DBG_VERSION="${OLDER}"`],
+  upCompat: [`-DBG_VERSION="${HIGH}"`, `-DBG_API=${UP}`, `-DBG_MIN_APP_API=${BASE_API}`],
+  upNeedsApp: [`-DBG_VERSION="${HIGH}"`, `-DBG_API=${UP}`, `-DBG_MIN_APP_API=${BASE_API + 1}`],
+  apiDown: [`-DBG_VERSION="${HIGH}"`, `-DBG_API=${BASE_API - 1}`, `-DBG_MIN_APP_API=${BASE_API - 1}`]
 };
+// Um texto exato dentro de uma RegExp.
+const rx = (text) => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 const bin = (name) => path.join(dir, `bgdl-${name}`);
 const compile = (name, flags) => new Promise((resolve) => {
   const child = spawn(compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', ...flags, '-o', bin(name), source, '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -49,8 +63,7 @@ if (!skip) {
   writeFileSync(path.join(dir, 'bad.c'), 'int main(void) { return 3; }\n');
   if (!skip && spawnSync(compiler, ['-o', bin('bad'), path.join(dir, 'bad.c')]).status !== 0) skip = 'the bad stand-in did not compile';
 }
-const BASE_VERSION = /#define BG_VERSION "([^"]+)"/.exec(readFileSync(source, 'utf8'))[1];
-const VERSION_OF = { base: BASE_VERSION, v1335: '1.33.5', v1329: '1.32.9', api35min33: '1.40.0', api35min34: '1.40.0', api32: '1.40.0', bad: '1.40.0' };
+const VERSION_OF = { base: BASE_VERSION, newer: NEWER, older: OLDER, upCompat: HIGH, upNeedsApp: HIGH, apiDown: HIGH, bad: HIGH };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha = (data) => createHash('sha256').update(data).digest('hex');
@@ -64,7 +77,7 @@ const KEY = keyPair();
 const OTHER = keyPair();
 
 // Os 3 arquivos de uma versao: o manifesto (texto exato) e a assinatura (128 hex + \n).
-function release(elf, { version, api = 33, minAppApi = api, key = KEY, sha256 = sha(elf), size = elf.length, domain = DOMAIN } = {}) {
+function release(elf, { version, api = BASE_API, minAppApi = api, key = KEY, sha256 = sha(elf), size = elf.length, domain = DOMAIN } = {}) {
   const manifest = `${JSON.stringify({ format: 1, name: 'bg-downloader', version, api, minAppApi, size, sha256 }, null, 2)}\n`;
   const signature = `${sign(null, Buffer.concat([Buffer.from(domain), Buffer.from(manifest)]), key.privateKey).toString('hex')}\n`;
   return { elf, manifest, signature };
@@ -72,8 +85,8 @@ function release(elf, { version, api = 33, minAppApi = api, key = KEY, sha256 = 
 const releaseOf = (name, extra = {}) => {
   const elf = readFileSync(bin(name));
   const flags = VARIANTS[name] ?? [];
-  const api = Number(/-DBG_API=(\d+)/.exec(flags.join(' '))?.[1] ?? 33);
-  const minAppApi = Number(/-DBG_MIN_APP_API=(\d+)/.exec(flags.join(' '))?.[1] ?? api);
+  const api = Number(/-DBG_API=(\d+)/.exec(flags.join(' '))?.[1] ?? BASE_API);
+  const minAppApi = Number(/-DBG_MIN_APP_API=(\d+)/.exec(flags.join(' '))?.[1] ?? (name === 'base' || name === 'newer' || name === 'older' ? BASE_MIN_APP_API : api));
   return release(elf, { version: VERSION_OF[name], api, minAppApi, ...extra });
 };
 
@@ -156,7 +169,7 @@ async function loaderFor(ws) {
 }
 
 let run = 0;
-async function workspace({ app = { api: 33, embedded: BASE_VERSION } } = {}) {
+async function workspace({ app = { api: BASE_API, embedded: BASE_VERSION } } = {}) {
   const base = path.join(dir, `ws${++run}`);
   mkdirSync(path.join(base, 'state'), { recursive: true });
   mkdirSync(path.join(base, 'disk/homebrew'), { recursive: true });
@@ -234,7 +247,7 @@ test('glibren.49: as versoes do payload compilam sem avisos; o marcador e o cont
 
 test('assinatura valida: baixa, confere, grava (.part -> renomeia), troca quando ocioso e a proxima subida escolhe o baixado', { skip }, async () => {
   const ws = await workspace();
-  const rel = releaseOf('v1335');
+  const rel = releaseOf('newer');
   publish(rel);
   const first = ws.start();
   await ws.version(BASE_VERSION);
@@ -243,30 +256,30 @@ test('assinatura valida: baixa, confere, grava (.part -> renomeia), troca quando
   assert.equal(answer.data.version, BASE_VERSION);
   assert.equal(answer.data.source, 'embedded');
   // O novo sobe pelo elfldr e pede a saida limpa do antigo.
-  const health = await ws.version('1.33.5');
-  assert.equal(health.api, 33);
-  assert.equal(health.minAppApi, 33);
+  const health = await ws.version(NEWER);
+  assert.equal(health.api, BASE_API);
+  assert.equal(health.minAppApi, BASE_MIN_APP_API);
   assert.equal(await exited(first), 0, 'o antigo saiu limpo (SIGTERM do novo)');
   assert.deepEqual(ws.loader.got, [sha(rel.elf)], 'o elfldr recebeu o ELF baixado, uma vez');
   for (const ext of ['elf', 'json', 'json.sig']) assert.ok(existsSync(path.join(ws.state, `bg-downloader.${ext}`)), ext);
   assert.equal(readFileSync(path.join(ws.state, 'bg-downloader.json'), 'utf8'), rel.manifest, 'o manifesto exato');
   assert.ok(!existsSync(path.join(ws.state, 'bg-downloader.part')));
   assert.ok(gh.asked.some((p) => p.startsWith('/cdn/')), 'o ELF veio pelo redirect');
-  assert.match(ws.log(), /self-update: 1\.33\.5 pronta/);
+  assert.match(ws.log(), rx(`self-update: ${NEWER} pronta`));
   const self = await ws.self();
   assert.equal(self.source, 'downloaded');
-  assert.equal(self.installed, '1.33.5');
+  assert.equal(self.installed, NEWER);
   // confirmada: as tentativas zeram
-  await ws.until(() => JSON.stringify(ws.saved().strikes ?? {}) === '{}' && ws.log().includes('payload 1.33.5 confirmado'), 'confirmacao');
+  await ws.until(() => JSON.stringify(ws.saved().strikes ?? {}) === '{}' && ws.log().includes(`payload ${NEWER} confirmado`), 'confirmacao');
   // A proxima subida (o app manda o embutido): ele passa a vez para o baixado.
   for (const child of [...children]) child.kill('SIGTERM');
   await ws.until(async () => !(await ws.health()), 'o payload parar');
   ws.loader.got.length = 0;
   const again = ws.start();
-  await ws.version('1.33.5');
+  await ws.version(NEWER);
   assert.equal(await exited(again), 0);
   assert.equal(ws.loader.got.length, 1);
-  assert.match(ws.log(), /passando a vez para o payload baixado 1\.33\.5 \(api 33; tentativa 1 de 2; este e o 1\.33\.0\)/);
+  assert.match(ws.log(), rx(`passando a vez para o payload baixado ${NEWER} (api ${BASE_API}; tentativa 1 de 2; este e o ${BASE_VERSION})`));
 });
 
 test('.sig ausente, de outra chave ou sem o prefixo de dominio: recusado, nada gravado; no disco, ignorado na subida', { skip }, async () => {
@@ -274,23 +287,23 @@ test('.sig ausente, de outra chave ou sem o prefixo de dominio: recusado, nada g
   ws.start();
   await ws.version(BASE_VERSION);
   const cases = [
-    ['sem .sig', { ...releaseOf('v1335'), signature: undefined }],
-    ['outra chave', releaseOf('v1335', { key: OTHER })],
-    ['sem o prefixo', releaseOf('v1335', { domain: '' })],
-    ['manifesto mexido', (() => { const r = releaseOf('v1335'); return { ...r, manifest: r.manifest.replace('"api": 33', '"api": 34') }; })()]
+    ['sem .sig', { ...releaseOf('newer'), signature: undefined }],
+    ['outra chave', releaseOf('newer', { key: OTHER })],
+    ['sem o prefixo', releaseOf('newer', { domain: '' })],
+    ['manifesto mexido', (() => { const r = releaseOf('newer'); return { ...r, manifest: r.manifest.replace(`"api": ${BASE_API}`, `"api": ${BASE_API + 1}`) }; })()]
   ];
   for (const [what, rel] of cases) {
     gh.files = {};
     publish(rel);
     await ws.call('POST', '/self-update', { action: 'check', force: true });
     const s = await ws.phase(['failed'], 20000);
-    assert.match(s.error, /^1\.33\.5: signature$/, what);
+    assert.equal(s.error, `${NEWER}: signature`, what);
     assert.ok(!existsSync(path.join(ws.state, 'bg-downloader.elf')), `${what}: nada gravado`);
   }
   assert.ok(!gh.asked.some((p) => p.startsWith('/cdn/')), 'o ELF nunca foi baixado');
   // Instalado a mao com a assinatura de outra chave: a subida ignora (nao passa a vez).
   for (const child of [...children]) child.kill('SIGKILL');
-  ws.install(releaseOf('v1335', { key: OTHER }));
+  ws.install(releaseOf('newer', { key: OTHER }));
   ws.start();
   await ws.version(BASE_VERSION);
   assert.deepEqual(ws.loader.got, []);
@@ -301,21 +314,21 @@ test('sha256 ou tamanho errados: recusado, o .part some e nada entra no lugar; E
   const ws = await workspace();
   ws.start();
   await ws.version(BASE_VERSION);
-  publish(releaseOf('v1335', { sha256: sha(Buffer.from('outro')) }));
+  publish(releaseOf('newer', { sha256: sha(Buffer.from('outro')) }));
   await ws.call('POST', '/self-update', { action: 'check', force: true });
   assert.match((await ws.phase(['failed'])).error, /sha256 mismatch/);
   assert.ok(!existsSync(path.join(ws.state, 'bg-downloader.part')) && !existsSync(path.join(ws.state, 'bg-downloader.elf')));
   gh.files = {};
-  const real = readFileSync(bin('v1335'));
-  publish(release(real, { version: '1.33.5', size: real.length - 1000, sha256: sha(real.subarray(0, real.length - 1000)) }));
+  const real = readFileSync(bin('newer'));
+  publish(release(real, { version: NEWER, size: real.length - 1000, sha256: sha(real.subarray(0, real.length - 1000)) }));
   await ws.call('POST', '/self-update', { action: 'check', force: true });
   assert.match((await ws.phase(['failed'])).error, /bigger than the manifest/);
   assert.ok(!existsSync(path.join(ws.state, 'bg-downloader.elf')));
   assert.deepEqual(ws.loader.got, [], 'nenhuma troca');
   // No disco: manifesto e assinatura validos, ELF trocado.
   for (const child of [...children]) child.kill('SIGKILL');
-  const rel = releaseOf('v1335');
-  ws.install({ ...rel, elf: readFileSync(bin('v1329')) });
+  const rel = releaseOf('newer');
+  ws.install({ ...rel, elf: readFileSync(bin('older')) });
   ws.start();
   await ws.version(BASE_VERSION);
   assert.deepEqual(ws.loader.got, []);
@@ -326,7 +339,7 @@ test('versao mais velha ou igual a embutida: nem baixada nem usada', { skip }, a
   const ws = await workspace();
   ws.start();
   await ws.version(BASE_VERSION);
-  publish(releaseOf('v1329'));
+  publish(releaseOf('older'));
   publish(release(readFileSync(bin('base')), { version: BASE_VERSION }));
   await ws.call('POST', '/self-update', { action: 'check', force: true });
   const s = await ws.phase(['current']);
@@ -334,7 +347,7 @@ test('versao mais velha ou igual a embutida: nem baixada nem usada', { skip }, a
   assert.ok(!gh.asked.some((p) => p.includes('/releases/download/')), 'nenhum manifesto pedido');
   // Instaladas no disco (validas): a subida nao passa a vez.
   for (const child of [...children]) child.kill('SIGKILL');
-  ws.install(releaseOf('v1329'));
+  ws.install(releaseOf('older'));
   ws.install(release(readFileSync(bin('base')), { version: BASE_VERSION }), 'bg-downloader.prev');
   ws.start();
   await ws.version(BASE_VERSION);
@@ -342,45 +355,45 @@ test('versao mais velha ou igual a embutida: nem baixada nem usada', { skip }, a
   assert.deepEqual(ws.loader.got, []);
   // e um app com embutido mais novo que o baixado (Jobe nova): o baixado tambem nao vale
   for (const child of [...children]) child.kill('SIGKILL');
-  ws.install(releaseOf('v1335'));
-  writeFileSync(path.join(ws.state, 'app.json'), JSON.stringify({ api: 33, embedded: '1.33.7' }));
+  ws.install(releaseOf('newer'));
+  writeFileSync(path.join(ws.state, 'app.json'), JSON.stringify({ api: BASE_API, embedded: EMBEDDED_NEWER }));
   ws.start();
   await ws.version(BASE_VERSION);
   await wait(300);
-  assert.deepEqual(ws.loader.got, [], '1.33.5 < 1.33.7 do app');
+  assert.deepEqual(ws.loader.got, [], `${NEWER} < ${EMBEDDED_NEWER} do app`);
 });
 
 test('nao sobe 2x: vira ruim e a anterior sobe; sem anterior, o embutido; nada de laco', { skip }, async () => {
   const ws = await workspace();
-  const bad = release(readFileSync(bin('bad')), { version: '1.40.0' });
+  const bad = release(readFileSync(bin('bad')), { version: HIGH });
   ws.install(bad);
-  ws.install(releaseOf('v1335'), 'bg-downloader.prev');
-  // 1a e 2a subidas: passa a vez para a 1.40.0, que cai.
+  ws.install(releaseOf('newer'), 'bg-downloader.prev');
+  // 1a e 2a subidas: passa a vez para a HIGH, que cai.
   for (const n of [1, 2]) {
     const child = ws.start();
     assert.equal(await exited(child), 0, `subida ${n}: passou a vez`);
     await ws.until(() => ws.loader.got.length === n, `elfldr ${n}`);
-    assert.equal(ws.saved().strikes['1.40.0'], n);
+    assert.equal(ws.saved().strikes[HIGH], n);
     await wait(200);
     assert.equal(await ws.health(), null, 'a versao ruim nao responde');
   }
-  // 3a: marca a 1.40.0 como ruim e passa a vez para a anterior (1.33.5), que sobe e confirma.
+  // 3a: marca a HIGH como ruim e passa a vez para a anterior (NEWER), que sobe e confirma.
   const third = ws.start();
-  await ws.version('1.33.5');
+  await ws.version(NEWER);
   assert.equal(await exited(third), 0);
-  assert.deepEqual(ws.saved().bad, ['1.40.0']);
-  assert.match(ws.log(), /versao 1\.40\.0 marcada como ruim \(nao subiu em 2 tentativas\)/);
-  await ws.until(() => !('1.33.5' in (ws.saved().strikes ?? {})), 'confirmacao da 1.33.5');
+  assert.deepEqual(ws.saved().bad, [HIGH]);
+  assert.match(ws.log(), rx(`versao ${HIGH} marcada como ruim (nao subiu em 2 tentativas)`));
+  await ws.until(() => !(NEWER in (ws.saved().strikes ?? {})), `confirmacao da ${NEWER}`);
   const self = await ws.self();
-  assert.deepEqual(self.bad, ['1.40.0']);
+  assert.deepEqual(self.bad, [HIGH]);
   // Sem anterior: so a ruim no disco -> o embutido fica.
   const ws2 = await workspace();
   ws2.install(bad);
-  writeFileSync(path.join(ws2.state, 'self-update.json'), JSON.stringify({ bad: [], strikes: { '1.40.0': 2 } }));
+  writeFileSync(path.join(ws2.state, 'self-update.json'), JSON.stringify({ bad: [], strikes: { [HIGH]: 2 } }));
   ws2.start();
   await ws2.version(BASE_VERSION);
   assert.deepEqual(ws2.loader.got, [], 'nao manda a ruim de novo');
-  assert.deepEqual(ws2.saved().bad, ['1.40.0']);
+  assert.deepEqual(ws2.saved().bad, [HIGH]);
   // A procura tambem nao baixa a ruim de novo.
   publish(bad);
   await ws2.call('POST', '/self-update', { action: 'check', force: true });
@@ -390,7 +403,7 @@ test('nao sobe 2x: vira ruim e a anterior sobe; sem anterior, o embutido; nada d
 
 test('troca segurada com download gravando ou conversao rodando; sai quando fica ocioso', { skip }, async () => {
   const ws = await workspace();
-  publish(releaseOf('v1335'));
+  publish(releaseOf('newer'));
   ws.start();
   await ws.version(BASE_VERSION);
   // um download rodando (servido devagar)
@@ -403,15 +416,15 @@ test('troca segurada com download gravando ou conversao rodando; sai quando fica
   assert.equal(waiting.waiting, 'download');
   await wait(1500);
   assert.deepEqual(ws.loader.got, [], 'nao troca com download gravando');
-  assert.match(ws.log(), /troca para 1\.33\.5 esperando \(download em andamento\)/);
+  assert.match(ws.log(), rx(`troca para ${NEWER} esperando (download em andamento)`));
   assert.equal((await ws.call('POST', `/jobs/${job.data.id}/cancel`)).status, 200);
   // Sem download: troca.
-  await ws.version('1.33.5');
+  await ws.version(NEWER);
   assert.equal(ws.loader.got.length, 1);
 
   // Uma conversao rodando (devagar: BGDL_CONVERT_DELAY_MS) segura a troca do mesmo jeito.
   const ws2 = await workspace();
-  publish(releaseOf('v1335'));
+  publish(releaseOf('newer'));
   ws2.env.BGDL_CONVERT_DELAY_MS = '300';
   ws2.start();
   await ws2.version(BASE_VERSION);
@@ -428,31 +441,31 @@ test('troca segurada com download gravando ou conversao rodando; sai quando fica
   await wait(1200);
   assert.deepEqual(ws2.loader.got, [], 'nao troca com conversao rodando');
   assert.equal((await ws2.call('POST', `/convert/${conv.data.id}/cancel`)).status, 200);
-  await ws2.version('1.33.5');
+  await ws2.version(NEWER);
 });
 
 test('compatibilidade de API: api maior so com minAppApi <= a do app; api menor recusada; vale na procura e na subida', { skip }, async () => {
   const ws = await workspace();
   ws.start();
   await ws.version(BASE_VERSION);
-  publish(releaseOf('api35min34'));
+  publish(releaseOf('upNeedsApp'));
   await ws.call('POST', '/self-update', { action: 'check', force: true });
   const needs = await ws.phase(['needs-app']);
-  assert.match(needs.error, /1\.40\.0: needs-app/);
+  assert.match(needs.error, rx(`${HIGH}: needs-app`));
   assert.ok(!gh.asked.some((p) => p.startsWith('/cdn/')), 'nao baixa o que o app nao usa');
   gh.files = {};
-  publish(releaseOf('api32'));
+  publish(releaseOf('apiDown'));
   await ws.call('POST', '/self-update', { action: 'check', force: true });
-  assert.match((await ws.phase(['failed'])).error, /1\.40\.0: api/);
+  assert.match((await ws.phase(['failed'])).error, rx(`${HIGH}: api`));
   gh.files = {};
-  publish(releaseOf('api35min33'));
+  publish(releaseOf('upCompat'));
   await ws.call('POST', '/self-update', { action: 'check', force: true });
-  const health = await ws.version('1.40.0');
-  assert.equal(health.api, 35);
-  assert.equal(health.minAppApi, 33);
-  // Na subida: um app (api 33) com o baixado api35/min34 no disco nao passa a vez; com o app api 34, passa.
+  const health = await ws.version(HIGH);
+  assert.equal(health.api, UP);
+  assert.equal(health.minAppApi, BASE_API);
+  // Na subida: um app (api BASE_API) com o baixado que exige app mais novo (minAppApi BASE_API + 1) no disco nao passa a vez.
   const ws2 = await workspace();
-  ws2.install(releaseOf('api35min34'));
+  ws2.install(releaseOf('upNeedsApp'));
   ws2.start();
   await ws2.version(BASE_VERSION);
   await wait(300);
@@ -462,20 +475,20 @@ test('compatibilidade de API: api maior so com minAppApi <= a do app; api menor 
 
 test('"Voltar ao payload embutido": pagina do celular (com o PIN) e API do app; o baixado vira ruim e o embutido volta', { skip }, async () => {
   const ws = await workspace();
-  ws.install(releaseOf('v1335'));
+  ws.install(releaseOf('newer'));
   copyFileSync(bin('base'), path.join(ws.state, 'embedded.elf')); // a copia que o app deixa
   ws.start();
-  await ws.version('1.33.5');
+  await ws.version(NEWER);
   assert.equal((await page(ws, '/api/payload')).status, 401, 'sem o PIN');
   assert.equal((await page(ws, '/api/payload/revert', { method: 'POST' })).status, 401);
   const session = await unlock(ws);
   const status = await page(ws, '/api/payload', { session });
   assert.equal(status.status, 200);
   assert.equal(status.data.source, 'downloaded');
-  assert.equal(status.data.version, '1.33.5');
+  assert.equal(status.data.version, NEWER);
   const reverted = await page(ws, '/api/payload/revert', { method: 'POST', session });
   assert.equal(reverted.status, 200);
-  assert.deepEqual(reverted.data.bad, ['1.33.5']);
+  assert.deepEqual(reverted.data.bad, [NEWER]);
   // troca pelo embedded.elf quando ocioso
   const health = await ws.version(BASE_VERSION);
   assert.equal(health.replace, false);
@@ -490,12 +503,12 @@ test('"Voltar ao payload embutido": pagina do celular (com o PIN) e API do app; 
   assert.equal(ws.loader.got.length, got);
   // Pela API do app, sem embedded.elf: marca e o /health do baixado diz "replace" (o app manda o embutido).
   const ws2 = await workspace();
-  ws2.install(releaseOf('v1335'));
+  ws2.install(releaseOf('newer'));
   ws2.start();
-  await ws2.version('1.33.5');
+  await ws2.version(NEWER);
   const r = await ws2.call('POST', '/self-update', { action: 'revert' });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.data.bad, ['1.33.5']);
+  assert.deepEqual(r.data.bad, [NEWER]);
   assert.equal((await ws2.health()).replace, true);
   assert.equal((await ws2.call('POST', '/self-update', { action: 'nada' })).status, 400);
 });
@@ -508,16 +521,16 @@ test('publicar_bg.py: manifesto + .sig que o payload aceita (chave de teste gera
   const pem = path.join(dir, 'teste.pem');
   writeFileSync(pem, KEY.privateKey.export({ format: 'pem', type: 'pkcs8' }));
   const out = path.join(dir, 'saida-bg');
-  const r = spawnSync('python3', [tool, bin('v1335'), '--saida', out, '--chave', pem, '--chave-publica', KEY.hex, '--sem-gh'], { encoding: 'utf8' });
+  const r = spawnSync('python3', [tool, bin('newer'), '--saida', out, '--chave', pem, '--chave-publica', KEY.hex, '--sem-gh'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const rel = { elf: readFileSync(path.join(out, 'bg-downloader.elf')), manifest: readFileSync(path.join(out, 'bg-downloader.json'), 'utf8'), signature: readFileSync(path.join(out, 'bg-downloader.json.sig'), 'utf8') };
-  assert.deepEqual(JSON.parse(rel.manifest), { format: 1, name: 'bg-downloader', version: '1.33.5', api: 33, minAppApi: 33, size: rel.elf.length, sha256: sha(rel.elf) });
+  assert.deepEqual(JSON.parse(rel.manifest), { format: 1, name: 'bg-downloader', version: NEWER, api: BASE_API, minAppApi: BASE_MIN_APP_API, size: rel.elf.length, sha256: sha(rel.elf) });
   const ws = await workspace();
   publish(rel);
   ws.start();
   await ws.version(BASE_VERSION);
   await ws.call('POST', '/self-update', { action: 'check', force: true });
-  await ws.version('1.33.5');
+  await ws.version(NEWER);
   // e o --conferir do script confere os arquivos baixados
   const c = spawnSync('python3', [tool, '--conferir', out, '--chave-publica', KEY.hex], { encoding: 'utf8' });
   assert.equal(c.status, 0, c.stdout + c.stderr);

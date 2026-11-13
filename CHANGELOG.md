@@ -6,6 +6,22 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.50** (fork): per-device pairing for the phone page (Orbit model, `app/native/bg_pair.c`). A phone, PC or
+  the JobeControle app asks for a code once; the PS5 shows a 6-digit code in a notification (in the player's language,
+  `pairText` in POST /config) and on Jobe's screen (`ui/PairCodeNotice.jsx`, reads GET /pair every 3 s without taking
+  the focus); the device types it and gets a token only it holds (64 hex, `X-Session` or `Authorization: Bearer`).
+  `/data/JobeesLair/bg/devices.json` (0600) keeps only the SHA-256, the name and the date. Constant-time checks, 5
+  tries, then a growing lock (30 s up to 15 min), a code lasts 2 min, at most one request every 10 s; the code and the
+  token never go to the log. 127.0.0.1 stays exempt only without an `Origin` from another site. Every page route that
+  changes something or shows sensitive data goes through `monitor_allowed` (list in `bg_pair.c`), including the .49
+  payload update/revert. The old single PIN keeps working until it is turned off ("Accept the old PIN" in Settings >
+  Downloads or on the page); turning it off drops its sessions at once. "Paired devices" in Settings > Downloads and on
+  the page, with Remove (the token stops working at once). 14 languages. `BG_API`/`PAYLOAD_API` 34, payload 1.34.0
+  (`BG_MIN_APP_API` stays 33: the app's local API only gained routes).
+- Tests: `tests/bg-pairing.test.mjs` (9) and `tests/render/pairing.mjs`; `tests/bg-self-update.test.mjs` derives every
+  version and API from the source (no fixed 1.33.x), so the next `BG_VERSION` bump does not break it. Flaky under a
+  loaded machine: the background-downloads checkpoint tests now wait for the condition on the monotonic clock (no fixed
+  250/400 ms), and the link-health integration deadline is 1 s instead of 100 ms.
 - **glibren.49** (fork): the download payload updates itself, signed, without a new Jobe image (phase 2 of the Orbit
   model). `app/native/bg_self.c`: releases tagged `bg-downloader-<version>` (never latest) carry `bg-downloader.elf`,
   `bg-downloader.json` (version, `api`, `minAppApi`, size, SHA-256) and `bg-downloader.json.sig` (Ed25519 of

@@ -386,12 +386,13 @@ test('integration: a local server answering 200, 302, 404, 410, 503-then-200, 42
   const names = ['ok', 'moved', 'gone', 'removed', 'busy', 'landing', 'silent', 'limited'];
   const releases = names.map((name) => direct(name, `${base}/${name}.pkg`));
   let saved = null;
-  // Real time, a hundred times faster: a 10 s deadline is 100 ms, the 2 s and 4 s backoffs 20 and 40 ms.
+  // Real time, faster: the 2 s and 4 s backoffs are 20 and 40 ms. glibren.50: the 10 s deadline is 1 s (it was 100 ms,
+  // and with the whole suite running a real answer from this server sometimes took longer: "ok" read as unreachable).
   const health = createLinkHealth({
     http: nodeHttp(),
     store: { get: () => saved, set: (value) => { saved = value; } },
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms / 100)),
-    timeout: (fn, ms) => { const id = setTimeout(fn, ms / 100); return () => clearTimeout(id); },
+    timeout: (fn, ms) => { const id = setTimeout(fn, ms / 10); return () => clearTimeout(id); },
     log: () => {},
   });
   const summary = await health.checkNow('game', releases);
