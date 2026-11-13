@@ -6,6 +6,20 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.53** (fork): the full Jobe on the web (Phase 8), a new page served by the download payload at
+  `http://<PS5 IP>:34201/app`, next to the phone page (which gains an "Open the full Jobe" link under its header). Store
+  as a cover grid with search, filters and sort (virtual list, pages of 100 from `/api/store`), game page with sources and
+  Download, live downloads, and real Settings over `GET/POST /api/settings` (Phase 7: preferences editable with the
+  payload's checks, keys shown only as "configured ✓ …last4"). Layouts for phone (portrait and landscape), PC and the
+  PS5 browser (1540x700 with its frame, 1920x1080 full screen, 1232x560 at 125% zoom); controller (PS5 browser keys and
+  Gamepad API, with the cursor click echo handled) and keyboard, visible focus; device pairing for actions. All 14 Jobe
+  languages (`tools/web-app/textos.mjs` reuses the app's and the phone page's translations; Arabic and Urdu right to
+  left). On the PS5, "⛶ Full screen" asks glibren 0.9.20+ (same console, port 8765) to apply ps5-web-browser-fullscreen
+  through the payload (`GET/POST /api/app/telacheia`, paired device or the PS5 itself) and reopens `/app` where it was;
+  without glibren the button is hidden. Download payload 1.36.1; `BG_API` stays 36: the app's local API did not change
+  (only the payload's own page routes).
+- Tests: `tests/bg-app-page.test.mjs` (route, Host, real pairing flow, glibren bridge against a fake glibren, texts in
+  14 languages, Playwright against a fake API in 8 sizes with controller and keyboard).
 - **glibren.52** (fork): the store catalog is built inside the download payload (Phase 3, C core in
   `app/native/bg_catalog*.c`). A thread builds it from the bundled catalog (copied by the app to
   `/data/JobeesLair/catalog/bundled` with `FileSystem.copyAsync` on each new version, `state/catalog-payload.js`), the live
