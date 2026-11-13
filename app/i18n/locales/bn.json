@@ -1031,6 +1031,7 @@
   "settings.update.never": "এখনও যাচাই করা হয়নি।",
   "settings.update.ready": "সংস্করণ {version} প্রস্তুত। রিস্টার্ট করে ইনস্টল করতে নির্বাচন করুন।",
   "settings.update.row": "আপডেট খুঁজুন",
+  "settings.update.unsigned": "সংস্করণ {version}-এ কোনো বৈধ স্বাক্ষর নেই, তাই এটি ইনস্টল হবে না। Jobee'sLair এই সংস্করণেই থাকবে।",
   "settings.vibration": "ব্রাউজ করার সময় কম্পন",
   "settings.vibrationDetail": "সরানো, বেছে নেওয়া ও ফিরে যাওয়ার সময় হালকা কম্পন",
   "shadowMount.offAction": "এটি লোড করলে গেমটি দেখা যাবে। সবসময় চালু রাখতে জেলব্রেকের অটোলোডে যোগ করুন।",

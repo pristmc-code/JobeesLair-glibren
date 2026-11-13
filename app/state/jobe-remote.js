@@ -71,6 +71,8 @@ function createJobeRemote({ link = () => source, update, version, text = (key) =
         set({ phase: "current", detail: text("update.remote.current", { version }) });
         return;
       }
+      // glibren.46 (A-M1): sem a assinatura do glibren a versao nova nao e instalada; a Jobe fica na atual.
+      if (found.unsigned) return fail("unsigned", text("settings.update.unsigned", { version: found.version }));
       const installState = () => update.snapshot().install ?? {};
       if (!["ready", "armed"].includes(installState().phase) || installState().version !== found.version) {
         if (!update.download() && !["waiting", "downloading", "checking", "ready", "armed"].includes(installState().phase)) return fail("download-failed", installState().error || "");

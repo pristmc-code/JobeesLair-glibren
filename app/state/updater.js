@@ -12,6 +12,7 @@
 
 // 0.5.1: the image's name is the edition's (version.js IMAGE_NAME).
 import { IMAGE_NAME } from '../version.js';
+import { GLIBREN_PUBLIC_KEY, MANIFEST_NAME, SIGNATURE_NAME, signedAssets, verifyRelease } from './release-signature.js';
   var DAY_MS = 24 * 60 * 60 * 1e3;
   var HOUR_MS = 60 * 60 * 1e3;
   var NOTES_MAX = 1200;
@@ -70,6 +71,18 @@ import { IMAGE_NAME } from '../version.js';
     if (asset.browser_download_url !== url || !sha256 || !Number.isSafeInteger(size) || size <= 0 || size > MAX_ASSET) return null;
     return { url, size, sha256 };
   }
+  // glibren.46 (A-M1): os enderecos do manifesto assinado e da assinatura da release (state/release-signature.js),
+  // so quando os dois estao nela no caminho de download da propria release. Null sem eles.
+  function signingOf(release, repo) {
+    const urls = {};
+    for (const [key, name] of [["manifest", MANIFEST_NAME], ["signature", SIGNATURE_NAME]]) {
+      const url = `https://github.com/${repo}/releases/download/${encodeURIComponent(release.tag_name)}/${name}`;
+      const asset = Array.isArray(release?.assets) ? release.assets.find((item) => item?.name === name) : null;
+      if (!asset || asset.browser_download_url !== url) return null;
+      urls[key] = url;
+    }
+    return urls;
+  }
   // A release as the checker keeps it, or null when it is not one that can be offered. `assets` is set only
   // when both files are there and checkable.
   // glibren-tube-update: o mesmo repositorio publica versoes so do servico do YouTube (tags "tube-service-<versao>",
@@ -85,15 +98,47 @@ import { IMAGE_NAME } from '../version.js';
       url: releasePage(release.html_url, repo),
       notes: clean(release.body, NOTES_MAX).trim(),
       published: clean(release.published_at, 40),
-      assets: image && zip ? { image, zip } : null
+      assets: image && zip ? { image, zip } : null,
+      signing: signingOf(release, repo)
     };
   }
-  function createUpdateChecker({ http, store, version: version2, repo, now = () => Date.now() }) {
+  // glibren.46 (A-M1): `requireSignature`: so instala uma versao nova com o manifesto assinado pela chave do glibren
+  // (state/release-signature.js); sem ele, ou com assinatura invalida, a versao aparece com `unsigned` (o motivo) e sem
+  // `assets`, e nada a instala. Com a assinatura ok, `assets` leva o tamanho e o sha256 do manifesto assinado e
+  // `signed: true`.
+  function createUpdateChecker({ http, store, version: version2, repo, now = () => Date.now(), requireSignature = true, publicKey = GLIBREN_PUBLIC_KEY, log = (line) => console.log(`[update] ${line}`) }) {
     const feed = `https://api.github.com/repos/${repo}/releases/latest`;
     // What the last check found, if it is newer than this build.
     function known() {
       const latest = store.get().latest;
-      return latest && newer(latest.version, version2) ? latest : null;
+      if (!latest || !newer(latest.version, version2)) return null;
+      // Uma resposta guardada sem a assinatura conferida (de antes da .46, ou recusada) nunca e instalavel.
+      if (requireSignature && latest.assets && latest.signed !== true) return { ...latest, assets: null, signed: false, unsigned: latest.unsigned || "missing" };
+      return latest;
+    }
+    // Baixa um arquivo pequeno da release (o Http segue o redirect do download do GitHub): o texto, ou null num 404.
+    async function releaseText(url) {
+      const response = await http.request(url, { maxBytes: 16 * 1024 });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`${url.slice(url.lastIndexOf("/") + 1)} answered HTTP ${response.status}`);
+      return String(await response.text() ?? "");
+    }
+    // A release nova com a assinatura conferida, ou sem assets e com o motivo. Uma falha de rede lanca (a procura falha
+    // e tenta de novo depois, sem guardar nada).
+    async function secure(latest) {
+      if (!requireSignature || !latest?.assets || !newer(latest.version, version2)) return latest;
+      const refuse = (reason) => {
+        log(`${latest.version}: not installable, release signature ${reason}`);
+        return { ...latest, assets: null, signed: false, unsigned: reason };
+      };
+      if (!latest.signing) return refuse("missing");
+      const manifest = await releaseText(latest.signing.manifest);
+      const signature = manifest === null ? null : await releaseText(latest.signing.signature);
+      const verified = verifyRelease(manifest, signature, { publicKey, version: latest.version });
+      if (!verified.ok) return refuse(verified.reason);
+      const signed = signedAssets(latest, verified.manifest, ASSETS);
+      if (!signed.ok) return refuse(signed.reason);
+      return { ...latest, assets: signed.assets, signed: true, unsigned: "" };
     }
     async function latestAppRelease() {
       const response = await http.request(`https://api.github.com/repos/${repo}/releases?per_page=10`, { headers: { Accept: "application/vnd.github+json", "User-Agent": "JobeesLair" }, maxBytes: 1024 * 1024 });
@@ -121,6 +166,7 @@ import { IMAGE_NAME } from '../version.js';
         // glibren-tube-update: uma versao do servico do YouTube marcada como latest por engano esconderia a do app:
         // procura a mais recente do app (nem rascunho nem pre-release) nas ultimas da lista.
         if (isTubeServiceTag(release?.tag_name)) latest = await latestAppRelease();
+        latest = await secure(latest);
       }
       const checkedAt = now();
       store.set({ ...saved, checkedAt, latest });

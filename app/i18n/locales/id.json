@@ -1031,6 +1031,7 @@
   "settings.update.never": "Belum diperiksa.",
   "settings.update.ready": "Versi {version} siap. Pilih untuk memulai ulang dan memasangnya.",
   "settings.update.row": "Periksa pembaruan",
+  "settings.update.unsigned": "Versi {version} tidak memiliki tanda tangan yang valid, jadi tidak akan dipasang. Jobee'sLair tetap di versi ini.",
   "settings.vibration": "Getaran saat menjelajah",
   "settings.vibrationDetail": "Getaran ringan saat berpindah, memilih, dan kembali",
   "shadowMount.offAction": "Game muncul setelah kamu memuatnya. Tambahkan ke autoload jailbreak agar selalu aktif.",

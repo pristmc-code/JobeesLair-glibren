@@ -1031,6 +1031,7 @@
     "settings.update.never": "Not checked yet.",
     "settings.update.ready": "Version {version} is ready. Select to restart and install it.",
     "settings.update.row": "Check for updates",
+    "settings.update.unsigned": "Version {version} has no valid signature, so it won't be installed. Jobee'sLair stays on this version.",
     "settings.vibration": "Vibration while browsing",
     "settings.vibrationDetail": "Short haptic pulse on move, select and back",
     "shadowMount.offAction": "The game shows up once you load it. Add it to your jailbreak's autoload to keep it on.",

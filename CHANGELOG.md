@@ -6,6 +6,17 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.46** (fork): the app's updates are signed (A-M1). Each release now carries `jobe-release.json` (version,
+  name, size and SHA-256 of `update.zip` and `JobeesLair.exfat`) and `jobe-release.json.sig`, an Ed25519 signature
+  made on the publisher's PC with the same key that already signs the glibren payload and the YouTube service
+  (`jobe/ferramentas/assinar_jobe.py`, called by `publicar.sh`; the private key never leaves that PC). The update
+  check (`state/updater.js` + the new `state/release-signature.js`) downloads both, checks the signature with the
+  embedded public key and that the manifest is the tag's version, and offers the update only with the size and SHA-256
+  of the signed manifest (which must also match GitHub's); the native download checks the file against them. A newer
+  release without a valid signature is shown but never installed, by any path (the dialog, the automatic install with
+  its restart, the phone's "Update Jobe" and the Settings row): the app stays on its version and Settings > Update says
+  why (14 languages). From .46 on the signature is required; .45 and earlier update to .46 the old way (GitHub's
+  SHA-256 only), because they do not know about it.
 - **glibren.45** (fork): less CPU while the app sits open (the PS5's fan sped up with it open). Measured on the PC
   preview (same JavaScript and CPU renderer as the console; `tools/perf/idle.mjs`, which now counts the frames actually
   drawn, `shown`): idle on the store 118.8 → 0 frames drawn a second, idle on Downloads with two announcements

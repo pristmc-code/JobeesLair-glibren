@@ -1031,6 +1031,7 @@
   "settings.update.never": "अभी जाँचा नहीं गया।",
   "settings.update.ready": "संस्करण {version} तैयार है। रीस्टार्ट करके इंस्टॉल करने के लिए चुनें।",
   "settings.update.row": "अपडेट जाँचें",
+  "settings.update.unsigned": "संस्करण {version} पर कोई मान्य हस्ताक्षर नहीं है, इसलिए यह इंस्टॉल नहीं होगा। Jobee'sLair इसी संस्करण पर रहेगा।",
   "settings.vibration": "ब्राउज़ करते समय वाइब्रेशन",
   "settings.vibrationDetail": "आगे बढ़ने, चुनने और वापस जाने पर हल्का कंपन",
   "shadowMount.offAction": "इसे लोड करने पर गेम दिखेगा। इसे हमेशा चालू रखने के लिए जेलब्रेक के ऑटोलोड में जोड़ें।",

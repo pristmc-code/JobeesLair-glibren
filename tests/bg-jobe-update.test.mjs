@@ -97,6 +97,23 @@ test('glibren.44: recusa com uma conversao rodando, fora do console e quando o r
   assert.equal(none.downloads, 0);
 });
 
+test('glibren.46 (A-M1): pelo celular, uma versao nova sem assinatura valida para com o motivo e nao baixa nada', async () => {
+  const link = fakeLink({ request: { id: '5', at: 1 } });
+  const update = fakeUpdate();
+  const check = update.check;
+  update.check = async () => {
+    await check();
+    update.view.update = { ...update.view.update, update: { version: '0.5.5-glibren.45', assets: null, signed: false, unsigned: 'signature' } };
+    return update.view.update;
+  };
+  await make(link, update).tick();
+  const last = link.reports.at(-1);
+  assert.equal(last.phase, 'failed');
+  assert.equal(last.error, 'unsigned');
+  assert.equal(last.detail, 'settings.update.unsigned:0.5.5-glibren.45');
+  assert.equal(update.downloads + update.restarts, 0, 'fica na versao atual');
+});
+
 // ---- O payload de verdade, compilado para o PC ----
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-jobe-'));
 const binary = path.join(dir, 'bgdl');

@@ -1031,6 +1031,7 @@
   "settings.update.never": "لم يُفحص بعد.",
   "settings.update.ready": "الإصدار {version} جاهز. اختر لإعادة التشغيل وتثبيته.",
   "settings.update.row": "التحقق من التحديثات",
+  "settings.update.unsigned": "الإصدار {version} ليس له توقيع صالح، لذلك لن يُثبَّت. يبقى Jobee'sLair على هذا الإصدار.",
   "settings.vibration": "الاهتزاز أثناء التصفح",
   "settings.vibrationDetail": "نبضة خفيفة عند التنقل والاختيار والرجوع",
   "shadowMount.offAction": "تظهر اللعبة بعد تحميله. أضفه إلى التحميل التلقائي لكسر الحماية ليبقى يعمل دائمًا.",

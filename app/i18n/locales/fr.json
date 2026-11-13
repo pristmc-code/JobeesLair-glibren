@@ -1031,6 +1031,7 @@
   "settings.update.never": "Pas encore vérifié.",
   "settings.update.ready": "La version {version} est prête. Sélectionnez pour redémarrer et l'installer.",
   "settings.update.row": "Rechercher des mises à jour",
+  "settings.update.unsigned": "La version {version} n'a pas de signature valide et ne sera pas installée. Jobee'sLair reste sur cette version.",
   "settings.vibration": "Vibration pendant la navigation",
   "settings.vibrationDetail": "Une légère impulsion quand vous vous déplacez, sélectionnez ou revenez",
   "shadowMount.offAction": "Le jeu apparaît une fois ShadowMount chargé. Ajoutez-le à l'autoload du jailbreak pour qu'il reste actif.",

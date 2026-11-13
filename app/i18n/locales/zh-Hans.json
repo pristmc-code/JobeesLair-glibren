@@ -1031,6 +1031,7 @@
   "settings.update.never": "尚未检查。",
   "settings.update.ready": "版本 {version} 已就绪。选择以重启并安装。",
   "settings.update.row": "检查更新",
+  "settings.update.unsigned": "版本 {version} 没有有效的签名，因此不会安装。Jobee'sLair 将保持当前版本。",
   "settings.vibration": "浏览时振动",
   "settings.vibrationDetail": "移动、选择和返回时轻微振动",
   "shadowMount.offAction": "加载 ShadowMount 后游戏才会出现。将它加入越狱的自动加载即可保持运行。",

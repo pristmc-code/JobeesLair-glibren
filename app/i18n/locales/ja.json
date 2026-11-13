@@ -1031,6 +1031,7 @@
   "settings.update.never": "まだ確認していません。",
   "settings.update.ready": "バージョン{version}の準備ができました。選択して再起動し、インストールします。",
   "settings.update.row": "更新を確認",
+  "settings.update.unsigned": "バージョン {version} には有効な署名がないため、インストールされません。Jobee'sLair はこのバージョンのままです。",
   "settings.vibration": "操作時の振動",
   "settings.vibrationDetail": "移動、選択、戻る操作のときに軽く振動します",
   "shadowMount.offAction": "ShadowMount を読み込むとゲームが表示されます。脱獄の自動読み込みに追加すると常に起動します。",

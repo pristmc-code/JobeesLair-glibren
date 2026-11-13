@@ -87,6 +87,9 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     // glibren.15: () => o aviso, no idioma do app, que o updater.elf mostra quando nao consegue reabrir o app
     // depois da troca ("notice=" em apply.txt). Sem ele, o updater usa ingles + portugues.
     notice = () => "",
+    // glibren.46 (A-M1): so baixa uma release com o manifesto assinado conferido (updater.js: signed, assets com o
+    // tamanho e o sha256 assinados). Defesa a mais: o verificador ja tira os assets de uma sem assinatura.
+    requireSigned = false,
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     log = (line) => console.log(`[auto-update] ${line}`)
   }) {
@@ -354,8 +357,12 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
      * Downloads and checks `release` (a describe() result with assets) unless that is already under way or
      * done; a different version's files are dropped first. Never throws: a failure is the `failed` phase.
      */
+    const installable = (release) => Boolean(release?.assets) && newer(release.version, running) && (!requireSigned || release.signed === true);
     function download(release) {
-      if (!release?.assets || !newer(release.version, running)) return false;
+      if (!installable(release)) {
+        if (release?.assets && requireSigned && release.signed !== true) log(`${release.version}: refused, the release signature was not checked`);
+        return false;
+      }
       const state = saved();
       if (run?.version === release.version) return true;
       if (state.version === release.version && ["ready", "armed"].includes(state.phase)) return true;
@@ -380,7 +387,7 @@ import { IMAGE_NAME as IMAGE } from '../version.js';
     // A release seen by the check: downloaded right away when automatic installs are on, or when a download
     // of it was cut off (paused) and the gamer had started it.
     function offer(release) {
-      if (!release?.assets || !newer(release.version, running)) return;
+      if (!installable(release)) return;
       const state = saved();
       // A release whose build turned out to be another version (start): shown, never fetched by itself.
       if (state.mismatched === release.version) {

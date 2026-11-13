@@ -83,7 +83,7 @@ import { FocusScope, Linking, Text, View, motion } from '@ps5-react/core';
       setNote(reason ? t2("update.install.failed", { error: reason }) : "");
     };
     const start = () => {
-      setNote(downloadUpdate() ? "" : t2("update.install.noAssets"));
+      setNote(downloadUpdate() ? "" : t2(update.unsigned ? "settings.update.unsigned" : "update.install.noAssets", { version: update.version }));
     };
     // The first button is the step that comes next; the release page and Close follow.
     const actions = [
@@ -113,6 +113,8 @@ import { FocusScope, Linking, Text, View, motion } from '@ps5-react/core';
           said ? /* @__PURE__ */ (0, jsx)(Text, { style: sans(21, said[1]), children: said[0] }) : null,
           /* @__PURE__ */ (0, jsx)(Text, { style: sans(21, colors.subtle), children: t2(installable ? "update.howTo" : "update.howToManual") }),
           note ? /* @__PURE__ */ (0, jsx)(Text, { style: sans(20, "#fbbf24"), children: note }) : null,
+          // glibren.46 (A-M1): a versao nova saiu sem a assinatura do glibren: diz por que nao instala.
+          !note && update.unsigned ? /* @__PURE__ */ (0, jsx)(Text, { style: sans(20, "#fbbf24"), children: t2("settings.update.unsigned", { version: update.version }) }) : null,
           /* @__PURE__ */ (0, jsx)(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 16 }, children: actions })
         ]
       }) }) })

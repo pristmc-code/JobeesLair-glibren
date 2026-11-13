@@ -112,7 +112,9 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
       }
     },
     // glibren.15: o aviso que o updater.elf mostra quando nao consegue reabrir o app depois da troca.
-    notice: () => t("update.install.reopenNotice")
+    notice: () => t("update.install.reopenNotice"),
+    // glibren.46 (A-M1): so instala uma release com o manifesto assinado pela chave do glibren (release-signature.js).
+    requireSigned: true
   }) : null;
   // { update: the newer release or null, checking, checkedAt, failed } and who is watching it.
   var state = { update: checker.known(), checking: false, checkedAt: store.get().checkedAt ?? null, failed: false };
@@ -179,7 +181,8 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
   // waits for that to be closed (up to PROMPT_WAIT_MS, for a launch where the panel never opens).
   var PROMPT_POLL_MS = 2e3, PROMPT_WAIT_MS = 10 * 6e4;
   function offerDialog(version) {
-    if (automatic || dialog || prompts.get().version === version) return;
+    // glibren.46: uma versao sem assinatura valida nao abre o dialogo sozinha; o motivo fica em Configuracoes.
+    if (automatic || dialog || prompts.get().version === version || state.update?.unsigned) return;
     let waited = 0;
     const open = () => {
       if (state.update?.version !== version || dialog || prompts.get().version === version) return;
@@ -254,6 +257,8 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
         return t2("settings.update.downloading", { version, percent: String(install.total ? Math.floor(Math.min(1, install.written / install.total) * 100) : 0) });
       if (install.phase === "failed") return t2("settings.update.installFailed", { version });
     }
+    // glibren.46 (A-M1): a versao nova saiu sem a assinatura do glibren (ou com uma invalida): fica nesta versao.
+    if (update.update?.unsigned) return t2("settings.update.unsigned", { version: update.update.version });
     if (update.update) return t2("settings.update.available", { version: update.update.version });
     if (update.failed) return t2("settings.update.failed");
     return update.checkedAt ? t2("settings.update.current", { date: formatDate2(isoDate(update.checkedAt)) }) : t2("settings.update.never");

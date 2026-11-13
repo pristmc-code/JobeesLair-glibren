@@ -1938,12 +1938,12 @@ test('a set of images unpacked into one folder moves image by image, and the emp
   assert.deepEqual(state.manual, [`${usb}/Game.exfat`, `${usb}/Game-Update-1.05.exfat`]);
 });
 
-test('versions: 0.2.0 is newer than every 0.1.1 beta and 0.1.1, and the app now reports 0.5.5-glibren.45 (glibren fork)', async () => {
+test('versions: 0.2.0 is newer than every 0.1.1 beta and 0.1.1, and the app now reports 0.5.5-glibren.46 (glibren fork)', async () => {
   assert.equal(newer('v0.2.0', '0.1.1-beta.4'), true);
   assert.equal(newer('v0.2.0', '0.1.1'), true);
   assert.equal(newer('0.1.1-beta.4', '0.2.0'), false);
   const { VERSION, VERSION_LABEL } = await load('app/version.js');
-  assert.deepEqual([VERSION, VERSION_LABEL], ['0.5.5-glibren.45', '0.5.5-glibren.45']);
+  assert.deepEqual([VERSION, VERSION_LABEL], ['0.5.5-glibren.46', '0.5.5-glibren.46']);
 });
 
 
@@ -1963,12 +1963,12 @@ const releaseJson = (overrides = {}) => ({
 });
 
 test('versions: 0.5.0 is newer than 0.4.1 and every 0.5.0 pre-release, and older than 0.5.1; 0.5.5 is newer than 0.5.4', () => {
-  assert.equal(VERSION, '0.5.5-glibren.45');
+  assert.equal(VERSION, '0.5.5-glibren.46');
   assert.equal(newer(VERSION, '0.5.4'), true, 'it is newer than 0.5.4');
   assert.equal(newer('v0.5.4', VERSION), false, 'so 0.5.4 is not offered to it');
-  assert.equal(newer('v0.5.5-glibren.45', VERSION), false, 'not to itself');
-  assert.equal(newer(VERSION, '0.5.5-glibren.44'), true, 'offered to glibren.44');
-  assert.equal(newer('v0.5.5-glibren.46', VERSION), true, 'the next fork build is offered to it');
+  assert.equal(newer('v0.5.5-glibren.46', VERSION), false, 'not to itself');
+  assert.equal(newer(VERSION, '0.5.5-glibren.45'), true, 'offered to glibren.45');
+  assert.equal(newer('v0.5.5-glibren.47', VERSION), true, 'the next fork build is offered to it');
   assert.equal(newer('v0.5.5', '0.5.5-pre.1'), true, '0.5.5 is offered to its testers');
   assert.equal(newer(VERSION, '0.5.3'), true, 'it is newer than 0.5.3');
   assert.equal(newer('v0.5.3', VERSION), false, 'so 0.5.3 is not offered to it');
@@ -2305,7 +2305,7 @@ test('glibren.22: the update does not wait for the downloads: it takes the netwo
 
 // The install's world: a USB drive with the installed image, a fake download engine that publishes each file
 // at its expected size (or fails as told), an extractor that unpacks update.zip's title folder.
-function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => true, failures = {}, free = 1e12, located = '/mnt/usb0/homebrew/JobeesLair.exfat', armed = () => true, automatic = false, version = '0.5.0', verifyZip = true, notice = null, busy = null, claim = null, beforeExit = null } = {}) {
+function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => true, failures = {}, free = 1e12, located = '/mnt/usb0/homebrew/JobeesLair.exfat', armed = () => true, automatic = false, version = '0.5.0', verifyZip = true, notice = null, busy = null, claim = null, beforeExit = null, requireSigned = false } = {}) {
   // The running version: a released one older than the fake 0.5.1 release these tests install, whatever the app's own VERSION is.
   const fs = memoryFs();
   fs.mkdir('/mnt/usb0/homebrew');
@@ -2360,7 +2360,7 @@ function installWorld({ param: paramFields = {}, eboot = 2000, lendable = () => 
     arm: (dir) => { world.arms.push(dir); return armed(); },
     freeBytes: async () => free,
     store: { get: () => saved.value, set: (next) => { saved.value = next; } },
-    controlDir: '/data/JobeesLair/update', version, titleId: TITLE_ID, verifyZip,
+    controlDir: '/data/JobeesLair/update', version, titleId: TITLE_ID, verifyZip, requireSigned,
     // A wait that lets the rest of the test run (an already-resolved promise would spin the loop forever).
     automatic: () => automatic, notify: (v) => world.notified.push(v), wait: () => new Promise((resolve) => setImmediate(resolve)), log: (line) => world.logs.push(line),
     ...(notice ? { notice } : {}), ...(busy ? { busy } : {}), ...(claim ? { claim } : {}), ...(beforeExit ? { beforeExit } : {}),
@@ -4135,4 +4135,77 @@ test('glibren.8 install: with verifyZip off only the image is downloaded, nothin
   assert.deepEqual(world.requests.map((r) => r.destination.endsWith(IMAGE_NAME)), [true], 'only the image');
   assert.ok(!seen.some((s) => s.phase === 'checking'), 'no "Checking" phase');
   assert.ok(world.fs.exists(`${STAGED}/${IMAGE_NAME}`));
+});
+
+// ---- glibren.46 (A-M1): o instalador so baixa uma release com o manifesto assinado (chaves de teste, nunca a real) ----
+const { createUpdateChecker: createSignedChecker } = await load('app/state/updater.js');
+const { RELEASE_DOMAIN, MANIFEST_NAME, SIGNATURE_NAME } = await load('app/state/release-signature.js');
+async function signedRelease({ key, signWith = key, imageSha = SHA('a') } = {}) {
+  const { generateKeyPairSync, sign: edSign } = await import('node:crypto');
+  const pair = key ?? generateKeyPairSync('ed25519');
+  const hex = pair.publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
+  const manifest = `${JSON.stringify({ format: 1, name: 'jobe-release', version: '0.5.1', files: [{ name: 'update.zip', size: 300, sha256: SHA('b') }, { name: 'JobeesLair.exfat', size: 5000, sha256: imageSha }] }, null, 2)}
+`;
+  const signature = edSign(null, Buffer.from(RELEASE_DOMAIN + manifest, 'ascii'), (signWith ?? pair).privateKey).toString('hex');
+  const base = 'https://github.com/JVK3R/JobeesLair/releases/download/v0.5.1/';
+  const json = releaseJson();
+  json.assets.push({ name: MANIFEST_NAME, size: manifest.length, digest: `sha256:${SHA('c')}`, browser_download_url: base + MANIFEST_NAME },
+    { name: SIGNATURE_NAME, size: 128, digest: `sha256:${SHA('d')}`, browser_download_url: base + SIGNATURE_NAME });
+  const files = { [base + MANIFEST_NAME]: manifest, [base + SIGNATURE_NAME]: signature };
+  const http = { async request(url) {
+    if (url.endsWith('/releases/latest')) return { ok: true, status: 200, json: async () => json };
+    return url in files ? { ok: true, status: 200, text: async () => files[url] } : { ok: false, status: 404, text: async () => '' };
+  } };
+  let saved = {};
+  const checker = createSignedChecker({ http, store: { get: () => saved, set: (v) => { saved = v; } }, version: '0.5.0', repo: 'JVK3R/JobeesLair', publicKey: hex, log: () => {} });
+  return (await checker.check()).update;
+}
+
+test('glibren.46 (A-M1): assinatura valida instala: o download leva o tamanho e o sha256 do manifesto assinado', async () => {
+  const release = await signedRelease();
+  assert.equal(release.signed, true);
+  const world = installWorld({ requireSigned: true, verifyZip: false });
+  assert.equal(world.updater.download(release), true);
+  const state = await world.until((s) => ['ready', 'failed'].includes(s.phase));
+  assert.equal(state.phase, 'ready', state.error);
+  assert.deepEqual(world.requests.map(({ sha256, expectedBytes }) => ({ sha256, expectedBytes })), [{ sha256: SHA('a'), expectedBytes: 5000 }]);
+});
+
+test('glibren.46 (A-M1): sem assinatura conferida o instalador recusa (pelo dialogo e pelo automatico), sem laco', async () => {
+  const { generateKeyPairSync } = await import('node:crypto');
+  const unsigned = await signedRelease({ signWith: generateKeyPairSync('ed25519') });
+  assert.equal(unsigned.assets, null);
+  assert.equal(unsigned.unsigned, 'signature');
+  // Mesmo uma release com assets mas sem signed (resposta antiga, ou montada a mao) nao e baixada.
+  for (const release of [unsigned, world0()]) {
+    const world = installWorld({ requireSigned: true, automatic: true, verifyZip: false });
+    assert.equal(world.updater.download(release), false);
+    world.updater.offer(release);
+    await tick(5);
+    assert.deepEqual(world.requests, []);
+    assert.equal(world.updater.state().phase, 'idle');
+    assert.deepEqual(world.arms, []);
+  }
+  function world0() { return installWorld().release; }
+});
+
+test('glibren.46 (A-M1): arquivo baixado diferente do manifesto assinado e recusado (nada fica pronto nem armado)', async () => {
+  const release = await signedRelease();
+  const world = installWorld({ requireSigned: true, verifyZip: false });
+  // O Downloads nativo confere o sha256 pedido; o arquivo que chega tem outro.
+  const enqueue = world.downloads.enqueue;
+  world.downloads.enqueue = (options) => {
+    if (options.sha256 === SHA('9')) return enqueue(options);
+    world.requests.push(options);
+    const done = Promise.reject(new Error(`SHA-256 mismatch: expected ${options.sha256}, got ${SHA('9')}`));
+    done.catch(() => {});
+    return { done, cancel() {}, subscribe() { return () => {}; } };
+  };
+  world.updater.download(release);
+  const state = await world.until((s) => ['ready', 'failed'].includes(s.phase), 2000);
+  assert.equal(state.phase, 'failed');
+  assert.match(state.error, /SHA-256 mismatch/);
+  assert.ok(world.requests.every((r) => r.sha256 === SHA('a')), 'sempre o sha256 assinado');
+  assert.deepEqual(world.arms, []);
+  assert.equal(world.fs.exists(`${STAGED}/${IMAGE_NAME}`), false);
 });

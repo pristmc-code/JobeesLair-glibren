@@ -1031,6 +1031,7 @@
   "settings.update.never": "ابھی جانچا نہیں گیا۔",
   "settings.update.ready": "ورژن {version} تیار ہے۔ ری اسٹارٹ کر کے انسٹال کرنے کے لیے منتخب کریں۔",
   "settings.update.row": "اپ ڈیٹس کی جانچ کریں",
+  "settings.update.unsigned": "ورژن {version} پر کوئی درست دستخط نہیں ہے، اس لیے یہ انسٹال نہیں ہوگا۔ Jobee'sLair اسی ورژن پر رہے گا۔",
   "settings.vibration": "براؤز کرتے وقت وائبریشن",
   "settings.vibrationDetail": "حرکت، انتخاب اور واپس جانے پر ہلکی سی وائبریشن",
   "shadowMount.offAction": "اسے لوڈ کرنے پر گیم نظر آئے گی۔ ہمیشہ چلانے کے لیے جیل بریک کے آٹو لوڈ میں شامل کریں۔",
