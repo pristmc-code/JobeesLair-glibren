@@ -208,6 +208,42 @@ test('o payload que para de responder: o app continua sozinho do ultimo checkpoi
   assert.equal(engine.started.length, 1);
 });
 
+// glibren.42 (A2): calado mas vivo (a parcial ainda cresce), o payload continua dono do arquivo; o app so assume quando
+// ela para de crescer. Antes, 15 consultas sem resposta punham o motor do app na mesma parcial (dois escritores).
+test('o payload calado que ainda grava a parcial continua com ela; o app so assume quando ela para de crescer', async () => {
+  const payload = fakePayload();
+  let size = 10;
+  let growing = true;
+  payload.fs.stat = (path) => path.endsWith('.part') ? { size: growing ? (size += 7) : size } : null;
+  const engine = fakeEngine();
+  make(payload, engine).enqueue(queueOptions());
+  await wait(30);
+  payload.up = false;
+  await wait(400);
+  assert.equal(engine.started.length, 0, 'vivo e gravando: o app nao escreve na mesma parcial');
+  growing = false;
+  await wait(400);
+  assert.equal(engine.started.length, 1, 'a parcial parou: o app continua do checkpoint');
+});
+
+test('"Baixar pelo app" sem resposta do payload que ainda grava: ele fica com o download', async () => {
+  const { takeOverDownload, inBackground } = await import('../app/state/background-downloads.js');
+  const payload = fakePayload();
+  let size = 10;
+  let growing = true;
+  payload.fs.stat = (path) => path.endsWith('.part') ? { size: growing ? (size += 7) : size } : null;
+  const engine = fakeEngine();
+  const task = make(payload, engine).enqueue(queueOptions({ destination: '/mnt/ext0/downloads/images/Mute.exfat' }));
+  await wait(30);
+  payload.up = false;
+  assert.equal(await takeOverDownload('/mnt/ext0/downloads/images/Mute.exfat'), false);
+  assert.equal(engine.started.length, 0);
+  assert.ok(inBackground('/mnt/ext0/downloads/images/Mute.exfat'), 'segue com o payload');
+  growing = false;
+  task.cancel();
+  await task.done.catch(() => {});
+});
+
 test('downloads simultaneos: o payload recebe o numero ao comecar um job e a cada mudanca; o motor nativo tambem', async () => {
   const payload = fakePayload();
   const engine = fakeEngine();

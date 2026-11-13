@@ -6,6 +6,27 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.42** (fork): Etapa 4 do plano de ação (revisões de 12/11) e a conta do YouTube. YouTube account: Settings >
+  Videos signs in with a TV code (the code, the address and a QR of it; the app asks until it is confirmed, refused or
+  expired), shows the connected account and Sign out; the sign-in stays only in the YouTube service on the console
+  (tube-service 0.2.0, api 2, feature "account"); with an older service the rows are hidden. The player says when a
+  video asks for an account (authentication_required: sign in under Settings > Videos), when the sign-in expired
+  (account_expired) or the account can't see it (account_not_allowed), and shows when a video played through the
+  account (signed_in_playback). The YouTube service: a downloaded version is set aside only after 3 failed starts in a
+  row, and "Back to the built-in version" sets it aside at once (A6); signed links are renewed again after a minute of
+  playing, up to 8 times per video (A11); the service itself no longer cuts long redirect headers (A3), drops the
+  oldest of 32 sessions (R2-10), caps waiting extractions (R2-11) and bounds WebM index integers (R2-18). Downloads:
+  the app takes a download back from a background payload that stopped answering only once its partial file stopped
+  growing (A2); cancelling or removing an item sends the payload the new list (R2-5); the parts of a set follow the
+  resolver's real size and repack mark (R2-7); a move to another drive that stopped keeps its finished copies as its
+  own (moving again keeps them, Cancel deletes them) (R2-6); counting extracted files for the log stops at 2,000 (A12).
+  The store export for the phone page computes its key game by game, sorts one order per frame and writes the index in
+  pieces (A4). Payload: the .pkg reader rejects a folder inode outside the table (R2-1); the fallback extraction keeps
+  only files and folders (no symlinks, special files or outside hardlinks) and survives non-ASCII names (R2-2, R2-3);
+  "Show log" in the app gets the last 512 KiB (R2-12); the phone page answers only requests addressed to an IP or
+  localhost (J6); AllDebrid and signed direct links are no longer written to jobs.json (J8); a power loss right before
+  the final rename is finished on the next start (J9); a store game's details are read with one pread (J7); paths with
+  control characters and deleting BACKUP/_temp or an item still being downloaded are refused (J10, R2-19).
 - **glibren.41** (fork): Etapa 2 do plano de ação (revisão de 12/11) e o catálogo do usuário. The cap while a video
   plays goes to the background payload as a temporary field ("videoCap" + "videoCapSeconds" in POST /config, renewed
   every 30 s): it is never written to config.json and expires by itself when the app stops renewing (closed with the

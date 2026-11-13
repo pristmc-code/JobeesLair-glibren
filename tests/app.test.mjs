@@ -1717,6 +1717,40 @@ test('a queue saved in the middle of a move reads it back as stopped, the game w
   assert.deepEqual([job.root, job.moving.interrupted, job.moving.written], ['/data', true, 0]);
 });
 
+// glibren.42 (R2-6): copyAsync names a copy `<to>` as soon as it is read back; a move that stops after that (the app
+// closing, the game mounted) left it there for good: Cancel only deleted `.partial`, and moving again found it in the way.
+function movedThenStopped(fs, { targets = ['/mnt/usb0/homebrew/Game.exfat'], done = [] } = {}) {
+  fs.file('/mnt/usb0/homebrew/Game.exfat', fs.stat('/data/homebrew/Game.exfat').size);
+  const saved = JSON.parse(fs.readFile('/data/app/JobeesLair/downloads.json'));
+  saved.jobs[0].moving = { to: '/mnt/usb0', total: 5000, written: 5000, at: 1, targets, done };
+  fs.writeFile('/data/app/JobeesLair/downloads.json', JSON.stringify(saved));
+  return queueWith({ fs, downloads: engine(fs) });
+}
+
+test('a copy a stopped move finished on the other drive is its own: moving again keeps it, cancelling deletes it', async () => {
+  const { fs, id } = await installedOnData();
+  const calls = fs.copies.calls.length;
+  let queue = movedThenStopped(fs);
+  await queue.relocate(id, '/mnt/usb0');
+  assert.equal(fs.copies.calls.length, calls, 'the finished copy is not copied again');
+  assert.equal(queue.snapshot()[0].root, '/mnt/usb0');
+  assert.ok(fs.exists('/mnt/usb0/homebrew/Game.exfat') && !fs.exists('/data/homebrew/Game.exfat'));
+  const second = await installedOnData();
+  queue = movedThenStopped(second.fs, { targets: [], done: ['/mnt/usb0/homebrew/Game.exfat'] });
+  await queue.cancelMove(second.id);
+  assert.ok(!second.fs.exists('/mnt/usb0/homebrew/Game.exfat'), 'the finished copy goes with the cancel');
+  assert.ok(second.fs.exists('/data/homebrew/Game.exfat'), 'the game stays where it was');
+  assert.equal(queue.snapshot()[0].moving, undefined);
+});
+
+test("a file there that no move of the game recorded is still in the way, and a cancel leaves it", async () => {
+  const { fs, id } = await installedOnData();
+  const queue = movedThenStopped(fs, { targets: [] });
+  await assert.rejects(queue.relocate(id, '/mnt/usb0'), /in the way|already/i);
+  await queue.cancelMove(id);
+  assert.ok(fs.exists('/mnt/usb0/homebrew/Game.exfat'), "a file that is not the move's own is never deleted");
+});
+
 test('deleting a game whose move stopped deletes its copy on the other drive too', async () => {
   const { fs, queue, id } = await installedOnData();
   fs.copies.failAt = 100;
@@ -1904,12 +1938,12 @@ test('a set of images unpacked into one folder moves image by image, and the emp
   assert.deepEqual(state.manual, [`${usb}/Game.exfat`, `${usb}/Game-Update-1.05.exfat`]);
 });
 
-test('versions: 0.2.0 is newer than every 0.1.1 beta and 0.1.1, and the app now reports 0.5.5-glibren.41 (glibren fork)', async () => {
+test('versions: 0.2.0 is newer than every 0.1.1 beta and 0.1.1, and the app now reports 0.5.5-glibren.42 (glibren fork)', async () => {
   assert.equal(newer('v0.2.0', '0.1.1-beta.4'), true);
   assert.equal(newer('v0.2.0', '0.1.1'), true);
   assert.equal(newer('0.1.1-beta.4', '0.2.0'), false);
   const { VERSION, VERSION_LABEL } = await load('app/version.js');
-  assert.deepEqual([VERSION, VERSION_LABEL], ['0.5.5-glibren.41', '0.5.5-glibren.41']);
+  assert.deepEqual([VERSION, VERSION_LABEL], ['0.5.5-glibren.42', '0.5.5-glibren.42']);
 });
 
 
@@ -1929,12 +1963,12 @@ const releaseJson = (overrides = {}) => ({
 });
 
 test('versions: 0.5.0 is newer than 0.4.1 and every 0.5.0 pre-release, and older than 0.5.1; 0.5.5 is newer than 0.5.4', () => {
-  assert.equal(VERSION, '0.5.5-glibren.41');
+  assert.equal(VERSION, '0.5.5-glibren.42');
   assert.equal(newer(VERSION, '0.5.4'), true, 'it is newer than 0.5.4');
   assert.equal(newer('v0.5.4', VERSION), false, 'so 0.5.4 is not offered to it');
-  assert.equal(newer('v0.5.5-glibren.41', VERSION), false, 'not to itself');
-  assert.equal(newer(VERSION, '0.5.5-glibren.40'), true, 'offered to glibren.40');
-  assert.equal(newer('v0.5.5-glibren.42', VERSION), true, 'the next fork build is offered to it');
+  assert.equal(newer('v0.5.5-glibren.42', VERSION), false, 'not to itself');
+  assert.equal(newer(VERSION, '0.5.5-glibren.41'), true, 'offered to glibren.41');
+  assert.equal(newer('v0.5.5-glibren.43', VERSION), true, 'the next fork build is offered to it');
   assert.equal(newer('v0.5.5', '0.5.5-pre.1'), true, '0.5.5 is offered to its testers');
   assert.equal(newer(VERSION, '0.5.3'), true, 'it is newer than 0.5.3');
   assert.equal(newer('v0.5.3', VERSION), false, 'so 0.5.3 is not offered to it');

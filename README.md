@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.42**: YouTube account sign-in in Settings > Videos, safer background downloads and moves, lighter store export.
 > **glibren.41**: Downloads cap while watching that expires by itself, conversions held after a crash, 149 new links and 43 new games in the catalog.
 > **glibren.40**: Downloads capped at a chosen speed while a YouTube video plays.
 > **glibren.39**: Default YouTube quality (1080p, 1440p or 4K) and the decoder shown in the player.

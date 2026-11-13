@@ -65,6 +65,11 @@ test('exportStore grava indice, fichas (chave antes dos jogos) e o solo; a segun
     const first = await exportStore({ pause: async () => {}, log: () => {} });
     assert.equal(first.written, 'all');
     const index = JSON.parse(files.get(`${STORE_DIR}/store-index.json`));
+    // glibren.42 (A4): gravado em pedacos e com a chave encadeada, sai o mesmo documento que storeIndexDocument.
+    const same = storeIndexDocument(undefined, Object.fromEntries(index.games.map((game) => [game.id, game.solo])));
+    assert.equal(index.key, same.key);
+    assert.deepEqual(index.games, same.games);
+    assert.deepEqual(index.facets, same.facets);
     const gamesText = files.get(`${STORE_DIR}/store-games.json`);
     assert.ok(gamesText.startsWith(`{"version":1,"key":${JSON.stringify(index.key)},"games":[`));
     const games = JSON.parse(gamesText);

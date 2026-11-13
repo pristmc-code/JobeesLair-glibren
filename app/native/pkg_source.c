@@ -1283,6 +1283,12 @@ static int pkgsrc_walk(pkgsrc* p) {
   pend[np++] = (pkgsrc_pend){4, root};
   while(np) {
     pkgsrc_pend cur = pend[--np];
+    // R2-1: o inode vem do pacote; conferir antes de tocar em 'visited' (que tem count bits).
+    if(cur.ino >= count) {
+      pkgsrc_perr(p, "pacote corrompido: inode %u passa da tabela (%llu)", cur.ino, (unsigned long long)count);
+      free(cur.path);
+      goto out;
+    }
     if(visited[cur.ino / 8] & (1u << (cur.ino % 8))) {
       free(cur.path);
       pkgsrc_perr(p, "pacote corrompido: pasta ligada duas vezes (ciclo)");
@@ -1313,6 +1319,9 @@ static int pkgsrc_walk(pkgsrc* p) {
       free(cur.path);
       goto out;
     }
+#ifdef PKGSRC_TEST_DIRENT_HOOK
+    PKGSRC_TEST_DIRENT_HOOK(dirbuf, (size_t)dsize);  // so no harness de teste: simula pasta montada de proposito
+#endif
     size_t o = 0;
     while(o + 16 <= dsize) {
       uint32_t ino = pkgsrc_le32(dirbuf + o), kind = pkgsrc_le32(dirbuf + o + 4), nl = pkgsrc_le32(dirbuf + o + 8),
@@ -1338,7 +1347,15 @@ static int pkgsrc_walk(pkgsrc* p) {
         goto out;
       }
       if(kind == 3) {
+        // R2-1: recusar ja ao empilhar uma subpasta com inode fora da tabela.
+        if(ino >= count) {
+          pkgsrc_perr(p, "pacote corrompido: inode %u da pasta '%s' passa da tabela (%llu)", ino, path, (unsigned long long)count);
+          free(path);
+          free(cur.path);
+          goto out;
+        }
         char* dup = strdup(path);
+        if(!dup) free(path);
         if(!dup || pkgsrc_add(p, path, 0, 1, 0, 0)) {
           free(dup);
           free(cur.path);

@@ -346,6 +346,27 @@ test('tuning: a set\'s new parts get the table\'s range size; one an earlier bui
   assert.equal(downloads.requests[1].connections, 64);
 });
 
+// glibren.42 (R2-7): the parts of a set follow the single file's rule (0.5.1): the resolver's real size wins over the
+// catalog's, an unknown one (null) turns the size check off, and a repacked part drops the catalog sha256.
+test("parts: the resolver's real size and repack mark win over the catalog's, as for a single file", async () => {
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const real = { 'https://example.com/Game.part1.rar': { expectedBytes: 150 }, 'https://example.com/Game.part2.rar': { expectedBytes: null, repacked: true } };
+  const sources = { resolve: async (source) => ({ url: source.url, ...real[source.url] }) };
+  const queue = queueWith({ fs, downloads, sources });
+  const part = (n) => ({ number: n, sources: [{ url: `https://example.com/Game.part${n}.rar`, sizeBytes: 100, sha256: 'c'.repeat(64) }] });
+  const id = queue.enqueue(game, { id: 'set', provider: 'host', filename: 'Game', parts: [part(1), part(2)] }, '/data');
+  const job = await settle(queue, id);
+  // No extractor here: the set fails only past its download, never on a part's size.
+  assert.doesNotMatch(job.error, /holds|Part \d of/, job.error);
+  assert.deepEqual(job.parts.map((item) => item.completed), [true, true]);
+  assert.equal(downloads.requests[0].expectedBytes, 150, 'the real size, not the catalog\'s 100');
+  assert.equal(downloads.requests[0].sha256, 'c'.repeat(64));
+  assert.equal(downloads.requests[1].expectedBytes, undefined, 'no size known: no size check');
+  assert.equal(downloads.requests[1].sha256, undefined, 'repacked: the catalog sha256 is not its');
+  assert.ok(!('repacked' in downloads.requests[1]), 'the mark is not handed to the engine');
+});
+
 // ---- 1. Mirrors ----
 
 const SHA = 'a'.repeat(64);
@@ -853,6 +874,38 @@ test('handoff: the queue not started goes to the payload in order; a host page o
   assert.deepEqual(handed.at(-1), [], 'with the background off nothing is handed');
   first.open();
   for (const id of [a, b]) assert.equal((await settle(queue, id)).state, 'downloaded');
+});
+
+// glibren.42 (R2-5): a cancel or a removal on its own (nothing else changing) also sends the payload the new list: before,
+// only change() did, and the payload downloaded on its own, with the app closed, the game cancelled here.
+test('handoff: cancelling or removing an item alone sends the payload the list without it', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  const handed = [];
+  downloads.queueAhead = () => true;
+  downloads.syncQueue = (items) => handed.push(items);
+  const queue = queueWith({ fs, downloads });
+  const a = queue.enqueue(other(1), image('Alpha.exfat'), '/data');
+  const b = queue.enqueue(other(2), image('Beta.exfat'), '/data');
+  const c = queue.enqueue(other(3), image('Gamma.exfat'), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  await later();
+  assert.deepEqual(handed.at(-1).map((item) => item.key), [b, c]);
+  const before = handed.length;
+  await queue.cancel(c);
+  await later();
+  assert.ok(handed.length > before, 'the cancel alone hands the queue over again');
+  assert.deepEqual(handed.at(-1).map((item) => item.key), [b], 'without the cancelled one');
+  queue.pause(b);
+  await later();
+  const paused = handed.length;
+  queue.remove(b);
+  await later();
+  assert.ok(handed.length > paused, 'the removal alone hands it over again');
+  assert.deepEqual(handed.at(-1), [], 'without the removed one');
+  first.open();
+  assert.equal((await settle(queue, a)).state, 'downloaded');
 });
 
 test('handoff (glibren.8): the phone pauses, resumes and cancels queue items here by key; a waiting item (no path) too', async () => {

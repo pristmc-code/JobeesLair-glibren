@@ -13,6 +13,9 @@
 //                     navegador, torrent ou partes). Nenhuma chave ou link temporario vai para o disco.
 // O indice e gravado logo (barato); o store-games, em segundo plano (le os links e a pagina de cada jogo, alguns
 // milissegundos de cada vez), so quando a loja mudou (a chave e a do indice, sem o solo).
+// glibren.42 (A4): nada disso para a tela de uma vez. A chave e encadeada jogo a jogo (antes: o indice inteiro montado e
+// serializado so para calcula-la), as ordens sao feitas uma por quadro, o indice e gravado em pedacos (appendFile) e o
+// que ja foi gravado fica no arquivo pequeno DONE (antes: JSON.parse do indice inteiro para ler dois campos).
 
 import { FileSystem, Platform } from '@ps5-react/core';
 import { DATA_DIR } from './data-dir.js';
@@ -42,12 +45,51 @@ import { isoStamp } from './clock.js';
   var text = (value, max) => typeof value === "string" ? value.slice(0, max) : "";
   var https = (value) => typeof value === "string" && /^https:\/\/[^\s"'<>\\`]+$/.test(value) && value.length <= 600 ? value : "";
 
+  var options = (key) => FACETS.find((facet) => facet.key === key)?.options ?? [];
+  var named = (key) => options(key).map(({ value, name }) => ({ value, name: name ?? value }));
+  /** O que vem antes dos jogos no store-index.json. */
+  function indexHead(key) {
+    return {
+      version: FORMAT,
+      key,
+      builtAt: isoStamp(Date.now()),
+      console: PS4 ? "ps4" : "ps5",
+      readyFirmware: readyLabel("13.60"),
+      facets: {
+        platform: options("platform").map(({ value }) => value),
+        format: options("format").map(({ value }) => value),
+        access: options("access").map(({ value }) => value),
+        genre: named("genre"),
+        feature: named("feature"),
+        release: options("release").map(({ value }) => value),
+        size: options("size").map(({ value }) => value),
+        provider: named("provider")
+      }
+    };
+  }
+  /** A posicao de cada jogo em cada ordem (SORTS). `pause`: entre uma ordem e outra (o exportStore cede o quadro). */
+  async function ranksOf(list, pause) {
+    const ranks = [];
+    for (const { id } of SORTS) {
+      ranks.push(new Map(sortGames(list, id).map((game, at) => [game, at])));
+      if (pause) await pause();
+    }
+    return ranks;
+  }
+  // A chave da loja, encadeada jogo a jogo (o mesmo valor no documento e no exportStore).
+  var keySeed = () => stableKey(JSON.stringify([FORMAT, VERSION, PS4]));
+  var keyStep = (key, entry) => stableKey(`${key}${JSON.stringify(entry)}`);
   /** O documento do store-index.json (sem gravar). `solo`: {id: bool} de um store-games da mesma loja, ou null. */
   function storeIndexDocument(list = shownGames(), solo = null) {
     const ranks = SORTS.map(({ id }) => new Map(sortGames(list, id).map((game, at) => [game, at])));
-    const options = (key) => FACETS.find((facet) => facet.key === key)?.options ?? [];
-    const named = (key) => options(key).map(({ value, name }) => ({ value, name: name ?? value }));
-    const games = list.map((game) => ({
+    const games = list.map((game) => indexEntry(game, ranks));
+    const key = games.reduce(keyStep, keySeed());
+    for (const game of games) game.solo = solo ? solo[game.id] ?? false : null;
+    return { ...indexHead(key), games };
+  }
+  /** Um jogo do indice (sem o solo). */
+  function indexEntry(game, ranks) {
+    return {
       id: game.id,
       code: game.id,
       title: game.title,
@@ -69,26 +111,6 @@ import { isoStamp } from './clock.js';
       publisher: text(game.publisher, 120),
       releaseDate: game.releaseDate ?? "",
       rank: ranks.map((rank) => rank.get(game))
-    }));
-    const key = stableKey(JSON.stringify([FORMAT, VERSION, PS4, games]));
-    for (const game of games) game.solo = solo ? solo[game.id] ?? false : null;
-    return {
-      version: FORMAT,
-      key,
-      builtAt: isoStamp(Date.now()),
-      console: PS4 ? "ps4" : "ps5",
-      readyFirmware: readyLabel("13.60"),
-      facets: {
-        platform: options("platform").map(({ value }) => value),
-        format: options("format").map(({ value }) => value),
-        access: options("access").map(({ value }) => value),
-        genre: named("genre"),
-        feature: named("feature"),
-        release: options("release").map(({ value }) => value),
-        size: options("size").map(({ value }) => value),
-        provider: named("provider")
-      },
-      games
     };
   }
 
@@ -190,26 +212,57 @@ import { isoStamp } from './clock.js';
   async function exportOnce(pause, log) {
     const list = shownGames();
     const done = readJson(DONE);
-    let doc = storeIndexDocument(list);
-    const key = doc.key;
-    const known = done?.key === key && done.solo ? done.solo : null;
-    const onDisk = readJson(INDEX);
-    if (known && onDisk?.key === key && onDisk.games?.[0]?.solo !== null) return { key, games: list.length, written: "none" };
-    FileSystem.mkdir(STORE_DIR, { recursive: true });
-    const writeIndex = (solo) => {
-      doc = storeIndexDocument(list, solo);
-      FileSystem.writeFile(`${INDEX}.tmp`, JSON.stringify(doc));
-      FileSystem.rename(`${INDEX}.tmp`, INDEX);
-      doc = null;
+    // Cede o quadro a cada SLICE_MS de trabalho.
+    let started = Date.now();
+    const breathe = async () => {
+      if (Date.now() - started < SLICE_MS) return;
+      await pause();
+      started = Date.now();
     };
-    writeIndex(known);
-    if (known) return { key, games: list.length, written: "index" };
+    const ranks = await ranksOf(list, pause);
+    let key = keySeed();
+    for (const game of list) {
+      key = keyStep(key, indexEntry(game, ranks));
+      await breathe();
+    }
+    const known = done?.key === key && done.solo ? done.solo : null;
+    let exists = false;
+    try {
+      exists = FileSystem.exists(INDEX);
+    } catch {
+    }
+    if (known && done.index === key && exists) return { key, games: list.length, written: "none" };
+    FileSystem.mkdir(STORE_DIR, { recursive: true });
+    // O indice em pedacos: o cabecalho (com a chave) e os jogos, CHUNK por vez, cedendo o quadro.
+    const writeIndex = async (solo) => {
+      const tmp = `${INDEX}.tmp`;
+      const head = JSON.stringify(indexHead(key));
+      FileSystem.writeFile(tmp, `${head.slice(0, -1)},"games":[`);
+      let part = "", first = true;
+      for (const game of list) {
+        part += `${first ? "" : ","}${JSON.stringify({ ...indexEntry(game, ranks), solo: solo ? solo[game.id] ?? false : null })}`;
+        first = false;
+        if (part.length >= CHUNK) {
+          FileSystem.appendFile(tmp, part);
+          part = "";
+        }
+        await breathe();
+      }
+      FileSystem.appendFile(tmp, `${part}]}`);
+      FileSystem.rename(tmp, INDEX);
+    };
+    await writeIndex(known);
+    if (known) {
+      FileSystem.writeFile(DONE, JSON.stringify({ key, solo: known, index: key }));
+      return { key, games: list.length, written: "index" };
+    }
     log(`[store-export] index of ${list.length} games written; details and links follow`);
     // store-games.json: o cabecalho com a chave antes dos jogos (o payload confere a chave sem ler o resto).
     const tmp = `${GAMES}.tmp`;
     FileSystem.writeFile(tmp, `{"version":${FORMAT},"key":${JSON.stringify(key)},"games":[`);
     const solo = {};
-    let chunk = "", first = true, started = Date.now();
+    let chunk = "", first = true;
+    started = Date.now();
     for (const game of list) {
       const entry = storeGameEntry(game);
       solo[game.id] = entry.links.some((link) => link.solo);
@@ -229,7 +282,8 @@ import { isoStamp } from './clock.js';
     FileSystem.appendFile(tmp, `${chunk}]}`);
     FileSystem.rename(tmp, GAMES);
     FileSystem.writeFile(DONE, JSON.stringify({ key, solo }));
-    writeIndex(solo);
+    await writeIndex(solo);
+    FileSystem.writeFile(DONE, JSON.stringify({ key, solo, index: key }));
     log(`[store-export] details and links of ${list.length} games written (${Object.values(solo).filter(Boolean).length} download with the app closed)`);
     return { key, games: list.length, written: "all" };
   }

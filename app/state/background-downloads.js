@@ -554,6 +554,29 @@ function createBackgroundDownloads({
         }
         return false;
       }
+      // glibren.42 (A2): o payload calado pode estar vivo e lento (uma conversao pesada num disco USB) e ainda gravando a
+      // parcial: o app so assume o arquivo quando ela parou de crescer por um tempo (pollMs x 20: 20 s no PS5). Um
+      // payload que solta o job (release) ou some de vez para de gravar; um vivo e mudo continua, e o app espera.
+      const partSize = () => {
+        for (const path of [`${destination}.part`, destination]) {
+          try {
+            const info = fs.stat?.(path);
+            if (info && Number.isFinite(info.size)) return `${path}:${info.size}`;
+          } catch {
+          }
+        }
+        return "";
+      };
+      async function stillWriting() {
+        const first = partSize();
+        for (const until = Date.now() + pollMs * 20; Date.now() < until; ) {
+          await wait(pollMs * 2);
+          if (settled) return false;
+          if (partSize() !== first) return true;
+        }
+        return false;
+      }
+      let mutedSaid = false;
       function runNative() {
         mode = "native";
         if (owners.get(destination)?.task === task) setOwner(destination, null);
@@ -612,7 +635,14 @@ function createBackgroundDownloads({
         } catch (problem) {
           // O payload sumiu (morto pelo gerenciador de payloads, ou o sistema): o app continua do ultimo checkpoint.
           if (++failures >= 15) {
-            log(`payload stopped answering (${problem?.message ?? problem}); continuing in the app`);
+            if (await stillWriting()) {
+              failures = 0;
+              if (!mutedSaid) log(`payload not answering (${problem?.message ?? problem}) but still writing ${baseName(destination)}; waiting for it`);
+              mutedSaid = true;
+              if (!settled && mode === "payload") timer = setTimeout(poll, pollMs);
+              return;
+            }
+            log(`payload stopped answering (${problem?.message ?? problem}) and its file stopped growing; continuing in the app`);
             if (!settled && mode === "payload") runNative();
             return;
           }
@@ -695,7 +725,17 @@ function createBackgroundDownloads({
         setOwner(destination, null);
         log(`${baseName(destination)}: taking the download back from the background job ${jobId}`);
         const released = await release();
-        if (!released) log("the background job did not let go in time; continuing in the app anyway");
+        // glibren.42 (A2): sem a resposta do payload, o arquivo so e assumido se parou de crescer; senao o payload segue com
+        // ele (dois escritores na mesma parcial estragariam o arquivo sem que o tamanho acusasse).
+        if (!released && !cancelled && await stillWriting()) {
+          log("the background job did not let go and is still writing; it keeps the download");
+          if (settled) return false;
+          mode = "payload";
+          setOwner(destination, { task, takeOver });
+          poll();
+          return false;
+        }
+        if (!released) log("the background job did not let go in time and its file stopped growing; continuing in the app");
         if (cancelled) finish(false, error("cancelled", "AbortError"));
         else runNative();
         return true;

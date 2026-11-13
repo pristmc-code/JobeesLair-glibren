@@ -249,7 +249,7 @@ test('check: off with the setting off; a version marked bad is neither used nor 
   const w = world({ manifests: { '0.2.0': manifest() } });
   const updater = w.make();
   await updater.check();
-  updater.markBad('0.2.0', 'did not answer');
+  updater.markBad('0.2.0', 'did not answer', { now: true });
   assert.deepEqual(updater.candidates().map((c) => `${c.source}:${c.version}`), ['embedded:0.1.0']);
   assert.equal((await updater.check({ force: true })).state, 'current');
   assert.equal(w.enqueued.length, 1, 'not downloaded again');
@@ -298,7 +298,9 @@ function serviceWorld({ broken = [], versions = {} } = {}) {
   return { w, net, http, payloads };
 }
 
-test('ensure: a downloaded version that does not answer is marked bad and the built-in one starts instead', async () => {
+// glibren.42 (A6): marked bad only after BAD_AFTER failures in a row (it was the first one); the built-in one starts
+// each time meanwhile.
+test('ensure: a downloaded version that does not answer 3 times is marked bad; the built-in one starts instead each time', async () => {
   const { w, net, http, payloads } = serviceWorld({ broken: [`${DIR}/tube-service.elf`], versions: { '/app0/tube-service.elf': '0.1.0' } });
   const updater = w.make();
   await updater.check();
@@ -306,6 +308,12 @@ test('ensure: a downloaded version that does not answer is marked bad and the bu
   const ready = await service.ensure();
   assert.deepEqual(ready, { ok: true, version: '0.1.0' });
   assert.deepEqual(net.sends, [`${DIR}/tube-service.elf`, '/app0/tube-service.elf']);
+  assert.ok(!(JSON.parse(w.fs.readFile(`${DIR}/update.json`)).bad ?? []).includes('0.2.0'), 'one failure is not enough');
+  assert.deepEqual(updater.candidates().map((c) => c.source), ['downloaded', 'embedded'], 'tried again next time');
+  for (let n = 0; n < 2; n++) {
+    net.up = null;
+    assert.equal((await service.ensure()).version, '0.1.0');
+  }
   assert.ok(JSON.parse(w.fs.readFile(`${DIR}/update.json`)).bad.includes('0.2.0'));
   assert.deepEqual(updater.candidates().map((c) => c.source), ['embedded']);
   assert.deepEqual(updater.inUse(), { source: 'embedded', version: '0.1.0' });
@@ -327,4 +335,27 @@ test('ensure: the downloaded version starts; an older service already up is used
   assert.deepEqual(await service.ensure(), { ok: true, version: '0.2.0' });
   assert.deepEqual(net.sends, [`${DIR}/tube-service.elf`]);
   assert.deepEqual(updater.inUse(), { source: 'downloaded', version: '0.2.0' });
+});
+
+// glibren.42 (A6): "Back to the built-in version" (Settings > Videos) marks the downloaded ones ahead of it as bad at once.
+test('revertToEmbedded: the downloaded version ahead of the built-in one is set aside; a newer one is still downloaded later', async () => {
+  const w = world({ manifests: { '0.2.0': manifest() } });
+  const updater = w.make();
+  await updater.check();
+  assert.equal(updater.aheadOfEmbedded(), true);
+  assert.deepEqual(updater.revertToEmbedded(), ['0.2.0']);
+  assert.deepEqual(updater.candidates().map((c) => `${c.source}:${c.version}`), ['embedded:0.1.0']);
+  assert.equal(updater.aheadOfEmbedded(), false);
+  assert.deepEqual(updater.revertToEmbedded(), [], 'nothing left to set aside');
+});
+
+test('markBad: a version that started again forgets its failures', () => {
+  const w = world({});
+  const updater = w.make();
+  assert.equal(updater.markBad('0.3.0', 'x'), false);
+  assert.equal(updater.markBad('0.3.0', 'x'), false);
+  updater.noteRunning('downloaded', '0.3.0');
+  assert.equal(updater.markBad('0.3.0', 'x'), false, 'counted from zero again');
+  assert.equal(updater.markBad('0.3.0', 'x'), false);
+  assert.equal(updater.markBad('0.3.0', 'x'), true);
 });

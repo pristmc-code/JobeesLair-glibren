@@ -139,7 +139,46 @@ assert.ok(!player.includes('Loading the video…') && images.length === 0, 'play
 const broken = screen('Player (failed)', { type: TubePlayer, props: { item: items[0], service: fake, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'unsupported_media' } } });
 assert.ok(broken.includes('This video didn\'t play (unsupported_media).'), broken.join('|'));
 assert.equal(videos.length, 0);
+// glibren.42: a video that asks for an account says where to sign in (with a service that can), or that this one can't;
+// an expired sign-in and a refusal say so; a video opened through the account says it.
+const withAccount = { ...fake, hasAccount: () => true };
+const needs = screen('Player (needs sign-in)', { type: TubePlayer, props: { item: items[0], service: withAccount, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'authentication_required' } } });
+assert.ok(needs.includes('This video asks you to sign in. Sign in under Settings > Videos.'), needs.join('|'));
+const needsOld = screen('Player (needs sign-in, old service)', { type: TubePlayer, props: { item: items[0], service: fake, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'authentication_required' } } });
+assert.ok(needsOld.some((line) => /can't do that yet/.test(line)), needsOld.join('|'));
+const expired = screen('Player (account expired)', { type: TubePlayer, props: { item: items[0], service: withAccount, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'account_expired' } } });
+assert.ok(expired.some((line) => /sign-in expired/.test(line)), expired.join('|'));
+const refusedVideo = screen('Player (account not allowed)', { type: TubePlayer, props: { item: items[0], service: withAccount, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'account_not_allowed' } } });
+assert.ok(refusedVideo.some((line) => /Not even your YouTube account/.test(line)), refusedVideo.join('|'));
+const throughAccount = screen('Player (playing through the account)', { type: TubePlayer, props: { item: items[0], service: withAccount, onClose() {}, start: { info: { ...info, signedIn: true }, choice: 0, phase: 'playing' } } });
+assert.ok(throughAccount.includes('PlayStation  ·  1080p H264 / AAC  ·  through your account'), throughAccount.join('|'));
 console.log('\nOK: YouTube inside the app (sheet, results, player)');
+
+// glibren.42: the YouTube account in Settings > Videos (ui/TubeAccount.jsx); the walker runs no effects, so each state
+// is drawn from `start`.
+const { TubeAccountRows, TubeRevertRow, offeredBy } = await load('app/ui/TubeAccount.jsx');
+const account = (extra) => ({ isReady: () => true, hasAccount: () => true, ensure: async () => ({ ok: true }), account: async () => ({ signedIn: false, name: '', pending: false }), hold: () => () => {}, ...extra });
+assert.equal(offeredBy(account({ hasAccount: () => false }), null), 'no', 'a service up without the feature');
+assert.equal(offeredBy({ isReady: () => false }, { source: 'embedded', version: '0.1.0' }), 'no', 'an older one would start');
+assert.equal(offeredBy({ isReady: () => false }, { source: 'embedded', version: '0.2.0' }), 'unknown');
+const hidden = screen('Settings (old service: no account rows)', { type: TubeAccountRows, props: { service: account({ hasAccount: () => false }) } });
+assert.equal(hidden.length, 0, hidden.join('|'));
+const unknown = screen('Settings (service not up yet)', { type: TubeAccountRows, props: { service: { isReady: () => false }, info: null } });
+assert.ok(unknown.includes('YouTube account') && unknown.includes('Press to check'), unknown.join('|'));
+assert.ok(pressable.has('settings:tubeAccount'));
+const out = screen('Settings (signed out)', { type: TubeAccountRows, props: { service: account(), start: { state: 'out' } } });
+assert.ok(out.includes('Sign in to your YouTube account'), out.join('|'));
+const code = screen('Settings (sign-in code)', { type: TubeAccountRows, props: { service: account(), start: { state: 'code', code: { code: 'ABC-DEF-GHI', url: 'https://www.google.com/device', expiresIn: 1800, interval: 5 } } } });
+for (const label of ['On your phone or computer, open https://www.google.com/device and enter this code:', 'ABC-DEF-GHI', 'Waiting for you to confirm (the code is valid for 30 min)…', 'Cancel']) assert.ok(code.includes(label), `${label}: ${code.join('|')}`);
+const signedIn = screen('Settings (signed in)', { type: TubeAccountRows, props: { service: account(), start: { state: 'in', name: 'PristMC' } } });
+assert.ok(signedIn.includes('Connected: PristMC') && signedIn.includes('Sign out'), signedIn.join('|'));
+assert.ok(pressable.has('settings:tubeAccountSignOut'));
+const updater = (ahead) => ({ aheadOfEmbedded: () => ahead, subscribe: () => () => {}, revertToEmbedded: () => ['0.3.0'], candidates: () => [{ source: 'embedded', version: '0.2.0' }] });
+assert.equal(screen('Settings (no downloaded service ahead)', { type: TubeRevertRow, props: { updater: updater(false), service: {} } }).length, 0);
+const revert = screen('Settings (downloaded service ahead)', { type: TubeRevertRow, props: { updater: updater(true), service: {} } });
+assert.ok(revert.includes('Back to the built-in version'), revert.join('|'));
+console.log('\nOK: YouTube account rows and "Back to the built-in version"');
+
 
 // glibren-a: aberta pelo pedido do glibren (state/tube-request.js) com voltar=: o botao "Back to glibren" no topo, e o
 // Circulo na raiz (e ao fechar o video do modo auto) pede a volta (goBack -> POST /switch); sem voltar=, onBack.

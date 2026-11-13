@@ -123,6 +123,15 @@ test('atualizacao (\\x7FLIH): abre com tipo e ids, mas recusa listar', { skip },
   assert.match(r.stdout, /^TID PPSA99999\nCID UP9999-PPSA99999_00-GLIBRENPKGSRC001\nKIND 2\n/);
 });
 
+test('subpasta com inode fora da tabela (pacote montado de proposito): erro claro, sem escrever fora do vetor (R2-1)', { skip }, () => {
+  for (const ino of ['100000', '0x7FFFFFFF', '0xFFFFFFF0']) {
+    const r = spawnSync(binary, ['list', path.join(pkgs, 'jogo_fast.pkg')], { encoding: 'utf8', timeout: 60000, env: { ...process.env, HARNESS_BAD_DIR_INO: ino } });
+    fails(r, /inode \d+ da pasta .* passa da tabela/);
+  }
+  // sem o gancho o mesmo pacote continua abrindo
+  assert.equal(run('list', path.join(pkgs, 'jogo_fast.pkg')).status, 0);
+});
+
 test('pacote truncado: erro, sem travar', { skip }, () => {
   const src = path.join(pkgs, 'jogo_fast.pkg');
   const size = statSync(src).size;

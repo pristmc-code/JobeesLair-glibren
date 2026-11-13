@@ -612,6 +612,9 @@ typedef struct {
   StLink links[ST_LINKS];
   int link_count;
 } StDetail;
+// glibren.42 (J7): onde cada jogo esta no store-games.json (deslocamento e tamanho do objeto), montado numa leitura so
+// quando o arquivo muda (mtime, tamanho e inode); depois a ficha de um jogo e um pread so do pedaco dele.
+typedef struct { char id[16]; uint64_t off; uint32_t len; } StGameAt;
 typedef struct {
   const char* want;
   const char* key; // a key do indice
@@ -619,6 +622,11 @@ typedef struct {
   int found;
   char id[16];
   StDetail* d;
+  // glibren.42 (J7): modo varredura (scan): anota cada jogo em `at` e a key do arquivo em scan_key, sem parar.
+  int scan, at_count, at_cap;
+  const char* base;
+  StGameAt* at;
+  char scan_key[96];
 } StDetailParse;
 static int st_about_item(JP* j, void* ctx) {
   StDetail* d = ctx;
@@ -690,7 +698,26 @@ static int st_detail_item(JP* j, void* ctx) {
   if (j->p >= j->end || *j->p != '{') return jp_skip(j);
   memset(p->d, 0, sizeof *p->d);
   p->id[0] = 0;
+  const char* start = j->p;
   if (!jp_object(j, st_detail_field, p)) return 0;
+  if (p->scan) {
+    const uint64_t len = (uint64_t)(j->p - start);
+    if (p->id[0] && len < (4u << 20)) {
+      if (p->at_count == p->at_cap) {
+        const int grown = p->at_cap ? p->at_cap * 2 : 1024;
+        if (grown > ST_MAX_GAMES * 2) return 0;
+        StGameAt* more = realloc(p->at, (size_t)grown * sizeof *more);
+        if (!more) return 0;
+        p->at = more;
+        p->at_cap = grown;
+      }
+      StGameAt* a = &p->at[p->at_count++];
+      copy_text(a->id, sizeof a->id, p->id);
+      a->off = (uint64_t)(start - p->base);
+      a->len = (uint32_t)len;
+    }
+    return 1;
+  }
   if (strcmp(p->id, p->want)) return 1;
   p->found = 1;
   return p->key_state != 1; // achou: com a key ja conferida, o resto nao interessa
@@ -700,6 +727,7 @@ static int st_detail_top(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "key")) {
     char value[96];
     if (!lib_text(jp, value, sizeof value)) return -1;
+    if (p->scan) { copy_text(p->scan_key, sizeof p->scan_key, value); p->key_state = 1; return 1; }
     p->key_state = strcmp(value, p->key) ? 2 : 1;
     return p->key_state == 2 ? -1 : 1; // outra key: para (vale como nao achado)
   }
@@ -707,7 +735,8 @@ static int st_detail_top(JP* jp, const char* key, void* ctx) {
   return 0;
 }
 // A ficha e os links do jogo `id`: 1 achou (com a key do indice), 0 nao achou, 2 sem o arquivo, 4 de outra key.
-static int st_find_detail(const char* id, const char* key, StDetail* d) {
+// Lendo o arquivo inteiro (o caminho de antes; agora so a reserva do J7).
+static int st_find_detail_full(const char* id, const char* key, StDetail* d) {
   char path[700];
   st_paths(NULL, 0, path, sizeof path);
   size_t size = 0;
@@ -726,6 +755,98 @@ static int st_find_detail(const char* id, const char* key, StDetail* d) {
   if (!p.found) return 0;
   if (p.key_state != 1) return 4; // sem key: nao da para saber se e deste indice
   return 1;
+}
+// glibren.42 (J7): a tabela de deslocamentos do store-games.json (com g_store_games_lock).
+static pthread_mutex_t g_store_games_lock = PTHREAD_MUTEX_INITIALIZER;
+static StGameAt* g_games_at;
+static int g_games_at_count, g_games_at_ok;
+static int64_t g_games_at_mtime, g_games_at_mtime_ns;
+static uint64_t g_games_at_size, g_games_at_ino;
+static char g_games_at_key[96];
+// Monta a tabela lendo o arquivo uma vez. 1 ok, 0 nao deu (o chamador usa a leitura inteira).
+static int st_games_scan_locked(const char* path, const struct stat* st) {
+  free(g_games_at);
+  g_games_at = NULL;
+  g_games_at_count = g_games_at_ok = 0;
+  g_games_at_key[0] = 0;
+  size_t size = 0;
+  char* text = read_text(path, ST_GAMES_MAX_BYTES, &size);
+  if (!text) return 0;
+  StDetail* scratch = malloc(sizeof *scratch);
+  if (!scratch) { free(text); return 0; }
+  StDetailParse p;
+  memset(&p, 0, sizeof p);
+  p.want = "";
+  p.key = "";
+  p.d = scratch;
+  p.scan = 1;
+  p.base = text;
+  JP jp = {text, text + size, 0};
+  const int parsed = jp_object(&jp, st_detail_top, &p);
+  free(scratch);
+  free(text);
+  if (!parsed || (uint64_t)size != (uint64_t)st->st_size) { free(p.at); return 0; }
+  g_games_at = p.at;
+  g_games_at_count = p.at_count;
+  copy_text(g_games_at_key, sizeof g_games_at_key, p.scan_key);
+  g_games_at_mtime = (int64_t)st->st_mtime;
+  g_games_at_mtime_ns = (int64_t)st->st_mtim.tv_nsec;
+  g_games_at_size = (uint64_t)st->st_size;
+  g_games_at_ino = (uint64_t)st->st_ino;
+  g_games_at_ok = 1;
+  logf_("loja completa: indice de deslocamentos do store-games.json montado (%d jogos)", g_games_at_count);
+  return 1;
+}
+static int st_find_detail(const char* id, const char* key, StDetail* d) {
+  char path[700];
+  st_paths(NULL, 0, path, sizeof path);
+  struct stat st;
+  if (stat(path, &st)) return 2;
+  pthread_mutex_lock(&g_store_games_lock);
+  const int same = g_games_at_ok && g_games_at_mtime == (int64_t)st.st_mtime && g_games_at_mtime_ns == (int64_t)st.st_mtim.tv_nsec &&
+                   g_games_at_size == (uint64_t)st.st_size && g_games_at_ino == (uint64_t)st.st_ino;
+  if (!same && !st_games_scan_locked(path, &st)) {
+    pthread_mutex_unlock(&g_store_games_lock);
+    return st_find_detail_full(id, key, d);
+  }
+  if (!g_games_at_key[0] || strcmp(g_games_at_key, key)) { pthread_mutex_unlock(&g_store_games_lock); return 4; }
+  uint64_t off = 0;
+  uint32_t len = 0;
+  int found = 0;
+  for (int i = 0; i < g_games_at_count && !found; ++i) if (!strcmp(g_games_at[i].id, id)) { off = g_games_at[i].off; len = g_games_at[i].len; found = 1; }
+  pthread_mutex_unlock(&g_store_games_lock);
+  if (!found) return 0;
+  // Le so o objeto do jogo; o arquivo trocado no meio (outro inode/tamanho/mtime) ou outro id: a leitura inteira decide.
+  char* slice = malloc((size_t)len + 1);
+  if (!slice) return st_find_detail_full(id, key, d);
+  int fd = open(path, O_RDONLY);
+  struct stat now;
+  int ok = fd >= 0 && !fstat(fd, &now) && (uint64_t)now.st_ino == (uint64_t)st.st_ino && now.st_size == st.st_size && now.st_mtime == st.st_mtime && now.st_mtim.tv_nsec == st.st_mtim.tv_nsec;
+  size_t got = 0;
+  while (ok && got < len) {
+    const ssize_t n = pread(fd, slice + got, len - got, (off_t)(off + got));
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) { ok = 0; break; }
+    got += (size_t)n;
+  }
+  if (fd >= 0) close(fd);
+  if (ok) {
+    slice[len] = 0;
+    StDetailParse p;
+    memset(&p, 0, sizeof p);
+    p.want = id;
+    p.key = key;
+    p.d = d;
+    memset(d, 0, sizeof *d);
+    JP jp = {slice, slice + len, 0};
+    ok = jp_object(&jp, st_detail_field, &p) && !strcmp(p.id, id);
+  }
+  free(slice);
+  if (ok) return 1;
+  pthread_mutex_lock(&g_store_games_lock);
+  g_games_at_ok = 0;
+  pthread_mutex_unlock(&g_store_games_lock);
+  return st_find_detail_full(id, key, d);
 }
 static int st_first_solo(const StDetail* d) {
   for (int i = 0; i < d->link_count; ++i) if (st_link_solo(&d->links[i])) return i;

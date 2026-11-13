@@ -1363,7 +1363,8 @@ static void conv_backup_delete(int fd, Request* r, int app) {
   const int count = conv_backup_roots(roots, 24);
   int known = 0;
   for (int i = 0; i < count; ++i) if (!strcmp(roots[i], d.root)) known = 1;
-  if (!known || !d.name[0] || d.name[0] == '.' || strchr(d.name, '/') || strchr(d.name, '\\')) { backup_reply(fd, app, 400, "{\"error\":\"invalid backup\"}"); return; }
+  // R2-19: _temp (as extracoes em andamento) nao e um item do BACKUP: a lista e o "converter" ja o recusavam.
+  if (!known || !d.name[0] || d.name[0] == '.' || !strcmp(d.name, "_temp") || strchr(d.name, '/') || strchr(d.name, '\\')) { backup_reply(fd, app, 400, "{\"error\":\"invalid backup\"}"); return; }
   char path[600];
   snprintf(path, sizeof path, "%.255s/BACKUP/%.255s", d.root, d.name);
   struct stat st;
@@ -1371,9 +1372,21 @@ static void conv_backup_delete(int fd, Request* r, int app) {
   // Nao apaga o original de uma conversao que ainda o le (um .pkg convertido direto do BACKUP).
   pthread_mutex_lock(&g_conv_lock);
   int busy = 0;
-  for (int i = 0; i < g_conv_count; ++i) if (!conv_terminal(g_convs[i]->state) && (conv_inside(g_convs[i]->source, path) || !strcmp(g_convs[i]->source, path))) busy = 1;
+  // R2-19: tambem a pasta de trabalho de uma conversao em andamento (dentro ou igual ao item).
+  for (int i = 0; i < g_conv_count; ++i)
+    if (!conv_terminal(g_convs[i]->state) && (conv_inside(g_convs[i]->source, path) || !strcmp(g_convs[i]->source, path) ||
+                                              conv_inside(g_convs[i]->work, path) || !strcmp(g_convs[i]->work, path)))
+      busy = 1;
   pthread_mutex_unlock(&g_conv_lock);
   if (busy) { backup_reply(fd, app, 409, "{\"error\":\"converting\"}"); return; }
+  // J10: nem um download que ainda grava dentro do item (o .part ou o destino de um job que nao terminou).
+  pthread_mutex_lock(&g_lock);
+  for (int i = 0; i < g_job_count; ++i)
+    if ((!terminal(g_jobs[i]->state) || g_jobs[i]->running) && g_jobs[i]->destination[0] &&
+        (conv_inside(g_jobs[i]->destination, path) || !strcmp(g_jobs[i]->destination, path)))
+      busy = 1;
+  pthread_mutex_unlock(&g_lock);
+  if (busy) { backup_reply(fd, app, 409, "{\"error\":\"downloading\"}"); return; }
   const int failed = conv_remove_tree(path, 0);
   logk_("%s: BACKUP %s apagado%s", backup_who(app), path, failed ? " (em parte)" : "");
   backup_reply(fd, app, failed ? 500 : 200, failed ? "{\"error\":\"not all deleted\"}" : "{\"ok\":true}");
@@ -1612,18 +1625,50 @@ static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) 
   if (!a) return 0;
   struct archive* out = archive_write_disk_new();
   if (!out) { archive_read_free(a); snprintf(err, cap, "out of memory"); return 0; }
-  archive_write_disk_set_options(out, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_SECURE_NODOTDOT | ARCHIVE_EXTRACT_SECURE_SYMLINKS); // o caminho ja vem limpo (arc_clean_path) e absoluto dentro de work
+  // O caminho ja vem limpo (arc_clean_path) e absoluto dentro de work. SECURE_NOABSOLUTEPATHS nao entra porque o
+  // proprio caminho de destino e absoluto (work/...); a defesa contra links e o filtro de tipo abaixo (R2-2).
+  archive_write_disk_set_options(out, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_SECURE_NODOTDOT | ARCHIVE_EXTRACT_SECURE_SYMLINKS);
   struct archive_entry* e;
   int rc = 1, r;
   char* block = malloc(ARC_BLOCK);
   if (!block) { archive_read_free(a); archive_write_free(out); snprintf(err, cap, "out of memory"); return 0; }
-  while ((r = archive_read_next_header(a, &e)) == ARCHIVE_OK) {
+  uint32_t skipped = 0;
+  // R2-3: ARCHIVE_WARN (nome fora do locale, por exemplo) segue, como no arc_plan.
+  while ((r = archive_read_next_header(a, &e)) == ARCHIVE_OK || r == ARCHIVE_WARN) {
     if (c->cancel || g_stop) { rc = 0; snprintf(err, cap, "stopped"); break; }
     char clean[1024], full[2200];
-    if (!arc_clean_path(archive_entry_pathname(e), clean, sizeof clean)) { archive_read_data_skip(a); continue; }
+    // R2-3: o nome pode vir NULL (caractere fora do locale "C" do payload): mesmo padrao do arc_plan.
+    const char* name = archive_entry_pathname_utf8(e);
+    if (!name) name = archive_entry_pathname(e);
+    if (!name || !arc_clean_path(name, clean, sizeof clean)) { archive_read_data_skip(a); skipped++; continue; }
+    // R2-2: so arquivo comum e pasta. Link simbolico, aparelho e fifo ficam de fora. Hardlink so para um arquivo que
+    // esta mesma extracao ja gravou dentro de work (o alvo e reescrito para work/...); alvo absoluto, com "..", que
+    // ainda nao existe ou que nao e arquivo comum e pulado.
+    // (Um hardlink do tar pode vir sem tipo no modo: o alvo e conferido abaixo.)
+    const mode_t type = archive_entry_filetype(e);
+    const int hard = archive_entry_hardlink(e) || archive_entry_hardlink_utf8(e);
+    if ((type != AE_IFREG && type != AE_IFDIR && !(hard && type == 0)) || (hard && type == AE_IFDIR) || archive_entry_symlink(e)) {
+      archive_read_data_skip(a);
+      skipped++;
+      continue;
+    }
+    if (hard) {
+      const char* target = archive_entry_hardlink_utf8(e);
+      if (!target) target = archive_entry_hardlink(e);
+      char tclean[1024], tfull[2200];
+      struct stat tst;
+      if (!target || target[0] == '/' || !arc_clean_path(target, tclean, sizeof tclean) ||
+          snprintf(tfull, sizeof tfull, "%s/%s", work, tclean) >= (int)sizeof tfull || lstat(tfull, &tst) || !S_ISREG(tst.st_mode)) {
+        archive_read_data_skip(a);
+        skipped++;
+        continue;
+      }
+      archive_entry_set_hardlink(e, tfull);
+    }
     snprintf(full, sizeof full, "%s/%s", work, clean);
     archive_entry_set_pathname(e, full);
-    if (archive_write_header(out, e) != ARCHIVE_OK) { rc = 0; snprintf(err, cap, "write: %s", archive_error_string(out) ? archive_error_string(out) : "extract"); break; }
+    const int w = archive_write_header(out, e);
+    if (w != ARCHIVE_OK && w != ARCHIVE_WARN) { rc = 0; snprintf(err, cap, "write: %s", archive_error_string(out) ? archive_error_string(out) : "extract"); break; }
     for (la_ssize_t got; (got = archive_read_data(a, block, ARC_BLOCK)) != 0;) {
       if (got < 0 || archive_write_data(out, block, (size_t)got) != got) { rc = 0; snprintf(err, cap, "source: %s", archive_error_string(a) ? archive_error_string(a) : "read"); break; }
     }
@@ -1631,6 +1676,7 @@ static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) 
     archive_write_finish_entry(out);
   }
   if (rc && r != ARCHIVE_EOF) { rc = 0; snprintf(err, cap, "source: %s", archive_error_string(a) ? archive_error_string(a) : "the archive could not be read"); }
+  if (skipped) logk_("conversao %s: extracao pulou %u entrada(s) (link, hardlink, tipo especial ou nome invalido)", c->id, skipped);
   free(block);
   archive_read_free(a);
   archive_write_free(out);
@@ -1831,7 +1877,9 @@ static void conv_backup_convert_all(int fd, Request* r, int app) {
 // celular por que uma conversao ou um download falhou e mandar a quem for ajudar.
 static void conv_log(int fd, Request* r, int app) {
   if (!app && !session_ok(r->session)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
-  const size_t cap = 1536 * 1024;
+  // R2-12: o app le no maximo 1 MiB (background-downloads.js); o texto vai num JSON (as quebras de linha dobram), entao
+  // para ele so os ultimos 512 KiB. A pagina do celular segue com ~1,5 MiB.
+  const size_t cap = app ? 512 * 1024 : 1536 * 1024;
   Buf b = {0};
   char old[700];
   snprintf(old, sizeof old, "%.690s.old", g_log_path);

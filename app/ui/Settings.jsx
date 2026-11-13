@@ -33,6 +33,7 @@ import { setAutoContinueParts, useAutoContinueParts } from '../state/auto-contin
 import { setAutoPlayFirst, useAutoPlayFirst } from '../state/auto-play-first.js';
 import { TUBE_DOWNLOAD_CAP_MAX, setTubeDownloadCap, stepTubeDownloadCap, useTubeDownloadCap, TUBE_QUALITY_CHOICES, setTubeAutoUpdate, setTubeQuality, setTubeSponsorBlock, useTubeAutoUpdate, useTubeQuality, useTubeSponsorBlock } from '../state/tube-settings.js';
 import { tubeUpdater } from '../state/tube-service.js';
+import { TubeAccountRows, TubeRevertRow } from './TubeAccount.jsx';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
@@ -217,9 +218,13 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       jsx(TubeQualityRow, {}),
       jsx(TubeDownloadCapRow, {}),
       jsx(Row, { focusKey: "settings:tubeSponsorBlock", name: t2("settings.tubeSponsorBlock"), hint: t2("settings.tubeSponsorBlockDetail"), end: jsx(Switch, { on: sponsor }), onPress: () => setTubeSponsorBlock(!sponsor) }),
+      // glibren.42: the YouTube account (TV sign-in through the service; hidden with a service that cannot).
+      jsx(TubeAccountRows, { info: service }),
       // glibren-tube-update: the YouTube service updates itself (state/tube-update.js), and which one is in use.
       jsx(Row, { focusKey: "settings:tubeAutoUpdate", name: t2("settings.tubeAutoUpdate"), hint: t2("settings.tubeAutoUpdateDetail"), end: jsx(Switch, { on: autoUpdate }), onPress: () => setTubeAutoUpdate(!autoUpdate) }),
-      jsx(Row, { focusKey: "settings:tubeService", name: t2("settings.tubeService"), detail: tubeServiceText(t2, service) })
+      jsx(Row, { focusKey: "settings:tubeService", name: t2("settings.tubeService"), detail: tubeServiceText(t2, service) }),
+      // glibren.42 (A6): back to the built-in service when a downloaded update misbehaves.
+      jsx(TubeRevertRow, {})
     ] });
   }
   // glibren-tube-quality: the quality YouTube videos open in (state/tube-settings.js), one pill per choice as the

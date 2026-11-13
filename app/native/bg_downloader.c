@@ -857,6 +857,9 @@ typedef struct {
   char platform[4], code[16], file[129];
   char error[600];
   int awaiting_app, renewals;
+  // glibren.42 (J8): o link temporario deste job nao foi gravado no jobs.json (AllDebrid, ou link direto assinado); o
+  // url lido de volta e so a origem ("https://host/"). Ao comecar, o job vira needs-app e o app pede um link novo.
+  int link_hidden;
   uint64_t written, total;
   double bytes_per_second;
   unsigned active_connections, retries;
@@ -970,13 +973,61 @@ static void tokenless(const char* url, char* out, size_t cap) {
   out[n] = 0;
 }
 
+// glibren.42 (J8): um nome de parametro da query que costuma levar credencial ou assinatura (link temporario).
+static int secret_param(const char* name, size_t n) {
+  static const char* const names[] = {"token", "access_token", "auth", "authorization", "key", "apikey", "api_key", "sig", "signature",
+                                      "x-amz-signature", "x-amz-credential", "x-amz-security-token", "googleaccessid", "policy", "hmac",
+                                      "secret", "session", "sessionid", "password", "pass", "expires", "x-amz-expires"};
+  for (size_t i = 0; i < sizeof names / sizeof names[0]; ++i) if (strlen(names[i]) == n && !strncasecmp(name, names[i], n)) return 1;
+  return 0;
+}
+// O link e temporario/assinado? Usuario e senha no endereco, ou um parametro da lista acima na query.
+static int url_has_secret(const char* url) {
+  const char* scheme = strstr(url, "://");
+  if (scheme) {
+    const char* host = scheme + 3;
+    const size_t n = strcspn(host, "/?#");
+    if (memchr(host, '@', n)) return 1;
+  }
+  const char* q = strchr(url, '?');
+  if (!q) return 0;
+  for (const char* p = q + 1; *p && *p != '#';) {
+    const size_t n = strcspn(p, "=&#");
+    if (n && secret_param(p, n)) return 1;
+    p += n;
+    p += strcspn(p, "&#");
+    if (*p == '&') ++p;
+  }
+  return 0;
+}
+// So a origem ("https://host/", sem usuario/senha), para o jobs.json e para mostrar o site.
+static void url_origin(const char* url, char* out, size_t cap) {
+  const char* scheme = strstr(url, "://");
+  if (!scheme || cap < 2) { snprintf(out, cap, "https://invalid/"); return; }
+  const char* host = scheme + 3;
+  size_t n = strcspn(host, "/?#");
+  const char* at = NULL;
+  for (const char* p = host; p < host + n; ++p) if (*p == '@') at = p;
+  if (at) { n -= (size_t)(at + 1 - host); host = at + 1; }
+  snprintf(out, cap, "%.*s%.*s/", (int)(scheme + 3 - url), url, (int)n, host);
+}
+// O link deste job nao vai para o disco inteiro: AllDebrid sempre (o proprio caminho e a credencial); direto quando
+// assinado. O TorBox segue com tokenless (renovado pelo payload com a chave).
+static int link_temporary(const Job* j) {
+  if (!strcmp(j->provider, "torbox")) return 0;
+  return !strcmp(j->provider, "alldebrid") || j->link_hidden || url_has_secret(j->url);
+}
+
 static void job_json_as(Buf* b, const Job* j, int for_disk) {
   const int hide = for_disk && !strcmp(j->provider, "torbox");
+  const int drop = for_disk && !hide && link_temporary(j); // glibren.42 (J8)
   char safe[sizeof j->url];
   if (hide) tokenless(j->url, safe, sizeof safe);
+  else if (drop) url_origin(j->url, safe, sizeof safe);
   buf_str(b, "{\"id\":"); buf_json(b, j->id);
   buf_str(b, ",\"state\":"); buf_json(b, j->state);
-  buf_str(b, ",\"url\":"); buf_json(b, hide ? safe : j->url);
+  buf_str(b, ",\"url\":"); buf_json(b, hide || drop ? safe : j->url);
+  if (drop) buf_str(b, ",\"linkHidden\":true");
   buf_str(b, ",\"destination\":"); buf_json(b, j->destination);
   buf_str(b, ",\"storageRoot\":"); buf_json(b, j->storage_root);
   buf_str(b, ",\"publishTo\":"); buf_json(b, j->publish_to);
@@ -1286,6 +1337,7 @@ static int job_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "written")) return jp_uint(jp, &j->written) ? 1 : -1;
   if (!strcmp(key, "total")) return jp_uint(jp, &j->total) ? 1 : -1;
   if (!strcmp(key, "linkAt")) return jp_int64(jp, &j->link_at) ? 1 : -1;
+  if (!strcmp(key, "linkHidden")) return jp_bool(jp, &j->link_hidden) ? 1 : -1; // glibren.42 (J8): so vale no jobs.json
   if (!strcmp(key, "created")) return jp_int64(jp, &j->created) ? 1 : -1;
   if (!strcmp(key, "updated")) return jp_int64(jp, &j->updated) ? 1 : -1;
   if (!strcmp(key, "source")) {
@@ -1304,6 +1356,8 @@ static int job_field(JP* jp, const char* key, void* ctx) {
 
 static int safe_path(const char* path) {
   size_t n = strlen(path);
+  // glibren.42 (J10): nada de caractere de controle (quebra de linha no diario, nome invisivel no disco).
+  for (const unsigned char* p = (const unsigned char*)path; *p; ++p) if (*p < 0x20 || *p == 0x7f) return 0;
   return path[0] == '/' && n > 1 && n < 1000 && !strstr(path, "/../") && !strstr(path, "/./") &&
          strcmp(path + (n >= 3 ? n - 3 : 0), "/..") && !strchr(path, '\\') && path[n - 1] != '/';
 }
@@ -2221,6 +2275,23 @@ static int recover_existing(Engine* e) {
               !memcmp(r.identity, e->receipt_identity, 65) && r.sha256[64] == 0;
   if (meta >= 0) close(meta);
   struct stat st;
+  // glibren.42 (J9): queda entre reservar o destino (vazio, O_EXCL) e renomear a .part (publish_file). O recibo ja foi
+  // gravado com o inode da .part: destino vazio + .part do tamanho e do inode do recibo = o publish interrompido.
+  // Termina o publish aqui (so apaga um destino de 0 bytes); qualquer outra coisa segue recusada como antes.
+  if (valid) {
+    char part[1100], resume[1100];
+    snprintf(part, sizeof part, "%s.part", e->job->destination);
+    snprintf(resume, sizeof resume, "%s.resume", e->job->destination);
+    struct stat dst, pst;
+    if (!lstat(e->job->destination, &dst) && S_ISREG(dst.st_mode) && dst.st_size == 0 && !lstat(part, &pst) && S_ISREG(pst.st_mode) &&
+        (uint64_t)pst.st_size == r.total && (uint64_t)pst.st_dev == r.device && (uint64_t)pst.st_ino == r.inode) {
+      if (!unlink(e->job->destination) && !rename(part, e->job->destination)) {
+        unlink(resume);
+        sync_parent(e->job->destination);
+        logk_("job %s: publish interrompido (destino vazio + .part completa do recibo): concluido agora", e->job->id);
+      }
+    }
+  }
   if (!valid || stat(e->job->destination, &st) || !S_ISREG(st.st_mode) || (uint64_t)st.st_size != r.total ||
       (uint64_t)st.st_dev != r.device || (uint64_t)st.st_ino != r.inode ||
       (e->job->sha256[0] && strcmp(e->job->sha256, r.sha256)) || (e->job->expected_bytes && r.total != e->job->expected_bytes)) {
@@ -2849,6 +2920,9 @@ static void run_job(Job* j) {
   for (int renew_round = 0;; ++renew_round) {
     // Link do TorBox velho: renova antes de comecar.
     if (!strcmp(j->provider, "torbox") && j->link_at && now_s() - j->link_at > RENEW_AGE_S) e->needs_renew = 1;
+    // glibren.42 (J8): o link temporario nao foi gravado (so a origem voltou do jobs.json): o app pede outro
+    // (renew_link devolve RENEW_NEEDS_APP para quem nao e TorBox).
+    if (j->link_hidden && strcmp(j->provider, "torbox")) e->needs_renew = 1;
     if (e->needs_renew) {
       e->needs_renew = 0;
       if (renew_round >= MAX_RENEWALS) { engine_fail(e, "provider denied the file; link expired or browser verification required (HTTP 403)"); goto done; }
@@ -3200,6 +3274,8 @@ typedef struct {
   char method[8], path[1024]; // glibren: 1024 para a busca e os filtros da Biblioteca TorBox na URL
   char token[128];
   char session[48]; // X-Session: a sessao aberta pelo PIN na pagina do celular
+  char host[96];    // glibren.42 (J6): o cabecalho Host (cortado), para a pagina do celular recusar nome de dominio
+  int host_seen;
   size_t content_length;
   char* body;
 } Request;
@@ -3268,6 +3344,7 @@ static int read_request(int fd, Request* r) {
       if (!strcasecmp(line, "content-length")) { uint64_t n; if (!decimal(value, &n) || n > (strcmp(r->path, "/orbit") ? 64u : 256u) * 1024) return 413; r->content_length = (size_t)n; }
       else if (!strcasecmp(line, "x-jobe-token")) snprintf(r->token, sizeof r->token, "%s", value);
       else if (!strcasecmp(line, "x-session")) snprintf(r->session, sizeof r->session, "%s", value);
+      else if (!strcasecmp(line, "host")) { snprintf(r->host, sizeof r->host, "%s", value); r->host_seen = 1; }
       else if (!strcasecmp(line, "authorization") && !strncasecmp(value, "Bearer ", 7)) snprintf(r->token, sizeof r->token, "%s", value + 7);
     }
     line = next ? next + 2 : NULL;
@@ -3328,6 +3405,7 @@ static void handle_create(int fd, Request* r) {
   char error[200];
   if (!jp_object(&jp, job_field, &parse)) { free(j); respond_error(fd, 400, "invalid JSON body"); return; }
   j->id[0] = 0; j->state[0] = 0; j->error[0] = 0; j->by[0] = 0; j->published[0] = 0; j->awaiting_app = 0; j->renewals = 0; j->written = j->total = 0;
+  j->link_hidden = 0; // glibren.42 (J8): so o jobs.json marca
   j->connections_set = 0; // glibren.8: so o celular escolhe (POST /api/jobs/<id>/connections, ou /jobs/<id>/connections)
   j->requested = 0;        // glibren: pedidos da Biblioteca TorBox so nascem no celular
   if (!validate_job(j, error, sizeof error)) { free(j); respond_error(fd, 400, error); return; }
@@ -3489,6 +3567,7 @@ static void handle_queue(int fd, Request* r) {
         j = q->job;
         q->job = NULL;
         j->ahead = 1;
+        j->link_hidden = 0; // glibren.42 (J8): link novo do app
         snprintf(j->id, sizeof j->id, "b%u", ++g_next_id);
         snprintf(j->state, sizeof j->state, "queued");
         j->created = j->updated = now_s();
@@ -6627,6 +6706,37 @@ static void close_gently(int fd) {
   close(fd);
 }
 
+// glibren.42 (J6): o Host de um pedido a pagina do celular tem de ser um IPv4 literal (com ou sem porta) ou "localhost",
+// como no companion original (companion_daemon.c, literal_host). Um nome de dominio e como uma pagina da web chegaria
+// aqui por DNS rebinding (e tentaria PINs ou leria o status); celular e app JobeControle usam o IP. Sem Host (HTTP/1.0,
+// ferramentas) passa: todo navegador manda um.
+static int monitor_host_ok(const Request* r) {
+  if (!r->host_seen) return 1;
+  char host[96];
+  snprintf(host, sizeof host, "%s", r->host);
+  size_t n = strlen(host);
+  while (n && (host[n - 1] == ' ' || host[n - 1] == '\t')) host[--n] = 0;
+  for (char* c = host; *c; ++c) if (*c >= 'A' && *c <= 'Z') *c = (char)(*c - 'A' + 'a');
+  char* colon = strrchr(host, ':');
+  if (colon) {
+    const size_t digits = strlen(colon + 1);
+    if (!digits || digits > 5 || strspn(colon + 1, "0123456789") != digits) return 0;
+    *colon = 0;
+  }
+  if (!strcmp(host, "localhost")) return 1;
+  int parts = 0;
+  for (const char* at = host;;) {
+    const size_t length = strspn(at, "0123456789");
+    if (!length || length > 3 || atoi(at) > 255) return 0;
+    ++parts;
+    at += length;
+    if (!*at) break;
+    if (*at != '.' || parts == 4) return 0;
+    ++at;
+  }
+  return parts == 4;
+}
+
 static void* serve_monitor(void* arg) {
   int fd = (int)(intptr_t)arg;
   struct timeval timeout = {5, 0};
@@ -6643,7 +6753,8 @@ static void* serve_monitor(void* arg) {
   Request r;
   memset(&r, 0, sizeof r);
   int status = read_request(fd, &r);
-  if (status == 200) monitor_route(fd, &r, ip);
+  if (status == 200 && !monitor_host_ok(&r)) monitor_json(fd, 403, "{\"error\":\"host\"}");
+  else if (status == 200) monitor_route(fd, &r, ip);
   else if (status) monitor_json(fd, status, "{\"error\":\"bad request\"}");
   if (r.body) { memset(r.body, 0, r.content_length); free(r.body); }
   close_gently(fd);

@@ -7,7 +7,7 @@ import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -370,6 +370,34 @@ test('a ficha: texto, fotos (so https), links sem URL, solo por link e "download
   storeFiles(base, { key: 'velha' });
   const stale = await page('/api/store/game?id=PPSA01001');
   assert.deepEqual([stale.data.download, stale.data.links, stale.data.detailsState], ['app', [], 'stale']);
+});
+
+// glibren.42 (J7): o store-games.json e lido inteiro uma vez (monta a tabela de deslocamentos); cada ficha depois e so o
+// pedaco do jogo. Regravado (tmp + rename, como a Jobe faz), a tabela e montada de novo e a ficha nova aparece.
+test('a ficha le so o pedaco do jogo (tabela de deslocamentos), remontada quando o arquivo muda', { skip }, async () => {
+  const base = workspace();
+  storeFiles(base);
+  start(base);
+  await up(base);
+  const built = () => (readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').match(/indice de deslocamentos do store-games\.json montado/g) || []).length;
+  for (let i = 0; i < 5; i++) {
+    const g = await page('/api/store/game?id=PPSA01001');
+    assert.equal(g.data.details.summary, 'Resumo.');
+    const b = await page('/api/store/game?id=PPSA01002');
+    assert.equal(b.data.links.length, 2);
+  }
+  assert.equal(built(), 1, 'o arquivo inteiro foi lido uma vez so');
+  // A Jobe regrava (tmp + rename): a ficha nova aparece e a tabela e remontada.
+  const file = path.join(base, 'store/store-games.json');
+  const doc = JSON.parse(readFileSync(file, 'utf8'));
+  doc.games[0].summary = 'Resumo novo, com acento: ação ™ 日本語.';
+  doc.games.unshift({ id: 'PPSA09999', summary: 'x'.repeat(5000), about: [], shots: [], links: [] });
+  writeFileSync(`${file}.tmp`, JSON.stringify(doc));
+  renameSync(`${file}.tmp`, file);
+  const g = await page('/api/store/game?id=PPSA01001');
+  assert.equal(g.data.details.summary, 'Resumo novo, com acento: ação ™ 日本語.');
+  assert.equal(built(), 2);
+  assert.deepEqual((await page('/api/store/game?id=PPSA01003')).data.detailsState, 'none');
 });
 
 test('Baixar: sem PIN nao; Jobe aberta vira marcador para ela; repetido "ja esta"; o pedido vai ao app em GET /jobs', { skip }, async () => {

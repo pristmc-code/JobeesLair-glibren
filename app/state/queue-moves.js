@@ -111,19 +111,29 @@ import { MARGIN2 } from './space.js';
             return 0;
           }
         };
-        const room = fs.diskUsage(to).free + copies2.reduce((sum, path) => sum + staged(path), 0);
+        // glibren.42 (R2-6): a move to another drive cut off before (or one to this drive) left copies of ours there.
+        if (job2.moving && job2.moving.to !== to) await dropCopies(job2, log2);
+        const ours = ownCopies(job2, copies2, to);
+        const room = fs.diskUsage(to).free + copies2.reduce((sum, path) => sum + staged(path) + (ours.has(onRoot(path, from, to)) ? treeSize(onRoot(path, from, to)) : 0), 0);
         log2(`${copies2.length} paths, ${total} bytes, to ${to} (${room} bytes there)`);
         if (room < total + MARGIN2) throw new Error(t("move.noRoom", { size: formatBytes(total + MARGIN2 - room) }));
-        for (const path of copies2) if (fs.exists(onRoot(path, from, to))) throw new Error(t("move.inTheWay", { path: onRoot(path, from, to) }));
+        for (const path of copies2) if (fs.exists(onRoot(path, from, to)) && !ours.has(onRoot(path, from, to))) throw new Error(t("move.inTheWay", { path: onRoot(path, from, to) }));
         const mounted = await mountedOf(job2, copies2, log2);
         if (mounted.length) throw new Error(t("move.mounted", { path: mounted[0].path }));
-        job2.moving = { to, total, written: 0, at: Date.now() };
+        // `targets`: every path this move may put there (none was in the way), so a cancel, or a move again, knows
+        // which finished copies are its own; `done`: the ones copied, read back and matched.
+        job2.moving = { to, total, written: 0, at: Date.now(), targets: copies2.map((path) => onRoot(path, from, to)), done: [...ours] };
         change();
         let copied = 0;
         try {
           for (const [index, path] of copies2.entries()) {
             if (control.cancelled) throw Object.assign(new Error(t("move.cancelled")), { name: "AbortError" });
             const target = onRoot(path, from, to);
+            if (ours.has(target)) {
+              copied += sizes[index];
+              log2(`${target} was copied, read back and matched before; kept`);
+              continue;
+            }
             fs.mkdir(target.slice(0, target.lastIndexOf("/")), { recursive: true });
             const task = control.task = fs.copyAsync(path, target, { verify: true, resume: true, receipt: true });
             let noRoom = null;
@@ -151,6 +161,8 @@ import { MARGIN2 } from './space.js';
               throw noRoom ?? error2;
             });
             copied += sizes[index];
+            job2.moving.done = [...new Set([...job2.moving.done ?? [], target])];
+            change();
             log2(`copied ${path} to ${target}${result.receipt ? ` (download receipt: ${result.receipt})` : ""}, read back and matched`);
           }
           control.task = null;
@@ -208,6 +220,46 @@ import { MARGIN2 } from './space.js';
       });
       return done;
     }
+    // glibren.42 (R2-6): the finished copies (not only the .partial ones) a move left on the other drive are its own when
+    // they are among the paths it recorded: copyAsync names a copy `<to>` only once it was read back and matched. One
+    // the move recorded as done, or one of its targets of the original's size (a file) that is there, counts as copied.
+    function ownCopies(job2, copies2, to) {
+      const moving = job2.moving;
+      const own = /* @__PURE__ */ new Set();
+      if (!moving || moving.to !== to) return own;
+      for (const path of copies2) {
+        const target = onRoot(path, job2.root, to);
+        if (!fs.exists(target)) continue;
+        if ((moving.done ?? []).includes(target)) {
+          own.add(target);
+          continue;
+        }
+        if (!(moving.targets ?? []).includes(target)) continue;
+        const original = fs.stat(path);
+        const copy = fs.stat(target);
+        if (original && copy && !original.isDirectory && !copy.isDirectory && original.size === copy.size) own.add(target);
+      }
+      return own;
+    }
+    // Deletes everything a move put on the other drive: the copies in progress (.partial) and the finished ones it
+    // recorded (targets: none was there before it began).
+    async function dropCopies(job2, log2) {
+      const moving = job2.moving;
+      if (!moving) return;
+      const { copies: copies2 } = movable(job2);
+      const own = new Set([...moving.targets ?? [], ...moving.done ?? []]);
+      const targets = new Set([...copies2.map((path) => onRoot(path, job2.root, moving.to)), ...own]);
+      for (const target of targets) {
+        if (!target.startsWith(`${moving.to}/`)) continue;
+        if (fs.exists(`${target}.partial`)) await removePath(`${target}.partial`);
+        if (own.has(target) && fs.exists(target)) {
+          await removePath(target);
+          log2(`deleted the copy ${target}`);
+        }
+      }
+      delete job2.moving;
+      change();
+    }
     // Stops a move and deletes its copy so far: the game stays where it was, untouched.
     async function cancelMove(id) {
       const job2 = find(id);
@@ -219,14 +271,8 @@ import { MARGIN2 } from './space.js';
         });
       }
       if (!job2.moving) return;
-      const { copies: copies2 } = movable(job2);
-      for (const path of copies2) {
-        const partial = `${onRoot(path, job2.root, job2.moving.to)}.partial`;
-        if (fs.exists(partial)) await removePath(partial);
-      }
+      await dropCopies(job2, (message) => console.log(`[download-queue] move ${job2.id}: ${message}`));
       console.log(`[download-queue] move ${job2.id}: cancelled, its copy deleted`);
-      delete job2.moving;
-      change();
     }
     // A game moved outside the app (another tool, FTP): when its file is gone from where the job left it,
     // and ShadowMount's record of the title points at that file's name on another drive, the job follows it.

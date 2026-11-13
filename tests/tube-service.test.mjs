@@ -393,3 +393,83 @@ test('pickCaption: written in the app language, else automatic, else YouTube tra
   assert.equal(pick([manualEn, { language: 'ja-en', url: m('tr-ja.srt'), automatic: true, translated: true, target: 'ja' }], 'ja'), 'tr-ja.srt');
   assert.equal(pickCaption([], 'pt-BR'), null);
 });
+
+// ---- glibren.42: the YouTube account (tube-service 0.2.0, api 2, "account" in features) ----
+function accountService({ features = ['search', 'account'], poll = [] } = {}) {
+  const service = fakeService();
+  const inner = service.http.request;
+  const respond = (status, data) => ({ status, ok: status < 300, json: async () => data });
+  service.account = { signedIn: false, name: '' };
+  service.http = {
+    async request(url, options = {}) {
+      const path = url.slice(BASE.length);
+      const method = options.method ?? 'GET';
+      if (method === 'GET' && path === '/v1/health') {
+        service.calls.push({ method, path });
+        return respond(200, { api_version: 1, api: 2, version: '0.2.0', service: 'tube-service', pid: 42, features });
+      }
+      if (path.startsWith('/v1/account')) {
+        service.calls.push({ method, path, auth: options.headers?.Authorization });
+        if (options.headers?.Authorization !== `Bearer ${TOKEN}`) return respond(401, { error: { code: 'unauthorized' } });
+        if (method === 'GET' && path === '/v1/account') return respond(200, { api_version: 1, signed_in: service.account.signedIn, ...service.account.name ? { name: service.account.name } : {}, signin_pending: false });
+        if (method === 'POST' && path === '/v1/account/signin') return respond(200, { api_version: 1, user_code: 'ABC-DEF-GHI', verification_url: 'https://www.google.com/device', expires_in: 1800, interval: 5 });
+        if (method === 'POST' && path === '/v1/account/signin/poll') return respond(200, { api_version: 1, ...poll.shift() ?? { state: 'pending', interval: 5 } });
+        if (method === 'POST' && path === '/v1/account/signout') { service.account = { signedIn: false, name: '' }; return respond(200, { api_version: 1, signed_in: false }); }
+      }
+      return inner(url, options);
+    }
+  };
+  return service;
+}
+
+test('account: offered only by a service with the "account" feature; an older one (0.1.x) hides it', async () => {
+  const old = make(fakeService());
+  await old.ensure();
+  assert.equal(old.hasAccount(), false, 'the 0.1.0 service has no features');
+  const fresh = make(accountService());
+  assert.equal(fresh.hasAccount(), false, 'not known before the service is up');
+  await fresh.ensure();
+  assert.equal(fresh.hasAccount(), true);
+  const without = make(accountService({ features: ['search'] }));
+  await without.ensure();
+  assert.equal(without.hasAccount(), false);
+});
+
+test('account: sign-in code and address, polled until done; the account name; sign out; all with the token', async () => {
+  const service = accountService({ poll: [{ state: 'pending', interval: 5 }, { state: 'slow_down', interval: 10 }, { state: 'done', signed_in: true, name: 'PristMC' }] });
+  const client = make(service);
+  await client.ensure();
+  assert.deepEqual(await client.account(), { signedIn: false, name: '', pending: false });
+  assert.deepEqual(await client.signIn(), { code: 'ABC-DEF-GHI', url: 'https://www.google.com/device', expiresIn: 1800, interval: 5 });
+  assert.deepEqual(await client.signInPoll(), { state: 'pending', interval: 5 });
+  assert.deepEqual(await client.signInPoll(), { state: 'slow_down', interval: 10 });
+  assert.deepEqual(await client.signInPoll(), { state: 'done', name: 'PristMC', signedIn: true });
+  service.account = { signedIn: true, name: 'PristMC' };
+  assert.deepEqual(await client.account(), { signedIn: true, name: 'PristMC', pending: false });
+  assert.deepEqual(await client.signOut(), { signedIn: false });
+  assert.ok(service.calls.filter((call) => call.path.startsWith('/v1/account')).every((call) => call.auth === `Bearer ${TOKEN}`));
+});
+
+test('account: refused, expired and a malformed answer; resolve says when the video came through the account', async () => {
+  const service = accountService({ poll: [{ state: 'denied' }, { state: 'expired' }, { state: 'weird' }] });
+  const client = make(service);
+  await client.ensure();
+  assert.equal((await client.signInPoll()).state, 'denied');
+  assert.equal((await client.signInPoll()).state, 'expired');
+  assert.equal((await client.signInPoll()).state, 'pending', 'an unknown state is waited on, never taken as done');
+  const playable = { title: 'T', channel: 'C', duration_sec: 10, choices: [{ label: '720p', container: 'mp4', video_codec: 'h264', height: 720, url: `${BASE}/media/sx/v0`, hls_url: `${BASE}/media/sx/v0.m3u8` }], captions: [] };
+  const signed = accountService();
+  const original = signed.http.request;
+  signed.http.request = async (url, options = {}) => {
+    const answer = await original(url, options);
+    if (/\/v1\/jobs\/\w+$/.test(url) && (options.method ?? 'GET') === 'GET') {
+      const data = await answer.json();
+      if (data.state === 'done') return { ...answer, json: async () => ({ ...data, result: { ...playable, signed_in_playback: true } }) };
+      return { ...answer, json: async () => data };
+    }
+    return answer;
+  };
+  const withAccount = make(signed);
+  await withAccount.ensure();
+  assert.equal((await withAccount.resolve('abcdefghijk')).signedIn, true);
+});

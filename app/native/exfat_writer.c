@@ -1226,7 +1226,8 @@ int exw_list_dir(const char* root, exw_entry** out, size_t* count, char* err, si
   ls.root_len = rl;
   struct stat st;
   int rc;
-  if (stat(rl ? ls.path : "/", &st) != 0 || !S_ISDIR(st.st_mode))
+  // R2-2: lstat tambem na raiz; uma pasta-fonte que e link simbolico (para a pasta de outro jogo) e recusada.
+  if (lstat(rl ? ls.path : "/", &st) != 0 || !S_ISDIR(st.st_mode))
     rc = exw_fail(err, errcap, "%s nao e uma pasta", root);
   else if (rl == 0)
     rc = exw_fail(err, errcap, "a raiz do sistema nao pode ser a fonte");

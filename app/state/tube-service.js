@@ -16,6 +16,13 @@
 //     captions: [{ language, name, url, automatic, translated }] }. O `hls_url` e uma playlist HLS master (video +
 //     audio) servida pelo proprio servico em /media/... (sem token): o <Video> abre um link so;
 //   - GET /v1/sponsor/<id>?categories=sponsor,selfpromo -> { segments: [{ start, end, category }], enabled }.
+//   - glibren.42, conta do YouTube (servico 0.2.0, api 2, "account" em features): GET /v1/account -> { signed_in,
+//     name?, signin_pending }; POST /v1/account/signin -> { user_code, verification_url, expires_in, interval };
+//     POST /v1/account/signin/poll -> { state: pending | slow_down (interval) | done (signed_in, name?) | denied |
+//     expired }; POST /v1/account/signout -> { signed_in: false }. O resolve tenta sem conta e so repete com a conta
+//     num authentication_required; a resposta diz signed_in_playback. Erros da conta no resolve: authentication_required
+//     (sem conta), account_expired (o Google recusou a renovacao: entrar de novo), account_not_allowed. As credenciais
+//     ficam so no servico (/data/JobeesLair/tube/account.json, 0600); o app nunca as ve.
 // Por jobs (e nao direto) porque resolver um video pode levar dezenas de segundos: o app pergunta a cada 400 ms e
 // pode desistir (DELETE /v1/jobs/<id>) quando o jogador sai.
 //
@@ -235,6 +242,11 @@ import { REPO, VERSION } from '../version.js';
     // glibren-tube-update: a versao no ar (do /v1/health), quem usa o servico agora (telas, jobs) e a reinicializacao
     // para uma versao nova quando ninguem usa.
     let runningVersion = null;
+    // glibren.42: o que o servico no ar sabe fazer (features do /v1/health), para esconder o que um antigo nao tem.
+    let features = [];
+    const learn = (state) => {
+      features = Array.isArray(state?.features) ? state.features.filter((item) => typeof item === "string").slice(0, 64) : [];
+    };
     let holds = 0;
     let active = 0;
     const readToken = () => {
@@ -335,6 +347,7 @@ import { REPO, VERSION } from '../version.js';
         // O que ja esta no ar serve (mesmo com uma versao mais nova pronta: ela entra quando ninguem usa).
         ready = true;
         runningVersion = typeof state.version === "string" ? state.version : null;
+        learn(state);
         if (updater && !updater.state?.().running) updater.noteRunning("running", runningVersion);
         return { ok: true, version: state.version ?? "" };
       }
@@ -371,6 +384,7 @@ import { REPO, VERSION } from '../version.js';
           if (state && upToDate(state) && readToken()) {
             ready = true;
             runningVersion = typeof state.version === "string" ? state.version : null;
+            learn(state);
             log(`service ${state.version ?? ""} up (pid ${state.pid ?? "?"})`);
             updater?.noteRunning(candidate.source, runningVersion);
             return { ok: true, version: state.version ?? "" };
@@ -403,8 +417,10 @@ import { REPO, VERSION } from '../version.js';
         best = updater.candidates()[0] ?? null;
       } catch {
       }
-      if (!best?.version || !newer(best.version, runningVersion)) return false;
-      log(`service ${runningVersion} is idle and ${best.version} is ready: restarting it`);
+      // glibren.42 (A6): also when the one up was set aside ("Back to the built-in version", or marked bad).
+      const setAside = typeof updater.isBad === "function" && updater.isBad(runningVersion);
+      if (!best?.version || best.version === runningVersion || !newer(best.version, runningVersion) && !setAside) return false;
+      log(`service ${runningVersion} is idle and ${best.version} is ${setAside ? "the one to use now" : "ready"}: restarting it`);
       ready = false;
       runningVersion = null;
       await call("POST", "/v1/quit", { timeoutMs: 3e3 }).catch(() => {
@@ -469,7 +485,9 @@ import { REPO, VERSION } from '../version.js';
         channel: clip(result.channel, 80),
         duration: Number(result.duration_sec) || 0,
         choices,
-        caption: pickCaption(result.captions, locale)
+        caption: pickCaption(result.captions, locale),
+        // glibren.42: o video so abriu pela conta do YouTube (o servico tentou sem ela antes).
+        signedIn: result?.signed_in_playback === true
       };
     }
 
@@ -587,7 +605,46 @@ import { REPO, VERSION } from '../version.js';
         return [];
       }
     }
-    return { ensure, offered, elfPath, elfCandidates, health, readToken, job, search, more, resolve, prefetch, cancelPrefetch, sponsor, hold, refreshIfIdle, isReady: () => ready, runningVersion: () => runningVersion };
+    // ---- glibren.42: a conta do YouTube (login pela TV com codigo) ----
+    /** O servico no ar sabe entrar numa conta (features "account"; um antigo, 0.1.x, nao). */
+    const hasAccount = () => ready && features.includes("account");
+    async function accountCall(method, path) {
+      const answer = await call(method, path, { timeoutMs: 2e4 });
+      if (answer.status === 401) {
+        ready = false;
+        throw new TubeError("unauthorized", "token");
+      }
+      if (answer.status !== 200) throw new TubeError(answer.data?.error?.code ?? `http_${answer.status}`, answer.data?.error?.message ?? "");
+      return answer.data ?? {};
+    }
+    const accountName = (data) => typeof data?.name === "string" ? clip(data.name, 80) : "";
+    /** { signedIn, name, pending }. */
+    async function account() {
+      const data = await accountCall("GET", "/v1/account");
+      return { signedIn: data.signed_in === true, name: accountName(data), pending: data.signin_pending === true };
+    }
+    /** Comeca o login: { code, url, expiresIn (s), interval (s) }; um novo troca o codigo anterior. */
+    async function signIn() {
+      const data = await accountCall("POST", "/v1/account/signin");
+      const code = String(data.user_code ?? "");
+      const url = String(data.verification_url ?? "");
+      if (!/^[A-Z0-9-]{4,32}$/i.test(code) || !/^https:\/\/[^\s]{1,200}$/.test(url)) throw new TubeError("signin_failed", "unexpected answer");
+      const seconds = (value, low, high, fallback) => Number.isFinite(value) ? Math.min(high, Math.max(low, Math.trunc(value))) : fallback;
+      return { code, url, expiresIn: seconds(data.expires_in, 60, 3600, 1800), interval: seconds(data.interval, 1, 60, 5) };
+    }
+    /** Uma consulta do login: { state: "pending" | "slow_down" | "done" | "denied" | "expired", interval?, name? }. */
+    async function signInPoll() {
+      const data = await accountCall("POST", "/v1/account/signin/poll");
+      const state = ["pending", "slow_down", "done", "denied", "expired"].includes(data.state) ? data.state : "pending";
+      return { state, ...Number.isFinite(data.interval) ? { interval: Math.min(60, Math.max(1, Math.trunc(data.interval))) } : {}, ...state === "done" ? { name: accountName(data), signedIn: data.signed_in !== false } : {} };
+    }
+    /** Sai da conta (o servico apaga as credenciais). */
+    async function signOut() {
+      await accountCall("POST", "/v1/account/signout");
+      cache.clear();
+      return { signedIn: false };
+    }
+    return { ensure, offered, hasAccount, account, signIn, signInPoll, signOut, elfPath, elfCandidates, health, readToken, job, search, more, resolve, prefetch, cancelPrefetch, sponsor, hold, refreshIfIdle, isReady: () => ready, runningVersion: () => runningVersion };
   }
 
   // O servico do app (o Http, o FileSystem e os Payloads do ps5-react), criado no primeiro uso.

@@ -312,4 +312,12 @@ test('fonte pasta: link simbolico e recusado', { skip }, () => {
   const p = harness(['plan', src, '']);
   assert.equal(p.rc, -1);
   assert.match(p.err, /link simbolico recusado: atalho/);
+  // glibren.42 (R2-2): a propria pasta-fonte sendo um link simbolico (para a pasta de outro jogo) tambem e recusada.
+  const other = tree('outro-jogo', { 'sce_sys/param.json': '{}', 'eboot.bin': 'x' });
+  const alias = path.join(work, 'atalho-para-outro');
+  symlinkSync(other, alias);
+  const q = harness(['plan', alias, '']);
+  assert.equal(q.rc, -1);
+  assert.match(q.err, /nao e uma pasta/);
+  assert.equal(harness(['plan', other, '']).rc, 0, 'a pasta de verdade segue valendo');
 });

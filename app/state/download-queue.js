@@ -2199,8 +2199,10 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
           // A debrid link close to expiring is replaced before the part starts on it.
           if (part.options && linkStale(part) && throughDebrid(job2)) delete part.options;
           if (!part.options) {
-            const resolved = await sources.resolve(source2, { signal, directURL: job2.directURL });
-            part.options = { ...resolved, expectedBytes: source2.sizeBytes || void 0, sha256: source2.sha256 || void 0 };
+            // glibren.42 (R2-7): the same rule as a single file (0.5.1): the real size the resolver found wins over the
+            // catalog's, null turns the size check off, and a repacked file has no catalog sha256 (nor goes to the engine).
+            const { expectedBytes: known, repacked, ...resolved } = await sources.resolve(source2, { signal, directURL: job2.directURL });
+            part.options = { ...resolved, expectedBytes: known === null ? void 0 : known ?? (source2.sizeBytes || void 0), sha256: repacked ? void 0 : source2.sha256 || void 0 };
             delete job2.directURL;
             if (throughDebrid(job2)) part.linkAt = Date.now();
             else delete part.linkAt;
@@ -2363,9 +2365,10 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       console.log(`[download-queue] ${job2.id}: its archive (${moved} file${moved === 1 ? "" : "s"}) kept in ${dir} instead of being deleted`);
       change();
     }
-    // glibren.17: the files under `dir` (an extraction's), at most 200000 looked at: { files, more }.
+    // glibren.17: the files under `dir` (an extraction's), for the log line: { files, more }.
+    // glibren.42 (A12): at most 2000 entries looked at (were 200000, read on the JS thread for one log line).
     function countFiles(dir) {
-      let files = 0, budget = 2e5;
+      let files = 0, budget = 2e3;
       const stack = [dir];
       while (stack.length && budget > 0) {
         const current = stack.pop();
@@ -2573,8 +2576,8 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       }
       jobs = jobs.filter((item) => item !== job2);
       console.log(`[download-queue] ${job2.id}: the folder stays as it was (not converted)`);
-      save();
-      emit2();
+      // glibren.42 (R2-5): change(), not save() + emit2(): the payload is sent the list without it as well.
+      change();
     }
     function convertFolder(folder, root2, { title = "", titleId = "" } = {}) {
       const path = String(folder || "").replace(/\/+$/, "");
@@ -2847,6 +2850,9 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         jobs = previous;
         throw error2;
       }
+      // glibren.42 (R2-5): the payload is sent the list without it (300 ms later), so it never starts on its own a
+      // download that was cancelled here (it only lets go of an item a new list leaves out).
+      scheduleHandoff();
     }
     async function shadowRequest2(route2, body = {}) {
       if (platform !== "ps5") throw new Error("ShadowMount registration requires a PS5.");
@@ -2981,6 +2987,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       }
       forgetLaunches(job2, log2);
       emit2();
+      scheduleHandoff();
       // Its files are gone and so is the task, whatever ShadowMount answers now.
       let note = null;
       if (managed && reachable && game !== null) await quiet(async () => {
@@ -3607,6 +3614,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
           throw error2;
         }
         emit2();
+        scheduleHandoff();
         pump();
       },
       // 0.5.0 Pre Release 4: ✕ on a finished card only tidies the Downloads list. The job stays (the library is

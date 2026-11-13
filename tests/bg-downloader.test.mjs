@@ -8,7 +8,7 @@ import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, openSync, ftruncateSync, closeSync, readSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, openSync, ftruncateSync, closeSync, readSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -48,7 +48,7 @@ const freePort = freePortFrom(2); // glibren.41 (T1): bloco de portas so deste a
 
 // O servidor: /f/<nome> (ETag forte), /t/<token>/<nome> (403 depois que os tokens vencem), /v1/api/webdl/requestdl
 // (o TorBox falso), /big.bin (virtual, 4 GiB + 40 MiB). `rate` limita cada resposta (bytes/s).
-const files = { 'a.bin': randomBytes(40 * MiB) };
+const files = { 'a.bin': randomBytes(40 * MiB), 'b.bin': randomBytes(2 * MiB) };
 const BIG = 4 * 1024 ** 3 + 40 * MiB;
 const block = randomBytes(MiB);
 const bigSlice = (start, end) => { const out = Buffer.alloc(end - start); for (let p = start; p < end;) { const off = p % MiB, n = Math.min(MiB - off, end - p); block.copy(out, p - start, off, off + n); p += n; } return out; };
@@ -406,6 +406,91 @@ test('glibren.6: o jobs.json guarda o link do TorBox sem a chave (token=); ao re
   await stop(child);
 });
 
+test('glibren.42 (J8): link do AllDebrid e link direto assinado ficam fora do jobs.json; ao reabrir, needs-app e o app manda outro link para a mesma parcial', { skip }, async () => {
+  const base = workspace();
+  srv.rate = 3 * MiB;
+  let child = start(base);
+  await up(base);
+  const dest = path.join(base, 'disk/downloads/ad.bin');
+  const secretPath = `/f/a.bin?agent=jobe&Expires=1999999999&Signature=SEGREDO-ASSINADO`;
+  const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}${secretPath}`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 16 * MiB, connections: 2, sha256: sha(files['a.bin']), source: { provider: 'alldebrid' } });
+  const signedDest = path.join(base, 'disk/downloads/signed.bin');
+  const signed = await call(base, 'POST', '/jobs', { url: `http://user:senha@127.0.0.1:${port}/f/b.bin?X-Amz-Credential=CRED-SECRETA&x=1`, destination: signedDest, storageRoot: path.join(base, 'disk'), rangeBytes: 16 * MiB, connections: 1 });
+  const publicDest = path.join(base, 'disk/downloads/public.bin');
+  const pub = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/b.bin?download=1`, destination: publicDest, storageRoot: path.join(base, 'disk'), rangeBytes: 16 * MiB, connections: 1 });
+  await until(base, data.id, ['downloading'], (job) => job.written > 18 * MiB);
+  await eventually(() => { try { return readFileSync(`${dest}.resume`).subarray(96).some((done) => done); } catch { return false; } }, 'um checkpoint com faixa pronta', 30000);
+  await stop(child);
+  const saved = readFileSync(path.join(base, 'state/jobs.json'), 'utf8');
+  for (const secret of ['SEGREDO-ASSINADO', '/f/a.bin', 'CRED-SECRETA', 'senha']) assert.ok(!saved.includes(secret), `${secret} nao fica no disco`);
+  const jobs = JSON.parse(saved).jobs;
+  const kept = jobs.find((job) => job.id === data.id);
+  assert.equal(kept.url, `http://127.0.0.1:${port}/`);
+  assert.equal(kept.linkHidden, true);
+  assert.equal(jobs.find((job) => job.id === signed.data.id).url, `http://127.0.0.1:${port}/`);
+  assert.equal(jobs.find((job) => job.id === pub.data.id).url, `http://127.0.0.1:${port}/f/b.bin?download=1`, 'link publico sem assinatura fica inteiro');
+  srv.rate = 0;
+  child = start(base);
+  await up(base);
+  const after = await until(base, data.id, ['needs-app', 'completed', 'failed']);
+  assert.equal(after.state, 'needs-app', after.error);
+  assert.match(after.error, /link expired/);
+  assert.ok(existsSync(`${dest}.part`), 'a parcial fica');
+  assert.equal((await until(base, signed.data.id, ['needs-app', 'completed', 'failed'])).state, 'needs-app');
+  assert.equal((await until(base, pub.data.id, ['needs-app', 'completed', 'failed'])).state, 'completed');
+  // O app manda o link de novo (POST /jobs, mesmo destino): termina a mesma parcial.
+  const again = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}${secretPath}`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 16 * MiB, connections: 2, sha256: sha(files['a.bin']), source: { provider: 'alldebrid' } });
+  assert.equal(again.status, 201, JSON.stringify(again.data));
+  const done = await until(base, again.data.id, ['completed', 'failed', 'needs-app']);
+  assert.equal(done.state, 'completed', done.error);
+  assert.equal(sha(readFileSync(dest)), sha(files['a.bin']));
+  assert.ok(!readFileSync(path.join(base, 'state/jobs.json'), 'utf8').includes('SEGREDO-ASSINADO'));
+  assert.ok(!readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').includes('SEGREDO-ASSINADO'));
+  await stop(child);
+});
+
+test('glibren.42 (J9): queda entre reservar o destino vazio e renomear a .part: ao reabrir, o arquivo completo e publicado (nao falha para sempre)', { skip }, async () => {
+  const base = workspace();
+  let child = start(base);
+  await up(base);
+  // glibren.42 (J10): destino com caractere de controle e recusado.
+  for (const bad of ['a\nb.bin', 'a\rb.bin', 'a\tb.bin', 'a\u007fb.bin']) {
+    const answer = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: path.join(base, 'disk/downloads', bad), storageRoot: path.join(base, 'disk') });
+    assert.equal(answer.status, 400, JSON.stringify(bad));
+  }
+  const dest = path.join(base, 'disk/downloads/j9.bin');
+  const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 16 * MiB, connections: 2, sha256: sha(files['a.bin']) });
+  assert.equal((await until(base, data.id, ['completed', 'failed'])).state, 'completed');
+  await stop(child);
+  // O estado do disco no meio do publish_file: recibo gravado, destino reservado (vazio), a .part completa.
+  renameSync(dest, `${dest}.part`);
+  writeFileSync(dest, '');
+  const file = path.join(base, 'state/jobs.json');
+  const state = JSON.parse(readFileSync(file, 'utf8'));
+  state.jobs.find((job) => job.id === data.id).state = 'verifying';
+  writeFileSync(file, JSON.stringify(state));
+  child = start(base);
+  await up(base);
+  const job = await until(base, data.id, ['completed', 'failed', 'needs-app']);
+  assert.equal(job.state, 'completed', job.error);
+  assert.equal(sha(readFileSync(dest)), sha(files['a.bin']));
+  assert.ok(!existsSync(`${dest}.part`));
+  // Um destino vazio SEM a .part do recibo continua recusado (nada e apagado as cegas).
+  await stop(child);
+  rmSync(dest);
+  writeFileSync(dest, '');
+  const again = JSON.parse(readFileSync(file, 'utf8'));
+  again.jobs.find((item) => item.id === data.id).state = 'verifying';
+  writeFileSync(file, JSON.stringify(again));
+  child = start(base);
+  await up(base);
+  const refused = await until(base, data.id, ['completed', 'failed', 'needs-app']);
+  assert.equal(refused.state, 'failed');
+  assert.match(refused.error, /no matching completion receipt/);
+  assert.ok(existsSync(dest), 'o destino fica');
+  await stop(child);
+});
+
 test('arquivo > 4 GB: retoma uma parcial esparsa e baixa so as faixas depois dos 4 GB', { skip }, async () => {
   const base = workspace();
   const root = path.join(base, 'disk');
@@ -477,7 +562,7 @@ async function eventually(check, what, ms = 20000) {
 }
 // Le a resposta devagar, 512 bytes de cada vez, como um celular numa Wi-Fi ruim: tem de chegar inteira.
 const slowRead = () => new Promise((resolve, reject) => {
-  const socket = net.connect(monitorPort, '127.0.0.1', () => socket.write('GET / HTTP/1.1\r\nHost: x\r\n\r\n'));
+  const socket = net.connect(monitorPort, '127.0.0.1', () => socket.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1:${monitorPort}\r\n\r\n`));
   const chunks = [];
   socket.on('data', (chunk) => { chunks.push(chunk); socket.pause(); setTimeout(() => socket.resume(), 5); });
   socket.setTimeout(20000, () => reject(new Error('slow read timed out')));
@@ -549,6 +634,37 @@ test('pagina do celular: a tela embutida inteira (leitura lenta), status sem seg
   assert.ok(!log.includes(PIN) && !log.includes(ok.data.session), 'nem PIN nem sessao no diario');
   srv.rate = 0;
   await stop(child);
+});
+
+// glibren.42 (J6): um pedido cru com o Host dado; devolve o codigo HTTP.
+const rawStatus = (host, route = '/api/status') => new Promise((resolve, reject) => {
+  const socket = net.connect(monitorPort, '127.0.0.1', () => socket.write(`GET ${route} HTTP/1.1\r\n${host === null ? '' : `Host: ${host}\r\n`}Connection: close\r\n\r\n`));
+  const chunks = [];
+  socket.on('data', (chunk) => chunks.push(chunk));
+  socket.setTimeout(10000, () => { socket.destroy(); reject(new Error('timeout')); });
+  socket.on('end', () => resolve(Number(/^HTTP\/1\.1 (\d+)/.exec(Buffer.concat(chunks).toString())?.[1] ?? 0)));
+  socket.on('error', reject);
+});
+
+test('glibren.42 (J6): pagina do celular so atende Host de IP literal ou localhost (DNS rebinding recusado com 403)', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  try {
+    await up(base);
+    await pageUp();
+    for (const host of [`127.0.0.1:${monitorPort}`, '127.0.0.1', `192.168.0.15:${monitorPort}`, '10.0.0.2', 'localhost', `LOCALHOST:${monitorPort}`, null]) {
+      assert.equal(await rawStatus(host), 200, `Host ${host} aceito`);
+    }
+    for (const host of ['evil.example.com', `evil.example.com:${monitorPort}`, 'ps5.local', '127.0.0.1.nip.io', '256.1.1.1', '1.2.3', '1.2.3.4.5', '127.0.0.1:abc', '[::1]', '']) {
+      assert.equal(await rawStatus(host), 403, `Host ${JSON.stringify(host)} recusado`);
+    }
+    assert.equal(await rawStatus('evil.example.com', '/'), 403, 'a pagina tambem');
+    // a API local do app (127.0.0.1, com token) nao muda
+    assert.equal((await call(base, 'GET', '/health')).status, 200);
+  } finally {
+    await stop(child);
+  }
 });
 
 test('pagina do celular desligada: a porta fecha; ligada de novo, volta; um PIN novo derruba as sessoes', { skip }, async () => {

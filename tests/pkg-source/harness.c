@@ -5,7 +5,32 @@
 //   harness selftest               vetores de SHA3/HMAC/XTS das referencias abertas
 // Erro: mensagem no stderr ("ERRO: ...") e saida 2 (abrir) ou 3 (ler).
 #define _GNU_SOURCE
+#include <stddef.h>
+#include <stdint.h>
+// HARNESS_BAD_DIR_INO=<n>: troca o inode da primeira subpasta lida pelo valor dado (pacote montado de proposito, R2-1).
+static void harness_dirent_hook(uint8_t* d, size_t n);
+#define PKGSRC_TEST_DIRENT_HOOK harness_dirent_hook
 #include "../../app/native/pkg_source.c"
+
+static void harness_dirent_hook(uint8_t* d, size_t n) {
+  static int done;
+  const char* v = getenv("HARNESS_BAD_DIR_INO");
+  if(!v || done) return;
+  for(size_t o = 0; o + 16 <= n;) {
+    uint32_t kind = pkgsrc_le32(d + o + 4), ent = pkgsrc_le32(d + o + 12);
+    if(ent < 16 || ent > n - o) return;
+    if(kind == 3) {
+      uint32_t ino = (uint32_t)strtoul(v, NULL, 0);
+      d[o] = (uint8_t)ino;
+      d[o + 1] = (uint8_t)(ino >> 8);
+      d[o + 2] = (uint8_t)(ino >> 16);
+      d[o + 3] = (uint8_t)(ino >> 24);
+      done = 1;
+      return;
+    }
+    o += ent;
+  }
+}
 
 #include <time.h>
 

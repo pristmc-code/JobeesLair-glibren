@@ -10,7 +10,10 @@
 //   - X pausa/continua; Esquerda/Direita ou L1/R1 voltam/avancam 10 s; Circulo fecha (com a lista de qualidades aberta,
 //     fecha so a lista).
 //   - Erro do player: resolve de novo com links novos (fresh) e reabre na posicao; de novo, tenta a qualidade abaixo;
-//     sem mais nenhuma, diz o erro.
+//     sem mais nenhuma, diz o erro. glibren.42 (A11): os links sao renovados de novo depois de um tempo tocando
+//     (FRESH_AFTER_MS), ate FRESH_MAX vezes por video (antes, uma vez so: um video longo ou pausado por horas parava).
+//   - glibren.42: video que pede login (authentication_required) manda entrar em Configuracoes > Videos; conta vencida
+//     ou sem acesso dizem isso; o que abriu pela conta mostra "pela sua conta" na barra.
 //   - glibren-fast: abre na hora (o resolve pode ja estar pronto: o pre-resolve da tela de resultados) com a miniatura
 //     do video e um indicador ate o primeiro quadro (fase "opening" entre o resolve e o onLoad/primeiro onProgress).
 
@@ -34,7 +37,16 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
   var SEEK_STEP = 10;
   var BAR_MS = 4e3;
   var NOTICE_MS = 2500;
-  var SUBTITLE_TRACK = 1e3; // os arquivos de `subtitles` sao listados a partir de 1000 (docs/VIDEO.md)
+  var SUBTITLE_TRACK = 1e3;
+  var FRESH_AFTER_MS = 6e4;
+  var FRESH_MAX = 8;
+  // glibren.42: os erros do servico que tem texto proprio (o resto mostra o codigo em tube.playFailed).
+  function problemText(t2, code, accountOffered) {
+    if (code === "authentication_required") return t2(accountOffered ? "tube.needsSignIn" : "tube.needsSignInOld");
+    if (code === "account_expired") return t2("tube.accountExpired");
+    if (code === "account_not_allowed") return t2("tube.accountNotAllowed");
+    return t2("tube.playFailed", { error: code || "?" });
+  } // os arquivos de `subtitles` sao listados a partir de 1000 (docs/VIDEO.md)
   var HINTS = [
     { button: "cross", label: "tube.hint.pause" },
     { button: "l1r1", label: "tube.hint.seek" },
@@ -98,7 +110,7 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     // glibren-tube-quality: quem decodifica o video aberto ("sceVideodec2" = o do PS5, "ffmpeg" = software), do onStatus.
     const [decoder, setDecoder] = useState("");
     const video = useRef(null);
-    const live = useRef({ position: 0, segments: [], skipUntil: 0, tries: 0, freshUsed: false, alive: true, abort: null });
+    const live = useRef({ position: 0, segments: [], skipUntil: 0, tries: 0, freshCount: 0, freshAt: 0, alive: true, abort: null });
     const barTimer = useRef(null);
     const noticeTimer = useRef(null);
     const showBar = () => {
@@ -200,9 +212,12 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
       const state = live.current;
       console.log(`tube: player error on ${item.id} (${info?.choices[choice]?.label ?? "?"}): ${error}`);
       setStartAt(state.position);
-      // 1) os links podem ter vencido: resolve de novo e reabre na mesma qualidade e posicao.
-      if (!state.freshUsed) {
-        state.freshUsed = true;
+      // 1) os links podem ter vencido: resolve de novo e reabre na mesma qualidade e posicao. A primeira vez sempre; as
+      // seguintes so depois de FRESH_AFTER_MS da anterior (um erro logo depois de links novos nao e de link vencido).
+      if (state.freshCount === 0 || state.freshCount < FRESH_MAX && Date.now() - state.freshAt >= FRESH_AFTER_MS) {
+        state.freshCount += 1;
+        state.freshAt = Date.now();
+        state.tries = 0;
         setPhase("resolving");
         void load(true, info?.choices[choice]?.label ?? "");
         return;
@@ -272,14 +287,14 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
       phase === "resolving" || phase === "opening" ? jsx(Opening, { id: item.id, label: t2("tube.loadingVideo"), title }) : null,
       phase === "failed" ? jsxs(View, { style: [FULL, { alignItems: "center", justifyContent: "center", gap: 16 }], children: [
         jsx(Icon, { name: "alert", size: 40, color: "#f87171" }),
-        jsx(Text, { style: text(30, colors.fg, { fontWeight: 600 }), children: t2("tube.playFailed", { error: problem || "?" }) }),
+        jsx(Text, { style: text(30, colors.fg, { fontWeight: 600, width: 1500, textAlign: "center" }), children: problemText(t2, problem, Boolean(service.hasAccount?.())) }),
         jsx(Text, { style: text(22, colors.muted, { numberOfLines: 1, ellipsizeMode: "tail", width: 1400, textAlign: "center" }), children: title })
       ] }) : null,
       notice ? jsx(View, { style: { position: "absolute", top: 48, right: 48, borderRadius: radius.md, backgroundColor: `${colors.surface}e6`, paddingHorizontal: 24, paddingVertical: 14 }, children: jsx(Text, { style: text(22, colors.fg, { fontWeight: 600 }), children: notice }) }) : null,
       bar || paused || phase !== "playing" ? jsxs(View, { style: { position: "absolute", left: 0, right: 0, bottom: 0, paddingTop: 90, backgroundGradient: { type: "linear", to: "top", stops: [{ color: "#000000e6", offset: 0 }, { color: "#00000000", offset: 1 }] } }, children: [
         jsxs(View, { style: { paddingHorizontal: 64, gap: 6 }, children: [
           jsx(Text, { style: text(30, "#ffffff", { fontWeight: 700, numberOfLines: 1, ellipsizeMode: "tail" }), children: title }),
-          jsx(Text, { style: text(22, "#cbd5e1", { numberOfLines: 1, ellipsizeMode: "tail" }), children: [info?.channel || item.channel, current?.label, decoder ? t2(decoder === "sceVideodec2" ? "tube.decoderHardware" : "tube.decoderSoftware") : ""].filter(Boolean).join("  ·  ") }),
+          jsx(Text, { style: text(22, "#cbd5e1", { numberOfLines: 1, ellipsizeMode: "tail" }), children: [info?.channel || item.channel, current?.label, info?.signedIn ? t2("tube.signedInPlayback") : "", decoder ? t2(decoder === "sceVideodec2" ? "tube.decoderHardware" : "tube.decoderSoftware") : ""].filter(Boolean).join("  ·  ") }),
           jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 18, marginTop: 10 }, children: [
             jsx(Icon, { name: paused ? "play" : "pause", size: 22, color: "#ffffff" }),
             jsx(Text, { style: text(22, "#ffffff", { width: 110 }), children: clockText(position) }),

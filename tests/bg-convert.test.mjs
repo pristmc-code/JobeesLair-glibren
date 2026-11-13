@@ -546,6 +546,30 @@ test('BACKUP na pagina do celular: lista por jogo com tamanho; apagar so com o P
   assert.equal((await page('/api/backup/delete', { method: 'POST', body: { root: disk, name: 'Nao existe' }, session })).status, 404);
   assert.equal((await page('/api/backup/delete', { method: 'POST', body: { root: disk, name: 'Jogo A' }, session })).status, 200);
   assert.ok(!existsSync(path.join(disk, 'BACKUP/Jogo A')) && existsSync(path.join(disk, 'BACKUP/Jogo B')));
+  // glibren.42 (R2-19): BACKUP/_temp (extracoes em andamento) nao e apagado por aqui, nem pelo app.
+  mkdirSync(path.join(disk, 'BACKUP/_temp/c1'), { recursive: true });
+  assert.equal((await page('/api/backup/delete', { method: 'POST', body: { root: disk, name: '_temp' }, session })).status, 400);
+  assert.equal((await call(base, 'POST', '/backup/delete', { root: disk, name: '_temp' })).status, 400);
+  assert.ok(existsSync(path.join(disk, 'BACKUP/_temp/c1')));
+  rmSync(path.join(disk, 'BACKUP/_temp'), { recursive: true });
+  // glibren.42 (J10): um download que ainda grava dentro do item nao deixa apagar (409); cancelado, apaga.
+  const hold = net.createServer(() => {});
+  await new Promise((resolve) => hold.listen(0, '127.0.0.1', resolve));
+  try {
+    mkdirSync(path.join(disk, 'BACKUP/Jogo C'), { recursive: true });
+    writeFileSync(path.join(disk, 'BACKUP/Jogo C/leia.txt'), 'x');
+    const job = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${hold.address().port}/c.rar`, destination: path.join(disk, 'BACKUP/Jogo C/c.rar'), storageRoot: disk });
+    assert.ok(job.status === 200 || job.status === 201, JSON.stringify(job.data));
+    const held = await page('/api/backup/delete', { method: 'POST', body: { root: disk, name: 'Jogo C' }, session });
+    assert.equal(held.status, 409);
+    assert.equal(held.data.error, 'downloading');
+    assert.equal((await call(base, 'POST', `/jobs/${job.data.id}/cancel`)).status, 200);
+    let gone = 0;
+    for (const end = Date.now() + 15000; Date.now() < end && gone !== 200; await wait(100)) gone = (await page('/api/backup/delete', { method: 'POST', body: { root: disk, name: 'Jogo C' }, session })).status;
+    assert.equal(gone, 200, 'cancelado, o item e apagado');
+  } finally {
+    hold.close();
+  }
   // Um original que uma conversao ainda le nao e apagado.
   const work = path.join(disk, 'downloads/extracted/W');
   gameFolder(work, 4);
@@ -853,5 +877,34 @@ test('RAR cifrado (DLPSGAME): o payload descompacta pelo rar-extract com a senha
   } finally {
     await stop(child);
     loader.close();
+  }
+});
+
+// glibren.42 (R2-12): o app aceita no maximo 1 MiB; com o diario grande, GET /log manda so os ultimos 512 KiB (o mais
+// recente fica, inteiro por linha), e a pagina do celular (/api/log, com o PIN) segue com mais.
+test('diario grande: GET /log do app corta em 512 KiB mantendo o final; /api/log do celular manda mais', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  const old = Array.from({ length: 40000 }, (_, i) => `linha antiga ${i} ${'x'.repeat(60)}`).join('\n');
+  writeFileSync(path.join(base, 'state/bgdl.log'), `PRIMEIRA-LINHA\n${old}\nULTIMA-ANTIGA\n`);
+  const child = start(base);
+  try {
+    await up(base);
+    const log = await call(base, 'GET', '/log');
+    assert.equal(log.status, 200);
+    const text = log.data.text;
+    assert.ok(Buffer.byteLength(text) <= 512 * 1024, `texto ${Buffer.byteLength(text)} bytes`);
+    assert.ok(Buffer.byteLength(text) > 400 * 1024, 'nao cortou demais');
+    assert.ok(!text.includes('PRIMEIRA-LINHA'), 'o comeco antigo saiu');
+    assert.match(text, /ULTIMA-ANTIGA/);
+    assert.match(text, /^linha antiga \d+ x+$/m, 'comeca numa linha inteira');
+    assert.ok(/^linha antiga /.test(text), 'a primeira linha e inteira');
+    const session = await phoneSession(base);
+    assert.ok(session, 'sessao do celular');
+    const phone = await page('/api/log', { session });
+    assert.equal(phone.status, 200);
+    assert.ok(Buffer.byteLength(phone.text) > 1024 * 1024, 'o celular segue com ~1,5 MiB');
+  } finally {
+    await stop(child);
   }
 });

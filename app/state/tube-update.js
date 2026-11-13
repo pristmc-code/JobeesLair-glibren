@@ -33,6 +33,8 @@ import { newer } from './updater.js';
   var PUBLIC_KEY = "ce2767604727310aa1b2a5713fe7b76774b7ecd8c68240fef789819a473847c0";
   // A versao deste cliente de atualizacao/do contrato com o servico: um manifesto com min_jobe maior pede uma Jobe nova.
   var CLIENT_API = 1;
+  // glibren.42 (A6): falhas seguidas ao subir antes de uma versao baixada ser marcada como ruim.
+  var BAD_AFTER = 3;
   var CHECK_MS = 6 * 60 * 60 * 1e3;
   var RETRY_MS = 60 * 60 * 1e3;
   var MAX_ELF = 32 * 1024 * 1024;
@@ -230,13 +232,53 @@ import { newer } from './updater.js';
         }
       }
       publish({ running: { source: from, version: known } });
+      // glibren.42 (A6): subiu: as falhas contadas dela recomecam do zero.
+      const strikes = load().strikes;
+      if (known && strikes && typeof strikes === "object" && known in strikes) {
+        const { [known]: _, ...rest } = strikes;
+        save({ strikes: rest });
+      }
     }
-    /** Uma baixada nao subiu: nao e tentada nem baixada de novo. */
-    function markBad(version, reason = "") {
-      if (!version) return;
+    /**
+     * Uma baixada nao subiu. glibren.42 (A6): so fica marcada como ruim (nao e tentada nem baixada de novo) depois de
+     * BAD_AFTER falhas seguidas; antes, uma vez so bastava (um console ocupado por 15 s condenava a versao para sempre).
+     * Ate la ela e tentada de novo, e a seguinte (o anterior, a embutida) sobe nesta vez. `now`: marca ja (o jogador
+     * escolheu "Voltar a versao embutida"). Devolve true quando marcou.
+     */
+    function markBad(version, reason = "", { now: right = false } = {}) {
+      if (!version) return false;
       const bad = badList();
-      if (!bad.includes(version)) save({ bad: [...bad, version].slice(-16) });
+      if (bad.includes(version)) return true;
+      const strikes = load().strikes && typeof load().strikes === "object" ? load().strikes : {};
+      const count = (Number.isInteger(strikes[version]) ? strikes[version] : 0) + 1;
+      if (!right && count < BAD_AFTER) {
+        save({ strikes: { ...strikes, [version]: count } });
+        log(`version ${version} failed (${count} of ${BAD_AFTER})${reason ? `: ${reason}` : ""}`);
+        return false;
+      }
+      const { [version]: _, ...rest } = strikes;
+      save({ bad: [...bad, version].slice(-16), strikes: rest });
       log(`version ${version} marked bad${reason ? `: ${reason}` : ""}`);
+      return true;
+    }
+    /**
+     * glibren.42 (A6): "Voltar a versao embutida" (Configuracoes > Videos): as baixadas mais novas que a embutida ficam
+     * marcadas como ruins (uma versao ainda mais nova, quando sair, e baixada normalmente). Devolve as versoes marcadas.
+     */
+    function revertToEmbedded() {
+      const embedded = embeddedVersion();
+      const marked = [];
+      for (const entry of candidates()) {
+        if (entry.source !== "downloaded" || !entry.version) continue;
+        if (embedded && !newer(entry.version, embedded)) continue;
+        if (markBad(entry.version, "the player chose the built-in version", { now: true })) marked.push(entry.version);
+      }
+      publish({ running: null });
+      return marked;
+    }
+    /** Ha uma baixada em uso ou a frente da embutida (o que "Voltar a versao embutida" desfaria). */
+    function aheadOfEmbedded() {
+      return candidates().some((entry) => entry.source === "downloaded" && (!embeddedVersion() || newer(entry.version, embeddedVersion())));
     }
     /** O que as Configuracoes mostram: o servico no ar, senao o primeiro candidato. */
     function inUse() {
@@ -349,6 +391,9 @@ import { newer } from './updater.js';
       bestVersion,
       noteRunning,
       markBad,
+      revertToEmbedded,
+      aheadOfEmbedded,
+      isBad: (version) => typeof version === "string" && badList().includes(version),
       inUse,
       check,
       state: () => view,
@@ -359,4 +404,4 @@ import { newer } from './updater.js';
     };
   }
 
-export { CHECK_MS, CLIENT_API, PUBLIC_KEY, TAG_PREFIX, TUBE_DIR, createTubeUpdater, manifestMessage, parseManifest, tubeTags };
+export { BAD_AFTER, CHECK_MS, CLIENT_API, PUBLIC_KEY, TAG_PREFIX, TUBE_DIR, createTubeUpdater, manifestMessage, parseManifest, tubeTags };
