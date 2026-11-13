@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#05070d">
+<title>Jobee'sLair · Testes</title>
+<!-- glibren.47: a pagina de testes da Fase 0 (ps5/ESTUDO-jobe-como-payload.md), servida pelo payload em /teste
+     (app/native/bg_teste.c; embutida em bg_teste_html.h por tools/bg-monitor/embed.mjs). Mede no navegador do PS5 e no
+     celular: tela cheia, controle (Gamepad API e teclado), a loja grande (/api/store inteira), a memoria do payload
+     (/api/teste/estado) e o repouso. Usa a mesma sessao do PIN da pagina do celular (localStorage "jobe.session").
+     JavaScript simples (sem ?. nem ??), para o navegador do PS5. ?demo = respostas falsas (prints). -->
+<style>
+:root{--ink:#05070d;--panel:#0f1520;--panel2:#151d2b;--raise:#1d2738;--line:#243047;--line-hi:#34445f;--fg:#f3f6fb;--muted:#aab4c6;--subtle:#7f8ca3;--accent:#3a86ff;--ice:#4cc9f0;--good:#4ade80;--warn:#fbbf24;--bad:#f87171}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;background:var(--ink);color:var(--fg);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+body{overflow-x:hidden}
+main{max-width:860px;margin:0 auto;padding:12px max(12px,env(safe-area-inset-right)) 28px max(12px,env(safe-area-inset-left));display:flex;flex-direction:column;gap:12px}
+h1{font-size:20px;margin:4px 0 0}
+h2{font-size:17px;margin:0}
+p,li,div,span,b,small,code{overflow-wrap:anywhere;word-break:normal}
+.note{color:var(--muted);font-size:14px;margin:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px}
+.btn{min-height:44px;padding:8px 10px;border:1px solid var(--line-hi);border-radius:10px;background:var(--raise);color:var(--fg);font:inherit;font-size:15px;font-weight:600;cursor:pointer;white-space:normal;text-align:center;width:100%}
+.btn.primary{background:var(--accent);border-color:var(--accent)}
+.btn.on{border-color:var(--good);color:var(--good);background:transparent}
+.btn:disabled{opacity:.5;cursor:default}
+.out{background:var(--panel2);border-radius:8px;padding:8px 10px;font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;min-height:1.5em}
+.ok{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.pin{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.pin input{min-height:44px;width:100%;padding:8px 10px;border-radius:10px;border:1px solid var(--line-hi);background:transparent;color:inherit;font:inherit;font-size:18px;letter-spacing:.2em}
+.pads{display:flex;flex-direction:column;gap:8px}
+.pad{border:1px solid var(--line);border-radius:8px;padding:8px;font-size:14px}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.chip{min-width:34px;padding:2px 6px;border-radius:6px;background:var(--raise);text-align:center;font-size:13px;font-variant-numeric:tabular-nums}
+.chip.down{background:var(--good);color:#05220f}
+.keys{font-size:13px;max-height:9.5em;overflow:auto}
+.store{height:46vh;min-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel2);-webkit-overflow-scrolling:touch}
+.game{display:flex;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);font-size:14px}
+.game b{flex:1 1 auto;min-width:0;font-weight:500}
+.game small{flex:0 0 auto;color:var(--subtle)}
+textarea{width:100%;min-height:9em;border-radius:8px;border:1px solid var(--line-hi);background:var(--panel2);color:inherit;font:13px/1.4 ui-monospace,Consolas,monospace;padding:8px}
+a{color:var(--ice)}
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1 id="title"></h1>
+    <p class="note" id="intro"></p>
+    <p class="note"><a href="/" id="back"></a></p>
+  </div>
+
+  <section class="card" id="lockCard" hidden>
+    <h2 id="pinTitle"></h2>
+    <p class="note" id="pinText"></p>
+    <div class="pin"><input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="12"><button type="button" class="btn primary" id="pinGo"></button></div>
+    <p class="out" id="pinMsg"></p>
+  </section>
+
+  <section class="card">
+    <h2 id="fsTitle"></h2>
+    <p class="note" id="fsText"></p>
+    <div class="row"><button type="button" class="btn primary" id="fsGo"></button><button type="button" class="btn" id="fsExit"></button></div>
+    <p class="out" id="fsOut"></p>
+  </section>
+
+  <section class="card">
+    <h2 id="gpTitle"></h2>
+    <p class="note" id="gpText"></p>
+    <div class="row"><button type="button" class="btn primary" id="gpGo"></button><button type="button" class="btn" id="gpClear"></button></div>
+    <div class="pads" id="gpPads"></div>
+    <p class="out keys" id="gpKeys"></p>
+  </section>
+
+  <section class="card">
+    <h2 id="stTitle"></h2>
+    <p class="note" id="stText"></p>
+    <div class="row"><button type="button" class="btn primary" id="stGo"></button><button type="button" class="btn" id="stScroll"></button></div>
+    <p class="out" id="stOut"></p>
+    <div class="store" id="stList" hidden></div>
+  </section>
+
+  <section class="card">
+    <h2 id="memTitle"></h2>
+    <p class="note" id="memText"></p>
+    <div class="row"><button type="button" class="btn primary" id="memGo"></button></div>
+    <p class="out" id="memOut"></p>
+  </section>
+
+  <section class="card">
+    <h2 id="slTitle"></h2>
+    <p class="note" id="slText"></p>
+    <div class="row"><button type="button" class="btn primary" id="slGo"></button></div>
+    <p class="out" id="slOut"></p>
+  </section>
+
+  <section class="card">
+    <h2 id="resTitle"></h2>
+    <p class="note" id="resText"></p>
+    <textarea id="resBox" readonly spellcheck="false"></textarea>
+    <div class="row"><button type="button" class="btn primary" id="resCopy"></button><button type="button" class="btn" id="resSend"></button></div>
+    <p class="out" id="resOut"></p>
+  </section>
+</main>
+<script>
+"use strict";
+var T = {
+  pt: {
+    title: "Testes da Fase 0", intro: "Testes rápidos para decidir a Jobe como payload. Faça cada um, depois toque em Enviar diagnóstico (ou Copiar resultados).",
+    back: "← Voltar para Downloads",
+    pinTitle: "PIN da página do celular", pinText: "Digite o PIN definido na Jobee'sLair. É o mesmo da página de Downloads.", pinGo: "Liberar",
+    pinWrong: "PIN errado.", pinBlocked: "Muitas tentativas. Espere {s} s.", noPin: "Defina um PIN na Jobee'sLair (Configurações) antes.", pinOk: "Liberado.",
+    net: "Sem resposta do PS5.",
+    fsTitle: "1. Tela cheia", fsText: "Toque em Tela cheia. Anote se a moldura do navegador sumiu.", fsGo: "Tela cheia", fsExit: "Sair da tela cheia",
+    fsNone: "Sem suporte: o navegador não tem requestFullscreen.", fsOk: "pedido aceito", fsFail: "recusado", fsBefore: "Antes", fsAfter: "Depois",
+    gpTitle: "2. Controle", gpText: "Toque em Começar e aperte todos os botões e mexa os dois direcionais. Aparecem os botões e eixos (Gamepad API) e as teclas que o navegador recebe.",
+    gpGo: "Começar", gpStop: "Parar", gpClear: "Limpar", gpNone: "Nenhum controle visto pela Gamepad API (aperte um botão).", gpNoApi: "O navegador não tem a Gamepad API.",
+    gpKeys: "Teclas:",
+    stTitle: "3. Loja grande", stText: "Busca todos os jogos da loja do payload, monta a lista e mede. Depois toque em Rolar e medir, e role também com o dedo/controle.",
+    stGo: "Montar a loja", stScroll: "Rolar e medir", stWait: "Buscando… {n} de {t}", stNoStore: "A loja ainda não existe no payload: abra a Jobee'sLair uma vez e espere a loja montar.",
+    stDone: "{n} jogos. Busca: {f} ms ({p} pedidos). Montagem: {b} ms (até desenhar: {d} ms).", stAuto: "Rolagem automática: {fps} quadros/s (quadro mais lento {max} ms, {n} quadros em {ms} ms).",
+    stManual: "Rolagem manual: {fps} quadros/s (quadro mais lento {max} ms).", stFirst: "Monte a loja antes.",
+    memTitle: "4. Memória do payload", memText: "Memória do bg-downloader agora e o pico. Leia antes e depois de montar a loja.", memGo: "Ler agora",
+    memLine: "{when}: agora {rss}, pico {peak} (pid {pid}, ligado há {up})", memBefore: "Antes da loja", memAfter: "Depois da loja", memNow: "Leitura",
+    memNa: "não informado",
+    slTitle: "5. Repouso", slText: "Toque em Marcar agora, ponha o PS5 em repouso por uns 5 minutos, acorde e abra (ou recarregue) esta página. Ela diz se o payload continuou vivo ou reiniciou.",
+    slGo: "Marcar agora", slMarked: "Marcado: pid {pid}, às {at}. Agora ponha o PS5 em repouso.",
+    slAlive: "Continuou vivo: mesmo pid {pid}, ligado há {up} (relógio) / {mono} (contador do processo).", slRestarted: "Reiniciou: pid antigo {old} → novo {pid} (ligado há {up}).",
+    slGap: "Intervalo desde o último pedido: {gap}.", slNone: "Primeira visita neste aparelho: toque em Marcar agora.",
+    resTitle: "Resultados", resText: "O texto abaixo junta tudo. Enviar diagnóstico manda junto com os logs para o GitHub (precisa da chave do diagnóstico, na página de Downloads).",
+    resCopy: "Copiar resultados", resSend: "Enviar diagnóstico", copied: "Copiado.", copyManual: "Texto selecionado: copie com o menu do navegador.",
+    sending: "Enviando… {n} de {t}", sent: "Enviado (pasta {f}).", noKey: "Falta a chave do GitHub: configure em Diagnóstico, na página de Downloads.", busy: "Já tem um envio em andamento.",
+    sendFail: "O envio falhou ({e}).", yes: "sim", no: "não"
+  },
+  en: {
+    title: "Phase 0 tests", intro: "Quick tests to decide Jobe as a payload. Run each one, then tap Send diagnostics (or Copy results).",
+    back: "← Back to Downloads",
+    pinTitle: "Phone page PIN", pinText: "Type the PIN set in Jobee'sLair. It is the same as the Downloads page.", pinGo: "Unlock",
+    pinWrong: "Wrong PIN.", pinBlocked: "Too many tries. Wait {s} s.", noPin: "Set a PIN in Jobee'sLair (Settings) first.", pinOk: "Unlocked.",
+    net: "No answer from the PS5.",
+    fsTitle: "1. Full screen", fsText: "Tap Full screen. Note whether the browser frame went away.", fsGo: "Full screen", fsExit: "Leave full screen",
+    fsNone: "Not supported: the browser has no requestFullscreen.", fsOk: "request accepted", fsFail: "refused", fsBefore: "Before", fsAfter: "After",
+    gpTitle: "2. Controller", gpText: "Tap Start, press every button and move both sticks. The buttons and axes (Gamepad API) and the keys the browser gets show up.",
+    gpGo: "Start", gpStop: "Stop", gpClear: "Clear", gpNone: "No controller seen by the Gamepad API (press a button).", gpNoApi: "The browser has no Gamepad API.",
+    gpKeys: "Keys:",
+    stTitle: "3. Large store", stText: "Fetches every game of the payload's store, builds the list and measures. Then tap Scroll and measure, and scroll by hand too.",
+    stGo: "Build the store", stScroll: "Scroll and measure", stWait: "Fetching… {n} of {t}", stNoStore: "The payload has no store yet: open Jobee'sLair once and wait for the store.",
+    stDone: "{n} games. Fetch: {f} ms ({p} requests). Build: {b} ms (until drawn: {d} ms).", stAuto: "Automatic scroll: {fps} frames/s (slowest frame {max} ms, {n} frames in {ms} ms).",
+    stManual: "Manual scroll: {fps} frames/s (slowest frame {max} ms).", stFirst: "Build the store first.",
+    memTitle: "4. Payload memory", memText: "The bg-downloader memory now and its peak. Read before and after building the store.", memGo: "Read now",
+    memLine: "{when}: now {rss}, peak {peak} (pid {pid}, up {up})", memBefore: "Before the store", memAfter: "After the store", memNow: "Reading",
+    memNa: "not given",
+    slTitle: "5. Rest mode", slText: "Tap Mark now, put the PS5 in rest mode for about 5 minutes, wake it and open (or reload) this page. It says whether the payload stayed alive or restarted.",
+    slGo: "Mark now", slMarked: "Marked: pid {pid}, at {at}. Now put the PS5 in rest mode.",
+    slAlive: "Stayed alive: same pid {pid}, up {up} (clock) / {mono} (process counter).", slRestarted: "Restarted: old pid {old} → new {pid} (up {up}).",
+    slGap: "Time since the last request: {gap}.", slNone: "First visit on this device: tap Mark now.",
+    resTitle: "Results", resText: "The text below has everything. Send diagnostics sends it with the logs to GitHub (needs the diagnostics key, on the Downloads page).",
+    resCopy: "Copy results", resSend: "Send diagnostics", copied: "Copied.", copyManual: "Text selected: copy it with the browser menu.",
+    sending: "Sending… {n} of {t}", sent: "Sent (folder {f}).", noKey: "The GitHub key is missing: set it in Diagnostics, on the Downloads page.", busy: "A send is already running.",
+    sendFail: "Sending failed ({e}).", yes: "yes", no: "no"
+  }
+};
+var L = /^pt/i.test(navigator.language || "") ? T.pt : T.en;
+var $ = function (id) { return document.getElementById(id); };
+var fill = function (text, vars) { return text.replace(/\{(\w+)\}/g, function (_, k) { return vars[k] === undefined ? "" : String(vars[k]); }); };
+var now = function () { return window.performance && performance.now ? performance.now() : Date.now(); };
+var DEMO = location.protocol === "file:" || /[?&]demo\b/.test(location.search);
+var SESSION_KEY = "jobe.session", SEEN_KEY = "jobe.teste.visto";
+var session = "";
+try { var saved = localStorage.getItem(SESSION_KEY); if (/^[0-9a-f]{32}$/.test(saved || "")) session = saved; } catch (e) {}
+var R = { fullscreen: null, gamepad: { seen: {}, pressed: {}, axesMoved: {}, keys: {} }, store: null, memory: {}, rest: null };
+
+for (var key in L) { var el = $(key); if (el && typeof L[key] === "string" && el.tagName !== "INPUT") el.textContent = L[key]; }
+
+// ---- O payload (ou o demo) --------------------------------------------------------------------------------
+var demoPid = 4242, demoStart = Math.floor(Date.now() / 1000) - 3600, demoReq = 0;
+function demoApi(method, path, body) {
+  if (path === "/api/unlock") return body.pin === "1234" ? { status: 200, data: { session: "0123456789abcdef0123456789abcdef" } } : { status: 403, data: { retryIn: 0 } };
+  if (path === "/api/teste/estado") { demoReq++; var t = Math.floor(Date.now() / 1000); return { status: 200, data: { ok: true, pid: demoPid, started: demoStart, uptimeSeconds: t - demoStart, now: t, version: "1.0.0", build: "demo", api: 32, rssBytes: (38 + demoReq) * 1048576, rssSource: "demo", peakBytes: (52 + demoReq) * 1048576, peakSource: "getrusage", requests: demoReq, lastRequest: demoReq > 1 ? t - 15 : null, previous: null } }; }
+  if (path.indexOf("/api/store") === 0) {
+    var m = /offset=(\d+)/.exec(path), off = m ? +m[1] : 0, games = [], total = 2639;
+    for (var i = off; i < Math.min(total, off + 200); i++) games.push({ id: "PPSA" + String(10000 + i), title: "Jogo de teste número " + (i + 1) + (i % 7 ? "" : " — edição com um nome bem comprido para quebrar a linha"), code: "PPSA" + String(10000 + i), platform: i % 3 ? "ps5" : "ps4" });
+    return { status: 200, data: { ok: true, total: total, count: games.length, offset: off, limit: 200, games: games } };
+  }
+  if (path === "/api/teste/enviar") return { status: 200, data: { ok: true, state: "running" } };
+  if (path === "/api/diag") return { status: 200, data: { ok: true, configured: true, state: "done", folder: "2026-11-13_120000", sent: 12, total: 12 } };
+  return { status: 404, data: {} };
+}
+function api(method, path, body) {
+  if (DEMO) return Promise.resolve(demoApi(method, path, body || {}));
+  var headers = { "Content-Type": "application/json" };
+  if (session) headers["X-Session"] = session;
+  return fetch(path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined, cache: "no-store" }).then(function (r) {
+    return r.text().then(function (text) { var data = {}; try { data = JSON.parse(text); } catch (e) {} return { status: r.status, data: data }; });
+  }).catch(function () { return { status: 0, data: {} }; });
+}
+// Pede o PIN quando a sessao falta ou caiu (401) e repete o que estava fazendo.
+var pending = null;
+function needPin(again) {
+  session = "";
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  pending = again; $("lockCard").hidden = false; $("pin").focus();
+}
+$("pinGo").onclick = function () {
+  api("POST", "/api/unlock", { pin: $("pin").value }).then(function (r) {
+    if (r.status === 200 && r.data.session) {
+      session = r.data.session; $("pin").value = ""; $("pinMsg").textContent = L.pinOk; $("lockCard").hidden = true;
+      try { if (!DEMO) localStorage.setItem(SESSION_KEY, session); } catch (e) {}
+      var again = pending; pending = null; if (again) again();
+    } else if (r.status === 0) $("pinMsg").textContent = L.net;
+    else if (r.data.noPin) $("pinMsg").textContent = L.noPin;
+    else $("pinMsg").textContent = r.data.retryIn ? fill(L.pinBlocked, { s: r.data.retryIn }) : L.pinWrong;
+  });
+};
+$("pin").onkeydown = function (e) { if (e.key === "Enter") $("pinGo").onclick(); };
+// GET com a sessao; 401 pede o PIN e chama `again`.
+function guardedGet(path, again) {
+  return api("GET", path).then(function (r) { if (r.status === 401) { needPin(again); return null; } return r; });
+}
+
+var mb = function (b) { return b == null ? L.memNa : (b / 1048576).toFixed(1) + " MB"; };
+function dur(s) {
+  if (s == null || !isFinite(s)) return "?";
+  s = Math.max(0, Math.round(s));
+  var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), r = s % 60;
+  return d ? d + " d " + h + " h" : h ? h + " h " + m + " min" : m ? m + " min " + r + " s" : r + " s";
+}
+var clock = function (t) { var d = new Date(t * 1000), p = function (n) { return String(n).padStart(2, "0"); }; return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()); };
+
+// ---- 1. Tela cheia ----------------------------------------------------------------------------------------
+function sizes() {
+  var fe = document.fullscreenElement || document.webkitFullscreenElement || document.webkitCurrentFullScreenElement || null;
+  return "janela " + window.innerWidth + "x" + window.innerHeight + ", tela " + screen.width + "x" + screen.height + ", dpr " + (window.devicePixelRatio || 1) +
+    ", fullscreenElement " + (fe ? fe.tagName : "nenhum") + (document.webkitIsFullScreen !== undefined ? ", webkitIsFullScreen " + document.webkitIsFullScreen : "");
+}
+$("fsOut").textContent = L.fsBefore + ": " + sizes();
+$("fsGo").onclick = function () {
+  var el = document.documentElement, before = sizes(), method = "", result = "";
+  var done = function (text, cls) {
+    result = text;
+    setTimeout(function () {
+      var after = sizes();
+      R.fullscreen = { method: method || "nenhum", result: result, before: before, after: after };
+      $("fsOut").className = "out " + (cls || "");
+      $("fsOut").textContent = (method || "-") + ": " + result + "\n" + L.fsBefore + ": " + before + "\n" + L.fsAfter + ": " + after;
+      results();
+    }, 700);
+  };
+  try {
+    if (el.requestFullscreen) { method = "requestFullscreen"; var p = el.requestFullscreen(); if (p && p.then) p.then(function () { done(L.fsOk, "ok"); }, function (e) { done(L.fsFail + ": " + (e && (e.name || e.message) || e), "bad"); }); else done(L.fsOk, "ok"); }
+    else if (el.webkitRequestFullscreen) { method = "webkitRequestFullscreen"; el.webkitRequestFullscreen(); done(L.fsOk, "ok"); }
+    else if (el.webkitRequestFullScreen) { method = "webkitRequestFullScreen"; el.webkitRequestFullScreen(); done(L.fsOk, "ok"); }
+    else done(L.fsNone, "warn");
+  } catch (e) { done(L.fsFail + ": " + (e && (e.name || e.message) || e), "bad"); }
+};
+$("fsExit").onclick = function () {
+  try { if (document.exitFullscreen) document.exitFullscreen(); else if (document.webkitExitFullscreen) document.webkitExitFullscreen(); else if (document.webkitCancelFullScreen) document.webkitCancelFullScreen(); } catch (e) {}
+  setTimeout(function () { $("fsOut").textContent = L.fsAfter + ": " + sizes(); }, 500);
+};
+["fullscreenchange", "webkitfullscreenchange"].forEach(function (name) { document.addEventListener(name, function () { if (R.fullscreen) R.fullscreen.change = (R.fullscreen.change || "") + name + " "; }); });
+
+// ---- 2. Controle ------------------------------------------------------------------------------------------
+var gpOn = false, keyLog = [];
+function padsNow() { try { return navigator.getGamepads ? Array.prototype.slice.call(navigator.getGamepads()).filter(Boolean) : null; } catch (e) { return null; } }
+function drawPads() {
+  if (!gpOn) return;
+  var pads = padsNow(), box = $("gpPads");
+  box.textContent = "";
+  if (pads === null) { box.textContent = L.gpNoApi; R.gamepad.api = false; }
+  else if (!pads.length) { box.textContent = L.gpNone; R.gamepad.api = true; }
+  else pads.forEach(function (pad) {
+    R.gamepad.api = true;
+    R.gamepad.seen[pad.id] = { mapping: pad.mapping || "(vazio)", buttons: pad.buttons.length, axes: pad.axes.length };
+    var div = document.createElement("div"); div.className = "pad";
+    var head = document.createElement("b"); head.textContent = "#" + pad.index + " " + pad.id + " · mapping " + (pad.mapping || "(vazio)"); div.append(head);
+    var chips = document.createElement("div"); chips.className = "chips";
+    pad.buttons.forEach(function (b, i) {
+      var c = document.createElement("span"), down = b.pressed || b.value > 0.5;
+      if (down) R.gamepad.pressed[i] = true;
+      c.className = "chip" + (down ? " down" : ""); c.textContent = "B" + i + (b.value > 0 && b.value < 1 ? " " + b.value.toFixed(2) : ""); chips.append(c);
+    });
+    pad.axes.forEach(function (v, i) {
+      if (Math.abs(v) > 0.5) R.gamepad.axesMoved[i] = true;
+      var c = document.createElement("span"); c.className = "chip" + (Math.abs(v) > 0.5 ? " down" : ""); c.textContent = "E" + i + " " + v.toFixed(2); chips.append(c);
+    });
+    div.append(chips); box.append(div);
+  });
+  requestAnimationFrame(drawPads);
+}
+function onKey(e) {
+  if (!gpOn) return;
+  if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Spacebar"].indexOf(e.key) >= 0 || [32, 37, 38, 39, 40].indexOf(e.keyCode) >= 0) e.preventDefault();
+  var line = e.type + " code=" + (e.code || "-") + " key=" + (e.key || "-") + " keyCode=" + e.keyCode;
+  R.gamepad.keys[(e.code || "-") + "/" + (e.key || "-") + "/" + e.keyCode] = true;
+  keyLog.unshift(line); keyLog.length = Math.min(keyLog.length, 14);
+  $("gpKeys").textContent = L.gpKeys + "\n" + keyLog.join("\n");
+}
+window.addEventListener("keydown", onKey, true);
+window.addEventListener("keyup", onKey, true);
+window.addEventListener("gamepadconnected", function (e) { keyLog.unshift("gamepadconnected #" + e.gamepad.index + " " + e.gamepad.id); });
+$("gpGo").onclick = function () {
+  gpOn = !gpOn; $("gpGo").textContent = gpOn ? L.gpStop : L.gpGo; $("gpGo").className = "btn " + (gpOn ? "on" : "primary");
+  if (gpOn) requestAnimationFrame(drawPads); else results();
+};
+$("gpClear").onclick = function () { keyLog = []; $("gpKeys").textContent = ""; R.gamepad = { seen: {}, pressed: {}, axesMoved: {}, keys: {} }; results(); };
+
+// ---- 4. Memoria (usada tambem pela loja) -------------------------------------------------------------------
+function readMemory(label, slot) {
+  return guardedGet("/api/teste/estado", function () { readMemory(label, slot); }).then(function (r) {
+    if (!r) return null;
+    if (r.status !== 200) { $("memOut").textContent = L.net; return null; }
+    var d = r.data;
+    R.memory[slot] = { rss: d.rssBytes, peak: d.peakBytes, source: d.rssSource, pid: d.pid, up: d.uptimeSeconds, api: d.api };
+    var lines = [];
+    [["before", L.memBefore], ["after", L.memAfter], ["now", L.memNow]].forEach(function (p) {
+      var m = R.memory[p[0]]; if (m) lines.push(fill(L.memLine, { when: p[1], rss: mb(m.rss), peak: mb(m.peak), pid: m.pid, up: dur(m.up) }));
+    });
+    $("memOut").textContent = lines.join("\n");
+    rest(d);
+    results();
+    return d;
+  });
+}
+$("memGo").onclick = function () { readMemory(L.memNow, "now"); };
+
+// ---- 3. Loja grande ---------------------------------------------------------------------------------------
+var storeCount = 0;
+function fetchStore() {
+  var all = [], requests = 0, t0 = now();
+  function page(offset) {
+    return guardedGet("/api/store?offset=" + offset + "&limit=200", null).then(function (r) {
+      requests++;
+      if (!r || r.status === 404) return null;
+      if (r.status !== 200) throw new Error("http " + r.status);
+      all = all.concat(r.data.games || []);
+      $("stOut").textContent = fill(L.stWait, { n: all.length, t: r.data.total });
+      if (all.length < r.data.total && (r.data.games || []).length) return page(all.length);
+      return { games: all, ms: Math.round(now() - t0), requests: requests };
+    });
+  }
+  return page(0);
+}
+$("stGo").onclick = function () {
+  $("stGo").disabled = true;
+  readMemory(L.memBefore, "before").then(function () { return fetchStore(); }).then(function (got) {
+    if (!got) { $("stOut").textContent = L.stNoStore; $("stGo").disabled = false; return; }
+    var list = $("stList"), t0 = now();
+    list.textContent = "";
+    var frag = document.createDocumentFragment();
+    got.games.forEach(function (g) {
+      var row = document.createElement("div"); row.className = "game";
+      var b = document.createElement("b"); b.textContent = g.title || g.id;
+      var s = document.createElement("small"); s.textContent = (g.code || g.id || "") + " · " + (g.platform || "");
+      row.append(b, s); frag.append(row);
+    });
+    list.append(frag); list.hidden = false;
+    var built = Math.round(now() - t0);
+    void list.offsetHeight;
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      var drawn = Math.round(now() - t0);
+      storeCount = got.games.length;
+      R.store = { games: storeCount, fetchMs: got.ms, requests: got.requests, buildMs: built, drawnMs: drawn };
+      $("stOut").textContent = fill(L.stDone, { n: storeCount, f: got.ms, p: got.requests, b: built, d: drawn });
+      $("stGo").disabled = false;
+      readMemory(L.memAfter, "after");
+    }); });
+  }).catch(function (e) { $("stOut").textContent = L.net + " " + (e && e.message || ""); $("stGo").disabled = false; });
+};
+// Quadros por segundo durante uma rolagem: conta os requestAnimationFrame e o maior intervalo entre eles.
+function measure(seconds, step, done) {
+  var frames = 0, max = 0, start = now(), last = start;
+  function tick() {
+    var t = now(); frames++; max = Math.max(max, t - last); last = t;
+    if (step) step((t - start) / (seconds * 1000));
+    if (t - start < seconds * 1000) requestAnimationFrame(tick);
+    else done({ fps: Math.round(frames * 1000 / (t - start)), max: Math.round(max), n: frames, ms: Math.round(t - start) });
+  }
+  requestAnimationFrame(tick);
+}
+$("stScroll").onclick = function () {
+  var list = $("stList");
+  if (!storeCount) { $("stOut").textContent = L.stFirst; return; }
+  list.scrollTop = 0;
+  autoScroll = true;
+  var range = list.scrollHeight - list.clientHeight;
+  measure(6, function (f) { list.scrollTop = Math.min(1, f) * range; }, function (m) {
+    setTimeout(function () { autoScroll = false; }, 200);
+    R.store.auto = m;
+    $("stOut").textContent = fill(L.stDone, { n: storeCount, f: R.store.fetchMs, p: R.store.requests, b: R.store.buildMs, d: R.store.drawnMs }) + "\n" + fill(L.stAuto, m) + (R.store.manual ? "\n" + fill(L.stManual, R.store.manual) : "");
+    results();
+  });
+};
+// Rolagem a mao: mede 1,5 s a partir do primeiro scroll (de novo a cada nova rolagem depois disso).
+var manualBusy = false, autoScroll = false;
+$("stList").addEventListener("scroll", function () {
+  if (manualBusy || autoScroll || !storeCount || !R.store) return;
+  manualBusy = true;
+  measure(1.5, null, function (m) {
+    manualBusy = false;
+    R.store.manual = m;
+    $("stOut").textContent = fill(L.stDone, { n: storeCount, f: R.store.fetchMs, p: R.store.requests, b: R.store.buildMs, d: R.store.drawnMs }) + (R.store.auto ? "\n" + fill(L.stAuto, R.store.auto) : "") + "\n" + fill(L.stManual, m);
+    results();
+  });
+}, { passive: true });
+
+// ---- 5. Repouso -------------------------------------------------------------------------------------------
+var seen = null;
+try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || "null"); } catch (e) {}
+// Compara o estado de agora com o visto antes (neste aparelho) e guarda o de agora.
+function rest(d) {
+  var lines = [], wall = d.now - d.started;
+  if (seen && seen.pid) {
+    if (seen.pid === d.pid && seen.started === d.started) lines.push(fill(L.slAlive, { pid: d.pid, up: dur(wall), mono: dur(d.uptimeSeconds) }));
+    else lines.push(fill(L.slRestarted, { old: seen.pid, pid: d.pid, up: dur(wall) }));
+    var last = d.lastRequest;
+    if (!(seen.pid === d.pid && seen.started === d.started) && d.previous && d.previous.pid === seen.pid) last = d.previous.last;
+    if (last) lines.push(fill(L.slGap, { gap: dur(d.now - last) }));
+    R.rest = { seenPid: seen.pid, pid: d.pid, alive: seen.pid === d.pid && seen.started === d.started, wallUp: wall, monoUp: d.uptimeSeconds, gap: last ? d.now - last : null, markedAt: seen.marked || null, previous: d.previous };
+  } else lines.push(L.slNone);
+  $("slOut").textContent = lines.join("\n");
+  seen = { pid: d.pid, started: d.started, at: d.now, marked: seen && seen.marked };
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch (e) {}
+}
+$("slGo").onclick = function () {
+  readMemory(L.memNow, "now").then(function (d) {
+    if (!d) return;
+    seen = { pid: d.pid, started: d.started, at: d.now, marked: d.now };
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch (e) {}
+    $("slOut").textContent = fill(L.slMarked, { pid: d.pid, at: clock(d.now) });
+    results();
+  });
+};
+// A pagina aberta: um pedido a cada 15 s guarda a hora do ultimo pedido no payload; ao voltar a ficar visivel (o PS5
+// acordou), le de novo e compara.
+setInterval(function () { if (session && document.visibilityState !== "hidden") api("GET", "/api/teste/estado").then(function (r) { if (r.status === 200) rest(r.data); }); }, 15000);
+document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && session) readMemory(L.memNow, "now"); });
+
+// ---- Resultados -------------------------------------------------------------------------------------------
+function results() {
+  var g = R.gamepad, lines = [];
+  lines.push("Jobee'sLair /teste (Fase 0) " + new Date().toISOString());
+  lines.push("navegador: " + navigator.userAgent);
+  lines.push("janela: " + window.innerWidth + "x" + window.innerHeight + ", tela " + screen.width + "x" + screen.height + ", dpr " + (window.devicePixelRatio || 1));
+  lines.push("[1 tela cheia] " + (R.fullscreen ? R.fullscreen.method + ": " + R.fullscreen.result + " | antes: " + R.fullscreen.before + " | depois: " + R.fullscreen.after + (R.fullscreen.change ? " | eventos: " + R.fullscreen.change : "") : "nao feito"));
+  var pads = Object.keys(g.seen);
+  lines.push("[2 controle] gamepad api: " + (g.api === undefined ? "nao feito" : g.api ? "sim" : "nao") + "; controles: " + (pads.length ? pads.map(function (id) { var s = g.seen[id]; return id + " (mapping " + s.mapping + ", " + s.buttons + " botoes, " + s.axes + " eixos)"; }).join("; ") : "nenhum") +
+    "; botoes apertados: " + (Object.keys(g.pressed).join(",") || "-") + "; eixos movidos: " + (Object.keys(g.axesMoved).join(",") || "-") + "; teclas (code/key/keyCode): " + (Object.keys(g.keys).join(" ") || "-"));
+  var s = R.store;
+  lines.push("[3 loja] " + (s ? s.games + " jogos; busca " + s.fetchMs + " ms em " + s.requests + " pedidos; montagem " + s.buildMs + " ms; ate desenhar " + s.drawnMs + " ms" + (s.auto ? "; rolagem auto " + s.auto.fps + " qps (pior quadro " + s.auto.max + " ms)" : "") + (s.manual ? "; rolagem manual " + s.manual.fps + " qps (pior quadro " + s.manual.max + " ms)" : "") : "nao feito"));
+  var mem = ["before", "after", "now"].filter(function (k) { return R.memory[k]; }).map(function (k) { var m = R.memory[k]; return k + ": rss " + mb(m.rss) + " (" + (m.source || "-") + "), pico " + mb(m.peak) + ", pid " + m.pid + ", api " + m.api; });
+  lines.push("[4 memoria] " + (mem.join("; ") || "nao feito"));
+  var r = R.rest;
+  lines.push("[5 repouso] " + (r ? (r.alive ? "continuou vivo" : "reiniciou") + " (pid visto " + r.seenPid + ", agora " + r.pid + "); ligado (relogio) " + dur(r.wallUp) + ", contador do processo " + dur(r.monoUp) + "; desde o ultimo pedido " + dur(r.gap) + (r.markedAt ? "; marcado as " + clock(r.markedAt) : "") + (r.previous ? "; processo anterior pid " + r.previous.pid + " ultimo pedido " + clock(r.previous.last) : "") : "nao feito"));
+  $("resBox").value = lines.join("\n");
+  return $("resBox").value;
+}
+$("resCopy").onclick = function () {
+  var text = results(), box = $("resBox");
+  var manual = function () { box.focus(); box.select(); try { box.setSelectionRange(0, text.length); } catch (e) {} var ok = false; try { ok = document.execCommand("copy"); } catch (e) {} $("resOut").textContent = ok ? L.copied : L.copyManual; };
+  if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { $("resOut").textContent = L.copied; }, manual);
+  else manual();
+};
+var following = null;
+function followDiag() {
+  api("GET", "/api/diag").then(function (r) {
+    var d = r.data || {};
+    if (r.status === 200 && d.state === "running") { $("resOut").textContent = fill(L.sending, { n: d.sent || 0, t: d.total || "?" }); following = setTimeout(followDiag, 1500); return; }
+    following = null;
+    if (r.status === 200 && d.state === "done") $("resOut").textContent = fill(L.sent, { f: d.folder });
+    else $("resOut").textContent = fill(L.sendFail, { e: d.error || r.status });
+  });
+}
+$("resSend").onclick = function send() {
+  var text = results().slice(0, 60000);
+  api("POST", "/api/teste/enviar", { texto: text }).then(function (r) {
+    if (r.status === 401) return needPin(send);
+    if (r.status === 200) { $("resOut").textContent = fill(L.sending, { n: 0, t: "?" }); if (!following) followDiag(); return; }
+    $("resOut").textContent = r.data.error === "no-key" ? L.noKey : r.data.error === "busy" ? L.busy : r.status === 0 ? L.net : fill(L.sendFail, { e: r.data.error || r.status });
+  });
+};
+
+// Ao abrir: com sessao, le o estado (memoria + repouso); sem, pede o PIN.
+results();
+if (session || DEMO) readMemory(L.memNow, "now"); else needPin(function () { readMemory(L.memNow, "now"); });
+</script>
+</body>
+</html>

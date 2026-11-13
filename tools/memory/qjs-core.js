@@ -21,7 +21,18 @@ export const FileSystem = {
   dataDir: '/data',
   tempDir: '/temp0',
   exists: (path) => os.stat(real(path))[1] === 0,
-  readFile(path) {
+  readFile(path, offset, length) {
+    // glibren.47: um trecho (um item de um pacote de dados), como o readFile(path, offset, length) do console.
+    if (offset !== undefined) {
+      const file = std.open(real(path), 'rb');
+      if (!file) throw new Error(`readFile ${path}: No such file or directory`);
+      try {
+        file.seek(offset, std.SEEK_SET);
+        return file.readAsString(length);
+      } finally {
+        file.close();
+      }
+    }
     const text = std.loadFile(real(path));
     if (text == null) throw new Error(`readFile ${path}: No such file or directory`);
     return text;

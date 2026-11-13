@@ -109,4 +109,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   writeIndex(files);
   const bytes = Object.values(files).reduce((sum, text) => sum + Buffer.byteLength(text), 0);
   console.log(`${catalog.games.length} games, ${catalog.twins.length} other editions: index.json ${Buffer.byteLength(files['index.json'])} bytes, ${Object.keys(files).length - 1} art files, ${bytes} bytes in all`);
+  // glibren.47: com o catalogo, os pacotes dos links e das fichas (tools/catalog/data-pack.mjs).
+  (await import('./data-pack.mjs')).writePacks();
 }

@@ -1183,6 +1183,8 @@ pinOnOpen();
       if (inApp) { const n = document.createElement("div"); n.className = "dg-note"; n.textContent = D.zipApp; body.append(n); }
     }
     if (msg) { const m = document.createElement("div"); m.className = msgClass || "dg-note"; m.textContent = msg; body.append(m); }
+    // glibren.47: a pagina de testes da Fase 0 (tela cheia, controle, loja grande, memoria, repouso), em /teste.
+    const test = document.createElement("a"); test.className = "dg-note"; test.href = "/teste"; test.textContent = L === T.pt ? "Página de testes (Fase 0) →" : "Test page (Phase 0) →"; body.append(test);
   }
   box.addEventListener("toggle", () => { if (box.open && (session || DEMO)) load(); else if (!box.open) stop(); render(); });
   render();

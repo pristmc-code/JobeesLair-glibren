@@ -751,6 +751,10 @@ bool storage_test() {
       if (fs.readFile(testPath) !== large) return false;
       fs.writeFile(testPath, 'synced', false, true);
       if (fs.readFile(testPath) !== 'synced') return false;
+      // glibren.47: a byte range (a data pack's item), and a range past the end is an error.
+      if (fs.readFile(testPath, 1, 3) !== 'ync' || fs.readFile(testPath, 0, 0) !== '') return false;
+      try { fs.readFile(testPath, 4, 3); return false; }
+      catch (error) { if (!error.message.includes('fs.readFile')) return false; }
     } finally { fs.remove(testPath); }
     // removeTree deletes the tree but only unlinks the symbolic link set up below, keeping its target.
     fs.removeTree('/download0/remove-tree-test');

@@ -16,6 +16,8 @@
 // notice show; index.jsx mounts the store once it is done (whenCatalogReady), and state/store-mode.js rebuilds what
 // other modules worked out from the lists while they were empty. Elsewhere (tests, qjs measurements) it all runs as
 // this module loads, as before. catalogBuildStats says how long it took, in how many parts and the longest one.
+// MODIFIED (glibren.47): the bundled releases and pages come from two pack files read one item at a time
+// (state/data-pack.js, tools/catalog/data-pack.mjs), not 4,188 small files: the image is ~275 MB smaller.
 
 import { CATALOG_PACED, catalogLoad, coverSize, features, games, indexSteps, twins } from '../data/catalog-index.js';
 import { formats as bundledFormats } from '../data/formats.js';
@@ -27,6 +29,7 @@ import { ORBIT_FEED, setOrbitKnown } from './orbit-feed.js';
 import { pageSummary } from './feed-format.js';
 import { ratings as bundledRatings } from '../data/ratings.js';
 import { createReleaseCache } from './release-cache.js';
+import { createDataPack } from './data-pack.js';
 import { createFramePace } from './frame-pace.js';
 import { readJlx } from './jlx.js';
 import { KINDS, gameFormats, ready1360 } from './formats.js';
@@ -60,8 +63,17 @@ import { memorySample } from './memory-meter.js';
     return low ? text.replace("13.60", low) : text;
   };
   // 0.5.7: the bundled release files are JLX1 (state/jlx.js).
-  var releaseCache = createReleaseCache((path) => readJlx(FileSystem.readFile(`/app0/${path}`)));
-  var pageCache = createPageCache((path) => FileSystem.readFile(`/app0/${path}`));
+  // glibren.47: the caches still name a game's data/<dir>/<id>.json; the text is that item of the pack. An item the pack
+  // lacks (or a pack that does not read) fails as a missing file did: no releases but the feeds', an empty page.
+  var releasePack = createDataPack("releases");
+  var pagePack = createDataPack("pages");
+  var packItem = (pack, path) => {
+    const text = pack.read(path.slice(path.lastIndexOf("/") + 1, -".json".length));
+    if (text === null) throw new Error(`${path}: not in the pack`);
+    return text;
+  };
+  var releaseCache = createReleaseCache((path) => readJlx(packItem(releasePack, path)));
+  var pageCache = createPageCache((path) => packItem(pagePack, path));
   var NO_PAGE = { about: [], shots: [], summary: "" };
   var SYNONYMS = {
     "Role Playing Game (RPG)": "RPG",

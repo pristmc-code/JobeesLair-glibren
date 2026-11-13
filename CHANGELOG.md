@@ -6,6 +6,18 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.47** (fork): a smaller image and a test page for the console's browser. The bundled catalog's releases
+  (2,114 files) and store pages (2,074 files) now ship as two pack files each, `data/packs/releases.pack` +
+  `releases.idx` and `pages.pack` + `pages.idx` (`tools/catalog/data-pack.mjs`; the folders stay the source in the
+  repository and `catalog-index.mjs`/`formats.mjs` rebuild the packs). The app reads one game's item at a time by its
+  byte offset (`state/data-pack.js`, with a new `FileSystem.readFile(path, offset, length)` in the runtime), so the
+  pack is never in memory, only its index (~45 KB each, checked once: a corrupt index refuses the pack and the game
+  shows its feed links and an empty page instead of crashing). With ~170 files instead of ~4,350 in 64 KiB clusters
+  and the image's slack down from 128 to 64 MiB, `JobeesLair.exfat` goes from 530 MB to under 250 MB. The packaging
+  now also checks the image with `fsck.exfat` and mounts it to compare every file. The payload's phone page has a new
+  `/teste` page (same PIN): full screen, the controller through the Gamepad API and the keys, the whole store
+  (~2,600 games) with timing and frames per second while scrolling, the payload's memory, and whether the payload
+  survived rest mode; "Copy results" and "Send diagnostics" carry the results.
 - **glibren.46** (fork): the app's updates are signed (A-M1). Each release now carries `jobe-release.json` (version,
   name, size and SHA-256 of `update.zip` and `JobeesLair.exfat`) and `jobe-release.json.sig`, an Ed25519 signature
   made on the publisher's PC with the same key that already signs the glibren payload and the YouTube service

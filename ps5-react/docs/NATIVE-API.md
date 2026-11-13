@@ -96,6 +96,7 @@ inside it can be read by path. Paths containing `..` components are rejected.
 | `stat(path)` | `FileStat \| null` | `null` when the path does not exist |
 | `exists(path)` | `boolean` | `stat(path) !== null` |
 | `readFile(path)` | `string` | UTF-8; throws above 8 MiB |
+| `readFile(path, offset, length)` | `string` | glibren.47: only `length` bytes from byte `offset` (UTF-8; at most 8 MiB); throws when the range passes the end of the file. For pack files read one item at a time |
 | `writeFile(path, text, {sync})` | — | Creates or truncates; `sync: true` flushes it to the disk before returning, for a file saved then renamed into place |
 | `appendFile(path, text)` | — | Creates or appends |
 | `mkdir(path, {recursive})` | — | `recursive` defaults to `false`; folders it creates are 0777 (chmod, best effort), existing ones keep their mode |

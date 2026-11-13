@@ -16,11 +16,21 @@ export const memo = (component) => component;
 // Keyboard (globalThis.__stubKeyboard: {available, open(options)}); without them, nothing is there.
 // The package's own files (/app0/...) are the repository's app/ folder: the bundled catalog is read from there.
 import { readFileSync as __read } from 'node:fs';
-const __app0 = (path) => path.startsWith('/app0/') ? __read(__APP__ + path.slice(6), 'utf8') : '';
+// glibren.47: readFile(path, offset, length) reads that byte range, as the console does for a data pack; a range past the
+// end of the file is an error.
+const __range = (bytes, path, offset, length) => {
+  if (offset < 0 || length < 0 || offset + length > bytes.length) throw new Error('fs.readFile ' + path + ': range ' + offset + '+' + length + ' passes the end of the file');
+  return bytes.subarray(offset, offset + length).toString('utf8');
+};
+const __app0 = (path, offset, length) => !path.startsWith('/app0/') ? '' : offset === undefined ? __read(__APP__ + path.slice(6), 'utf8') : __range(__read(__APP__ + path.slice(6)), path, offset, length);
 export const FileSystem = {
   dataDir: '/download0',
   exists: (path) => globalThis.__stubFiles?.has(path) ?? false,
-  readFile: (path) => globalThis.__stubFiles?.get(path) ?? __app0(path),
+  readFile: (path, offset, length) => {
+    const stubbed = globalThis.__stubFiles?.get(path);
+    if (stubbed == null) return __app0(path, offset, length);
+    return offset === undefined ? stubbed : __range(Buffer.from(stubbed), path, offset, length);
+  },
   writeFile(path, text) { globalThis.__stubFiles?.set(path, String(text)); },
   mkdir() {},
   rename(from, to) { const files = globalThis.__stubFiles; if (files?.has(from)) { files.set(to, files.get(from)); files.delete(from); } },
@@ -63,7 +73,7 @@ export const Controller = { subscribe: () => () => {} };
 export default {};
 `;
 const app = new URL('../app/', import.meta.url).pathname;
-const core = stub.replace('__APP__', JSON.stringify(app));
+const core = stub.replaceAll('__APP__', JSON.stringify(app));
 register(`data:text/javascript,${encodeURIComponent(`
 export async function resolve(specifier, context, next) {
   if (specifier === 'react' || specifier === '@ps5-react/core') return { url: 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(core)}), shortCircuit: true };

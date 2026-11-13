@@ -28,7 +28,13 @@ const core = `
 import { readFileSync as __read } from 'node:fs';
 const fs = () => globalThis.__fake?.fs ?? { exists: () => false, stat: () => null, readDir: () => [], readFile: () => '' };
 // The package's own files (/app0/...) are the repository's app/ folder: the bundled catalog is read from there.
-const app0 = { readFile: (path) => path.startsWith('/app0/') ? __read(${JSON.stringify(new URL('../../app/', import.meta.url).pathname)} + path.slice(6), 'utf8') : fs().readFile?.(path) };
+// glibren.47: readFile(path, offset, length) reads that byte range of a package file (a data pack).
+const __appFile = (path) => ${JSON.stringify(new URL('../../app/', import.meta.url).pathname)} + path.slice(6);
+const app0 = { readFile: (path, offset, length) => !path.startsWith('/app0/') ? fs().readFile?.(path, offset, length) : offset === undefined ? __read(__appFile(path), 'utf8') : (() => {
+  const bytes = __read(__appFile(path));
+  if (offset < 0 || length < 0 || offset + length > bytes.length) throw new Error('fs.readFile ' + path + ': range passes the end of the file');
+  return bytes.subarray(offset, offset + length).toString('utf8');
+})() };
 export const FileSystem = new Proxy({ dataDir: '/download0', appDir: '/app0' }, { get: (target, key) => key in target ? target[key] : key === 'readFile' ? app0.readFile : (...args) => fs()[key]?.(...args) });
 export const Platform = { get OS() { return globalThis.__fake?.os ?? 'desktop'; }, select: (spec) => spec.desktop ?? spec.default };
 export const SelfUpdate = { arm: (dir) => (globalThis.__fake?.arms?.push(dir), globalThis.__fake?.armResult ?? true) };

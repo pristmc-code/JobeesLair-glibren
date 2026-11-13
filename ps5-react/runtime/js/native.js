@@ -85,7 +85,8 @@ export const FileSystem = {
   /** @param {string} path @returns {boolean} */
   exists: path => host().fs.stat(path) !== null,
   /** UTF-8, at most 8 MiB. @param {string} path @returns {string} */
-  readFile: path => host().fs.readFile(path),
+  /** glibren.47: with `offset` and `length`, only those bytes (a data pack read one item at a time). */
+  readFile: (path, offset, length) => offset === undefined ? host().fs.readFile(path) : host().fs.readFile(path, offset, length),
   /** `sync` waits until the text is on the disk, for a file saved then renamed into place.
    * @param {string} path @param {string} text @param {{sync?: boolean}} [options] */
   writeFile: (path, text, {sync = false} = {}) => host().fs.writeFile(path, text, false, sync),

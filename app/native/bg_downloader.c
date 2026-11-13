@@ -42,6 +42,7 @@
 //     GET  /diag, POST /diag/send  glibren.44: o diagnostico pelo GitHub (e /api/diag* na pagina do celular): ver bg_diag.c
 //     GET  /jobe, POST /jobe/state glibren.44: o pedido "Atualizar a Jobe" da pagina do celular e o estado do app: ver bg_jobe.c
 //     GET  /focus                  glibren.44: o foco do controle (kern.msgbuf; so leitura): ver bg_jobe.c
+//   glibren.47: GET /teste (a pagina de testes da Fase 0) e /api/teste/* na pagina do celular: ver bg_teste.c
 // - Fila persistida em <dir>/jobs.json (tmp + fsync + rename + fsync da pasta). Um download por vez.
 // - Varias conexoes por arquivo (faixas HTTP Range + If-Range, janela AIMD) e retomada no MESMO formato
 //   .part/.resume/.complete do motor nativo do ps5-react (native/shared/network.cpp): o app e o payload
@@ -100,7 +101,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 31 // glibren.44 (area Jobe): GET /jobe, POST /jobe/state e /api/jobe* na pagina do celular, o pedido de atualizacao, e GET /focus (bg_jobe.c); glibren.44 (diagnostico): GET /diag, POST /diag/send e /api/diag* na pagina do celular (bg_diag.c); glibren.44: account.json da Biblioteca TorBox enxuto (so os arquivos que o app usa + codes; sem rota nova); glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#define BG_API 32 // glibren.47: a pagina de testes da Fase 0 (GET /teste, GET /api/teste/estado, POST /api/teste/enviar; bg_teste.c); glibren.44 (area Jobe): GET /jobe, POST /jobe/state e /api/jobe* na pagina do celular, o pedido de atualizacao, e GET /focus (bg_jobe.c); glibren.44 (diagnostico): GET /diag, POST /diag/send e /api/diag* na pagina do celular (bg_diag.c); glibren.44: account.json da Biblioteca TorBox enxuto (so os arquivos que o app usa + codes; sem rota nova); glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -6853,6 +6854,7 @@ static void auto_after_download(Job* j) {
 #include "bg_diag.c"
 // glibren.44: a area Jobe da pagina do celular (versao e "Atualizar a Jobe"; quem atualiza e o app).
 #include "bg_jobe.c"
+#include "bg_teste.c" // glibren.47: a pagina de testes da Fase 0 (/teste)
 
 static void monitor_route(int fd, Request* r, uint32_t ip) {
   char* query = strchr(r->path, '?');
@@ -6863,6 +6865,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (store_route(fd, r, query)) return; // glibren (item 2): /api/store
   if (diag_monitor_route(fd, r)) return; // glibren.44: /api/diag (chave do GitHub, enviar, .zip)
   if (jobe_monitor_route(fd, r)) return; // glibren.44: /api/jobe (versao e pedido de atualizacao)
+  if (teste_monitor_route(fd, r)) return; // glibren.47: /teste e /api/teste (testes da Fase 0)
   if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {
     monitor_send(fd, 200, "text/html; charset=utf-8", BG_MONITOR_HTML, BG_MONITOR_HTML_SIZE);
@@ -7082,6 +7085,7 @@ int main(void) {
   g_tb_rate_wait_ms = atoi(env_or("BGDL_TB_RATE_WAIT_MS", "61000"));
   if (mkdir_p(g_dir)) return 1;
   snprintf(g_log_path, sizeof g_log_path, "%s/bgdl.log", g_dir);
+  teste_boot(); // glibren.47: hora de inicio e o teste-estado.json do processo anterior (pagina /teste)
   set_process_name();
   read_previous_session();
   logk_("==== iniciando bg-downloader %s (%s, api %d), pid %d, pai %d", BG_VERSION, BG_BUILD, BG_API, (int)getpid(), (int)getppid());

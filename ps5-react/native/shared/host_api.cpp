@@ -125,8 +125,42 @@ JSValue fs_stat(JSContext* ctx, JSValueConst, int, JSValueConst* argv) {
   return entry(ctx, base_name(path.app()), st);
 }
 
-JSValue fs_read_file(JSContext* ctx, JSValueConst, int, JSValueConst* argv) {
+// glibren.47: readFile(path, offset, length) reads only `length` bytes from byte `offset` (a data pack read one item at
+// a time, the rest of the file never in memory). The whole range must be in the file: a short read is an error.
+JSValue fs_read_range(JSContext* ctx, Path& path, JSValueConst offset_value, JSValueConst length_value) {
+  int64_t offset = -1;
+  int64_t length = -1;
+  if (JS_ToInt64(ctx, &offset, offset_value) != 0 || JS_ToInt64(ctx, &length, length_value) != 0) return JS_EXCEPTION;
+  if (offset < 0 || length < 0 || length > static_cast<int64_t>(kMaxReadBytes))
+    return JS_ThrowRangeError(ctx, "fs.readFile %s: bad range %lld+%lld", path.app(), static_cast<long long>(offset),
+                              static_cast<long long>(length));
+  const int fd = open(path.real(), O_RDONLY);
+  if (fd < 0) return path.error("fs.readFile");
+  char* buffer = static_cast<char*>(std::malloc(static_cast<std::size_t>(length) + 1));
+  if (!buffer) {
+    close(fd);
+    return JS_ThrowOutOfMemory(ctx);
+  }
+  std::size_t got = 0;
+  ssize_t count = 0;
+  while (got < static_cast<std::size_t>(length) &&
+         (count = pread(fd, buffer + got, static_cast<std::size_t>(length) - got, static_cast<off_t>(offset) + got)) > 0)
+    got += static_cast<std::size_t>(count);
+  JSValue result;
+  if (count < 0) result = path.error("fs.readFile");
+  else if (got != static_cast<std::size_t>(length))
+    result = JS_ThrowPlainError(ctx, "fs.readFile %s: range %lld+%lld passes the end of the file", path.app(),
+                                static_cast<long long>(offset), static_cast<long long>(length));
+  else result = JS_NewStringLen(ctx, buffer, got);
+  std::free(buffer);
+  close(fd);
+  return result;
+}
+
+JSValue fs_read_file(JSContext* ctx, JSValueConst, int argc, JSValueConst* argv) {
   Path path(ctx, argv[0]);
+  if (path && argc >= 3 && !JS_IsUndefined(argv[1]) && !JS_IsUndefined(argv[2]))
+    return fs_read_range(ctx, path, argv[1], argv[2]);
   const int fd = path ? open(path.real(), O_RDONLY) : -1;
   if (fd < 0) return path.error("fs.readFile");
   struct stat st;

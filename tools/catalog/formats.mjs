@@ -51,4 +51,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const counts = {};
   for (const kinds of Object.values(formats)) for (const kind of kinds.split(' ')) counts[kind] = (counts[kind] ?? 0) + 1;
   console.log(`${Object.keys(formats).length} games:`, counts);
+  // glibren.47: os links mudaram, entao os pacotes que o app le (tools/catalog/data-pack.mjs) tambem.
+  (await import('./data-pack.mjs')).writePacks();
 }

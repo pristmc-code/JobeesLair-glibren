@@ -28,7 +28,12 @@ command -v mkfs.exfat >/dev/null || { echo "error: mkfs.exfat not found, install
 # catalog JSON needs 285 MB of 64 KiB clusters. Asking `du` for a block size
 # does not emulate that (it scales the host filesystem's own usage), hence the
 # count here. The slack covers the FAT, the upcase table and the directories.
-slack=$(( 128 * 1024 * 1024 ))
+# MODIFIED (glibren.47): the catalog's releases and pages ship as two pack files (tools/catalog/data-pack.mjs), so
+# the image holds ~170 files instead of ~4,350, and the slack is 64 MiB instead of 128: still far above what the FAT
+# (4 bytes a cluster), the bitmap, the upcase table and the folders take (under 1 MiB here), and the floor
+# ShadowMount+'s own mkexfat.sh keeps (data + 64 MiB at least). The cluster stays 64 KiB: ShadowMount+'s fast read
+# path joins only 64 KiB requests aligned to 64 KiB, so a smaller cluster would be slower on the console.
+slack=$(( 64 * 1024 * 1024 ))
 case "$cluster" in
     32K|32k) cluster_bytes=32768 ;;
     128K|128k) cluster_bytes=131072 ;;

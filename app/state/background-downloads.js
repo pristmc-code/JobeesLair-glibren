@@ -84,7 +84,7 @@ import { setJobeSource } from './jobe-remote.js';
   // mandava todos os arquivos de cada item da conta e o app segurava ~20 MB (sem rota nova).
   // glibren.44: 30, o diagnostico pelo GitHub (GET /diag, POST /diag/send; /api/diag* na pagina do celular; bg_diag.c).
   // glibren.44: 31, a area Jobe da pagina do celular (GET /jobe, POST /jobe/state; /api/jobe*; bg_jobe.c) e GET /focus.
-  var PAYLOAD_API = 31;
+  var PAYLOAD_API = 32;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 

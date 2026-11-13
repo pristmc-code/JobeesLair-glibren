@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.47**: Smaller image: the catalog's releases and store pages ship as two pack files read one item at a time (530 MB -> under 250 MB); new /teste page on the phone page (full screen, controller, big store, memory, rest mode).
 > **glibren.46**: Signed updates: from this build on, the app installs a newer release only if its manifest is signed with the glibren key (size and SHA-256 of each file checked against it).
 > **glibren.45**: Quieter when nobody is using it (fan): animations stop after 15 s idle, the catalog is built in small parts, the screen saver no longer redraws the whole screen every frame, and a "Save energy" setting.
 > **glibren.44**: Less memory in the TorBox library, YouTube account always reachable, clearer download cards, diagnostics and updates from the phone, automatic updates that restart by themselves.
@@ -302,6 +303,7 @@ On Linux (or WSL) with `clang-18`, `llvm-18`, `cmake`, `ninja-build`, `nodejs`, 
 
 ```sh
 node tools/catalog/catalog-index.mjs   # only after editing app/data/catalog.js; the tests check it is current
+node tools/catalog/data-pack.mjs      # after app/data/releases or app/data/pages change (catalog-index and formats run it too)
 cd ps5-react
 python3 tools/build_ps5.py --app-dir ../app --llvm /usr/bin
 cp -a dist/PPSA99471 ../stage

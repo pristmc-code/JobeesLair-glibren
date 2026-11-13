@@ -16,6 +16,8 @@
 //   fs.stat(path)                  {name, isDirectory, isFile, size, modified, device, inode} | null
 //                                  device/inode are decimal strings, preserving 64-bit IDs
 //   fs.readFile(path)              string (UTF-8; at most kMaxReadBytes)
+//   fs.readFile(path, offset, length) glibren.47: `length` bytes from byte `offset` (pread), for a pack file
+//                                  read one item at a time; throws when the range passes the end of the file
 //   fs.writeFile(path, text, append, sync)  sync: fsync before close
 //   fs.mkdir(path, recursive)
 //   fs.remove(path)                file or empty directory

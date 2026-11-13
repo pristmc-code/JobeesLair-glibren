@@ -24,8 +24,7 @@
   ],
   "resources": [
     "data/catalog",
-    "data/releases",
-    "data/pages",
+    "data/packs",
     "data/homebrew.json",
     "data/private",
     "i18n/locales"
@@ -60,6 +59,6 @@
   "filesystemAccess": "console",
   "networking": true,
   "video": true,
-  "userAgent": "JobeesLair-Homebrew/0.5.5-glibren.46 (PS5)",
+  "userAgent": "JobeesLair-Homebrew/0.5.5-glibren.47 (PS5)",
   "timeoutSeconds": 0
 }

@@ -9,7 +9,7 @@
   "surface": { "width": 1920, "height": 1080 },
   "refreshRate": 60,
   "textFonts": ["chinese", "japanese", "bengali", "devanagari", "arabic", "symbols", "emoji"],
-  "resources": ["data/catalog", "data/releases", "data/pages", "data/homebrew.json", "data/private", "i18n/locales"],
+  "resources": ["data/catalog", "data/packs", "data/homebrew.json", "data/private", "i18n/locales"],
   "payloads": [
     {
       "source": "native/companion_daemon.c",
@@ -32,6 +32,6 @@
   "filesystemAccess": "console",
   "networking": true,
   "video": true,
-  "userAgent": "JobeesLair/0.5.5-glibren.46 (PS5)",
+  "userAgent": "JobeesLair/0.5.5-glibren.47 (PS5)",
   "timeoutSeconds": 0
 }

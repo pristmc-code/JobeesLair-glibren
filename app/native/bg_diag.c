@@ -24,7 +24,7 @@
 // BGDL_GLIBREN_BASE apontam para pastas e servidores falsos.
 
 #define DIAG_TAIL (2u * 1024 * 1024)       // cada log: so os ultimos ~2 MB
-#define DIAG_MAX_FILES 14
+#define DIAG_MAX_FILES 16 // glibren.47: + teste-resultados.txt e teste-estado.json (pagina /teste)
 #define DIAG_MEMORY_MAX (48 * 1024)        // a amostra da Memoria que o app manda
 #define DIAG_REPO_PATH "/repos/pristmc-code/ps5-diagnosticos/contents/"
 #define DIAG_COMMITTER "{\"name\":\"PristMC\",\"email\":\"285300718+pristmc-code@users.noreply.github.com\"}"
@@ -509,6 +509,11 @@ static void diag_collect(DiagSet* s, const char* folder, const char* from) {
   diag_add_path(s, "jobs.json", path, &known);
   snprintf(path, sizeof path, "%.500s/config.json", g_dir);
   diag_add_path(s, "config.json", path, &known);
+  // glibren.47: os resultados da pagina /teste (POST /api/teste/enviar) e o teste-estado.json, so quando existem
+  snprintf(path, sizeof path, "%.500s/teste-resultados.txt", g_diag_dir);
+  if (!access(path, F_OK)) diag_add_path(s, "teste-resultados.txt", path, &known);
+  snprintf(path, sizeof path, "%.500s/teste-estado.json", g_dir);
+  if (!access(path, F_OK)) diag_add_path(s, "teste-estado.json", path, &known);
   diag_add_glibren(s, &known);
   // info.json: versoes, a Memoria do app, de onde veio o pedido e o que foi junto
   Buf b = {0};

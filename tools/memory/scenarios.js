@@ -11,6 +11,8 @@
 //   procurar                a loja + Procurar no TorBox do jogo com mais links
 //   youtube                 a loja + uma pagina de resultados do YouTube (tube-service pageItems)
 //   exportar                a loja + a loja completa exportada ao payload (state/store-export.js: indice, fichas, links)
+//   ficha                   glibren.47: ler os links (JLX1) e a ficha de MEM_FICHA_N jogos embutidos, sem montar a loja;
+//                           MEM_FICHA=arquivos le um arquivo por jogo (como ate a .46), senao os pacotes (data-pack.js)
 // A loja dos cenarios depois de "loja" e a da pasta de trabalho: com a Orbit ligada se ela foi preparada com prep-orbit.
 import * as std from 'qjs:std';
 import * as os from 'qjs:os';
@@ -337,6 +339,42 @@ if (scenario === 'prep-loja' || scenario === 'prep-orbit') {
   for (const name of ['store-index.json', 'store-games.json', 'store-games.done.json']) if (FileSystem.exists(`${STORE_DIR}/${name}`)) FileSystem.remove(`${STORE_DIR}/${name}`);
   const result = await exportStore({ pause: async () => {}, log: () => {} });
   note = `export ${result.games} games ${result.written}`;
+} else if (scenario === 'ficha') {
+  // glibren.47: o custo de abrir a ficha de um jogo (links + pagina), pacote contra arquivo por jogo.
+  const { createDataPack } = await import('../../app/state/data-pack.js');
+  const { readJlx } = await import('../../app/state/jlx.js');
+  const files = std.getenv('MEM_FICHA') === 'arquivos';
+  const releases = createDataPack('releases');
+  const pages = createDataPack('pages');
+  const idx = FileSystem.readFile('/app0/data/packs/releases.idx').split('\n').slice(1, -1).map((line) => line.split(' ')[0]);
+  const count = Math.min(Number(std.getenv('MEM_FICHA_N') ?? 300), idx.length);
+  const step = Math.max(1, Math.floor(idx.length / count));
+  std.gc();
+  const before = typeof std.mem === 'function' ? std.mem()[0] : 0;
+  let slowest = 0;
+  let total = 0;
+  let first = 0;
+  let links = 0;
+  for (let n = 0; n < count; n++) {
+    const id = idx[n * step];
+    const t0 = os.now();
+    const text = files ? FileSystem.readFile(`/app0/data/releases/${id}.json`) : releases.read(id);
+    const list = JSON.parse(readJlx(text));
+    let page;
+    try {
+      page = JSON.parse(files ? FileSystem.readFile(`/app0/data/pages/${id}.json`) : pages.read(id) ?? '{}');
+    } catch {
+      page = {};
+    }
+    const us = os.now() - t0;
+    if (n === 0) first = us;
+    slowest = Math.max(slowest, us);
+    total += us;
+    links += list.length + (page.about ? 0 : 0);
+  }
+  const after = typeof std.mem === 'function' ? std.mem() : [0, 0];
+  std.err.puts(`FICHA ${files ? 'arquivos' : 'pacote'} games=${count} links=${links} first_ms=${(first / 1e3).toFixed(2)} avg_ms=${(total / count / 1e3).toFixed(3)} slowest_ms=${(slowest / 1e3).toFixed(2)} heap_before_MB=${(before / 1048576).toFixed(2)} heap_after_MB=${(after[0] / 1048576).toFixed(2)} peak_MB=${(after[1] / 1048576).toFixed(2)}\n`);
+  note = `ficha ${count}`;
 } else if (scenario !== 'base') {
   throw new Error(`unknown scenario ${scenario}`);
 }
