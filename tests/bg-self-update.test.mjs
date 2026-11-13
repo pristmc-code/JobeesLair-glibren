@@ -19,6 +19,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { freePortFrom } from './free-port.mjs';
+import { before as whenBuilt } from 'node:test';
+import { HEADERS_MISSING, compileTo, compileToAsync } from './payload-build.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-self-'));
@@ -48,21 +50,27 @@ const VARIANTS = {
 // Um texto exato dentro de uma RegExp.
 const rx = (text) => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 const bin = (name) => path.join(dir, `bgdl-${name}`);
-const compile = (name, flags) => new Promise((resolve) => {
-  const child = spawn(compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', ...flags, '-o', bin(name), source, '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { stdio: ['ignore', 'ignore', 'pipe'] });
-  let err = '';
-  child.stderr.on('data', (chunk) => { err += chunk; });
-  child.on('exit', (code) => resolve({ name, code, err }));
-});
+const compile = (name, flags) => compileToAsync(bin(name), compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', ...flags, source, '-lcurl', '-lcrypto', '-larchive', '-lpthread'])
+  .then((r) => ({ name, ...r }));
+// glibren.51: so a falta do ambiente pula. Uma variante que nao compilou (ou cujo compilador foi morto) e FALHA.
 let skip = !compiler ? 'no C compiler' : false;
+let buildError = null;
 if (!skip) {
   const results = await Promise.all(Object.entries(VARIANTS).map(([name, flags]) => compile(name, flags)));
   const failed = results.find((r) => r.code !== 0);
-  if (failed) skip = /curl\/curl\.h|openssl\/evp\.h|archive\.h|cannot find -l/.test(failed.err) ? 'no libcurl/OpenSSL/libarchive headers' : `did not compile (${failed.name}): ${failed.err.slice(0, 400)}`;
+  if (failed) {
+    if (HEADERS_MISSING.test(failed.err)) skip = 'no libcurl/OpenSSL/libarchive headers';
+    else buildError = `did not compile (${failed.name}): ${failed.err.slice(0, 400)}`;
+  }
   // Um "payload" que cai na subida (a versao ruim): sai na hora.
   writeFileSync(path.join(dir, 'bad.c'), 'int main(void) { return 3; }\n');
-  if (!skip && spawnSync(compiler, ['-o', bin('bad'), path.join(dir, 'bad.c')]).status !== 0) skip = 'the bad stand-in did not compile';
+  if (!skip && !buildError) {
+    const bad = compileTo(bin('bad'), compiler, [path.join(dir, 'bad.c')]);
+    if (bad.status !== 0) buildError = `the bad stand-in did not compile: ${bad.stderr}`;
+  }
 }
+// glibren.51: uma variante que nao compilou FALHA todos os testes deste arquivo na hora (antes: "pulados").
+whenBuilt(() => { assert.equal(buildError, null, String(buildError)); });
 const VERSION_OF = { base: BASE_VERSION, newer: NEWER, older: OLDER, upCompat: HIGH, upNeedsApp: HIGH, apiDown: HIGH, bad: HIGH };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -234,7 +242,7 @@ const page = (ws, route, { method = 'GET', body = null, session = '' } = {}) => 
 });
 
 test('glibren.49: as versoes do payload compilam sem avisos; o marcador e o contrato batem com o app', { skip: !compiler ? 'no C compiler' : false }, async () => {
-  assert.equal(skip, false, String(skip));
+  assert.equal(buildError, null, String(buildError));
   const elf = readFileSync(bin('base')).toString('latin1');
   const marker = /BG-DOWNLOADER-VERSION:(\d+\.\d+\.\d+);API:(\d+);MINAPP:(\d+);\n/.exec(elf);
   assert.ok(marker, 'o marcador que o publicar_bg.py le');

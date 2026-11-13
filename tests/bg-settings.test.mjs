@@ -15,6 +15,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { freePortFrom } from './free-port.mjs';
+import { before as whenBuilt } from 'node:test';
+import { assertBuilt, buildSkip, compileTo } from './payload-build.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const { createSettingsSync } = await import(pathToFileURL(path.join(repo, 'app/state/settings-sync.js')).href);
@@ -31,12 +33,13 @@ const MONITOR_PIN_HASH = 'f'.repeat(64);
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-settings-'));
 const binary = path.join(dir, 'bgdl');
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
-// Compilado com outro nome e renomeado: a limpeza de payloads orfaos (pacote.sh e outras rodadas) mata o que cita
+// Compilado fora de /tmp/jl-* e movido no fim (tests/payload-build.mjs): a limpeza de payloads orfaos mata o que cita
 // /tmp/jl-*/bgdl na linha de comando, e o compilador citava.
-const built = compiler && spawnSync(compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-o', path.join(dir, 'compiled.out'), path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { encoding: 'utf8' });
-if (built?.status === 0) renameSync(path.join(dir, 'compiled.out'), binary);
-const missing = Boolean(built && built.status !== 0 && /curl\/curl\.h|openssl\/evp\.h|archive\.h|cannot find -l/.test(built.stderr));
-const skip = !compiler ? 'no C compiler' : missing ? 'no libcurl/OpenSSL/libarchive headers' : built.status !== 0 ? `did not compile: ${built.stderr.slice(0, 400)}` : false;
+const built = compiler && compileTo(binary, compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread']);
+const skip = buildSkip(compiler, built);
+// glibren.51: um binario que nao compilou (erro, aviso com -Werror ou o compilador morto por sinal) FALHA todos os
+// testes deste arquivo na hora, com o motivo; antes eles viravam "pulados" e ninguem via. So a falta do ambiente pula.
+whenBuilt(() => { if (!skip) assertBuilt(built); });
 const children = new Set();
 after(() => {
   for (const child of children) child.kill('SIGKILL');

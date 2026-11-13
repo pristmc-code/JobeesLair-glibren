@@ -34,8 +34,8 @@ const make = (payload, extra = {}) => createBackgroundDownloads({
   payloads: { send: () => ({ ok: true }) }, log: () => {}, pollMs: 5, startWaitMs: 50, ...extra
 });
 
-test('pac1: PAYLOAD_API 24 (pausa/limite/pedacos na conversao e GET /crash); item 2: 26 (loja completa); glibren.38: 27 (a rede da Biblioteca TorBox); glibren.43: 28 (primeiro plano no /switch, ritmo unico do TorBox); glibren.44: 29 (account.json enxuto da Biblioteca TorBox) e 30 (diagnostico) e 31 (area Jobe: atualizar pela pagina do celular); glibren.47: 32 (pagina de testes /teste); glibren.49: 33 (atualizacao propria do payload); glibren.50: 34 (pareamento por aparelho)', () => {
-  assert.equal(PAYLOAD_API, 34);
+test('pac1: PAYLOAD_API 24 (pausa/limite/pedacos na conversao e GET /crash); item 2: 26 (loja completa); glibren.38: 27 (a rede da Biblioteca TorBox); glibren.43: 28 (primeiro plano no /switch, ritmo unico do TorBox); glibren.44: 29 (account.json enxuto da Biblioteca TorBox) e 30 (diagnostico) e 31 (area Jobe: atualizar pela pagina do celular); glibren.47: 32 (pagina de testes /teste); glibren.49: 33 (atualizacao propria do payload); glibren.50: 34 (pareamento por aparelho); glibren.51: 35 (configuracoes no payload)', () => {
+  assert.equal(PAYLOAD_API, 35);
 });
 
 test('pac1: opcoes da conversao desligadas por padrao, guardadas so quando ligadas, avisadas e lidas de volta', async () => {

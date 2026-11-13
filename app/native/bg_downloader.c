@@ -105,19 +105,21 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.34.0"
+#define BG_VERSION "1.35.0"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
 #ifndef BG_API
-#define BG_API 34 // glibren.50: pareamento por aparelho (GET /pair, POST /pair/remove|pin; "pairText" no POST /config; /api/pair* na pagina do celular; bg_pair.c); glibren.49: atualizacao propria assinada (GET/POST /self-update, /api/payload* na pagina do celular; "minAppApi", "source" e "replace" no /health; bg_self.c); glibren.47: a pagina de testes da Fase 0 (GET /teste, GET /api/teste/estado, POST /api/teste/enviar; bg_teste.c); glibren.44 (area Jobe): GET /jobe, POST /jobe/state e /api/jobe* na pagina do celular, o pedido de atualizacao, e GET /focus (bg_jobe.c); glibren.44 (diagnostico): GET /diag, POST /diag/send e /api/diag* na pagina do celular (bg_diag.c); glibren.44: account.json da Biblioteca TorBox enxuto (so os arquivos que o app usa + codes; sem rota nova); glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#define BG_API 35 // glibren.51: configuracoes no payload (GET/POST /settings; "settings", "settingsRev" e "settingsStore" no /health; GET/POST /api/settings na pagina do celular; bg_settings.c); glibren.50: pareamento por aparelho (GET /pair, POST /pair/remove|pin; "pairText" no POST /config; /api/pair* na pagina do celular; bg_pair.c); glibren.49: atualizacao propria assinada (GET/POST /self-update, /api/payload* na pagina do celular; "minAppApi", "source" e "replace" no /health; bg_self.c); glibren.47: a pagina de testes da Fase 0 (GET /teste, GET /api/teste/estado, POST /api/teste/enviar; bg_teste.c); glibren.44 (area Jobe): GET /jobe, POST /jobe/state e /api/jobe* na pagina do celular, o pedido de atualizacao, e GET /focus (bg_jobe.c); glibren.44 (diagnostico): GET /diag, POST /diag/send e /api/diag* na pagina do celular (bg_diag.c); glibren.44: account.json da Biblioteca TorBox enxuto (so os arquivos que o app usa + codes; sem rota nova); glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #endif
 // glibren.49: o menor PAYLOAD_API de app com que este payload continua compativel (o "minAppApi" do manifesto). Um
 // app com PAYLOAD_API menor que este nao usa este payload baixado (bg_self.c). Suba quando uma rota/campo que um app
 // antigo usa mudar de jeito incompativel.
 #ifndef BG_MIN_APP_API
-#define BG_MIN_APP_API 33 // glibren.50: 33 de proposito. O pareamento so ACRESCENTA na API local (GET /pair, POST /pair/remove|pin,
+#define BG_MIN_APP_API 33 // glibren.51: continua 33. A Fase 7 so ACRESCENTA na API local (GET/POST /settings e campos novos no
+// /health); um app .49/.50 nao chama /settings e segue com o settings.json dele, como antes (fallback do settings-sync).
+// glibren.50: 33 de proposito. O pareamento so ACRESCENTA na API local (GET /pair, POST /pair/remove|pin,
 // "pairText"); nada que o app da .49 usa mudou. PIN e sessao mudaram so na pagina do celular, que vem do proprio payload
 // (pagina e rotas sempre da mesma versao). Um app .49 com este payload: o codigo aparece na notificacao do PS5 (texto
 // padrao), o PIN antigo continua valendo e a lista de aparelhos fica na pagina.

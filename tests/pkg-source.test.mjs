@@ -12,6 +12,8 @@ import { gunzipSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { before as whenBuilt } from 'node:test';
+import { assertBuilt, buildSkip, compileTo } from './payload-build.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const fix = path.join(repo, 'tests/pkg-source');
@@ -23,9 +25,12 @@ const pkgs = path.join(dir, 'pkgs');
 mkdirSync(pkgs);
 for (const name of readdirSync(fix).filter((n) => n.endsWith('.pkg.gz'))) writeFileSync(path.join(pkgs, name.slice(0, -3)), gunzipSync(readFileSync(path.join(fix, name))));
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
-const built = compiler && spawnSync(compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-o', binary, path.join(fix, 'harness.c'), '-lcrypto'], { encoding: 'utf8' });
+const built = compiler && compileTo(binary, compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', path.join(fix, 'harness.c'), '-lcrypto']);
 const missing = Boolean(built && built.status !== 0 && /openssl\/evp\.h|cannot find -lcrypto/.test(built.stderr));
 const skip = !compiler ? 'no C compiler' : missing ? 'no OpenSSL headers' : false;
+// glibren.51: um binario que nao compilou (erro, aviso com -Werror ou o compilador morto por sinal) FALHA todos os
+// testes deste arquivo na hora, com o motivo; antes eles viravam "pulados" e ninguem via. So a falta do ambiente pula.
+whenBuilt(() => { if (!skip) assertBuilt(built); });
 
 const run = (...args) => spawnSync(binary, args, { encoding: 'utf8', timeout: 60000, maxBuffer: 64 * 1024 * 1024 });
 const shaLines = (text) => text.trim().split('\n').filter(Boolean).sort((a, b) => (a.split(' ').slice(2).join(' ') < b.split(' ').slice(2).join(' ') ? -1 : 1));

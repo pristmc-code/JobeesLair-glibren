@@ -18,6 +18,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { freePortFrom } from './free-port.mjs';
+import { before as whenBuilt } from 'node:test';
+import { assertBuilt, buildSkip, compileTo } from './payload-build.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const load = (rel) => import(pathToFileURL(path.join(repo, rel)).href);
@@ -214,9 +216,12 @@ test('glibren.38: no payload, or an old one (api < 27): the whole run in the app
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-libpay-'));
 const binary = path.join(dir, 'bgdl');
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
-const built = compiler && spawnSync(compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-o', binary, path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { encoding: 'utf8' });
+const built = compiler && compileTo(binary, compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread']);
 const missing = Boolean(built && built.status !== 0 && /curl\/curl\.h|openssl\/evp\.h|archive\.h|cannot find -l/.test(built.stderr));
-const skip = !compiler ? 'no C compiler' : missing ? 'no libcurl/OpenSSL/libarchive headers' : built.status !== 0 ? `did not compile: ${built.stderr.slice(0, 400)}` : false;
+const skip = !compiler ? 'no C compiler' : missing ? 'no libcurl/OpenSSL/libarchive headers' : false;
+// glibren.51: um binario que nao compilou (erro, aviso com -Werror ou o compilador morto por sinal) FALHA todos os
+// testes deste arquivo na hora, com o motivo; antes eles viravam "pulados" e ninguem via. So a falta do ambiente pula.
+whenBuilt(() => { if (!skip) assertBuilt(built); });
 const children = new Set();
 const servers = new Set(); // fechados no fim mesmo quando um teste falha (senao o processo nao sai)
 after(() => {
@@ -395,8 +400,19 @@ test('glibren.43: the library calls the TorBox at the one payload-wide pace, and
   const remote = createLibraryRemote({ fs: diskFs, link: () => payload.link, poll: 20 });
   await lib.buildLibrary({ entries: entriesOf(games), api: {}, remote, pace: 0, sleep: async () => {} });
   assert.ok(times.length >= 3, `poucas chamadas: ${times.length}`);
+  // glibren.51 (teste instavel): o ritmo vale na SAIDA de cada chamada no payload (tb_turn), mas aqui so se ve a CHEGADA,
+  // anotada pelo node. Com a suite inteira rodando, um atraso do laco de eventos (ou do connect de uma conexao nova) numa
+  // chegada encurtava a seguinte e a conta "cada intervalo >= 105 ms" falhava de vez em quando sem o payload errar.
+  // Agora a conta e por janela: entre a chamada i e a j (j > i) passam pelo menos (j - i) ritmos, menos uma folga fixa
+  // para UM atraso de anotacao. Uma rajada (o ritmo nao respeitado) continua falhando: 2 chamadas seguidas sem ritmo ja
+  // tiram 120 ms da janela, e a folga e de 60.
+  const PACE = 120, SLACK = 60;
   const gaps = times.slice(1).map((at, i) => at - times[i]);
-  assert.ok(Math.min(...gaps) >= 105, `intervalo menor que o ritmo: ${gaps.map(Math.round).join(', ')}`);
+  for (let i = 0; i < times.length; i++) {
+    for (let j = i + 1; j < times.length; j++) {
+      assert.ok(times[j] - times[i] >= (j - i) * PACE - SLACK, `chamadas ${i}..${j} em ${Math.round(times[j] - times[i])} ms (ritmo ${PACE} ms); intervalos: ${gaps.map(Math.round).join(', ')}`);
+    }
+  }
   const log = readFileSync(path.join(payload.base, 'state/bgdl.log'), 'utf8');
   assert.match(log, /TorBox: 429 \(devagar\) em biblioteca; ninguem chama por/);
   assert.ok(!log.includes(KEY), 'no key in the log');
