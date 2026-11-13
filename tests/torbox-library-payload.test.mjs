@@ -88,6 +88,11 @@ function fakeTorBox() {
     torrents: [{ id: 7, name: 'PPSA00060 Dump', hash: 'TT7', size: 6e9, download_finished: true, files: [file(0, 'PPSA00060/eboot.bin', 6e9), file(1, 'Quest61 Legends/game.exfat', 4e9)] }],
   };
   account.webdl[3].name = 'Quest70 Legends Ñ';
+  // glibren.44: uma pasta de 3.000 arquivos na conta: o codigo so nos arquivos pequenos (que o payload corta e manda em
+  // "codes") e os grandes so com o nome do jogo no caminho. Pelo payload, sem "codes" a conta nao casaria pelo codigo.
+  const folder = [];
+  for (let f = 0; f < 3000; f++) folder.push(f % 100 === 0 ? file(f, `Quest72 Legends/Image0/data_${f}.bin`, 5e6 + f) : file(f, `PPSA00072-app/sce_sys/p_${f}.dat`, 1000 + f));
+  account.torrents.push({ id: 8, name: 'Big Folder Dump', hash: 'TT8', size: 9e9, download_finished: true, files: folder });
   const state = { calls: 0, limitOnce: new Set(['first-checkcached', 'first-mylist']), seen: [] };
   const answer = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); };
   const server = http.createServer((req, res) => {
@@ -200,7 +205,7 @@ test('glibren.38: no payload, or an old one (api < 27): the whole run in the app
   // background-downloads.js so entrega o payload com api >= 27 (o que um payload antigo responde vira null).
   const text = readFileSync(path.join(repo, 'app/state/background-downloads.js'), 'utf8');
   assert.match(text, /Number\(answer\.data\.api\) >= 27/);
-  assert.match(text, /var PAYLOAD_API = 28;/);
+  assert.match(text, /var PAYLOAD_API = 29;/);
 });
 
 // ======================================================================================================================
@@ -282,6 +287,14 @@ test('glibren.38: EQUIVALENCE: the payload\'s network gives the same library, li
   for (const id of Object.keys(a.library.games)) assert.deepEqual(b.library.games[id], a.library.games[id], id);
   assert.deepEqual(b, a, 'the same files');
   assert.equal(a.library.games.PPSA00050.torbox.error, 'HTTP_414');
+  // glibren.44: a pasta da conta casou pelo codigo dos arquivos pequenos pelos dois caminhos (o payload manda "codes").
+  assert.ok(a.library.games.PPSA00072.torbox.files.some((f) => f.via === 'account' && /^data_\d+\.bin$/.test(f.name)), 'account folder matched by code');
+  // e o account.json do payload so leva os arquivos que o app usa (os 30 grandes, nao os 3.000).
+  const accountText = readFileSync(path.join(payload.base, 'state/library/account.json'), 'utf8');
+  const big = JSON.parse(accountText).torrent.find((item) => item.name === 'Big Folder Dump');
+  assert.equal(big.files.length, 30);
+  assert.deepEqual(big.codes, ['PPSA00072']);
+  assert.ok(!accountText.includes('p_1.dat'), 'small files left out');
   assert.ok(a.library.games.PPSA00030.torbox.files.length > 1, 'the big folder');
   assert.ok(seen.includes('account') && seen.includes('games'));
   assert.ok(after2.progress.calls > 0 && calls > 0, 'calls counted');

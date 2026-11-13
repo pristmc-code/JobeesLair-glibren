@@ -15,6 +15,7 @@
 
 import { cachedEntry } from '../services/torbox.js';
 import { planGame } from './torbox-library.js';
+import { jsonMembers, skipSpace } from './json-scan.js';
 
   var PLAN = "plan.ndjson";
   var LIST_LINE = 500; // hashes da lista do jogador por linha do plano
@@ -48,6 +49,24 @@ import { planGame } from './torbox-library.js';
     signal?.addEventListener?.("abort", stop, { once: true });
   });
   var blockFile = (b) => `b${String(b).padStart(5, "0")}.json`;
+  /**
+   * glibren.44: o account.json do payload ({ webdl: [item...], torrent: [item...] } ou { error }) com as listas como
+   * iteraveis que fazem o JSON.parse de um item por vez (o texto fica; a arvore inteira nunca existe de uma vez).
+   * -> { webdl, torrent } | { error } | null (nao e um objeto). Texto que nao e JSON: SyntaxError.
+   */
+  function readAccount(text) {
+    if (text.charCodeAt(skipSpace(text, 0, text.length)) !== 123) return null;
+    const out = { webdl: [], torrent: [] };
+    for (const member of jsonMembers(text, 0, text.length)) {
+      if (member.key === "error") return { error: JSON.parse(text.slice(member.start, member.end)) || "?" };
+      if (member.key !== "webdl" && member.key !== "torrent" || text.charCodeAt(member.start) !== 91) continue;
+      const kind = member.key;
+      out[kind] = { *[Symbol.iterator]() {
+        for (const part of jsonMembers(text, 0, text.length, kind)) if (part.item && part.key === kind) yield JSON.parse(text.slice(part.start, part.end));
+      } };
+    }
+    return out;
+  }
 
   /**
    * O cliente da rodada no payload. `fs`: FileSystem; `link`: o de setLibraryPayload (padrão: o registrado); `wait(ms,
@@ -114,14 +133,17 @@ import { planGame } from './torbox-library.js';
           blocks: attached ? Number(state.blocks) || 0 : Math.ceil(pending.length / chunk),
           calls: Number(state.calls) || 0,
           /** A conta: [["webdl", itens], ["torrent", itens]], ou null quando o TorBox nao a deu. */
+          // glibren.44: lida um item por vez (state/json-scan.js), sem o JSON.parse do arquivo inteiro: o payload da .43
+          // mandava todos os arquivos de cada item (varios MB numa conta com pastas grandes) e um payload antigo ainda
+          // no ar manda. Cada item passa pelo corte de indexAccount logo depois de lido.
           async account() {
             await until(() => fs.exists(path("account.json")));
-            const value = read("account.json");
+            const value = readAccount(String(fs.readFile(path("account.json"))));
             if (!value || value.error) {
               log(`account not read: ${value?.error ?? "?"}`);
               return null;
             }
-            return [["webdl", value.webdl || []], ["torrent", value.torrent || []]];
+            return [["webdl", value.webdl], ["torrent", value.torrent]];
           },
           /** A lista de hashes do jogador: Map hash -> entrada (so os que o TorBox tem). */
           async list() {
@@ -168,4 +190,4 @@ import { planGame } from './torbox-library.js';
     fs.rename(tmp, target);
   }
 
-export { createLibraryRemote, libraryPayload, setLibraryPayload, writePlan };
+export { createLibraryRemote, libraryPayload, readAccount, setLibraryPayload, writePlan };

@@ -460,6 +460,8 @@ function bigLibrary(total = 900) {
   }
   return { version: 1, builtAt: '2026-11-10T12:30:00.000Z', run: { id: 'r1', startedAt: 'a', finishedAt: 'b', sources: null, total, done: total, found: total / 2, known: 0, errors: 0, calls: 9 }, games };
 }
+// glibren.44: o banco lido de volta: os jogos nao confirmados so com { id, title, torbox } (torbox-library.js compactRecord).
+const compacted = (library) => ({ ...library, games: Object.fromEntries(Object.entries(library.games).map(([id, record]) => [id, lib.compactRecord(structuredClone(record))])) });
 const catalogGame = (id) => ({ id, shortDescription: 'Resumo do jogo.', about: ['Parágrafo um, com acentuação.', 'Dois.'], shots: [{ url: `https://shots.example/${id}.jpg` }], videos: ['dQw4w9WgXcQ'], art: { cover: `https://img/${id}.png` }, developer: 'Estúdio' });
 
 test('glibren.28: the library, the list, the ids and the details are written in pieces, the same text as one JSON.stringify', () => {
@@ -478,7 +480,7 @@ test('glibren.28: the library, the list, the ids and the details are written in 
     assert.ok(![...fs.files.keys()].some((p) => p.endsWith('.tmp')), 'no .tmp left');
     if (append) assert.ok(fs.log.appends > 4, `in pieces (${fs.log.appends} appends)`);
     else assert.equal(fs.log.writes, 5, 'without appendFile (an old runtime): each file at once, as before');
-    assert.deepEqual(lib.readLibrary(fs, ps5), library, 'read back game by game');
+    assert.deepEqual(lib.readLibrary(fs, ps5), compacted(library), 'read back game by game');
   }
   // Um banco vazio e um sem rodada: o mesmo texto tambem.
   const fs = memoryFs();
@@ -501,9 +503,9 @@ test('glibren.28: a write that fails halfway keeps the previous file; the librar
   assert.throws(() => lib.writeLibrary(fs, ps5, bigLibrary(900)), /out of memory/);
   assert.equal(fs.files.get(ps5.library), JSON.stringify(old), 'the previous library stays');
   fs.files.set(ps5.library, JSON.stringify(old, null, 2));
-  assert.deepEqual(lib.readLibrary(fs, ps5), old, 'spaces and new lines');
+  assert.deepEqual(lib.readLibrary(fs, ps5), compacted(old), 'spaces and new lines');
   fs.files.set(ps5.library, JSON.stringify(old).slice(0, -40));
-  assert.deepEqual(lib.readLibrary(fs, ps5), old, 'cut short: the copy on /data');
+  assert.deepEqual(lib.readLibrary(fs, ps5), compacted(old), 'cut short: the copy on /data');
   fs.files.set(ps5.backup, '{"version":1,"games":[]}');
   assert.deepEqual(lib.readLibrary(fs, ps5), lib.emptyLibrary(), 'not a library: an empty one');
 });
@@ -553,7 +555,7 @@ test('glibren.28: a library on the disk that fails to read (out of memory) is ne
   // Cortado ou JSON invalido: a copia, como antes.
   fs.readFile = readFile;
   fs.files.set(ps5.library, '{"version":1,"games":{"PPSA');
-  assert.deepEqual(lib.readLibrary(fs, ps5), old);
+  assert.deepEqual(lib.readLibrary(fs, ps5), compacted(old));
 });
 
 test('glibren.28: startLibrary stops with a clear error when the saved library cannot be read, and writes nothing', async () => {

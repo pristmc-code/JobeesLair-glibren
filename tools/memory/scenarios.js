@@ -6,6 +6,7 @@
 //   loja                    a loja montada (state/catalog.js: catalogo embutido + catalogo ao vivo do cache)
 //   orbit                   a loja com a lista Orbit Store ligada
 //   biblioteca              a loja + montar e gravar a Biblioteca TorBox (conta e checkcached de mentira)
+//   biblioteca-payload      glibren.44: a mesma montagem pelo caminho do console (rede no payload, arquivos por bloco)
 //   formatos                a loja + Descobrir formatos do jogo com mais links (TorBox ligado: checkcached com list_files)
 //   procurar                a loja + Procurar no TorBox do jogo com mais links
 //   youtube                 a loja + uma pagina de resultados do YouTube (tube-service pageItems)
@@ -13,7 +14,7 @@
 // A loja dos cenarios depois de "loja" e a da pasta de trabalho: com a Orbit ligada se ela foi preparada com prep-orbit.
 import * as std from 'qjs:std';
 import * as os from 'qjs:os';
-import { FileSystem, Http } from '@ps5-react/core';
+import { DeviceInfo, FileSystem, Http } from '@ps5-react/core';
 
 // O laco do qjs 0.15 so retoma um await de nivel de modulo no proximo evento do poll: com um timer longo pendente (o
 // limite de 90 s de uma chamada ao TorBox, que e cancelado logo) ele esperava esse tempo todo. Um timer de 1 ms enquanto o
@@ -134,6 +135,145 @@ if (scenario === 'prep-loja' || scenario === 'prep-orbit') {
     keep.summary = uncheckedCount(again, catalog.catalogEntries());
   }
   note = `library ${progress.found} of ${progress.total}, ${progress.calls} calls`;
+} else if (scenario === 'biblioteca-payload') {
+  // glibren.44: a Biblioteca TorBox como no console desde a .38: a rede no payload (state/torbox-library-payload.js) e o
+  // app lendo account.json, list.json e um bloco por vez. O payload de mentira responde na hora com o formato de
+  // app/native/bg_library.c. A conta tem MEM_ACCOUNT itens por tipo; 1 de cada MEM_ACCOUNT_BIG_EVERY e uma pasta de
+  // MEM_ACCOUNT_BIG_FILES arquivos (um jogo PS5 em pasta), como a conta de quem baixa muito. O medidor do app
+  // (memory-meter.js) mede com o qjs de peak.mjs; no fim, "depois" e o heap com a tela de volta (montagem terminada).
+  const catalog = await store();
+  const meter = await import('../../app/state/memory-meter.js');
+  meter.memoryScreen('tela:settings');
+  const lib = await import('../../app/state/torbox-library.js');
+  const { createLibraryRemote } = await import('../../app/state/torbox-library-payload.js');
+  // MEM_TRACE=1: a cada linha do log e a cada bloco, o heap agora e o pico desde a linha anterior (MB).
+  const trace = (line) => {
+    if (typeof std.mem !== 'function') return std.err.puts(`${line}\n`);
+    const [used, top] = std.mem(true);
+    std.err.puts(`  [${(used / 1048576).toFixed(1)} pico ${(top / 1048576).toFixed(1)}] ${line}\n`);
+  };
+  const debug = std.getenv('MEM_DEBUG') || std.getenv('MEM_TRACE') ? trace : () => {};
+  const where = lib.libraryPaths('/data/JobeesLair', true);
+  const bigEvery = Number(std.getenv('MEM_ACCOUNT_BIG_EVERY') ?? 10), bigFiles = Number(std.getenv('MEM_ACCOUNT_BIG_FILES') ?? 2000);
+  const dir = '/data/JobeesLair/bg/library';
+  const accountText = () => {
+    const kinds = [];
+    for (const kind of ['webdl', 'torrent']) {
+      const items = [];
+      for (let i = 0; i < ACCOUNT_ITEMS; i++) {
+        const name = `Game.${kind}.${i}.PPSA${10000 + i}-GROUP`;
+        const files = [];
+        // Uma pasta: 1 de cada 5 arquivos com 5 MB (os que contam), o resto pequeno (o payload .43 manda todos).
+        const count = bigEvery > 0 && i % bigEvery === 0 ? bigFiles : 1;
+        for (let f = 0; f < count; f++) files.push(count === 1 ? `{"id":0,"name":"${name}/${name}.exfat","short_name":"${name}.exfat","size":40000000000}`
+          : `{"id":${f},"name":"${name}/Image0/sce_module/data_${i}_${f}.bin","short_name":"data_${i}_${f}.bin","size":${f % 5 ? 50000 + f : 5000000 + f}}`);
+        // glibren.44: o payload novo (api 29) grava so os arquivos que valem (nome de jogo ou 1 MB ou mais, ate 400, e o
+        // maior) e os codigos de todos; MEM_OLD_PAYLOAD=1 grava todos, como o da .43.
+        let kept = files;
+        if (!std.getenv('MEM_OLD_PAYLOAD') && files.length > 1) {
+          kept = files.filter((text) => /\.exfat"/.test(text) || Number(/"size":(\d+)/.exec(text)[1]) >= 1e6).slice(0, 400);
+          if (!kept.length) kept = [files[0]];
+        }
+        const codes = std.getenv('MEM_OLD_PAYLOAD') ? '' : `,"codes":["PPSA${10000 + i}"]`;
+        items.push(`{"id":${i},"hash":"${hexOf(name).repeat(5)}","name":"${name}","size":${i * 1e6},"files":[${kept.join(',')}]${codes}}`);
+      }
+      kinds.push(`"${kind}":[${items.join(',')}]`);
+    }
+    return `{${kinds.join(',')}}`;
+  };
+  let runId = '', blocks = 0;
+  const payload = {
+    dir,
+    status: async () => ({ ok: true, api: 28, run: runId, state: runId ? 'done' : '', phase: 'games', busy: false, blocks, done: blocks, calls: 1, waitMs: 0 }),
+    cancel: async () => ({}),
+    async start(run) {
+      // O que o app fez ate aqui (o plano) e medido; o resto (o trabalho do payload, em C no console) nao conta.
+      debug('plano gravado (payload comeca)');
+      runId = run;
+      const lines = String(FileSystem.readFile(`${dir}/plan.ndjson`)).split('\n').filter(Boolean);
+      blocks = JSON.parse(lines[0]).blocks;
+      FileSystem.writeFile(`${dir}/account.json`, accountText());
+      FileSystem.writeFile(`${dir}/list.json`, '{"held":{}}');
+      for (const line of lines.slice(1)) {
+        const value = JSON.parse(line);
+        if (!value.games) continue;
+        const held = [];
+        for (const game of value.games) for (const link of [...game.links, ...game.parts]) {
+          const n = parseInt(hexOf(link).slice(-4), 16);
+          if (n % HELD_EVERY) continue;
+          const hash = hexOf(link).repeat(4);
+          // Como bg_library.c grava (lb_entry_write): so os arquivos que valem (nome de jogo ou 1 MB ou mais, ate 400).
+          const dirName = `Game.Title.${hash.slice(0, 6)}.PPSA0${hash.slice(0, 4)}-GROUP`;
+          const big = n % (HELD_EVERY * BIG_EVERY) === 0;
+          const files = big ? Array.from({ length: Math.min(BIG_FILES, 400) }, (_, f) => `{"id":${f},"name":"${dirName}/Image0/data_${f}.bin","short_name":"data_${f}.bin","size":${5000000 + f}}`)
+            : [`{"id":0,"name":"${dirName}/${dirName}.exfat","short_name":"${dirName}.exfat","size":45000000000}`];
+          held.push(`${JSON.stringify(link)}:{"name":"${dirName}","size":${files.length * 5000000},"files":[${files.join(',')}]}`);
+        }
+        FileSystem.writeFile(`${dir}/b${String(value.b).padStart(5, '0')}.json`, `{"b":${value.b},"ids":${JSON.stringify(value.games.map((g) => g.id))},"held":{${held.join(',')}},"failed":{},"names":[]}`);
+      }
+      std.gc();
+      if (typeof std.mem === 'function') std.mem(true);
+      return payload.status();
+    },
+  };
+  const entries = catalog.catalogEntries();
+  const byId = new Map(entries.map(({ game }) => [game.id, game]));
+  // A loja termina de abrir os feeds (a Orbit) depois de montada: espera isso acabar (o heap parar de mudar), para o pico
+  // da Biblioteca nao somar o da abertura da loja (no console a montagem comeca com a loja aberta ha tempo).
+  for (let last = -1, still = 0, tries = 0; still < 10 && tries < 400; tries++) {
+    await new Promise((resolve) => os.setTimeout(resolve, 20));
+    const size = catalog.catalogEntries().length + (meter.memorySnapshot().top.length << 16);
+    still = size === last ? still + 1 : 0;
+    last = size;
+  }
+  std.gc();
+  if (std.getenv('MEM_PRETOUCH')) {
+    debug('antes de tocar');
+    const { planGame } = await import('../../app/state/torbox-library.js');
+    for (const { game } of catalog.catalogEntries()) planGame(game);
+    std.gc();
+    debug('links de todos lidos');
+    const { gameDetails } = await import('../../app/state/torbox-library.js');
+    for (const { game } of catalog.catalogEntries()) gameDetails(game);
+    std.gc();
+    debug('fichas de todos lidas');
+  }
+  // A montagem numa funcao (como torbox-library-run.js startLibrary): o que ela segura sai quando ela termina.
+  let probe = null, probeGames = null;
+  async function runLibrary(fresh = false) {
+    debug('antes de ler o banco');
+    let library = lib.readLibrary(FileSystem, where);
+    meter.memorySample('biblioteca-torbox:ler');
+    debug('banco lido');
+    const save = (value, { final }) => lib.saveLibraryRun(FileSystem, where, value, { final, gameOf: (id) => byId.get(id) ?? null, log: debug, sample: meter.memorySample,
+      memory: () => DeviceInfo.memory() });
+    const { progress: last } = await lib.buildLibrary({ entries, api: null, library, save, signal, fresh, sleep: async () => {}, pace: 0, rateWait: 0, log: debug,
+      remote: createLibraryRemote({ fs: FileSystem, link: () => payload, wait: async () => {}, log: debug, poll: 0 }),
+      onProgress: (p) => {
+        meter.memorySample('biblioteca-torbox:montar');
+        debug(`progress ${p.phase} ${p.done}/${p.total}`);
+      } });
+    probe = new WeakRef(library);
+    probeGames = new WeakRef(library.games);
+    library = null;
+    return last;
+  }
+  // MEM_RUNS=2: monta de novo ("Montar de novo"), com o banco da primeira lido do disco, como no console.
+  let progress = await runLibrary();
+  for (let again = 1; again < Number(std.getenv('MEM_RUNS') ?? 1); again++) {
+    std.gc();
+    debug(`montar de novo (${again + 1})`);
+    runId = '';
+    progress = await runLibrary(true);
+  }
+  std.gc();
+  if (std.getenv('MEM_TRACE')) debug(`banco ainda vivo: ${probe.deref() !== undefined}, jogos: ${probeGames.deref() !== undefined}`);
+  meter.memorySample('tela:settings');
+  const snap = meter.memorySnapshot();
+  const mbOf = (b) => (b / 1048576).toFixed(1);
+  std.err.puts(`RANK ${snap.top.map((r) => `${r.action}=${mbOf(r.used)}`).join(' ')}\n`);
+  std.err.puts(`AFTER ${mbOf(snap.last.used)}\n`);
+  note = `library ${progress.found} of ${progress.total}`;
 } else if (scenario === 'formatos') {
   const catalog = await store();
   const { createFormatProbe } = await import('../../app/state/format-probe.js');
@@ -181,4 +321,7 @@ if (scenario === 'prep-loja' || scenario === 'prep-orbit') {
 }
 pumping = false;
 std.gc();
+// glibren.44: com o qjs de peak.mjs, o pico do heap (MB) desde o inicio.
+if (typeof std.mem === 'function') std.err.puts(`PEAK ${(std.mem()[1] / 1048576).toFixed(1)} NOW ${(std.mem()[0] / 1048576).toFixed(1)}
+`);
 print(`DONE ${scenario} ${note}`);

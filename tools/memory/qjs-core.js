@@ -47,7 +47,15 @@ export const FileSystem = {
 };
 export const Http = { request: (url, options = {}) => globalThis.__MEM_HTTP(url, options) };
 export const Platform = { OS: 'ps5', select: (spec) => spec.ps5 ?? spec.default };
-export const DeviceInfo = { utcOffset: () => 0, get: () => ({ language: 'en-US' }), memory: () => null };
+// glibren.44: com o qjs de tools/memory/peak.mjs (std.mem() = [uso agora, pico] do heap do JS) o medidor do app mede como
+// no console (limite 64 MiB, o kJsMemoryLimit do ps5-react); com o qjs comum, nada (como antes).
+export const DeviceInfo = { utcOffset: () => 0, get: () => ({ language: 'en-US' }),
+  memory: () => {
+    if (typeof std.mem !== 'function') return null;
+    // MEM_GC=1: coleta antes de medir (o que fica vivo, sem o lixo de ciclos que o console ainda nao coletou).
+    if (std.getenv('MEM_GC')) std.gc();
+    return { heapUsed: std.mem()[0], heapLimit: 64 * 1024 * 1024 };
+  } };
 export const Notifications = { show() {}, notify() {} };
 export const Image = { warm() {}, prefetch: () => Promise.resolve(), setRouter() {} };
 export const Downloads = { setConcurrency: () => 1, enqueue() { throw new Error('no downloads here'); } };

@@ -78,7 +78,9 @@ import { setLibraryPayload } from './torbox-library-payload.js';
   // glibren.38: 27, a rede da Biblioteca TorBox (GET/POST /library/build).
   // glibren.43: 28, /switch pelo primeiro plano (kern.msgbuf) e um ritmo so para o TorBox: sobe para o app trocar o
   // payload da .42 que ainda estiver no ar (sem rota nova).
-  var PAYLOAD_API = 28;
+  // glibren.44: 29, account.json da Biblioteca TorBox so com os arquivos que o app usa (+ "codes"): o payload da .43
+  // mandava todos os arquivos de cada item da conta e o app segurava ~20 MB (sem rota nova).
+  var PAYLOAD_API = 29;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 

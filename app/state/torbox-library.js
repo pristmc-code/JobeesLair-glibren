@@ -39,7 +39,7 @@ import { youtubeId } from './youtube.js';
 import { formatFromName } from './link-formats.js';
 import { BROKEN_BYTES, brokenFile } from './broken-copy.js';
 import { jsonMembers } from './json-scan.js';
-import { isMagnet, linkHashes, magnetHash, md5 } from '../services/torbox.js';
+import { cachedEntry, isMagnet, linkHashes, magnetHash, md5 } from '../services/torbox.js';
 import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePattern, filesOf, isBackportFile, isPiece, magnetOf, matchesGame, plain, titleWords, worthShowing } from './torbox-search.js';
 
   var LIBRARY_FILE = "torbox-biblioteca.json";
@@ -65,6 +65,8 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
    *               known?: [{ name, size, format, via: "name" | "code" | "parts", hash, release?, parts?, missing?,
    *                          total? }],  // só quando não confirmado
    *               error?: string }
+   *   glibren.44: um jogo NAO confirmado (torbox.confirmed falso) guarda so { id, title, torbox }: os outros campos so
+   *   servem a lista (torbox-lista.json), que leva so os confirmados; um banco antigo e compactado ao ser lido.
    *   glibren.16: um conjunto em partes (release.parts no catálogo) é UM arquivo: via "webdl", `release` o id do conjunto
    *   (set-...), `parts` as partes guardadas na ordem (hash = MD5 do link da parte, ou o info hash de um magnet), `size`
    *   a soma, `name` "<nome da parte 1 sem a parte> (N partes)". Só entra em `files` com TODAS as partes no TorBox; com
@@ -202,8 +204,14 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
   // glibren.28: o banco lido um jogo por vez (state/json-scan.js: os limites de cada valor, e um JSON.parse por jogo), sem
   // o JSON.parse do texto inteiro, que no QuickJS ainda faz uma copia UTF-8 do texto todo (alguns MB) ao lado do texto e
   // da arvore. Texto que nao e JSON: SyntaxError (o readLibrary passa para a copia, como antes).
+  // glibren.44: cada registro lido passa por compactRecord: o de um jogo nao confirmado fica so com id, titulo e o
+  // resultado do TorBox (os campos da loja so servem a lista, que so leva confirmados), e os textos repetidos de registro
+  // para registro (rodada, hora, plataforma, fontes, generos, formatos, tipo e origem dos arquivos) viram um so. Medido no
+  // qjs (tools/memory/peak.mjs, 2.639 jogos com a Orbit): o banco lido ocupava ~8,6 MB do heap (cada JSON.parse cria
+  // objetos e textos novos, sem nada em comum com o catalogo) e o "Montar de novo" comecava com ele inteiro.
   function parseLibrary(text) {
     const library = {};
+    const pool = /* @__PURE__ */ new Map();
     for (const part of jsonMembers(text, 0, text.length)) {
       if (part.key !== "games" || text.charCodeAt(part.start) !== 123) {
         library[part.key] = JSON.parse(text.slice(part.start, part.end));
@@ -211,11 +219,39 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
       }
       const games = {};
       for (const game of jsonMembers(text, part.start, part.end)) {
-        if (game.key !== "__proto__") games[game.key] = JSON.parse(text.slice(game.start, game.end));
+        if (game.key !== "__proto__") games[game.key] = compactRecord(JSON.parse(text.slice(game.start, game.end)), pool);
       }
       library.games = games;
     }
     return library;
+  }
+  /**
+   * glibren.44: o registro de um jogo como o banco o guarda: confirmado (ou sem resultado ainda), inteiro; nao confirmado,
+   * so { id, title, torbox }. `pool` (um Map) junta os textos e listas repetidos entre registros (nenhum deles e mudado
+   * depois: a montagem troca o registro inteiro).
+   */
+  function compactRecord(record, pool = null) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) return record;
+    const one = (value) => {
+      if (!pool) return value;
+      const key = typeof value === "string" ? value : Array.isArray(value) && value.every((item) => typeof item === "string") ? `\u0000${value.join("\u0000")}` : null;
+      if (key === null) return value;
+      const known = pool.get(key);
+      if (known !== void 0) return known;
+      pool.set(key, value);
+      return value;
+    };
+    const torbox = record.torbox;
+    if (torbox && typeof torbox === "object") {
+      for (const name of ["run", "checkedAt"]) if (name in torbox) torbox[name] = one(torbox[name]);
+      for (const list of [torbox.files, torbox.known]) {
+        if (!Array.isArray(list)) continue;
+        for (const file of list) if (file && typeof file === "object") for (const name of ["format", "via", "release"]) if (name in file) file[name] = one(file[name]);
+      }
+      if (!torbox.confirmed) return { id: record.id, title: record.title, torbox };
+    }
+    for (const name of ["platform", "sources", "genres", "formats"]) if (name in record) record[name] = one(record[name]);
+    return record;
   }
   // glibren.28: um banco que existe mas nao deu para ler por outro motivo que nao JSON invalido (no PS5, "out of memory"
   // com o heap cheio) nao vira um banco vazio: a montagem comecaria do zero e gravaria por cima do bom. readLibrary lanca
@@ -475,15 +511,32 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     });
   }
   /** A conta (itens de mylist) arrumada para casar muitos jogos: por código e pelo nome em texto simples. */
+  // glibren.44: cada item guarda so os arquivos que a montagem usa (services/torbox.js cachedEntry: os de nome de jogo,
+  // pacote ou compactado, e os de 1 MB ou mais, como as entradas do checkcached; fileRows so olha esses), e os codigos
+  // saem de todos antes do corte (mais os `codes` que o payload ja mandou). Ate a .43 ficavam todos os arquivos de cada
+  // item: uma conta com pastas de milhares de arquivos segurava ~20 MB do heap a montagem inteira (Configuracoes > Sobre
+  // no PS5 real: 50,5 MB de 64 na Biblioteca TorBox). `lists`: [[tipo, itens]]; os itens podem ser um iteravel (a conta
+  // lida do payload um item por vez, torbox-library-payload.js).
+  function accountItemOf(kind, raw) {
+    const files = Array.isArray(raw?.files) ? raw.files : [];
+    const codes = new Set(codesIn(raw?.name));
+    for (const file of files) for (const code of codesIn(file?.name || file?.short_name)) codes.add(code);
+    for (const code of Array.isArray(raw?.codes) ? raw.codes : []) for (const one of codesIn(code)) codes.add(one);
+    const kept = files.length ? cachedEntry({ name: raw.name, size: raw.size, files }).files : [];
+    return { item: { kind, id: raw?.id, name: String(raw?.name || ""), hash: String(raw?.hash || "").toLowerCase() || null, size: Number(raw?.size) || 0, files: kept, text: ` ${plain(raw?.name)} ` }, codes };
+  }
   function indexAccount(lists) {
     const byCode = /* @__PURE__ */ new Map();
     const items = [];
     for (const [kind, list] of lists) {
       for (const raw of list || []) {
-        const item = { kind, id: raw.id, name: String(raw.name || ""), hash: String(raw.hash || "").toLowerCase() || null, size: Number(raw.size) || 0, files: Array.isArray(raw.files) ? raw.files : [], text: ` ${plain(raw.name)} ` };
+        const { item, codes } = accountItemOf(kind, raw);
         items.push(item);
-        const codes = new Set([...codesIn(item.name), ...item.files.flatMap((file) => codesIn(file.name || file.short_name))]);
-        for (const code of codes) byCode.set(code, [...byCode.get(code) ?? [], item]);
+        for (const code of codes) {
+          const known = byCode.get(code);
+          if (known) known.push(item);
+          else byCode.set(code, [item]);
+        }
       }
     }
     return { byCode, items };
@@ -819,17 +872,21 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     if (session) callsBefore = Math.max(0, run.calls - (session.calls || 0));
     tell();
     // A conta, uma vez por rodada.
-    let account = null;
-    try {
+    // glibren.44: as listas cruas (e o texto do account.json) so dentro de readAccount: uma variavel de bloco desta funcao
+    // assincrona fica no quadro ate a montagem acabar, e segurava a conta inteira (varios MB) todo esse tempo.
+    async function readAccount() {
       if (session) {
         const lists = await session.account();
-        account = lists ? indexAccount(lists) : null;
         if (!lists) log("account not read (payload)");
-      } else {
-        const lists = [];
-        for (const kind of ["webdl", "torrent"]) lists.push([kind, await polite(() => api.myList(kind, { signal }))]);
-        account = indexAccount(lists);
+        return lists ? indexAccount(lists) : null;
       }
+      const lists = [];
+      for (const kind of ["webdl", "torrent"]) lists.push([kind, await polite(() => api.myList(kind, { signal }))]);
+      return indexAccount(lists);
+    }
+    let account = null;
+    try {
+      account = await readAccount();
     } catch (error) {
       if (error?.name === "AbortError") throw error;
       if (transient(error) || error?.code === "RATE_LIMITED" || session) throw error;
@@ -867,7 +924,8 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
         const rows = rowsOf.get(game);
         const errors = asked(game).map((link) => failed.get(link)).filter(Boolean);
         const torbox = verdict(rows, run.id, now(), !rows.length && errors.length ? errors[0] : null, [...known.get(game) ?? [], ...setsHeld.get(game).partial]);
-        library.games[game.id] = { ...describe(game, from), torbox };
+        // glibren.44: nao confirmado, so id, titulo e o resultado (compactRecord); os campos da loja so servem a lista.
+        library.games[game.id] = torbox.confirmed ? { ...describe(game, from), torbox } : { id: game.id, title: String(game.title || game.id), torbox };
         run.done++;
         if (torbox.confirmed) run.found++;
         if (torbox.known) run.known++;
@@ -929,4 +987,4 @@ import { FORMAT_RANK, baseName, catalogLinks, catalogSets, setHolding, codePatte
     return { library, progress: progress() };
   }
 
-export { UNREADABLE, BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LEAN_AT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, planGame, saveLibraryRun, summarize, writeDetails, writeLibrary, writeList, writeListFiles };
+export { UNREADABLE, BROKEN_BYTES, brokenFile, brokenOnly, stillConfirmed, DETAILS_FILE, DETAILS_FORMAT, LEAN_AT, LIBRARY_FILE, LIBRARY_FORMAT, LIST_FILE, LIST_FORMAT, MAX_FILES, PACE_MS, RATE_WAIT_MS, buildLibrary, compactRecord, describe, uncheckedCount, emptyLibrary, exportDetails, exportList, gameDetails, indexAccount, libraryPaths, readConfirmedIds, readLibrary, planGame, saveLibraryRun, summarize, writeDetails, writeLibrary, writeList, writeListFiles };

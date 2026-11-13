@@ -1,0 +1,62 @@
+--- quickjs.c	2026-11-04 12:00:47.294689020 -0300
++++ quickjs.c	2026-11-12 22:07:40.682277699 -0300
+@@ -45,6 +45,8 @@
+ #include "cutils.h"
+ #include "list.h"
+ #include "quickjs.h"
++size_t js_peak_size = 0;
++#define PEAK(s) do { if ((s)->malloc_size > js_peak_size) js_peak_size = (s)->malloc_size; } while (0)
+ #include "libregexp.h"
+ #include "dtoa.h"
+ 
+@@ -1629,6 +1631,7 @@
+ 
+     s->malloc_count++;
+     s->malloc_size += rt->mf.js_malloc_usable_size(ptr) + MALLOC_OVERHEAD;
++    PEAK(s);
+     return ptr;
+ }
+ 
+@@ -1652,6 +1655,7 @@
+ 
+     s->malloc_count++;
+     s->malloc_size += rt->mf.js_malloc_usable_size(ptr) + MALLOC_OVERHEAD;
++    PEAK(s);
+     return ptr;
+ }
+ 
+@@ -1698,6 +1702,7 @@
+         return NULL;
+ 
+     s->malloc_size += rt->mf.js_malloc_usable_size(ptr) - old_size;
++    PEAK(s);
+     return ptr;
+ }
+ 
+--- quickjs-libc.c	2026-11-04 12:00:47.278054170 -0300
++++ quickjs-libc.c	2026-11-12 22:07:40.690972940 -0300
+@@ -1075,6 +1075,16 @@
+     return JS_EXCEPTION;
+ }
+ 
++extern size_t js_peak_size;
++static JSValue js_std_mem(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv)
++{
++    JSMemoryUsage st; JS_ComputeMemoryUsage(JS_GetRuntime(ctx), &st);
++    JSValue a = JS_NewArray(ctx);
++    JS_SetPropertyUint32(ctx, a, 0, JS_NewFloat64(ctx, (double)st.malloc_size));
++    JS_SetPropertyUint32(ctx, a, 1, JS_NewFloat64(ctx, (double)js_peak_size));
++    if (argc > 0 && JS_ToBool(ctx, argv[0])) js_peak_size = st.malloc_size;
++    return a;
++}
+ static JSValue js_std_gc(JSContext *ctx, JSValueConst this_val,
+                          int argc, JSValueConst *argv)
+ {
+@@ -1916,6 +1926,7 @@
+ static const JSCFunctionListEntry js_std_funcs[] = {
+     JS_CFUNC_DEF("exit", 1, js_std_exit ),
+     JS_CFUNC_DEF("gc", 0, js_std_gc ),
++    JS_CFUNC_DEF("mem", 1, js_std_mem ),
+     JS_CFUNC_DEF("evalScript", 1, js_evalScript ),
+     JS_CFUNC_DEF("loadScript", 1, js_loadScript ),
+     JS_CFUNC_DEF("getenv", 1, js_std_getenv ),

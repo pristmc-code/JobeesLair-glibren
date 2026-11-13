@@ -18,7 +18,8 @@
 // "links" sao os links de um arquivo so do jogo (catalogLinks), "parts" os das partes dos conjuntos (catalogSets), "names"
 // os nomes de arquivo do catalogo e "code" o codigo (para os MD5 de "<nome>" e "<codigo>.<tipo>").
 // O que o payload grava ao lado (cada arquivo uma vez, tmp + rename):
-//   account.json  {"webdl":[item...],"torrent":[item...]} ou {"error":"<codigo>"}; item = {id,name,hash,size,files}
+//   account.json  {"webdl":[item...],"torrent":[item...]} ou {"error":"<codigo>"}; item = {id,hash,name,size,files,codes?}
+//                 (glibren.44: "files" com o corte de LB_FILES_KEPT, como as entradas; "codes" os PPSA/CUSA de todos)
 //   list.json     {"held":{"<info hash>":entrada}}
 //   b00000.json   {"b":0,"ids":[...],"held":{"<link>":entrada},"failed":{"<link>":"<codigo>"},"names":[{"hash",...entrada}]}
 //   state.json    o estado (o mesmo de GET /library/build)
@@ -348,6 +349,40 @@ static void lb_entry_write(Buf* b, const LbEntry* e, int all_files) {
   }
   free(keep);
   free(ranks);
+  buf_str(b, "]");
+}
+
+// glibren.44: os codigos PPSA/CUSA dos nomes dos arquivos de um item da conta (o app casa a conta pelo codigo de
+// qualquer arquivo, torbox-library.js indexAccount; o corte de lb_entry_write deixa de fora os arquivos pequenos, que
+// tambem podem ter o codigo no caminho). `,"codes":["PPSA01234",...]`, cada um uma vez, ate LB_CODES; nada sem codigo.
+#define LB_CODES 32
+static void lb_codes_write(Buf* b, const LbEntry* e) {
+  char codes[LB_CODES][10];
+  int n = 0;
+  for (int i = 0; i < e->count && n < LB_CODES; ++i) {
+    const Span spans[2] = {e->files[i].name, e->files[i].short_name};
+    for (int k = 0; k < 2 && n < LB_CODES; ++k) {
+      char text[1024];
+      if (!span_is(spans[k], '"') || !lb_text(spans[k], text, sizeof text)) continue;
+      for (const char* t = text; *t && n < LB_CODES; ++t) {
+        const int ppsa = !strncasecmp(t, "ppsa", 4), cusa = !strncasecmp(t, "cusa", 4);
+        if (!ppsa && !cusa) continue;
+        const char* d = t + 4;
+        if (*d == '-' || *d == '_' || *d == ' ') ++d;
+        int digits = 0;
+        while (digits < 5 && isdigit((unsigned char)d[digits])) ++digits;
+        if (digits < 5) continue;
+        char code[10];
+        snprintf(code, sizeof code, "%s%.5s", ppsa ? "PPSA" : "CUSA", d);
+        int seen = 0;
+        for (int c = 0; c < n && !seen; ++c) seen = !strcmp(codes[c], code);
+        if (!seen) copy_text(codes[n++], sizeof codes[0], code);
+      }
+    }
+  }
+  if (!n) return;
+  buf_str(b, ",\"codes\":[");
+  for (int c = 0; c < n; ++c) buf_fmt(b, "%s\"%s\"", c ? "," : "", codes[c]);
   buf_str(b, "]");
 }
 
@@ -795,19 +830,20 @@ static int lb_page_item(JP* j, void* ctx) {
   ++p->fresh;
   buf_str(p->out, p->first ? "{" : ",{");
   p->first = 0;
-  int field = 0;
-  const struct { const char* key; Span value; } fields[] = {{"id", e.id}, {"name", e.name}, {"hash", e.hash}, {"size", e.size}};
+  // glibren.44: so os arquivos que o app usa (lb_entry_write, o mesmo corte das entradas do checkcached) e os codigos de
+  // todos ("codes"). Ate a .43 iam todos os arquivos de cada item: uma conta com pastas de milhares de arquivos dava um
+  // account.json de varios MB, e o app (JSON.parse + indexAccount) segurava ~20 MB do heap de 64 MiB a montagem inteira.
+  const struct { const char* key; Span value; } fields[] = {{"id", e.id}, {"hash", e.hash}};
   for (size_t i = 0; i < sizeof fields / sizeof *fields; ++i) {
     if (!fields[i].value.s) continue;
-    buf_fmt(p->out, "%s\"%s\":", field++ ? "," : "", fields[i].key);
+    buf_fmt(p->out, "\"%s\":", fields[i].key);
     buf_span(p->out, fields[i].value);
+    buf_str(p->out, ",");
   }
-  buf_fmt(p->out, "%s\"files\":[", field ? "," : "");
-  for (int i = 0; i < e.count; ++i) {
-    if (i) buf_str(p->out, ",");
-    lb_file_write(p->out, &e.files[i]);
-  }
-  buf_str(p->out, "]}");
+  if (!e.has_files) e.has_files = 1; // o app le "files" sempre como lista
+  lb_entry_write(p->out, &e, 0);
+  lb_codes_write(p->out, &e);
+  buf_str(p->out, "}");
   lb_entry_free(&e);
   return 1;
 }
