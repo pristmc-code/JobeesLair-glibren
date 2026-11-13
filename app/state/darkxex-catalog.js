@@ -32,9 +32,21 @@ import { fromUtf8, hex, sha256 } from './secret-box.js';
   var MAX_MANIFEST_BYTES = 512 * 1024;
   var MAX_APP_BYTES = 64 * 1024;
   var MAX_APPS = 600;
-  // Itens que a Jobe nao mostra (ANALISE-ps5-homebrew-catalog.md, secao 3): ferramentas cujo uso tipico e rodar copias
-  // (FPKG, dumps), destravar trofeus, chaves de save, ou outra loja de conteudo nao verificado.
-  var HIDDEN = /* @__PURE__ */ new Set(["PPSA99594", "PPSA99180", "PPSA99842", "PPSA99700", "PSPL47000", "PPSA92000"]);
+  // Itens que a Jobe nao mostra (title IDs). glibren.48 escondia 6 (ANALISE-ps5-homebrew-catalog.md, secao 3);
+  // glibren.49: a pedido do dono os 6 voltam, cada um com uma linha informativa na pagina (NOTICES, abaixo). O mecanismo
+  // fica para um item que precise sumir de novo.
+  var HIDDEN = /* @__PURE__ */ new Set([]);
+  // glibren.49: a linha informativa da pagina do app (chave do texto), por title ID. So informa: nao bloqueia nem esconde.
+  var NOTICES = Object.freeze({
+    PPSA99594: "homebrew.notice.ownCopies", // Alembic
+    PPSA99180: "homebrew.notice.ownCopies", // PKG Folderizer
+    PPSA99842: "homebrew.notice.trophies", // Trophy Manager
+    PPSA99700: "homebrew.notice.saves", // MacheteSaveGameManager
+    PSPL47000: "homebrew.notice.thirdPartyStore", // PS Play 3.0
+    PPSA92000: "homebrew.notice.thirdPartyStore" // RecompStore
+  });
+  /** A chave da linha informativa de um app (pelo title ID), ou null. */
+  var noticeOf = (app) => typeof app?.titleId === "string" && Object.hasOwn(NOTICES, app.titleId) ? NOTICES[app.titleId] : null;
   // As categorias do catalogo nas da aba Homebrew (app/data/homebrew.json).
   var CATEGORIES = {
     "console-ports": "games",
@@ -369,4 +381,4 @@ import { fromUtf8, hex, sha256 } from './secret-box.js';
     return fail("gone");
   }
 
-export { API_URL, CREDIT_URL, FEED_URL, HIDDEN, PUBLIC_KEYS, bytesOf, compareVersions, confirmDarkxexFile, mergeCatalogs, normalizeDarkxexApp, parseDarkxexFeed, sameName, verifyAppFile, verifyManifest };
+export { API_URL, CREDIT_URL, FEED_URL, HIDDEN, NOTICES, PUBLIC_KEYS, noticeOf, bytesOf, compareVersions, confirmDarkxexFile, mergeCatalogs, normalizeDarkxexApp, parseDarkxexFeed, sameName, verifyAppFile, verifyManifest };

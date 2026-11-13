@@ -159,10 +159,12 @@ async function call(base, method, route, body, token) {
 }
 // Espera por condicao, com prazo largo: com a suite inteira em paralelo (maquina carregada) subir leva mais que 5 s.
 async function up(base, ms = 30000) {
-  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) {
+  for (const end = performance.now() + ms; performance.now() < end; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call(base, 'GET', '/health')).status === 200) return; } catch {}
   }
-  throw new Error('payload did not start');
+  let tail = '';
+  try { tail = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').split('\n').slice(-15).join('\n'); } catch {}
+  throw new Error(`payload did not start:\n${tail}`);
 }
 async function until(base, id, states, check = () => true, ms = 60000) {
   for (const end = Date.now() + ms; Date.now() < end; await wait(100)) {
@@ -2141,10 +2143,12 @@ test('glibren.43: POST /switch espera o foco sair do app antigo (kern.msgbuf); s
     await logged('troca: PPSA99471 fechou; abrindo PPSA99991 em ate 4 s');
     await wait(400);
     assert.deepEqual(launches(), [], 'o foco ainda na Jobe: espera');
-    const left = Date.now();
+    // glibren.49: medido pelo relogio monotonico. Sob carga o relogio de parede do WSL (Date.now) anda mais devagar que o
+    // monotonico (4,27 s reais medidos como 2,7-2,9 s): era a falha "abriu cedo" da .48.
+    const left = performance.now();
     buffer('SetControllerFocus(0x60000010)', 'SetControllerFocus(0x7)');
     await launchedAfter(1);
-    assert.ok(Date.now() - left < 2500, `demorou ${Date.now() - left} ms depois do foco sair`);
+    assert.ok(performance.now() - left < 2500, `demorou ${Math.round(performance.now() - left)} ms depois do foco sair`);
     await logged('troca: foco saiu do app antigo (0x60000010 -> 0x00000007)');
     assert.ok(log().includes('margem de 200 ms'));
     await logged('troca: PPSA99991 aberto (tentativa 1 de 4)');
@@ -2155,9 +2159,9 @@ test('glibren.43: POST /switch espera o foco sair do app antigo (kern.msgbuf); s
     await ask({ to: 'PPSA99991', from: 'PPSA99471' });
     await logged('troca: primeiro plano: foco em PPSA99471 (0x60000010), 1 linhas');
     rmSync(flag);
-    const closed = Date.now();
+    const closed = performance.now();
     await launchedAfter(2);
-    assert.ok(Date.now() - closed >= SETTLE - 300, `abriu cedo: ${Date.now() - closed} ms`);
+    assert.ok(performance.now() - closed >= SETTLE - 300, `abriu cedo: ${Math.round(performance.now() - closed)} ms`);
     await logged('troca: o foco continuou no app antigo por 4 s - segue (limite)');
 
     // 3) Uma linha velha que nao e o app antigo: nao adianta nada (espera fixa).
@@ -2166,9 +2170,9 @@ test('glibren.43: POST /switch espera o foco sair do app antigo (kern.msgbuf); s
     await ask({ to: 'PPSA99991', from: 'PPSA99471' });
     await logged('troca: o foco (0x60000099) nao e PPSA99471 (0x60000010) - espera fixa de 4 s');
     rmSync(flag);
-    const fixed = Date.now();
+    const fixed = performance.now();
     await launchedAfter(3);
-    assert.ok(Date.now() - fixed >= SETTLE - 300, `abriu cedo: ${Date.now() - fixed} ms`);
+    assert.ok(performance.now() - fixed >= SETTLE - 300, `abriu cedo: ${Math.round(performance.now() - fixed)} ms`);
 
     // 4) Sem msgbuf (firmware que nao escreve, ou nao deu para ler): espera fixa.
     rmSync(msgbuf);
@@ -2176,9 +2180,9 @@ test('glibren.43: POST /switch espera o foco sair do app antigo (kern.msgbuf); s
     await ask({ to: 'PPSA99991', from: 'PPSA99471' });
     await logged('troca: kern.msgbuf nao lido - espera fixa de 4 s');
     rmSync(flag);
-    const none = Date.now();
+    const none = performance.now();
     await launchedAfter(4);
-    assert.ok(Date.now() - none >= SETTLE - 300, `abriu cedo: ${Date.now() - none} ms`);
+    assert.ok(performance.now() - none >= SETTLE - 300, `abriu cedo: ${Math.round(performance.now() - none)} ms`);
 
     // 5) Buffer sem as linhas: "sem sinal".
     buffer('outra coisa qualquer');

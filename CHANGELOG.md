@@ -6,6 +6,24 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.49** (fork): the download payload updates itself, signed, without a new Jobe image (phase 2 of the Orbit
+  model). `app/native/bg_self.c`: releases tagged `bg-downloader-<version>` (never latest) carry `bg-downloader.elf`,
+  `bg-downloader.json` (version, `api`, `minAppApi`, size, SHA-256) and `bg-downloader.json.sig` (Ed25519 of
+  `jobe-bg-signature-v1\n` + the exact manifest, the glibren key). The payload looks for a newer one when the app opens
+  (at most every 6 h) or from the phone page, checks the signature and the SHA-256, writes `.part` and renames it into
+  `/data/JobeesLair/bg/`, and switches only when nothing is downloading or converting (the new one asks the old one to
+  quit cleanly). On every start the payload hands over to a downloaded version only if it is newer than itself and than
+  the app's built-in one, signed, intact and compatible; a version that fails to start twice is marked bad and the
+  previous (or the built-in) one starts. API contract: a downloaded payload with `api` above the app's `PAYLOAD_API` is
+  used only when its `minAppApi` is not above it. "Download payload" and "Back to the built-in payload" in Settings >
+  About and on the phone page (PIN). `BG_API`/`PAYLOAD_API` 33, payload 1.33.0.
+- Homebrew: the six darkxex apps hidden in glibren.48 (Alembic, PKG Folderizer, Trophy Manager,
+  MacheteSaveGameManager, PS Play 3.0, RecompStore) are listed again; each page shows one informative line (it does not
+  block anything). 14 languages.
+- Tests: the payload's start waits on the monotonic clock with a 30 s limit and no payload of an earlier test survives
+  it (the WSL wall clock runs ~35% slow under load; one slow start used to fail the rest of the file), and a busy port
+  at start is tried again every 250 ms for 20 s instead of once every 10 s. On the PC a test payload now quits with the
+  test runner (or when its folder is gone): orphans from killed runs kept retaking the tests' ports every 10 s.
 - **glibren.48** (fork): the Homebrew section also lists the [PS5 Homebrew Catalog](https://github.com/darkxex/ps5-homebrew-catalog)
   by darkxex (GPL-3.0-or-later; data only, none of its code). `state/darkxex-catalog.js` reads its `catalog/v1.json`
   feed one app at a time (`json-scan.js`), keeps a copy (`homebrew-darkxex.json`) and fetches it again in the same

@@ -1266,6 +1266,85 @@ pinOnOpen();
   render();
 })();
 </script>
+<!-- glibren.49 (Fase 2): area "Payload de downloads": a versao em uso (embutida ou baixada e assinada), procurar e
+     instalar uma versao nova (o payload confere a assinatura e o sha256 e troca quando nada estiver baixando nem convertendo)
+     e "Voltar ao payload embutido". Com o PIN, como o Diagnostico. Usa os estilos .diag. -->
+<script>
+"use strict";
+(() => {
+  const P = {
+    pt: { title: "Payload de downloads (versão e atualização)", unlock: "Liberar com o PIN", running: "Em uso: {v} ({s})", embedded: "a que vem com a Jobe", downloaded: "baixada e assinada",
+      latest: "Última conferida: {v}", update: "Procurar e atualizar o payload", revert: "Voltar ao payload embutido", fail: "Não deu. Tente de novo.",
+      reverted: "Pronto: as versões baixadas ficaram de lado; o embutido volta quando nada estiver baixando.",
+      phases: { checking: "Procurando a versão nova…", downloading: "Baixando {v}: {p}%", ready: "Versão {v} pronta: entra quando nada estiver baixando nem convertendo.",
+        waiting: "Versão {v} pronta, esperando: {w} em andamento.", swapping: "Trocando para {v}…", current: "O payload já está na versão mais nova.",
+        "needs-app": "A versão {v} precisa de uma Jobe mais nova: atualize a Jobe primeiro." },
+      waits: { download: "download", convert: "conversão", quiet: "pausa depois de fechar o app" }, failed: "Não atualizou: {e}" },
+    en: { title: "Download payload (version and update)", unlock: "Unlock with the PIN", running: "Running: {v} ({s})", embedded: "the one built into Jobe", downloaded: "downloaded and signed",
+      latest: "Last checked: {v}", update: "Look for and install a payload update", revert: "Back to the built-in payload", fail: "It did not work. Try again.",
+      reverted: "Done: the downloaded versions were set aside; the built-in one comes back when nothing is downloading.",
+      phases: { checking: "Looking for the new version…", downloading: "Downloading {v}: {p}%", ready: "Version {v} is ready: it takes over when nothing is downloading or converting.",
+        waiting: "Version {v} is ready and waiting: {w} running.", swapping: "Switching to {v}…", current: "The payload is already on the newest version.",
+        "needs-app": "Version {v} needs a newer Jobe: update Jobe first." },
+      waits: { download: "a download", convert: "a conversion", quiet: "the pause after the app closed" }, failed: "Not updated: {e}" }
+  }[L === T.pt ? "pt" : "en"];
+  const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+  const box = document.createElement("details"); box.className = "diag payload";
+  const head = document.createElement("summary"); head.textContent = P.title;
+  const body = document.createElement("div"); body.className = "dg-body";
+  box.append(head, body);
+  $("foot").before(box);
+  let info = null, polling = null, msg = "", note = "";
+  let demo = { ok: true, version: "1.33.0", source: "embedded", embedded: "1.33.0", installed: null, latest: "1.33.1", phase: "idle", percent: 0, error: "", waiting: "", bad: [] };
+  async function call(method, path) {
+    if (DEMO) {
+      if (path === "/api/payload/update") Object.assign(demo, { phase: "downloading", percent: 42 });
+      return { status: 200, data: { ...demo } };
+    }
+    return await api(method, path, method === "POST" ? {} : undefined).catch(() => ({ status: 0, data: {} }));
+  }
+  const relock = (again) => { session = ""; lockButton(); pending = again; openPin(); };
+  async function load() {
+    const r = await call("GET", "/api/payload");
+    if (r.status === 401) return relock(load);
+    if (r.status === 200) info = r.data;
+    const busy = info && ["checking", "downloading", "ready", "waiting", "swapping"].includes(info.phase);
+    if (busy && !polling) polling = setInterval(load, 2000);
+    if (!busy && polling) { clearInterval(polling); polling = null; }
+    render();
+  }
+  async function act(path, after) {
+    msg = ""; note = "";
+    const r = await call("POST", path);
+    if (r.status === 401) return relock(() => act(path, after));
+    if (r.status !== 200) { msg = P.fail; render(); return; }
+    info = r.data;
+    if (after) note = after;
+    await load();
+  }
+  function line(text, cls = "dg-note") { const d = document.createElement("div"); d.className = cls; d.textContent = text; body.append(d); }
+  function button(text, onclick, disabled, primary) { const b = document.createElement("button"); b.type = "button"; b.className = primary ? "btn primary" : "btn"; b.textContent = text; b.disabled = disabled; b.onclick = onclick; body.append(b); }
+  function render() {
+    body.textContent = "";
+    if (!session && !DEMO) { button(P.unlock, () => guarded(load), false, true); return; }
+    if (info) {
+      line(fill(P.running, { v: info.version, s: info.source === "downloaded" ? P.downloaded : P.embedded }), "");
+      if (info.latest) line(fill(P.latest, { v: info.latest }), "");
+      const v = info.latest || info.version;
+      if (info.phase === "failed") line(fill(P.failed, { e: info.error || "?" }), "dg-err");
+      else if (P.phases[info.phase]) line(fill(P.phases[info.phase], { v, p: info.percent || 0, w: P.waits[info.waiting] || info.waiting }), info.phase === "current" ? "dg-ok" : info.phase === "needs-app" ? "dg-err" : "dg-note");
+      const busy = ["checking", "downloading", "swapping"].includes(info.phase);
+      button(P.update, () => guarded(() => act("/api/payload/update")), busy, true);
+      const ahead = info.source === "downloaded" || (info.installed && info.installed !== info.embedded && !(info.bad || []).includes(info.installed));
+      if (ahead) button(P.revert, () => guarded(() => act("/api/payload/revert", P.reverted)), busy, false);
+    }
+    if (note) line(note, "dg-ok");
+    if (msg) line(msg, "dg-err");
+  }
+  box.addEventListener("toggle", () => { if (box.open && (session || DEMO)) load(); else if (!box.open && polling) { clearInterval(polling); polling = null; } render(); });
+  render();
+})();
+</script>
 <!-- glibren: Biblioteca TorBox (a lista de jogos confirmados no TorBox que o app monta): ver, filtrar e incluir downloads.
      Bloco separado; usa o api/guarded/openPin/session da pagina. glibren.9: capas e fotos direto dos enderecos do catalogo
      (o celular tem internet; a CSP do payload libera img-src https:), ficha do jogo ao tocar (fotos, videos do YouTube,

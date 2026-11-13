@@ -10,6 +10,7 @@
 // an app sharing its title ID with another says so; one whose file the Jobe cannot install yet says "Not supported yet"
 // instead of Install. Those texts wrap (no ellipsis).
 
+import { noticeOf } from '../state/darkxex-catalog.js'; // glibren.49
 import '../assets/Exo2.ttf';
 import '../assets/JetBrainsMono-Regular.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
@@ -228,6 +229,8 @@ import { AnimatePresence, FocusScope, Image, Linking, Platform, ScrollView, Text
           jsx(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 6 }, children: tags }),
           jsx(View, { style: { marginTop: 18 }, children: jsx(Actions, { app, status, onFiles, onMessage, onRemove }) }),
           ...(app.conflicts ?? []).map((name) => jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: "#fbbf24", width: 1100 }, children: t2("homebrew.conflict", { name }) }, `conflict:${name}`)),
+          // glibren.49: a linha informativa de alguns apps (state/darkxex-catalog.js NOTICES): quebra linha, sem reticencias.
+          noticeOf(app) ? jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: colors.muted, width: 1100 }, children: t2(noticeOf(app)) }, "notice") : null,
           message ? jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: message.bad ? "#fca5a5" : "#86efac", width: 1100 }, children: message.text }) : status.failed ? jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: "#fca5a5", width: 1100 }, children: t2("homebrew.failed", { error: status.failed }) }) : null
         ] })
       ] })

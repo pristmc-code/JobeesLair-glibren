@@ -93,9 +93,9 @@ async function startPayload({ base, github = 'http://127.0.0.1:9' } = {}) {
     req.on('error', reject);
     req.end();
   });
-  for (const end = Date.now() + 30000; ; await wait(50)) {
+  for (const end = performance.now() + 30000; ; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call('GET', '/health')).status === 200) break; } catch {}
-    if (Date.now() > end) throw new Error('payload did not start');
+    if (performance.now() > end) throw new Error('payload did not start');
   }
   const PIN = '2468';
   const salt = randomBytes(32).toString('hex');
@@ -166,7 +166,7 @@ test('glibren.47: /api/teste/estado da pid, uptime, memoria (bytes), api e o ped
   assert.ok(d.uptimeSeconds >= 0 && d.uptimeSeconds < 120);
   assert.ok(Math.abs(d.now - Date.now() / 1000) < 5);
   assert.equal(d.api, Number(/#define BG_API (\d+)/.exec(readFileSync(path.join(repo, 'app/native/bg_downloader.c'), 'utf8'))[1]));
-  assert.equal(d.version, '1.0.0');
+  assert.equal(d.version, /#define BG_VERSION "([^"]+)"/.exec(readFileSync(path.join(repo, 'app/native/bg_downloader.c'), 'utf8'))[1]); // glibren.49: a versao publicada a parte
   assert.equal(d.rssSource, 'proc');
   assert.ok(d.rssBytes > 1024 * 1024 && d.rssBytes < 4 * 1024 ** 3, `rss ${d.rssBytes}`);
   assert.equal(d.peakSource, 'getrusage');

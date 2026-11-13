@@ -107,7 +107,7 @@ async function call(base, method, route, body, token) {
 }
 // Com prazo largo (nao 100 voltas de 50 ms): com a suite inteira em paralelo o payload demora mais a subir.
 async function up(base, ms = 30000) {
-  for (const end = Date.now() + ms; Date.now() < end; await wait(50)) {
+  for (const end = performance.now() + ms; performance.now() < end; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call(base, 'GET', '/health')).status === 200) return; } catch {}
   }
   throw new Error('payload did not start');

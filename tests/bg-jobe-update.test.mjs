@@ -152,9 +152,9 @@ async function startPayload(base, env = {}) {
     if (data) req.write(data);
     req.end();
   });
-  for (const end = Date.now() + 30000; ; await wait(50)) {
+  for (const end = performance.now() + 30000; ; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call('GET', '/health')).status === 200) break; } catch {}
-    if (Date.now() > end) throw new Error('payload did not start');
+    if (performance.now() > end) throw new Error('payload did not start');
   }
   return { child, call, page };
 }

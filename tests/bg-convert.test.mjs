@@ -4,7 +4,7 @@
 // progresso, cancelar, erros (com o codigo que o app traduz), espaco, tentar de novo pela mesma chave, reinicio no
 // meio (recomeca limpo), o pedido de varredura ao ShadowMount+ e o BACKUP na pagina do celular (PIN).
 // Precisa de cc, libcurl, OpenSSL e libarchive; rar/7z/zip so para os testes de compactado (sem eles, pulados).
-import test, { after } from 'node:test';
+import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -27,6 +27,14 @@ const tool = (name) => spawnSync('sh', ['-c', `command -v ${name}`]).status === 
 const MiB = 1024 * 1024;
 const PIN = '135790';
 const children = new Set();
+// glibren.49: um teste que falhou no meio (maquina carregada) deixava o payload dele no ar segurando a porta da API, e
+// todos os seguintes deste arquivo falhavam com "payload did not start" (16 falhas em cascata na .48). Cada teste
+// comeca sem nenhum payload de antes.
+beforeEach(async () => {
+  const left = [...children];
+  for (const child of left) child.kill('SIGKILL');
+  await Promise.all(left.map((child) => child.exitCode !== null || child.signalCode ? null : new Promise((resolve) => child.once('exit', resolve))));
+});
 let smp, smpPort, scans = 0;
 after(() => {
   for (const child of children) child.kill('SIGKILL');
@@ -71,12 +79,15 @@ async function call(base, method, route, body) {
   const res = await fetch(`http://127.0.0.1:${api}${route}`, { method, headers: { 'X-Jobe-Token': tok, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, data: await res.json().catch(() => ({})) };
 }
-async function up(base) {
-  for (let i = 0; i < 100; i++) {
+// glibren.49: prazo largo pelo relogio monotonico (com a suite inteira em paralelo subir passa de 5 s) e, se nao subir,
+// o fim do diario do payload na mensagem.
+async function up(base, ms = 30000) {
+  for (const end = performance.now() + ms; performance.now() < end; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call(base, 'GET', '/health')).status === 200) return; } catch {}
-    await wait(50);
   }
-  throw new Error('payload did not start');
+  let tail = '';
+  try { tail = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').split('\n').slice(-15).join('\n'); } catch {}
+  throw new Error(`payload did not start:\n${tail}`);
 }
 async function page(route, { method = 'GET', body, session } = {}) {
   const res = await fetch(`http://127.0.0.1:${monitorPort}${route}`, { method, headers: { 'Content-Type': 'application/json', ...(session ? { 'X-Session': session } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });

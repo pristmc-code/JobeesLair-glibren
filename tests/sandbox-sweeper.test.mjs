@@ -25,7 +25,7 @@ const build = () => built ??= spawnSync(compiler, ['-std=gnu11', '-O2', '-Wall',
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(check, what, ms = 4000) {
-  for (const start = Date.now(); Date.now() - start < ms; await wait(10)) if (check()) return;
+  for (const start = performance.now(); performance.now() - start < ms; await wait(10)) if (check()) return;
   assert.fail(`timed out waiting for ${what}`);
 }
 
@@ -54,7 +54,9 @@ function console_(name) {
   const close = (folder) => {
     rmSync(path.join(state, 'running'), { force: true });
     unmountAll(at(folder, 'app0'));
-    rmdirSync(at(folder, 'app0'));
+    // glibren.49: o sweeper (20x mais rapido aqui) pode ja ter apagado o app0 vazio entre as duas linhas (sob carga): ENOENT
+    // nao e falha. rmdir (nao rm -r): uma pasta com algo dentro continua sendo erro.
+    try { rmdirSync(at(folder, 'app0')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   };
   const log = () => (existsSync(path.join(state, 'sandbox.log')) ? readFileSync(path.join(state, 'sandbox.log'), 'utf8') : '');
   const start = () => {

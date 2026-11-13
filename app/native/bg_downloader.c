@@ -97,11 +97,23 @@
 #include <curl/curl.h>
 #include <openssl/evp.h>
 
-#define BG_VERSION "1.0.0"
+// glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
+// o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
+#ifndef BG_VERSION
+#define BG_VERSION "1.33.0"
+#endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 32 // glibren.47: a pagina de testes da Fase 0 (GET /teste, GET /api/teste/estado, POST /api/teste/enviar; bg_teste.c); glibren.44 (area Jobe): GET /jobe, POST /jobe/state e /api/jobe* na pagina do celular, o pedido de atualizacao, e GET /focus (bg_jobe.c); glibren.44 (diagnostico): GET /diag, POST /diag/send e /api/diag* na pagina do celular (bg_diag.c); glibren.44: account.json da Biblioteca TorBox enxuto (so os arquivos que o app usa + codes; sem rota nova); glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#ifndef BG_API
+#define BG_API 33 // glibren.49: atualizacao propria assinada (GET/POST /self-update, /api/payload* na pagina do celular; "minAppApi", "source" e "replace" no /health; bg_self.c); glibren.47: a pagina de testes da Fase 0 (GET /teste, GET /api/teste/estado, POST /api/teste/enviar; bg_teste.c); glibren.44 (area Jobe): GET /jobe, POST /jobe/state e /api/jobe* na pagina do celular, o pedido de atualizacao, e GET /focus (bg_jobe.c); glibren.44 (diagnostico): GET /diag, POST /diag/send e /api/diag* na pagina do celular (bg_diag.c); glibren.44: account.json da Biblioteca TorBox enxuto (so os arquivos que o app usa + codes; sem rota nova); glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#endif
+// glibren.49: o menor PAYLOAD_API de app com que este payload continua compativel (o "minAppApi" do manifesto). Um
+// app com PAYLOAD_API menor que este nao usa este payload baixado (bg_self.c). Suba quando uma rota/campo que um app
+// antigo usa mudar de jeito incompativel.
+#ifndef BG_MIN_APP_API
+#define BG_MIN_APP_API 33
+#endif
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -124,6 +136,9 @@
 #define CHECKPOINT_AWAY_MS 15000 // com o app fechado: menos fsync no disco que o sistema esta usando
 #define HEARTBEAT_MS 60000       // "pulso" no diario enquanto ha trabalho
 
+#if defined(__linux__) && !defined(__PROSPERO__)
+#include <sys/prctl.h> // glibren.49: testes no PC (ver o inicio do main)
+#endif
 #ifdef __PROSPERO__
 #include <sys/syscall.h>
 #include <sys/sysctl.h> // glibren.43: kern.msgbuf (primeiro plano)
@@ -4275,6 +4290,8 @@ static void switch_route(int fd, Request* r) {
 static void auto_plan_route(int fd, const char* query); // glibren.18 (perto da Biblioteca TorBox)
 static int diag_app_route(int fd, Request* r); // glibren.44: o diagnostico pelo GitHub (bg_diag.c)
 static int jobe_app_route(int fd, Request* r); // glibren.44: a area Jobe (bg_jobe.c)
+static int self_app_route(int fd, Request* r); // glibren.49: a atualizacao propria (bg_self.c)
+static void self_health(int* replace); // glibren.49
 static void route(int fd, Request* r) {
   // glibren.31: a troca de app vem tambem do app de videos, sem o token (ver switch_route).
   if (!strcmp(r->path, "/switch")) { switch_route(fd, r); return; }
@@ -4286,6 +4303,7 @@ static void route(int fd, Request* r) {
   if (lb_route(fd, r)) return; // glibren.38: /library/build
   if (diag_app_route(fd, r)) return; // glibren.44: /diag e /diag/send
   if (jobe_app_route(fd, r)) return; // glibren.44: /jobe e /jobe/state
+  if (self_app_route(fd, r)) return; // glibren.49: /self-update
   if (conv_app_route(fd, r)) return; // glibren.22: /backup e /log (a tela Pasta BACKUP do app)
   // glibren.18: o destino que o payload daria a um pedido do celular (o teste o compara com o do app).
   if (!strcmp(r->method, "GET") && !strncmp(r->path, "/auto/plan", 10) && (!r->path[10] || r->path[10] == '?')) {
@@ -4294,19 +4312,21 @@ static void route(int fd, Request* r) {
   }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/crash")) { crash_route(fd); return; } // pac1
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
-    char body[900], ip[64];
+    char body[1100], ip[64];
     current_ip(ip, sizeof ip);
+    int replace = 0;
+    self_health(&replace); // glibren.49
     pthread_mutex_lock(&g_lock);
     const Job* active = first_running_locked();
     snprintf(body, sizeof body, "{\"ok\":true,\"version\":\"%s\",\"api\":%d,\"pid\":%d,\"active\":%s%s%s,\"jobs\":%d,\"running\":%d,\"concurrency\":%d,"
              "\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u,"
              "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s,"
-             "\"convertPauseSeconds\":%d,\"convertWriteLimit\":%d,\"convertSyncMB\":%d,\"crash\":%s}",
+             "\"convertPauseSeconds\":%d,\"convertWriteLimit\":%d,\"convertSyncMB\":%d,\"crash\":%s,\"minAppApi\":%d,\"replace\":%s}",
              BG_VERSION, BG_API, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
              g_running_count, g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
              g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp, ip, g_monitor_on ? "true" : "false",
              g_monitor_port_now(), g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false",
-             g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb, g_crash_id[0] ? "true" : "false");
+             g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb, g_crash_id[0] ? "true" : "false", BG_MIN_APP_API, replace ? "true" : "false");
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
     return;
@@ -4471,6 +4491,10 @@ static void* serve_client(void* arg) {
 }
 
 static volatile int g_reopen_server;
+// glibren.49: quando o processo comecou (monotonico). Nos primeiros 20 s uma porta ocupada e tentada de novo a cada
+// 250 ms (o payload anterior pode estar soltando a porta); antes eram 10 s fixos, e quem esperava a subida desistia.
+static int64_t g_boot_ms;
+static int64_t port_retry_ms(void) { return mono_ms() - g_boot_ms < 20000 ? 250 : 10000; }
 
 static int open_server(void) {
   int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -4495,7 +4519,7 @@ static void* server_loop(void* arg) {
     if (server < 0) {
       if (mono_ms() < next_try) { sleep_ms(200); continue; }
       server = open_server();
-      if (server < 0) { logf_("servidor: porta %d indisponivel (%s); tenta de novo em 10 s", g_port, strerror(errno)); next_try = mono_ms() + 10000; continue; }
+      if (server < 0) { const int64_t again = port_retry_ms(); logf_("servidor: porta %d indisponivel (%s); tenta de novo em %lld ms", g_port, strerror(errno), (long long)again); next_try = mono_ms() + again; continue; }
       logf_("servidor: ouvindo em 127.0.0.1:%d", g_port);
       failures = 0;
     }
@@ -6855,6 +6879,14 @@ static void auto_after_download(Job* j) {
 // glibren.44: a area Jobe da pagina do celular (versao e "Atualizar a Jobe"; quem atualiza e o app).
 #include "bg_jobe.c"
 #include "bg_teste.c" // glibren.47: a pagina de testes da Fase 0 (/teste)
+#include "bg_self.c"  // glibren.49: a atualizacao propria do payload, assinada (Fase 2)
+// glibren.49: o /health diz se o payload no ar foi posto de lado ("Voltar ao payload embutido"): o app sobe o embutido.
+static void self_health(int* replace) {
+  self_init();
+  SelfState s;
+  self_load(&s);
+  *replace = self_is_bad(&s, BG_VERSION);
+}
 
 static void monitor_route(int fd, Request* r, uint32_t ip) {
   char* query = strchr(r->path, '?');
@@ -6865,6 +6897,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (store_route(fd, r, query)) return; // glibren (item 2): /api/store
   if (diag_monitor_route(fd, r)) return; // glibren.44: /api/diag (chave do GitHub, enviar, .zip)
   if (jobe_monitor_route(fd, r)) return; // glibren.44: /api/jobe (versao e pedido de atualizacao)
+  if (self_monitor_route(fd, r)) return; // glibren.49: /api/payload (versao do payload, atualizar, voltar ao embutido)
   if (teste_monitor_route(fd, r)) return; // glibren.47: /teste e /api/teste (testes da Fase 0)
   if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {
@@ -7003,7 +7036,7 @@ static void* monitor_loop(void* arg) {
     if (server < 0) {
       if (!g_monitor_on || mono_ms() < next_try) { sleep_ms(200); continue; }
       server = open_monitor();
-      if (server < 0) { logf_("pagina do celular: porta %d indisponivel (%s); tenta de novo em 10 s", g_monitor_port, strerror(errno)); next_try = mono_ms() + 10000; continue; }
+      if (server < 0) { const int64_t again = port_retry_ms(); logf_("pagina do celular: porta %d indisponivel (%s); tenta de novo em %lld ms", g_monitor_port, strerror(errno), (long long)again); next_try = mono_ms() + again; continue; }
       logf_("pagina do celular: ouvindo em 0.0.0.0:%d", g_monitor_port);
       failures = 0;
     }
@@ -7066,6 +7099,14 @@ int main(void) {
   if (g_app_silence_ms <= 0) g_app_silence_ms = 15000;
   g_fake_free = strtoull(env_or("BGDL_FAKE_FREE_BYTES", "0"), NULL, 10);
   g_last_app_ms = mono_ms();
+  g_boot_ms = mono_ms(); // glibren.49
+#if defined(__linux__) && !defined(__PROSPERO__)
+  // glibren.49: so no PC (testes). Um runner de teste que morre antes do after() deixava este processo vivo para sempre,
+  // tentando de novo a porta dele a cada 10 s e roubando-a dos testes seguintes (payloads de 15 h atras seguravam as
+  // portas 13000-16001: era a falha "porta indisponivel" / "payload did not start" em cascata). Agora ele sai junto.
+  prctl(PR_SET_PDEATHSIG, SIGTERM);
+  if (getppid() == 1) return 1;
+#endif
   g_session_seconds = atoll(env_or("BGDL_SESSION_SECONDS", "2592000"));
   if (g_session_seconds <= 0) g_session_seconds = 30LL * 24 * 3600;
 #ifdef __PROSPERO__
@@ -7089,6 +7130,9 @@ int main(void) {
   set_process_name();
   read_previous_session();
   logk_("==== iniciando bg-downloader %s (%s, api %d), pid %d, pai %d", BG_VERSION, BG_BUILD, BG_API, (int)getpid(), (int)getppid());
+  // glibren.49 (Fase 2): um payload baixado, assinado e mais novo que este e que o embutido do app? Passa a vez para ele
+  // (antes do lock: o que esta no ar continua ate o novo assumir) e sai.
+  if (self_boot_handoff()) { printf("handoff\n"); fflush(stdout); return 0; }
   g_lock_fd = take_lock();
   if (g_lock_fd < 0) { logk_("outra copia segura o lock; saindo"); printf("busy\n"); fflush(stdout); return 1; }
   report_previous_session(g_lock_contended);
@@ -7152,6 +7196,10 @@ int main(void) {
   while (!g_stop) {
     sleep_ms(1000);
     power_check(); // glibren: desligar/repouso pedido pela pagina do celular
+    self_tick(mono_ms() - g_boot_ms); // glibren.49: confirma esta versao e faz a troca pendente quando ocioso
+#ifndef __PROSPERO__
+    { struct stat dir_st; if (stat(g_dir, &dir_st)) { logk_("pasta %s sumiu: saindo (teste no PC)", g_dir); g_stop = 1; } } // glibren.49
+#endif
     {
       const int64_t mono = mono_ms();
       const int running_now = app_running();

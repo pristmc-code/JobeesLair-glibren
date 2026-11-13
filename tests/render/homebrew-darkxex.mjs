@@ -93,6 +93,14 @@ const conflict = en['homebrew.conflict'].replace('{name}', 'Spider-Man: Edge of 
 assert.ok(shown.includes(conflict), shown.join('|'));
 assert.ok(whole(conflict));
 
+// glibren.49: os apps que a .48 escondia aparecem, com a linha informativa inteira (Alembic esta no feed de exemplo).
+const alembic = index.apps.find((app) => app.titleId === 'PPSA99594');
+assert.ok(alembic, 'Alembic na aba');
+shown = draw({ type: HomebrewApp, props: { id: alembic.id, onBack() {} } });
+assert.ok(shown.includes(en['homebrew.notice.ownCopies']), shown.join('|'));
+assert.ok(whole(en['homebrew.notice.ownCopies']), 'a linha informativa quebra sem reticencias');
+assert.ok(!shown.includes(en['homebrew.notice.thirdPartyStore']), 'so a linha dele');
+
 // A secao: a linha das listas, os creditos e a chave.
 shown = draw({ type: HomebrewScreen, props: { onBack() {}, onOpenApp() {} } });
 for (const text of [en['homebrew.listByBoth'], en['homebrew.creditsDarkxex'], en['settings.darkxex']]) {

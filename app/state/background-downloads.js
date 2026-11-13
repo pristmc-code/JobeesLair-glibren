@@ -59,6 +59,7 @@ import { setOrbitSource } from './orbit-feed.js';
 import { setLibraryPayload } from './torbox-library-payload.js';
 import { setDiagnosticsSource } from './diagnostics.js';
 import { setJobeSource } from './jobe-remote.js';
+import { setPayloadSelfSource } from './payload-self.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
@@ -84,7 +85,13 @@ import { setJobeSource } from './jobe-remote.js';
   // mandava todos os arquivos de cada item da conta e o app segurava ~20 MB (sem rota nova).
   // glibren.44: 30, o diagnostico pelo GitHub (GET /diag, POST /diag/send; /api/diag* na pagina do celular; bg_diag.c).
   // glibren.44: 31, a area Jobe da pagina do celular (GET /jobe, POST /jobe/state; /api/jobe*; bg_jobe.c) e GET /focus.
-  var PAYLOAD_API = 32;
+  // glibren.47: 32, a pagina de testes da Fase 0 (GET /teste).
+  // glibren.49: 33, a atualizacao propria assinada do payload (GET/POST /self-update; "minAppApi" e "replace" no /health).
+  var PAYLOAD_API = 33;
+  // glibren.49 (Fase 2): a versao do bg-downloader.elf embutido neste app (BG_VERSION em app/native/bg_downloader.c; o
+  // tests/bg-self-update.test.mjs confere que sao iguais). Vai em <stateDir>/app.json junto com PAYLOAD_API: o payload
+  // so usa um baixado MAIS NOVO que este e compativel com esta API (contrato em app/native/bg_self.c).
+  var BG_EMBEDDED_VERSION = "1.33.0";
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -265,6 +272,12 @@ function createBackgroundDownloads({
     convertOptions = () => null,
     // glibren.13: a "api" minima do payload no ar; um mais antigo e trocado pelo ELF deste app (ensurePayloadNow).
     payloadApi = PAYLOAD_API,
+    // glibren.49 (Fase 2): a versao do ELF embutido (vai no app.json do payload); quantas vezes o app manda o payload
+    // quando ninguem responde (um baixado que nao sobe conta uma tentativa no payload e, na 2a, e marcado como ruim: a
+    // 3a sobe o anterior ou o embutido); e se pede ao payload, uma vez por abertura, para procurar uma versao nova dele.
+    embeddedVersion = BG_EMBEDDED_VERSION,
+    startTries = 1,
+    selfUpdate = false,
     // glibren: poe na fila um pedido da Biblioteca TorBox feito no celular ({ id, hash, file, whole, code, platform,
     // title, size }; lanca o motivo quando nao da), ou null; e de quanto em quanto os pedidos sao vistos (0 = so quando
     // adoptRequests() e chamado).
@@ -354,7 +367,10 @@ function createBackgroundDownloads({
     // a "api" dele; menor que PAYLOAD_API (ou sem ela), o app manda o ELF novo, que pede ao antigo para sair (ele grava
     // os checkpoints e a fila) e continua a fila de onde parou. So quando o antigo nao esta baixando nada: ocupado, ele
     // fica ate a proxima vez que o app precisar do payload sem nada rodando.
-    const upToDate = (state) => Number.isInteger(state?.api) && state.api >= payloadApi;
+    // glibren.49: e nao foi posto de lado ("Voltar ao payload embutido": replace) nem e um baixado de API maior que nao
+    // declarou compatibilidade com este app (minAppApi maior que o PAYLOAD_API daqui).
+    const upToDate = (state) => Number.isInteger(state?.api) && state.api >= payloadApi && state.replace !== true &&
+      !(state.api > payloadApi && Number.isInteger(state.minAppApi) && state.minAppApi > payloadApi);
     let staleSaid = null;
     // glibren.20b: o rar-extract.elf do app (UnRAR num programa separado) vai para a pasta do payload: com ele o payload
     // descompacta RAR cifrado (os do DLPSGAME), que a libarchive dele nao abre. Uma vez por abertura, so quando mudou.
@@ -375,8 +391,57 @@ function createBackgroundDownloads({
         log(`rar-extract.elf not copied: ${problem?.message ?? problem}`);
       }
     }
+    // glibren.49 (Fase 2): antes de subir o payload, o app diz a ele a PAYLOAD_API e a versao do embutido (app.json) e
+    // deixa uma copia do ELF embutido (embedded.elf), para "Voltar ao payload embutido" funcionar sem o app aberto.
+    let embeddedStaged = false;
+    function tellPayload() {
+      if (platform !== "ps5" || typeof fs.writeFile !== "function") return;
+      let previous = null;
+      try {
+        previous = JSON.parse(String(fs.readFile(`${stateDir}/app.json`) ?? "") || "null");
+      } catch {
+      }
+      try {
+        if (previous?.api !== payloadApi || previous?.embedded !== embeddedVersion) {
+          fs.mkdir?.(stateDir, { recursive: true });
+          fs.writeFile(`${stateDir}/app.json.tmp`, JSON.stringify({ api: payloadApi, embedded: embeddedVersion }), { sync: true });
+          fs.rename(`${stateDir}/app.json.tmp`, `${stateDir}/app.json`);
+        }
+      } catch (problem) {
+        log(`app.json not written for the payload: ${problem?.message ?? problem}`);
+      }
+      if (embeddedStaged || typeof fs.copyAsync !== "function") return;
+      embeddedStaged = true;
+      const to = `${stateDir}/embedded.elf`;
+      try {
+        const source = fs.stat(ELF);
+        const here = fs.exists(to) ? fs.stat(to) : null;
+        if (!source || here && here.size === source.size && previous?.embedded === embeddedVersion) return;
+        if (here) fs.remove(to);
+        if (fs.exists(`${to}.partial`)) fs.remove(`${to}.partial`);
+        const task = fs.copyAsync(ELF, to, { verify: false, resume: false });
+        task?.done?.then(() => log("embedded payload copied for the payload's revert"), (problem) => log(`embedded.elf not copied: ${problem?.message ?? problem}`));
+      } catch (problem) {
+        log(`embedded.elf not copied: ${problem?.message ?? problem}`);
+      }
+    }
+    // glibren.49: uma vez por abertura, com o payload no ar, ele procura a versao nova dele (no maximo a cada 6 h, la).
+    let selfAsked = false;
+    function askSelfUpdate(token) {
+      if (!selfUpdate || selfAsked || !token) return;
+      selfAsked = true;
+      call(token, "POST", "/self-update", { action: "check" }).then((answer) => {
+        if (answer.status === 200) log(`payload ${answer.data?.version ?? "?"} (${answer.data?.source ?? "?"}) looks for a newer version of itself`);
+      }, () => {});
+    }
     async function ensurePayloadNow() {
+      const token = await ensurePayloadOnce();
+      askSelfUpdate(token);
+      return token;
+    }
+    async function ensurePayloadOnce() {
       stageRarWorker();
+      tellPayload();
       let token = readToken();
       let state = token ? await health(token) : null;
       if (state && upToDate(state)) return token;
@@ -385,35 +450,46 @@ function createBackgroundDownloads({
         // glibren.22: trocado mesmo baixando ou convertendo. Esperar ele ficar ocioso deixava o antigo no ar para sempre
         // com uma fila longa (ou uma conversao que nunca acabava), e o app novo sem o que ele traz. O antigo grava os
         // checkpoints e a fila ao sair; o novo continua os downloads de onde pararam e poe as conversoes de volta na fila.
-        if (state.running > 0 || state.quiet) log(`payload ${state.pid} is an older one (api ${state.api ?? "none"}) and busy; it saves where it was and this app's payload carries on`);
-        else log(`payload ${state.pid} is an older one (api ${state.api ?? "none"}); sending this app's payload in its place`);
+        // glibren.49: o motivo da troca (antigo, posto de lado ou um baixado incompativel com este app).
+        const what = state.replace === true ? "set aside (back to the built-in payload)" : Number.isInteger(state.api) && state.api > payloadApi ? `not meant for this app (api ${state.api}, minAppApi ${state.minAppApi})` : `an older one (api ${state.api ?? "none"})`;
+        if (state.running > 0 || state.quiet) log(`payload ${state.pid} is ${what} and busy; it saves where it was and this app's payload carries on`);
+        else log(`payload ${state.pid} is ${what}; sending this app's payload in its place`);
       }
       if (platform !== "ps5" || !payloads) return "";
+      // glibren.49: ate startTries subidas quando ninguem responde (um baixado que cai na subida: o payload conta as
+      // tentativas e, na 2a, marca a versao como ruim; a seguinte sobe o anterior ou o embutido).
+      for (let attempt = 1; ; attempt++) {
+        const answered = await sendAndWait(state, token);
+        if (answered.done || attempt >= startTries) return answered.token;
+        log(`payload did not answer; sending it again (${attempt + 1} of ${startTries})`);
+      }
+    }
+    async function sendAndWait(state, token) {
       try {
         const result = payloads.send(ELF, { answer: false });
         if (!result?.ok) {
           log(`payload not sent: ${result?.error ?? "no answer"}`);
-          return state ? token : "";
+          return { done: true, token: state ? token : "" };
         }
       } catch (error) {
         log(`payload not sent: ${error?.message ?? error}`);
-        return state ? token : "";
+        return { done: true, token: state ? token : "" };
       }
       let answered = "";
       for (const until = Date.now() + startWaitMs; Date.now() < until; ) {
         await wait(Math.min(400, startWaitMs));
         token = readToken();
         state = token ? await health(token) : null;
-        if (state && upToDate(state)) return token;
+        if (state && upToDate(state)) return { done: true, token };
         if (state) answered = token;
       }
       // O antigo ainda responde (o novo nao subiu): segue com ele, como antes.
       if (answered) {
         log("the new payload did not take over in time; keeping the one running");
-        return answered;
+        return { done: true, token: answered };
       }
       log("payload did not answer in time; downloading in the app");
-      return "";
+      return { done: false, token: "" };
     }
     // glibren.13: uma entrega por servico de cada vez (a abertura do app e a fila podem pedir juntas).
     const handing = /* @__PURE__ */ new Map();
@@ -1210,6 +1286,14 @@ function createBackgroundDownloads({
       conversions: () => wrapper.conversions()
     };
     setJobeSource(wrapper.jobe);
+    // glibren.49 (Fase 2): a versao do payload e a atualizacao propria dele (Configuracoes > Sobre; state/payload-self.js).
+    // status/revert so com um payload no ar; check sobe o payload se preciso.
+    wrapper.payloadSelf = {
+      status: () => backupCall(false, "GET", "/self-update"),
+      check: (force = true) => backupCall(true, "POST", "/self-update", { action: "check", force: force === true }),
+      revert: () => backupCall(false, "POST", "/self-update", { action: "revert" })
+    };
+    setPayloadSelfSource(wrapper.payloadSelf);
     // glibren.44: o foco do controle pelo kern.msgbuf (GET /focus, so leitura): { ok, known, jobe, focus, at }, ou null sem
     // payload no ar (ou um antigo, api < 31). jobe === true: o foco esta na propria Jobe.
     wrapper.focus = async () => {
@@ -1226,4 +1310,4 @@ function createBackgroundDownloads({
     return wrapper;
   }
 
-export { payloadFocus, PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, switchAppVia, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };
+export { BG_EMBEDDED_VERSION, payloadFocus, PAYLOAD_API, backgroundDownloadsOn, createBackgroundDownloads, inBackground, onBackgroundDownloads, onPauseOnClose, PAUSE_CHOICES, pauseOnCloseSeconds, sayByeToPayload, switchAppVia, setBackgroundDownloads, setPauseOnCloseSeconds, takeOverDownload, useBackgroundDownloads, useBackgroundOwner, usePauseOnCloseSeconds };

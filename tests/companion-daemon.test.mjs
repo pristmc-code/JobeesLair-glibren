@@ -195,13 +195,13 @@ test('a helper from 0.5.0 Pre Release 1 is told to stop, and the new one takes i
 // ms, and resolves with what came back and how long the connection stayed open.
 function raw(port, { text = '', trickle = '', every = 0 } = {}) {
   return new Promise((resolve) => {
-    const started = Date.now();
+    const started = performance.now(); // glibren.49: monotonico
     const socket = net.connect(port, '127.0.0.1');
     let answer = '', timer = null;
     socket.on('data', (chunk) => { answer += chunk; });
     socket.on('error', () => {});
     socket.setTimeout(10000, () => socket.destroy());
-    socket.on('close', () => { clearInterval(timer); resolve({ answer, open: Date.now() - started }); });
+    socket.on('close', () => { clearInterval(timer); resolve({ answer, open: performance.now() - started }); });
     socket.on('connect', () => {
       if (text) socket.write(text);
       let at = 0;

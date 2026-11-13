@@ -68,6 +68,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       fs: FileSystem,
       payloads: Payloads,
       platform: Platform.OS,
+      // glibren.49 (Fase 2): o payload se atualiza sozinho (assinado); ate 3 subidas quando um baixado nao responde.
+      selfUpdate: true,
+      startTries: 3,
       handoff: debridHandoff,
       secret: debridSecret,
       text: t,

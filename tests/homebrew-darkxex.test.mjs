@@ -26,9 +26,13 @@ test('feed real: cada app vira um registro da aba, com sha256, title ID, tag do 
   assert.ok(feed, 'o feed foi lido');
   assert.match(feed.commit, /^[0-9a-f]{40}$/);
   const raw = JSON.parse(feedText);
-  // Alembic (escondido) sai; as reservas (coming_soon) nem entram na lista.
-  assert.equal(feed.apps.length, raw.apps.length - 1);
-  assert.ok(!feed.apps.some((app) => app.titleId === 'PPSA99594'), 'Alembic escondido');
+  // glibren.49: nada escondido (Alembic volta, com a linha informativa); as reservas (coming_soon) nem entram na lista.
+  assert.equal(feed.apps.length, raw.apps.length);
+  assert.equal(dx.HIDDEN.size, 0, 'o mecanismo fica, vazio');
+  const alembic = feed.apps.find((app) => app.titleId === 'PPSA99594');
+  assert.ok(alembic, 'Alembic aparece');
+  assert.equal(dx.noticeOf(alembic), 'homebrew.notice.ownCopies');
+  assert.equal(dx.noticeOf(feed.apps.find((app) => app.titleId === 'PPSA01153')), null, 'app comum sem aviso');
   assert.ok(!feed.apps.some((app) => raw.coming_soon.some((c) => c.titleid === app.titleId)), 'reservas fora');
   const olise = feed.apps.find((app) => app.titleId === 'PPSA01153');
   assert.equal(olise.id, 'marice/oliseplayer');

@@ -137,9 +137,9 @@ async function startPayload(githubBase, glibrenPort, env = {}) {
     try { data = JSON.parse(buffer.toString('utf8')); } catch {}
     return { status: res.status, data, text: buffer.toString('utf8'), buffer, type: res.headers.get('content-type') };
   };
-  for (const end = Date.now() + 30000; ; await wait(50)) {
+  for (const end = performance.now() + 30000; ; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call('GET', '/health')).status === 200) break; } catch {}
-    if (Date.now() > end) throw new Error('payload did not start');
+    if (performance.now() > end) throw new Error('payload did not start');
   }
   const PIN = '2468';
   const salt = randomBytes(32).toString('hex');

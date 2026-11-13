@@ -87,7 +87,8 @@ import { GLIBREN_PUBLIC_KEY, MANIFEST_NAME, SIGNATURE_NAME, signedAssets, verify
   // when both files are there and checkable.
   // glibren-tube-update: o mesmo repositorio publica versoes so do servico do YouTube (tags "tube-service-<versao>",
   // state/tube-update.js), sempre como NAO latest. Elas nunca sao uma versao do app, mesmo se aparecerem aqui.
-  var TUBE_SERVICE_TAG = /^tube-service-/i;
+  // glibren.49: e as do payload de downloads ("bg-downloader-<versao>", app/native/bg_self.c), tambem NAO latest.
+  var TUBE_SERVICE_TAG = /^(?:tube-service|bg-downloader)-/i;
   var isTubeServiceTag = (tag) => typeof tag === "string" && TUBE_SERVICE_TAG.test(tag);
   function describe(release, repo) {
     const tag = release?.tag_name;

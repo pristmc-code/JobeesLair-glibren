@@ -6,7 +6,7 @@
 //     ShadowMount+, fim);
 //   - a queda da sessao anterior: last-crash.json (ate 4 KB, ultimas linhas, o que fazia, o ultimo marco) e GET /crash.
 // Tempos curtos: pausa de 2 s, limite de 4 MB/s, marco de progresso a cada 1 MiB (BGDL_MARK_BYTES).
-import test, { after } from 'node:test';
+import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -27,6 +27,14 @@ const missing = Boolean(built && built.status !== 0 && /curl\/curl\.h|openssl\/e
 const skip = !compiler ? 'no C compiler' : missing ? 'no libcurl/OpenSSL/libarchive headers' : built.status !== 0 ? `did not compile: ${built.stderr.slice(0, 400)}` : false;
 const MiB = 1024 * 1024;
 const children = new Set();
+// glibren.49: um teste que falhou no meio (maquina carregada) deixava o payload dele no ar segurando a porta da API, e
+// todos os seguintes deste arquivo falhavam com "payload did not start" (16 falhas em cascata na .48). Cada teste
+// comeca sem nenhum payload de antes.
+beforeEach(async () => {
+  const left = [...children];
+  for (const child of left) child.kill('SIGKILL');
+  await Promise.all(left.map((child) => child.exitCode !== null || child.signalCode ? null : new Promise((resolve) => child.once('exit', resolve))));
+});
 let smp, smpPort;
 after(() => {
   for (const child of children) child.kill('SIGKILL');
@@ -70,12 +78,15 @@ async function call(base, method, route, body) {
   const res = await fetch(`http://127.0.0.1:${api}${route}`, { method, headers: { 'X-Jobe-Token': tok, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, data: await res.json().catch(() => ({})) };
 }
-async function up(base) {
-  for (let i = 0; i < 100; i++) {
+// glibren.49: prazo largo pelo relogio monotonico (com a suite inteira em paralelo subir passa de 5 s) e, se nao subir,
+// o fim do diario do payload na mensagem.
+async function up(base, ms = 30000) {
+  for (const end = performance.now() + ms; performance.now() < end; await wait(50)) {
     try { if (existsSync(path.join(base, 'state/token')) && (await call(base, 'GET', '/health')).status === 200) return; } catch {}
-    await wait(50);
   }
-  throw new Error('payload did not start');
+  let tail = '';
+  try { tail = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').split('\n').slice(-15).join('\n'); } catch {}
+  throw new Error(`payload did not start:\n${tail}`);
 }
 const conversion = async (base, id) => (await call(base, 'GET', '/convert')).data.conversions.find((item) => item.id === id);
 async function until(base, id, states, check = () => true, ms = 60000) {
@@ -121,7 +132,7 @@ test('pac1: pausa entre conversoes respeitada, visivel no GET /convert e no celu
   const first = await call(base, 'POST', '/convert', request(base, 1));
   const second = await call(base, 'POST', '/convert', request(base, 2));
   await until(base, first.data.id, ['done'], () => true);
-  const doneAt = Date.now();
+  const doneAt = performance.now(); // glibren.49: monotonico (o Date.now do WSL atrasa sob carga)
   // Logo depois da primeira: a segunda espera (o app e o celular veem quanto falta).
   let list = (await call(base, 'GET', '/convert')).data;
   for (let i = 0; i < 40 && !list.waitSeconds; i++) { await wait(25); list = (await call(base, 'GET', '/convert')).data; }
@@ -131,7 +142,7 @@ test('pac1: pausa entre conversoes respeitada, visivel no GET /convert e no celu
   const phone = await (await fetch(`http://127.0.0.1:${monitorPort}/api/status`)).json();
   assert.ok(phone.convertWaitSeconds >= 1, `convertWaitSeconds ${phone.convertWaitSeconds}`);
   await until(base, second.data.id, ['converting', 'verifying', 'done'], () => true);
-  assert.ok(Date.now() - doneAt >= 1500, `a segunda comecou ${Date.now() - doneAt} ms depois da primeira`);
+  assert.ok(performance.now() - doneAt >= 1500, `a segunda comecou ${Math.round(performance.now() - doneAt)} ms depois da primeira`);
   await until(base, second.data.id, ['done']);
   assert.equal((await call(base, 'GET', '/convert')).data.waitSeconds, 0, 'sem nada na fila, nada a esperar');
   assert.match(log(base), /pausa entre conversoes: Jogo 2 comeca em \d+ s/);
