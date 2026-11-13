@@ -51,6 +51,8 @@ const TODOS = [
   // PS5 com o patch de tela cheia (ps5/PESQUISA-navegador-ps5-tela-cheia.md)
   { nome: '1540x700-ps5', w: 1540, h: 700, movel: false, ps5: true },
   { nome: '1232x560-ps5', w: 1232, h: 560, movel: false, ps5: true },
+  // da direita para a esquerda (arabe) no celular
+  { nome: '412x915-ar', w: 412, h: 915, movel: true, idioma: 'ar' },
 ];
 const pedidos = typeof args.tamanhos === 'string' ? args.tamanhos.split(',') : null;
 const TAMANHOS = pedidos ? TODOS.filter((t) => pedidos.includes(t.nome)) : TODOS;
@@ -82,7 +84,7 @@ const REGRAS = () => {
 
 let passo = '';
 async function medirTamanho(navegador, api, t, jogo) {
-  const contexto = await navegador.newContext({ viewport: { width: t.w, height: t.h }, deviceScaleFactor: 1, isMobile: t.movel, hasTouch: t.movel, locale: 'pt-BR',
+  const contexto = await navegador.newContext({ viewport: { width: t.w, height: t.h }, deviceScaleFactor: 1, isMobile: t.movel, hasTouch: t.movel, locale: t.idioma || 'pt-BR',
     ...(t.ps5 ? { userAgent: PS5_UA } : {}) });
   if (checar) await contexto.addInitScript(() => {
     const pad = { id: 'controle falso', index: 0, connected: true, mapping: 'standard', axes: [0, 0, 0, 0], timestamp: 0, buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) };
@@ -113,7 +115,9 @@ async function medirTamanho(navegador, api, t, jogo) {
     conferir(tela.navL >= t.w - 2 && tela.navA <= t.h * 0.12, `${t.nome}: no PS5 a navegacao devia ser um cabecalho baixo (${tela.navL}x${tela.navA})`);
   }
   // fora do PS5 o Chromium tem a Fullscreen API: o botao aparece; no PS5 nao (a moldura e do ShellUI; so o gancho do payload)
-  conferir(tela.telaCheia === !t.ps5, `${t.nome}: botao Tela cheia ${tela.telaCheia ? 'visivel' : 'escondido'} (esperado ${t.ps5 ? 'escondido no PS5' : 'visivel'})`);
+  // fora do PS5: a Fullscreen API; no PS5: o ⛶ pelo glibren (no ar na API falsa) aparece logo depois de perguntar
+  if (!t.ps5) conferir(tela.telaCheia, `${t.nome}: botao Tela cheia devia aparecer (Chromium tem a API)`);
+  if (t.ps5 && t.h >= 1060) conferir(!tela.telaCheia, `${t.nome}: ja em tela cheia, o ⛶ nao devia aparecer`);
   const r1 = await pagina.evaluate(REGRAS);
   await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-loja.png`) });
   // o 1o botao da navegacao e "Jogos" (fora da loja vira "<- JOGOS")
@@ -191,14 +195,14 @@ async function medirTamanho(navegador, api, t, jogo) {
   await pagina.waitForSelector('#parCodL:not([hidden])', { timeout: 5000 });
   await pagina.fill('#parCodigo', '000000');
   await pagina.click('#parSim');
-  await pagina.waitForFunction(() => /errado|Wrong/.test(document.getElementById('parErro').textContent), null, { timeout: 5000 });
+  await pagina.waitForFunction(() => document.getElementById('parErro').textContent.length > 0, null, { timeout: 5000 });
   await pagina.fill('#parCodigo', '123456');
   await pagina.click('#parSim');
   await pagina.waitForFunction(() => document.getElementById('acesso').hidden, null, { timeout: 5000 });
   const guardado = await pagina.evaluate(() => localStorage.getItem('jobe.session'));
   conferir(/^[0-9a-f]{64}$/.test(guardado || ''), `${t.nome}: o token do aparelho nao foi guardado em jobe.session`);
   passo = "await pagina.waitForFunction(() => document.getElementById('fBaixar').";
-  await pagina.waitForFunction(() => document.getElementById('fBaixar').disabled && /fila|Queued/i.test(document.getElementById('fBaixar').textContent), null, { timeout: 5000 });
+  await pagina.waitForFunction(() => document.getElementById('fBaixar').disabled && document.getElementById('fBaixar').textContent === window.jobeApp.L.naFila, null, { timeout: 5000 });
   passo = "await pagina.click('#fVoltar');";
   await pagina.click('#fVoltar');
   passo = "await pagina.waitForFunction(() => document.getElementById('ficha').hi";
@@ -213,6 +217,43 @@ async function medirTamanho(navegador, api, t, jogo) {
   const r4 = await pagina.evaluate(REGRAS);
   const navFora = await pagina.evaluate(() => document.querySelector('#nav .nb').textContent.trim());
   await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-downloads.png`) });
+
+  // ---- configuracoes (/api/settings, com o token do pareamento acima) ----
+  passo = 'configuracoes';
+  await pagina.click('#nav .nb[data-sec="config"]');
+  await pagina.waitForSelector('#cfg_backgroundDownloads', { timeout: 8000 }).catch(async (e) => {
+    throw new Error(`${e.message.split(String.fromCharCode(10))[0]} | tela: ${await pagina.evaluate(() => document.getElementById('secConfig').innerText.slice(0, 300))}`); });
+  const antesCfg = api.config.rev, antesValor = api.config.values.backgroundDownloads;
+  await pagina.click('#cfg_backgroundDownloads');
+  await pagina.waitForFunction(() => document.getElementById('cfgCorpo').textContent.indexOf(window.jobeApp.L.cfg.salvo) >= 0, null, { timeout: 5000 });
+  conferir(api.config.values.backgroundDownloads === !antesValor && api.config.rev > antesCfg, `${t.nome}: o liga/desliga nao gravou em /api/settings`);
+  await pagina.fill('#cfg_speedLimit', '5000'); await pagina.press('#cfg_speedLimit', 'Tab');
+  conferir(await pagina.evaluate(() => document.getElementById('cfgCorpo').textContent.indexOf(window.jobeApp.L.cfg.invalido) >= 0), `${t.nome}: 5000 MB/s devia ser recusado na pagina`);
+  await pagina.selectOption('#cfg_simultaneousDownloads', '3');
+  await pagina.waitForFunction(() => true, null, { timeout: 300 }).catch(() => {});
+  await espera(300);
+  conferir(api.config.values.simultaneousDownloads === 3, `${t.nome}: o select nao gravou`);
+  const chaves = await pagina.evaluate(() => document.getElementById('cfgChavesLista').textContent);
+  conferir(/a1b2/.test(chaves) && !/9z8y9/.test(chaves), `${t.nome}: segredos so como "configurada ✓ …fim": ${chaves}`);
+  await pagina.evaluate(() => { document.getElementById('secConfig').scrollTop = 0; });
+  const r5 = await pagina.evaluate(REGRAS);
+  await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-config.png`) });
+  if (t.ps5 && t.h < 1060) {
+    // o botao ⛶ (glibren no ar pela API falsa) e a janela que pede ao payload; em 1920x1080 o PS5 ja esta em tela cheia
+    await pagina.click('#nav .nb[data-sec="loja"]');
+    await pagina.waitForSelector('#bTela:not([hidden])', { timeout: 5000 });
+    await pagina.click('#bTela');
+    await pagina.waitForSelector('#tcForm:not([hidden])', { timeout: 5000 });
+    await pagina.click('#tcSim');
+    await pagina.waitForFunction(() => document.getElementById('tcEst').textContent === window.jobeApp.L.tc.indo, null, { timeout: 5000 });
+    conferir(api.telaPedidos.length > 0 && /^#\//.test(api.telaPedidos.at(-1)), `${t.nome}: o ⛶ nao pediu ao payload com a volta para a /app`);
+    await pagina.click('#tcNao');
+  }
+  for (const [qual, r] of [['config', r5]]) {
+    conferir(!r.largo.length, `${t.nome} ${qual}: rola de lado: ${r.largo.join(', ')}`);
+    conferir(!r.reticencias, `${t.nome} ${qual}: reticencias`);
+    conferir(!r.desiguais.length, `${t.nome} ${qual}: botoes de larguras diferentes: ${r.desiguais.join('; ')}`);
+  }
 
   // ---- controle e teclado (so com --checar) ----
   let controle = null;
@@ -270,15 +311,16 @@ async function medirTamanho(navegador, api, t, jogo) {
     conferir(!r.desiguais.length, `${t.nome} ${qual}: botoes de larguras diferentes: ${r.desiguais.join('; ')}`);
     conferir(!r.cortados, `${t.nome} ${qual}: ${r.cortados} texto(s) cortado(s)`);
   }
-  conferir(/Jogos/.test(primeiroNav), `${t.nome}: 1o botao da navegacao: ${primeiroNav}`);
-  conferir(/^← JOGOS$/.test(navFora), `${t.nome}: fora da loja o 1o botao deveria ser "← JOGOS": ${navFora}`);
-  conferir(/^← JOGOS$/.test(fichaPrimeiro), `${t.nome}: o 1o botao da ficha deveria ser "← JOGOS": ${fichaPrimeiro}`);
+  const Lp = await pagina.evaluate(() => ({ jogos: window.jobeApp.L.jogos, voltar: window.jobeApp.L.voltarJogos }));
+  conferir(primeiroNav === Lp.jogos, `${t.nome}: 1o botao da navegacao: ${primeiroNav}`);
+  conferir(navFora === Lp.voltar && /^←/.test(navFora), `${t.nome}: fora da loja o 1o botao deveria ser "${Lp.voltar}": ${navFora}`);
+  conferir(fichaPrimeiro === Lp.voltar, `${t.nome}: o 1o botao da ficha deveria ser "${Lp.voltar}": ${fichaPrimeiro}`);
   conferir(rolagem.maxCartoesNoDom < 200, `${t.nome}: lista nao e virtual (${rolagem.maxCartoesNoDom} cartoes no DOM)`);
   conferir(capasNaMontagem < 120, `${t.nome}: capas demais na montagem (${capasNaMontagem})`);
   conferir(!errosJs.length, `${t.nome}: erros de JS: ${errosJs.join(' | ')}`);
   await contexto.close();
   return { tamanho: t.nome, ps5: Boolean(t.ps5), tela, montagem, capasNaMontagem, rolagem, controle, errosJs,
-    prints: ['loja', 'ficha', 'parear', 'downloads'].map((q) => path.join(saida, `app-${t.nome}-${q}.png`)) };
+    prints: ['loja', 'ficha', 'parear', 'downloads', 'config'].map((q) => path.join(saida, `app-${t.nome}-${q}.png`)) };
 }
 
 const api = await apiFalsa({ jogos: 2639, atraso: 15 });

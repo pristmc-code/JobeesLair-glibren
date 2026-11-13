@@ -75,6 +75,11 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
   // aceita a sessao do PIN e o token do aparelho (em X-Session ou Authorization: Bearer), como a .50 (monitor_allowed)
   const sessaoOk = (req) => [SESSAO, TOKEN].includes(req.headers['x-session']) || req.headers.authorization === `Bearer ${TOKEN}`;
   let codigoPedido = false;
+  // Fase 7: as preferencias (so algumas chaves; os limites como em bg_settings.c) e os segredos so como estado
+  const config = { rev: 1, values: { backgroundDownloads: true, simultaneousDownloads: 2, speedLimit: 0, pauseOnCloseSeconds: 10, convertExfat: true, torboxQuick: true,
+    orbitFeed: false, homebrewDarkxex: true, screenSaver: true, energySaver: false, language: 'pt-BR', tubeQuality: 1080, tubeDownloadCap: 0, autoInstallUpdates: true } };
+  const LIMITES = { simultaneousDownloads: [1, 2, 3, 4], pauseOnCloseSeconds: [0, 5, 10, 15, 20, 25, 30], tubeQuality: [1080, 1440, 2160] };
+  const telaPedidos = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
@@ -164,6 +169,25 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
       if (acao[2] === 'cancel') jobs.splice(jobs.indexOf(j), 1);
       return json(res, 200, { ok: true });
     }
+    if (p === '/api/settings') {
+      if (!sessaoOk(req)) return json(res, 401, { error: 'pin' });
+      const resposta = () => ({ ok: true, schema: 1, rev: config.rev, store: 'f'.repeat(32), values: config.values,
+        secrets: { torbox: { set: true, tail: 'a1b2' }, alldebrid: { set: false }, github: { set: true, tail: '9z8y' }, youtube: { set: false }, phonePin: { set: true } } });
+      if (req.method === 'GET') return json(res, 200, resposta());
+      for (const [k, v] of Object.entries((body && body.set) || {})) {
+        const ok = LIMITES[k] ? LIMITES[k].includes(v) : typeof config.values[k] === 'boolean' || typeof v === 'boolean' ? typeof v === 'boolean'
+          : ['speedLimit', 'tubeDownloadCap'].includes(k) ? Number.isInteger(v) && v >= 0 && v <= 1000 : k === 'language' ? typeof v === 'string' : false;
+        if (!ok) return json(res, 400, { error: 'invalid', key: k });
+      }
+      Object.assign(config.values, (body && body.set) || {}); config.rev++;
+      return json(res, 200, { ...resposta(), changed: Object.keys((body && body.set) || {}) });
+    }
+    if (p === '/api/app/telacheia') {
+      if (req.method === 'GET') return json(res, 200, { ok: true, glibren: true, item: true, estado: 'pronto', ocupado: false });
+      if (!sessaoOk(req)) return json(res, 401, { error: 'pin' });
+      telaPedidos.push(body && body.volta);
+      return json(res, 200, { ok: true });
+    }
     if (p === '/api/pair' && req.method === 'GET') return json(res, 200, { ok: true, paired: sessaoOk(req), local: false, allowed: sessaoOk(req), pinOn: true, pinSet: true, devices: 0, retryIn: 0 });
     if (p === '/api/pair/request' && req.method === 'POST') { codigoPedido = true; return json(res, 200, { ok: true, validFor: 120 }); }
     if (p === '/api/pair/confirm' && req.method === 'POST') {
@@ -178,7 +202,7 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
   }
   await new Promise((resolve) => server.listen(porta, '127.0.0.1', resolve));
   const real = server.address().port;
-  return { porta: real, url: `http://127.0.0.1:${real}`, contadores, lista, close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); }) };
+  return { porta: real, url: `http://127.0.0.1:${real}`, contadores, lista, config, telaPedidos, close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); }) };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

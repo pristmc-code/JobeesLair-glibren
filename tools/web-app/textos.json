@@ -1,0 +1,1376 @@
+{
+ "jogos": {
+  "en": "Games",
+  "pt-BR": "Jogos"
+ },
+ "voltarJogos": {
+  "en": "← GAMES",
+  "pt-BR": "← JOGOS",
+  "es": "← JUEGOS",
+  "fr": "← JEUX",
+  "de": "← SPIELE",
+  "it": "← GIOCHI",
+  "ru": "← ИГРЫ",
+  "ja": "← ゲーム",
+  "zh-Hans": "← 游戏",
+  "ar": "← الألعاب",
+  "hi": "← गेम",
+  "bn": "← গেম",
+  "id": "← GIM",
+  "ur": "← گیمز"
+ },
+ "navDown": {
+  "en": "Downloads",
+  "pt-BR": "Downloads"
+ },
+ "navBib": {
+  "en": "Library",
+  "pt-BR": "Biblioteca"
+ },
+ "navHb": {
+  "en": "Homebrew",
+  "pt-BR": "Homebrew"
+ },
+ "navCfg": {
+  "en": "Settings",
+  "pt-BR": "Configurações"
+ },
+ "navAntiga": {
+  "en": "Phone page",
+  "pt-BR": "Página do celular",
+  "es": "Página del móvil",
+  "fr": "Page du téléphone",
+  "de": "Handy-Seite",
+  "it": "Pagina del telefono",
+  "ru": "Страница для телефона",
+  "ja": "スマホ用ページ",
+  "zh-Hans": "手机页面",
+  "ar": "صفحة الهاتف",
+  "hi": "फ़ोन वाला पेज",
+  "bn": "ফোনের পেজ",
+  "id": "Halaman ponsel",
+  "ur": "فون کا صفحہ"
+ },
+ "busca": {
+  "en": "Search the store",
+  "pt-BR": "Buscar na loja"
+ },
+ "filtros": {
+  "en": "Filters",
+  "pt-BR": "Filtros"
+ },
+ "ordem": {
+  "en": "Sort",
+  "pt-BR": "Ordem"
+ },
+ "plataforma": {
+  "en": "Platform",
+  "pt-BR": "Plataforma"
+ },
+ "formato": {
+  "en": "Format",
+  "pt-BR": "Formato"
+ },
+ "genero": {
+  "en": "Genre",
+  "pt-BR": "Gênero"
+ },
+ "tamanho": {
+  "en": "Size",
+  "pt-BR": "Tamanho"
+ },
+ "solo": {
+  "en": "Only those that download with Jobe closed",
+  "pt-BR": "Só os que baixam com a Jobe fechada"
+ },
+ "limpar": {
+  "en": "Clear filters",
+  "pt-BR": "Limpar filtros"
+ },
+ "deNovo": {
+  "en": "Try again",
+  "pt-BR": "Tentar de novo"
+ },
+ "ativos": {
+  "en": "Active",
+  "pt-BR": "Ativos"
+ },
+ "velocidade": {
+  "en": "Speed",
+  "pt-BR": "Velocidade",
+  "es": "Velocidad",
+  "fr": "Vitesse",
+  "de": "Geschwindigkeit",
+  "it": "Velocità",
+  "ru": "Скорость",
+  "ja": "速度",
+  "zh-Hans": "速度",
+  "ar": "السرعة",
+  "hi": "गति",
+  "bn": "গতি",
+  "id": "Kecepatan",
+  "ur": "رفتار"
+ },
+ "restante": {
+  "en": "Left",
+  "pt-BR": "Restante"
+ },
+ "abrirAntiga": {
+  "en": "Open the phone page",
+  "pt-BR": "Abrir a página do celular",
+  "es": "Abrir la página del móvil",
+  "fr": "Ouvrir la page du téléphone",
+  "de": "Handy-Seite öffnen",
+  "it": "Apri la pagina del telefono",
+  "ru": "Открыть страницу для телефона",
+  "ja": "スマホ用ページを開く",
+  "zh-Hans": "打开手机页面",
+  "ar": "فتح صفحة الهاتف",
+  "hi": "फ़ोन वाला पेज खोलें",
+  "bn": "ফোনের পেজ খুলুন",
+  "id": "Buka halaman ponsel",
+  "ur": "فون کا صفحہ کھولیں"
+ },
+ "cancelar": {
+  "en": "Cancel",
+  "pt-BR": "Cancelar"
+ },
+ "entrar": {
+  "en": "Unlock",
+  "pt-BR": "Entrar",
+  "es": "Entrar",
+  "fr": "Entrer",
+  "de": "Entsperren",
+  "it": "Entra",
+  "ru": "Войти",
+  "ja": "ロック解除",
+  "zh-Hans": "解锁",
+  "ar": "دخول",
+  "hi": "अनलॉक करें",
+  "bn": "আনলক করুন",
+  "id": "Masuk",
+  "ur": "داخل ہوں"
+ },
+ "todas": {
+  "en": "All",
+  "pt-BR": "Todas"
+ },
+ "ps5ps4": {
+  "en": "PS5 and PS4",
+  "pt-BR": "PS5 e PS4"
+ },
+ "todoFormato": {
+  "en": "Any format",
+  "pt-BR": "Todo formato"
+ },
+ "pronto": {
+  "en": "Ready for {v}",
+  "pt-BR": "Pronto para {v}"
+ },
+ "todoGenero": {
+  "en": "All genres",
+  "pt-BR": "Todos os gêneros"
+ },
+ "todoTam": {
+  "en": "Any size",
+  "pt-BR": "Qualquer tamanho"
+ },
+ "pequeno": {
+  "en": "up to 10 GB",
+  "pt-BR": "até 10 GB"
+ },
+ "medio": {
+  "en": "10–50 GB",
+  "pt-BR": "10–50 GB"
+ },
+ "grande": {
+  "en": "over 50 GB",
+  "pt-BR": "mais de 50 GB"
+ },
+ "ordens.relevance": {
+  "en": "Most popular",
+  "pt-BR": "Mais populares"
+ },
+ "ordens.newest": {
+  "en": "Newest",
+  "pt-BR": "Mais novos"
+ },
+ "ordens.rating": {
+  "en": "Top rated",
+  "pt-BR": "Melhor avaliados"
+ },
+ "ordens.size": {
+  "en": "Largest",
+  "pt-BR": "Maiores"
+ },
+ "ordens.title": {
+  "en": "Title",
+  "pt-BR": "Título"
+ },
+ "nJogos": {
+  "en": "{n} games",
+  "pt-BR": "{n} jogos"
+ },
+ "nDe": {
+  "en": "{n} of {t} games",
+  "pt-BR": "{n} de {t} jogos"
+ },
+ "carregando": {
+  "en": "Loading…",
+  "pt-BR": "Carregando…"
+ },
+ "nenhum": {
+  "en": "No game with these filters.",
+  "pt-BR": "Nenhum jogo com esses filtros."
+ },
+ "semLoja": {
+  "en": "The store hasn't reached the payload yet. Open Jobee'sLair once and come back.",
+  "pt-BR": "A loja ainda não chegou ao payload. Abra a Jobee'sLair uma vez e volte aqui."
+ },
+ "lojaRuim": {
+  "en": "The store list has a problem. Open Jobee'sLair so it writes it again.",
+  "pt-BR": "A lista da loja está com problema. Abra a Jobee'sLair para ela gravar de novo."
+ },
+ "semResposta": {
+  "en": "The PS5 did not answer.",
+  "pt-BR": "O PS5 não respondeu."
+ },
+ "baixar": {
+  "en": "Download",
+  "pt-BR": "Baixar"
+ },
+ "naFila": {
+  "en": "Queued",
+  "pt-BR": "Na fila"
+ },
+ "incluindo": {
+  "en": "Adding…",
+  "pt-BR": "Incluindo…"
+ },
+ "viaPayload": {
+  "en": "{t}: the PS5 is downloading it, even with Jobee'sLair closed.",
+  "pt-BR": "{t}: o PS5 já está baixando, mesmo com a Jobee'sLair fechada."
+ },
+ "viaApp": {
+  "en": "{t}: queued in Jobee'sLair.",
+  "pt-BR": "{t}: na fila da Jobee'sLair."
+ },
+ "espera": {
+  "en": "{t}: request saved. Needs Jobe open to start the download: it starts when you open Jobee'sLair.",
+  "pt-BR": "{t}: pedido guardado. Precisa da Jobe aberta para começar o download: começa quando você abrir a Jobee'sLair."
+ },
+ "semDisco": {
+  "en": "{t}: request saved. Open Jobee'sLair once so the payload knows which drive to use.",
+  "pt-BR": "{t}: pedido guardado. Abra a Jobee'sLair uma vez para o payload saber em que disco baixar."
+ },
+ "jaNaFila": {
+  "en": "{t} is already queued.",
+  "pt-BR": "{t} já está na fila."
+ },
+ "existe": {
+  "en": "That file is already on the drive.",
+  "pt-BR": "Esse arquivo já está no disco."
+ },
+ "cheia": {
+  "en": "The PS5 queue is full.",
+  "pt-BR": "A fila do PS5 está cheia."
+ },
+ "falhou": {
+  "en": "Couldn't add it. Try again.",
+  "pt-BR": "Não deu para incluir. Tente de novo."
+ },
+ "fichaFalhou": {
+  "en": "Couldn't open this game's details.",
+  "pt-BR": "Não deu para abrir a ficha deste jogo."
+ },
+ "sozinho": {
+  "en": "The PS5 downloads it by itself, even with Jobee'sLair closed.",
+  "pt-BR": "O PS5 baixa sozinho, mesmo com a Jobee'sLair fechada."
+ },
+ "precisaApp": {
+  "en": "Needs Jobe open to start the download (a host that needs the browser, a torrent or parts). The request is saved and starts when you open Jobee'sLair.",
+  "pt-BR": "Precisa da Jobe aberta para começar o download (host com navegador, torrent ou partes). O pedido fica guardado e começa quando você abrir a Jobee'sLair."
+ },
+ "semFicha": {
+  "en": "Jobee'sLair is still preparing this game's details and sources; the download goes through Jobee'sLair.",
+  "pt-BR": "A Jobee'sLair ainda está preparando a ficha e as fontes deste jogo; o download vai pela Jobee'sLair."
+ },
+ "sobre": {
+  "en": "About",
+  "pt-BR": "Sobre"
+ },
+ "informacoes": {
+  "en": "Details",
+  "pt-BR": "Informações"
+ },
+ "fontes": {
+  "en": "Sources",
+  "pt-BR": "Fontes"
+ },
+ "fotos": {
+  "en": "Photos",
+  "pt-BR": "Fotos"
+ },
+ "codigo": {
+  "en": "Code",
+  "pt-BR": "Código"
+ },
+ "tamanhoL": {
+  "en": "Size",
+  "pt-BR": "Tamanho"
+ },
+ "formatos": {
+  "en": "Formats",
+  "pt-BR": "Formatos"
+ },
+ "generos": {
+  "en": "Genres",
+  "pt-BR": "Gêneros"
+ },
+ "lancamento": {
+  "en": "Released",
+  "pt-BR": "Lançamento"
+ },
+ "dev": {
+  "en": "Developer",
+  "pt-BR": "Desenvolvedora"
+ },
+ "editora": {
+  "en": "Publisher",
+  "pt-BR": "Editora"
+ },
+ "nota": {
+  "en": "PS Store rating",
+  "pt-BR": "Nota na PS Store"
+ },
+ "avaliacoes": {
+  "en": "{n} ratings",
+  "pt-BR": "{n} avaliações"
+ },
+ "partes": {
+  "en": "{n} parts",
+  "pt-BR": "{n} partes"
+ },
+ "fonteSo": {
+  "en": "downloads with Jobe closed",
+  "pt-BR": "baixa com a Jobe fechada",
+  "es": "descarga con Jobe cerrada",
+  "fr": "télécharge avec Jobe fermée",
+  "de": "lädt herunter, wenn Jobe geschlossen ist",
+  "it": "scarica con Jobe chiusa",
+  "ru": "скачивает при закрытой Jobe",
+  "ja": "Jobeを閉じていてもダウンロード",
+  "zh-Hans": "Jobe 关闭时也能下载",
+  "ar": "يُنزِّل والتطبيق Jobe مغلق",
+  "hi": "Jobe बंद होने पर भी डाउनलोड होता है",
+  "bn": "Jobe বন্ধ থাকলেও ডাউনলোড হয়",
+  "id": "mengunduh saat Jobe ditutup",
+  "ur": "Jobe بند ہونے پر ڈاؤن لوڈ ہوتا ہے"
+ },
+ "fonteApp": {
+  "en": "Needs Jobe open to start the download",
+  "pt-BR": "Precisa da Jobe aberta para começar o download"
+ },
+ "kinds.direct": {
+  "en": "direct link",
+  "pt-BR": "link direto",
+  "es": "enlace directo",
+  "fr": "lien direct",
+  "de": "Direktlink",
+  "it": "link diretto",
+  "ru": "прямая ссылка",
+  "ja": "直接リンク",
+  "zh-Hans": "直链",
+  "ar": "رابط مباشر",
+  "hi": "सीधा लिंक",
+  "bn": "সরাসরি লিংক",
+  "id": "tautan langsung",
+  "ur": "براہ راست لنک"
+ },
+ "kinds.browser": {
+  "en": "host with browser",
+  "pt-BR": "host com navegador",
+  "es": "host con navegador",
+  "fr": "hébergeur avec navigateur",
+  "de": "Host mit Browser",
+  "it": "host con browser",
+  "ru": "хост с браузером",
+  "ja": "ブラウザ経由のホスト",
+  "zh-Hans": "需浏览器的主机",
+  "ar": "مضيف عبر المتصفح",
+  "hi": "ब्राउज़र वाला होस्ट",
+  "bn": "ব্রাউজার সহ হোস্ট",
+  "id": "host dengan browser",
+  "ur": "براؤزر والا ہوسٹ"
+ },
+ "kinds.torrent": {
+  "en": "torrent",
+  "pt-BR": "torrent"
+ },
+ "kinds.set": {
+  "en": "parts",
+  "pt-BR": "partes",
+  "es": "partes",
+  "fr": "parties",
+  "de": "Teile",
+  "it": "parti",
+  "ru": "части",
+  "ja": "分割ファイル",
+  "zh-Hans": "分卷",
+  "ar": "أجزاء",
+  "hi": "भाग",
+  "bn": "অংশ",
+  "id": "bagian",
+  "ur": "حصے"
+ },
+ "kinds.unavailable": {
+  "en": "unavailable",
+  "pt-BR": "indisponível"
+ },
+ "telaCheia": {
+  "en": "Full screen",
+  "pt-BR": "Tela cheia",
+  "es": "Pantalla completa",
+  "fr": "Plein écran",
+  "de": "Vollbild",
+  "it": "Schermo intero",
+  "ru": "Во весь экран",
+  "ja": "全画面",
+  "zh-Hans": "全屏",
+  "ar": "ملء الشاشة",
+  "hi": "पूर्ण स्क्रीन",
+  "bn": "পূর্ণ স্ক্রিন",
+  "id": "Layar penuh",
+  "ur": "مکمل اسکرین"
+ },
+ "sairTela": {
+  "en": "Exit full screen",
+  "pt-BR": "Sair da tela cheia",
+  "es": "Salir de pantalla completa",
+  "fr": "Quitter le plein écran",
+  "de": "Vollbild beenden",
+  "it": "Esci dallo schermo intero",
+  "ru": "Выйти из полноэкранного режима",
+  "ja": "全画面を終了",
+  "zh-Hans": "退出全屏",
+  "ar": "الخروج من ملء الشاشة",
+  "hi": "पूर्ण स्क्रीन से बाहर निकलें",
+  "bn": "পূর্ণ স্ক্রিন থেকে বেরোন",
+  "id": "Keluar dari layar penuh",
+  "ur": "مکمل اسکرین سے باہر نکلیں"
+ },
+ "medidasTit": {
+  "en": "This screen's measurements",
+  "pt-BR": "Medidas desta tela",
+  "es": "Medidas de esta pantalla",
+  "fr": "Mesures de cet écran",
+  "de": "Maße dieses Bildschirms",
+  "it": "Misure di questo schermo",
+  "ru": "Размеры этого экрана",
+  "ja": "この画面のサイズ",
+  "zh-Hans": "本屏幕的尺寸",
+  "ar": "قياسات هذه الشاشة",
+  "hi": "इस स्क्रीन का माप",
+  "bn": "এই স্ক্রিনের মাপ",
+  "id": "Ukuran layar ini",
+  "ur": "اس اسکرین کی پیمائش"
+ },
+ "medidasTxt": {
+  "en": "To fit the page to the PS5 browser. The same text goes into the /teste page results.",
+  "pt-BR": "Para calibrar a página no navegador do PS5. O mesmo texto entra nos resultados da página /teste.",
+  "es": "Para ajustar la página al navegador del PS5. El mismo texto se añade a los resultados de la página /teste.",
+  "fr": "Pour ajuster la page au navigateur de la PS5. Le même texte est ajouté aux résultats de la page /teste.",
+  "de": "Um die Seite an den PS5-Browser anzupassen. Derselbe Text landet in den Ergebnissen der Seite /teste.",
+  "it": "Per adattare la pagina al browser della PS5. Lo stesso testo finisce nei risultati della pagina /teste.",
+  "ru": "Чтобы подогнать страницу под браузер PS5. Тот же текст попадает в результаты страницы /teste.",
+  "ja": "PS5のブラウザに合わせてページを調整するためのものです。同じテキストが /teste ページの結果にも入ります。",
+  "zh-Hans": "用于让页面适配 PS5 浏览器。相同的文本也会出现在 /teste 页面的结果中。",
+  "ar": "لضبط الصفحة على متصفح PS5. يظهر النص نفسه في نتائج صفحة /teste.",
+  "hi": "पेज को PS5 ब्राउज़र के अनुसार ठीक करने के लिए। यही टेक्स्ट /teste पेज के नतीजों में भी जाता है।",
+  "bn": "পেজটি PS5 ব্রাউজারের সাথে মানানোর জন্য। একই লেখা /teste পেজের ফলাফলেও যায়।",
+  "id": "Untuk menyesuaikan halaman dengan browser PS5. Teks yang sama masuk ke hasil halaman /teste.",
+  "ur": "صفحے کو PS5 براؤزر کے مطابق کرنے کے لیے۔ یہی متن /teste صفحے کے نتائج میں بھی جاتا ہے۔"
+ },
+ "medidasEnviar": {
+  "en": "Send to diagnostics",
+  "pt-BR": "Enviar ao diagnóstico",
+  "es": "Enviar al diagnóstico",
+  "fr": "Envoyer au diagnostic",
+  "de": "An die Diagnose senden",
+  "it": "Invia alla diagnostica",
+  "ru": "Отправить в диагностику",
+  "ja": "診断に送信",
+  "zh-Hans": "发送到诊断",
+  "ar": "إرسال إلى التشخيص",
+  "hi": "डायग्नोस्टिक में भेजें",
+  "bn": "ডায়াগনস্টিকে পাঠান",
+  "id": "Kirim ke diagnostik",
+  "ur": "تشخیص کو بھیجیں"
+ },
+ "abrirTeste": {
+  "en": "Open the /teste page",
+  "pt-BR": "Abrir a página /teste",
+  "es": "Abrir la página /teste",
+  "fr": "Ouvrir la page /teste",
+  "de": "Seite /teste öffnen",
+  "it": "Apri la pagina /teste",
+  "ru": "Открыть страницу /teste",
+  "ja": "/teste ページを開く",
+  "zh-Hans": "打开 /teste 页面",
+  "ar": "فتح صفحة /teste",
+  "hi": "/teste पेज खोलें",
+  "bn": "/teste পেজ খুলুন",
+  "id": "Buka halaman /teste",
+  "ur": "/teste صفحہ کھولیں"
+ },
+ "medidasEnviado": {
+  "en": "Sent: GitHub folder {f}.",
+  "pt-BR": "Enviado: pasta {f} no GitHub.",
+  "es": "Enviado: carpeta {f} en GitHub.",
+  "fr": "Envoyé : dossier {f} sur GitHub.",
+  "de": "Gesendet: Ordner {f} auf GitHub.",
+  "it": "Inviato: cartella {f} su GitHub.",
+  "ru": "Отправлено: папка {f} на GitHub.",
+  "ja": "送信しました：GitHubのフォルダ {f}。",
+  "zh-Hans": "已发送：GitHub 文件夹 {f}。",
+  "ar": "تم الإرسال: المجلد {f} على GitHub.",
+  "hi": "भेज दिया: GitHub पर फ़ोल्डर {f}।",
+  "bn": "পাঠানো হয়েছে: GitHub-এ ফোল্ডার {f}।",
+  "id": "Terkirim: folder {f} di GitHub.",
+  "ur": "بھیج دیا: GitHub پر فولڈر {f}۔"
+ },
+ "medidasSemChave": {
+  "en": "Diagnostics need the GitHub key (phone page, Downloads).",
+  "pt-BR": "O diagnóstico precisa da chave do GitHub (página do celular, Downloads).",
+  "es": "El diagnóstico necesita la clave de GitHub (página del móvil, Descargas).",
+  "fr": "Le diagnostic nécessite la clé GitHub (page du téléphone, Téléchargements).",
+  "de": "Die Diagnose braucht den GitHub-Schlüssel (Handy-Seite, Downloads).",
+  "it": "La diagnostica richiede la chiave GitHub (pagina del telefono, Download).",
+  "ru": "Для диагностики нужен ключ GitHub (страница для телефона, Загрузки).",
+  "ja": "診断にはGitHubキーが必要です（スマホ用ページ、ダウンロード）。",
+  "zh-Hans": "诊断需要 GitHub 密钥（手机页面，下载）。",
+  "ar": "يحتاج التشخيص إلى مفتاح GitHub (صفحة الهاتف، التنزيلات).",
+  "hi": "डायग्नोस्टिक के लिए GitHub कुंजी चाहिए (फ़ोन पेज, डाउनलोड)।",
+  "bn": "ডায়াগনস্টিকের জন্য GitHub কী দরকার (ফোনের পেজ, ডাউনলোড)।",
+  "id": "Diagnostik memerlukan kunci GitHub (halaman ponsel, Unduhan).",
+  "ur": "تشخیص کے لیے GitHub کی کلید درکار ہے (فون کا صفحہ، ڈاؤن لوڈز)۔"
+ },
+ "medidasOcupado": {
+  "en": "A diagnostics upload is already running.",
+  "pt-BR": "Já tem um envio do diagnóstico em andamento.",
+  "es": "Ya hay un envío del diagnóstico en curso.",
+  "fr": "Un envoi du diagnostic est déjà en cours.",
+  "de": "Es läuft bereits ein Diagnose-Upload.",
+  "it": "È già in corso un invio della diagnostica.",
+  "ru": "Отправка диагностики уже идёт.",
+  "ja": "診断の送信がすでに実行中です。",
+  "zh-Hans": "已有诊断上传正在进行。",
+  "ar": "هناك عملية إرسال للتشخيص قيد التنفيذ بالفعل.",
+  "hi": "डायग्नोस्टिक भेजने का काम पहले से चल रहा है।",
+  "bn": "ডায়াগনস্টিক পাঠানো আগে থেকেই চলছে।",
+  "id": "Pengiriman diagnostik sedang berjalan.",
+  "ur": "تشخیص بھیجنے کا کام پہلے سے جاری ہے۔"
+ },
+ "medidasFalhou": {
+  "en": "Couldn't send ({e}).",
+  "pt-BR": "Não deu para enviar ({e}).",
+  "es": "No se pudo enviar ({e}).",
+  "fr": "Envoi impossible ({e}).",
+  "de": "Senden fehlgeschlagen ({e}).",
+  "it": "Impossibile inviare ({e}).",
+  "ru": "Не удалось отправить ({e}).",
+  "ja": "送信できませんでした（{e}）。",
+  "zh-Hans": "无法发送（{e}）。",
+  "ar": "تعذّر الإرسال ({e}).",
+  "hi": "भेज नहीं सका ({e})।",
+  "bn": "পাঠানো যায়নি ({e})।",
+  "id": "Gagal mengirim ({e}).",
+  "ur": "بھیج نہیں سکے ({e})۔"
+ },
+ "medidasEnviando": {
+  "en": "Sending…",
+  "pt-BR": "Enviando…"
+ },
+ "parTit": {
+  "en": "Pair this device",
+  "pt-BR": "Parear este aparelho"
+ },
+ "nomeAparelho": {
+  "en": "This device's name",
+  "pt-BR": "Nome deste aparelho"
+ },
+ "codigoTv": {
+  "en": "Code on the TV",
+  "pt-BR": "Código da TV",
+  "es": "Código del TV",
+  "fr": "Code de la TV",
+  "de": "Code am Fernseher",
+  "it": "Codice della TV",
+  "ru": "Код на ТВ",
+  "ja": "テレビのコード",
+  "zh-Hans": "电视上的代码",
+  "ar": "الرمز على التلفزيون",
+  "hi": "टीवी पर कोड",
+  "bn": "টিভির কোড",
+  "id": "Kode di TV",
+  "ur": "ٹی وی پر کوڈ"
+ },
+ "pedirCodigo": {
+  "en": "Get a code",
+  "pt-BR": "Pedir código"
+ },
+ "parear": {
+  "en": "Pair",
+  "pt-BR": "Parear"
+ },
+ "voltar": {
+  "en": "Back",
+  "pt-BR": "Voltar"
+ },
+ "usarPin": {
+  "en": "Use the old PIN",
+  "pt-BR": "Usar o PIN antigo"
+ },
+ "parTxt": {
+  "en": "To use the controls, pair this device once. The PS5 shows a 6-digit code in a notification and on Jobe's screen.",
+  "pt-BR": "Para usar os controles, pareie este aparelho uma vez. O PS5 mostra um código de 6 dígitos numa notificação e na tela da Jobe."
+ },
+ "parTxtCod": {
+  "en": "Type the 6-digit code shown on the PS5. It is valid for 2 minutes.",
+  "pt-BR": "Digite o código de 6 dígitos que apareceu no PS5. Ele vale 2 minutos."
+ },
+ "parErrado": {
+  "en": "Wrong code. {n} tries left.",
+  "pt-BR": "Código errado. Restam {n} tentativas."
+ },
+ "parBloq": {
+  "en": "Too many wrong tries. Wait {s} s.",
+  "pt-BR": "Muitas tentativas erradas. Espere {s} s."
+ },
+ "parEspera": {
+  "en": "Wait {s} s to ask for another code.",
+  "pt-BR": "Espere {s} s para pedir outro código."
+ },
+ "parVenceu": {
+  "en": "The code expired. Ask for another one.",
+  "pt-BR": "O código venceu. Peça outro."
+ },
+ "parFalhou": {
+  "en": "It did not work. Try again.",
+  "pt-BR": "Não deu. Tente de novo."
+ },
+ "pinTxt": {
+  "en": "Type the PIN set in Jobee'sLair (Settings) to download and control the queue from here.",
+  "pt-BR": "Digite o PIN definido na Jobee'sLair (Configurações) para baixar e controlar a fila daqui.",
+  "es": "Escribe el PIN definido en Jobee'sLair (Ajustes) para descargar y controlar la cola desde aquí.",
+  "fr": "Saisis le PIN défini dans Jobee'sLair (Réglages) pour télécharger et contrôler la file d'ici.",
+  "de": "Gib die in Jobee'sLair (Einstellungen) festgelegte PIN ein, um von hier aus Downloads zu starten und die Warteschlange zu steuern.",
+  "it": "Inserisci il PIN impostato in Jobee'sLair (Impostazioni) per scaricare e controllare la coda da qui.",
+  "ru": "Введите PIN, заданный в Jobee'sLair (Настройки), чтобы скачивать и управлять очередью отсюда.",
+  "ja": "Jobee'sLair（設定）で決めたPINを入力すると、ここからダウンロードやキューの操作ができます。",
+  "zh-Hans": "输入在 Jobee'sLair（设置）中设定的 PIN，即可在此下载并控制队列。",
+  "ar": "اكتب رمز PIN المحدد في Jobee'sLair (الإعدادات) للتنزيل والتحكم في قائمة الانتظار من هنا.",
+  "hi": "यहाँ से डाउनलोड करने और कतार चलाने के लिए Jobee'sLair (सेटिंग्स) में तय किया गया PIN डालें।",
+  "bn": "এখান থেকে ডাউনলোড ও সারি নিয়ন্ত্রণ করতে Jobee'sLair (সেটিংস)-এ ঠিক করা PIN দিন।",
+  "id": "Ketik PIN yang diatur di Jobee'sLair (Pengaturan) untuk mengunduh dan mengendalikan antrean dari sini.",
+  "ur": "یہاں سے ڈاؤن لوڈ اور قطار کو کنٹرول کرنے کے لیے Jobee'sLair (سیٹنگز) میں مقرر کیا گیا PIN درج کریں۔"
+ },
+ "pinErrado": {
+  "en": "Wrong PIN.",
+  "pt-BR": "PIN errado."
+ },
+ "pinBloq": {
+  "en": "Too many wrong tries. Wait {s} s.",
+  "pt-BR": "Muitas tentativas erradas. Espere {s} s."
+ },
+ "semPin": {
+  "en": "No PIN set yet. Set one in Jobee'sLair (Settings) to control the PS5 from here.",
+  "pt-BR": "Nenhum PIN definido. Defina um na Jobee'sLair (Configurações) para controlar o PS5 daqui.",
+  "es": "Aún no hay PIN. Define uno en Jobee'sLair (Ajustes) para controlar el PS5 desde aquí.",
+  "fr": "Aucun PIN défini. Définis-en un dans Jobee'sLair (Réglages) pour contrôler la PS5 d'ici.",
+  "de": "Noch keine PIN festgelegt. Lege in Jobee'sLair (Einstellungen) eine fest, um die PS5 von hier aus zu steuern.",
+  "it": "Nessun PIN impostato. Impostane uno in Jobee'sLair (Impostazioni) per controllare la PS5 da qui.",
+  "ru": "PIN ещё не задан. Задайте его в Jobee'sLair (Настройки), чтобы управлять PS5 отсюда.",
+  "ja": "PINがまだ設定されていません。Jobee'sLair（設定）で設定すると、ここからPS5を操作できます。",
+  "zh-Hans": "尚未设置 PIN。请在 Jobee'sLair（设置）中设置，即可在此控制 PS5。",
+  "ar": "لم يتم تعيين PIN بعد. عيّن واحدًا في Jobee'sLair (الإعدادات) للتحكم في PS5 من هنا.",
+  "hi": "अभी कोई PIN तय नहीं है। यहाँ से PS5 चलाने के लिए Jobee'sLair (सेटिंग्स) में एक तय करें।",
+  "bn": "এখনও কোনো PIN ঠিক করা নেই। এখান থেকে PS5 নিয়ন্ত্রণ করতে Jobee'sLair (সেটিংস)-এ একটি ঠিক করুন।",
+  "id": "Belum ada PIN. Atur di Jobee'sLair (Pengaturan) untuk mengendalikan PS5 dari sini.",
+  "ur": "ابھی کوئی PIN مقرر نہیں۔ یہاں سے PS5 کو کنٹرول کرنے کے لیے Jobee'sLair (سیٹنگز) میں ایک مقرر کریں۔"
+ },
+ "estados.downloading": {
+  "en": "Downloading",
+  "pt-BR": "Baixando"
+ },
+ "estados.connecting": {
+  "en": "Connecting",
+  "pt-BR": "Conectando"
+ },
+ "estados.verifying": {
+  "en": "Checking",
+  "pt-BR": "Conferindo"
+ },
+ "estados.queued": {
+  "en": "Queued",
+  "pt-BR": "Na fila"
+ },
+ "estados.paused": {
+  "en": "Paused",
+  "pt-BR": "Pausado"
+ },
+ "estados.failed": {
+  "en": "Failed",
+  "pt-BR": "Falhou"
+ },
+ "estados.completed": {
+  "en": "Done",
+  "pt-BR": "Concluído"
+ },
+ "estados.waiting-app": {
+  "en": "Waiting for Jobe",
+  "pt-BR": "Espera a Jobe",
+  "es": "Esperando a Jobe",
+  "fr": "En attente de Jobe",
+  "de": "Wartet auf Jobe",
+  "it": "In attesa di Jobe",
+  "ru": "Ждёт Jobe",
+  "ja": "Jobeを待機中",
+  "zh-Hans": "等待 Jobe",
+  "ar": "في انتظار Jobe",
+  "hi": "Jobe का इंतज़ार",
+  "bn": "Jobe-র অপেক্ষায়",
+  "id": "Menunggu Jobe",
+  "ur": "Jobe کا انتظار"
+ },
+ "estados.extracting": {
+  "en": "Extracting",
+  "pt-BR": "Extraindo"
+ },
+ "estados.converting": {
+  "en": "Converting",
+  "pt-BR": "Convertendo",
+  "es": "Convirtiendo",
+  "fr": "Conversion",
+  "de": "Wird konvertiert",
+  "it": "Conversione",
+  "ru": "Конвертация",
+  "ja": "変換中",
+  "zh-Hans": "转换中",
+  "ar": "جارٍ التحويل",
+  "hi": "बदला जा रहा है",
+  "bn": "রূপান্তর হচ্ছে",
+  "id": "Mengonversi",
+  "ur": "تبدیل ہو رہا ہے"
+ },
+ "estados.cancelled": {
+  "en": "Cancelled",
+  "pt-BR": "Cancelado",
+  "es": "Cancelado",
+  "fr": "Annulé",
+  "de": "Abgebrochen",
+  "it": "Annullato",
+  "ru": "Отменено",
+  "ja": "キャンセル済み",
+  "zh-Hans": "已取消",
+  "ar": "تم الإلغاء",
+  "hi": "रद्द किया गया",
+  "bn": "বাতিল করা হয়েছে",
+  "id": "Dibatalkan",
+  "ur": "منسوخ"
+ },
+ "pausar": {
+  "en": "Pause",
+  "pt-BR": "Pausar"
+ },
+ "retomar": {
+  "en": "Resume",
+  "pt-BR": "Retomar"
+ },
+ "cancelarDl": {
+  "en": "Cancel",
+  "pt-BR": "Cancelar"
+ },
+ "confirmar": {
+  "en": "Confirm cancel",
+  "pt-BR": "Confirmar",
+  "es": "Confirmar",
+  "fr": "Confirmer",
+  "de": "Bestätigen",
+  "it": "Conferma",
+  "ru": "Подтвердить",
+  "ja": "確認",
+  "zh-Hans": "确认",
+  "ar": "تأكيد",
+  "hi": "पुष्टि करें",
+  "bn": "নিশ্চিত করুন",
+  "id": "Konfirmasi",
+  "ur": "تصدیق کریں"
+ },
+ "de": {
+  "en": "of",
+  "pt-BR": "de",
+  "es": "de",
+  "fr": "sur",
+  "de": "von",
+  "it": "di",
+  "ru": "из",
+  "ja": "/",
+  "zh-Hans": "/",
+  "ar": "من",
+  "hi": "में से",
+  "bn": "এর মধ্যে",
+  "id": "dari",
+  "ur": "میں سے"
+ },
+ "semDownloads": {
+  "en": "No downloads in the PS5 queue.",
+  "pt-BR": "Nenhum download na fila do PS5.",
+  "es": "No hay descargas en la cola del PS5.",
+  "fr": "Aucun téléchargement dans la file de la PS5.",
+  "de": "Keine Downloads in der Warteschlange der PS5.",
+  "it": "Nessun download nella coda della PS5.",
+  "ru": "В очереди PS5 нет загрузок.",
+  "ja": "PS5のキューにダウンロードはありません。",
+  "zh-Hans": "PS5 队列中没有下载。",
+  "ar": "لا توجد تنزيلات في قائمة انتظار PS5.",
+  "hi": "PS5 की कतार में कोई डाउनलोड नहीं है।",
+  "bn": "PS5-এর সারিতে কোনো ডাউনলোড নেই।",
+  "id": "Tidak ada unduhan di antrean PS5.",
+  "ur": "PS5 کی قطار میں کوئی ڈاؤن لوڈ نہیں۔"
+ },
+ "esperaApp": {
+  "en": "Starts when Jobee'sLair opens.",
+  "pt-BR": "Começa quando a Jobee'sLair abrir.",
+  "es": "Empieza cuando se abra Jobee'sLair.",
+  "fr": "Démarre à l'ouverture de Jobee'sLair.",
+  "de": "Startet, sobald Jobee'sLair geöffnet wird.",
+  "it": "Parte quando Jobee'sLair si apre.",
+  "ru": "Начнётся, когда откроется Jobee'sLair.",
+  "ja": "Jobee'sLairが開くと始まります。",
+  "zh-Hans": "Jobee'sLair 打开后开始。",
+  "ar": "يبدأ عند فتح Jobee'sLair.",
+  "hi": "Jobee'sLair खुलने पर शुरू होगा।",
+  "bn": "Jobee'sLair খুললে শুরু হবে।",
+  "id": "Dimulai saat Jobee'sLair dibuka.",
+  "ur": "Jobee'sLair کھلنے پر شروع ہوگا۔"
+ },
+ "breve.biblioteca.0": {
+  "en": "Library (coming soon)",
+  "pt-BR": "Biblioteca (em breve)",
+  "es": "Biblioteca (próximamente)",
+  "fr": "Bibliothèque (bientôt)",
+  "de": "Bibliothek (demnächst)",
+  "it": "Libreria (in arrivo)",
+  "ru": "Библиотека (скоро)",
+  "ja": "ライブラリ（近日公開）",
+  "zh-Hans": "库（即将推出）",
+  "ar": "المكتبة (قريبًا)",
+  "hi": "लाइब्रेरी (जल्द आ रही है)",
+  "bn": "লাইব্রেরি (শীঘ্রই আসছে)",
+  "id": "Pustaka (segera hadir)",
+  "ur": "لائبریری (جلد آ رہی ہے)"
+ },
+ "breve.biblioteca.1": {
+  "en": "The TorBox Library moves to the payload in Phase 6. Until then, use it in Jobee'sLair or on the phone page.",
+  "pt-BR": "A Biblioteca TorBox passa para o payload na Fase 6. Até lá, use-a na Jobee'sLair ou na página do celular.",
+  "es": "La Biblioteca TorBox pasa al payload en la Fase 6. Hasta entonces, úsala en Jobee'sLair o en la página del móvil.",
+  "fr": "La Bibliothèque TorBox passe dans le payload à la Phase 6. D'ici là, utilise-la dans Jobee'sLair ou sur la page du téléphone.",
+  "de": "Die TorBox-Bibliothek zieht in Phase 6 in den Payload um. Bis dahin nutze sie in Jobee'sLair oder auf der Handy-Seite.",
+  "it": "La Libreria TorBox passa al payload nella Fase 6. Fino ad allora usala in Jobee'sLair o nella pagina del telefono.",
+  "ru": "Библиотека TorBox переедет в payload на этапе 6. До тех пор пользуйтесь ею в Jobee'sLair или на странице для телефона.",
+  "ja": "TorBoxライブラリはフェーズ6でpayloadに移ります。それまではJobee'sLairかスマホ用ページで使ってください。",
+  "zh-Hans": "TorBox 库将在第 6 阶段移到 payload。在此之前，请在 Jobee'sLair 或手机页面中使用。",
+  "ar": "ستنتقل مكتبة TorBox إلى payload في المرحلة 6. حتى ذلك الحين، استخدمها في Jobee'sLair أو في صفحة الهاتف.",
+  "hi": "TorBox लाइब्रेरी चरण 6 में payload में आ जाएगी। तब तक इसे Jobee'sLair या फ़ोन पेज पर इस्तेमाल करें।",
+  "bn": "TorBox লাইব্রেরি ধাপ ৬-এ payload-এ যাবে। ততদিন Jobee'sLair বা ফোনের পেজে ব্যবহার করুন।",
+  "id": "Pustaka TorBox pindah ke payload di Tahap 6. Sampai saat itu, gunakan di Jobee'sLair atau halaman ponsel.",
+  "ur": "TorBox لائبریری مرحلہ 6 میں payload میں آئے گی۔ تب تک اسے Jobee'sLair یا فون کے صفحے پر استعمال کریں۔"
+ },
+ "breve.homebrew.0": {
+  "en": "Homebrew (coming soon)",
+  "pt-BR": "Homebrew (em breve)",
+  "es": "Homebrew (próximamente)",
+  "fr": "Homebrew (bientôt)",
+  "de": "Homebrew (demnächst)",
+  "it": "Homebrew (in arrivo)",
+  "ru": "Homebrew (скоро)",
+  "ja": "Homebrew（近日公開）",
+  "zh-Hans": "Homebrew（即将推出）",
+  "ar": "Homebrew (قريبًا)",
+  "hi": "Homebrew (जल्द आ रहा है)",
+  "bn": "Homebrew (শীঘ্রই আসছে)",
+  "id": "Homebrew (segera hadir)",
+  "ur": "Homebrew (جلد آ رہا ہے)"
+ },
+ "breve.homebrew.1": {
+  "en": "The homebrew list comes with the catalog in the payload (Phase 3). Until then, use the Homebrew tab in Jobee'sLair.",
+  "pt-BR": "A lista de homebrew chega junto com o catálogo no payload (Fase 3). Até lá, use a aba Homebrew da Jobee'sLair.",
+  "es": "La lista de homebrew llega junto con el catálogo en el payload (Fase 3). Hasta entonces, usa la pestaña Homebrew de Jobee'sLair.",
+  "fr": "La liste homebrew arrive avec le catalogue dans le payload (Phase 3). D'ici là, utilise l'onglet Homebrew de Jobee'sLair.",
+  "de": "Die Homebrew-Liste kommt zusammen mit dem Katalog in den Payload (Phase 3). Bis dahin nutze den Homebrew-Tab in Jobee'sLair.",
+  "it": "L'elenco homebrew arriva insieme al catalogo nel payload (Fase 3). Fino ad allora usa la scheda Homebrew di Jobee'sLair.",
+  "ru": "Список homebrew появится вместе с каталогом в payload (этап 3). До тех пор используйте вкладку Homebrew в Jobee'sLair.",
+  "ja": "Homebrewの一覧はカタログと一緒にpayloadに入ります（フェーズ3）。それまではJobee'sLairのHomebrewタブを使ってください。",
+  "zh-Hans": "Homebrew 列表将随目录一起加入 payload（第 3 阶段）。在此之前，请使用 Jobee'sLair 的 Homebrew 标签页。",
+  "ar": "ستصل قائمة Homebrew مع الفهرس إلى payload (المرحلة 3). حتى ذلك الحين، استخدم تبويب Homebrew في Jobee'sLair.",
+  "hi": "Homebrew की सूची कैटलॉग के साथ payload में आएगी (चरण 3)। तब तक Jobee'sLair का Homebrew टैब इस्तेमाल करें।",
+  "bn": "Homebrew তালিকা ক্যাটালগের সাথে payload-এ আসবে (ধাপ ৩)। ততদিন Jobee'sLair-এর Homebrew ট্যাব ব্যবহার করুন।",
+  "id": "Daftar homebrew hadir bersama katalog di payload (Tahap 3). Sampai saat itu, gunakan tab Homebrew di Jobee'sLair.",
+  "ur": "Homebrew کی فہرست کیٹلاگ کے ساتھ payload میں آئے گی (مرحلہ 3)۔ تب تک Jobee'sLair کا Homebrew ٹیب استعمال کریں۔"
+ },
+ "cfg.titulo": "app:settings.title",
+ "cfg.grupo.downloads": "app:settings.card.downloads",
+ "cfg.grupo.debrid": "app:settings.card.debrid",
+ "cfg.grupo.homebrew": "app:settings.card.homebrew",
+ "cfg.grupo.look": "app:settings.card.look",
+ "cfg.grupo.idioma": "app:settings.card.language",
+ "cfg.grupo.energia": "app:settings.card.energy",
+ "cfg.grupo.videos": {
+  "en": "Videos",
+  "pt-BR": "Vídeos"
+ },
+ "cfg.grupo.atualizacoes": {
+  "en": "Updates and reports",
+  "pt-BR": "Atualizações e relatórios",
+  "es": "Actualizaciones e informes",
+  "fr": "Mises à jour et rapports",
+  "de": "Updates und Berichte",
+  "it": "Aggiornamenti e report",
+  "ru": "Обновления и отчёты",
+  "ja": "アップデートとレポート",
+  "zh-Hans": "更新与报告",
+  "ar": "التحديثات والتقارير",
+  "hi": "अपडेट और रिपोर्ट",
+  "bn": "আপডেট ও রিপোর্ট",
+  "id": "Pembaruan dan laporan",
+  "ur": "اپ ڈیٹس اور رپورٹس"
+ },
+ "cfg.grupo.chaves": {
+  "en": "Keys and accounts",
+  "pt-BR": "Chaves e contas",
+  "es": "Claves y cuentas",
+  "fr": "Clés et comptes",
+  "de": "Schlüssel und Konten",
+  "it": "Chiavi e account",
+  "ru": "Ключи и аккаунты",
+  "ja": "キーとアカウント",
+  "zh-Hans": "密钥与账户",
+  "ar": "المفاتيح والحسابات",
+  "hi": "कुंजियाँ और खाते",
+  "bn": "কী ও অ্যাকাউন্ট",
+  "id": "Kunci dan akun",
+  "ur": "کلیدیں اور اکاؤنٹس"
+ },
+ "cfg.k.backgroundDownloads": "app:settings.background",
+ "cfg.k.pauseOnCloseSeconds": "app:settings.pauseOnClose",
+ "cfg.k.simultaneousDownloads": "app:settings.simultaneous",
+ "cfg.k.speedLimit": "app:settings.speedLimit",
+ "cfg.k.autoContinueParts": "app:settings.autoParts",
+ "cfg.k.convertExfat": "app:settings.convertExfat",
+ "cfg.k.warnPs5Pkg": "app:settings.warnPs5Pkg",
+ "cfg.k.phoneMonitor": "app:settings.phoneMonitor",
+ "cfg.k.torboxQuick": "app:settings.debrid.quick",
+ "cfg.k.orbitFeed": "app:settings.orbit.name",
+ "cfg.k.homebrewDarkxex": "app:settings.darkxex",
+ "cfg.k.language": "app:settings.card.language",
+ "cfg.k.screenSaver": "app:settings.screenSaver",
+ "cfg.k.energySaver": "app:settings.energySaver",
+ "cfg.k.statusLight": "app:settings.statusLight",
+ "cfg.k.vibration": "app:settings.vibration",
+ "cfg.k.autoInstallUpdates": "app:settings.update.auto",
+ "cfg.k.autoReports": "app:settings.report.autoRow",
+ "cfg.k.tubeSponsorBlock": "app:settings.tubeSponsorBlock",
+ "cfg.k.tubeAutoUpdate": "app:settings.tubeAutoUpdate",
+ "cfg.k.tubeQuality": "app:settings.tubeQuality",
+ "cfg.k.tubeDownloadCap": "app:settings.tubeDownloadCap",
+ "cfg.k.autoPlayFirstVideo": "app:settings.autoPlayFirst",
+ "cfg.k.companion": "app:settings.companion",
+ "cfg.k.companionAway": "app:settings.companion.away",
+ "cfg.d.backgroundDownloads": "app:settings.backgroundDetail",
+ "cfg.d.convertExfat": "app:settings.convertExfatDetail",
+ "cfg.d.speedLimit": "app:settings.speedLimitDetail",
+ "cfg.d.simultaneousDownloads": "app:settings.simultaneousDetail",
+ "cfg.d.torboxQuick": "app:settings.debrid.quickDetail",
+ "cfg.d.energySaver": "app:settings.energyWhat",
+ "cfg.d.tubeDownloadCap": "app:settings.tubeDownloadCapDetail",
+ "cfg.ligado": "app:settings.energySaverOn",
+ "cfg.desligado": "app:settings.energySaverOff",
+ "cfg.semLimite": "app:settings.speedUnlimited",
+ "cfg.pausaOff": "app:settings.pauseOnCloseOff",
+ "cfg.pausaN": "app:settings.pauseOnCloseValue",
+ "cfg.capOff": "app:settings.tubeDownloadCapOff",
+ "cfg.lang.ar": "app:language.name.ar",
+ "cfg.lang.bn": "app:language.name.bn",
+ "cfg.lang.de": "app:language.name.de",
+ "cfg.lang.en": "app:language.name.en",
+ "cfg.lang.es": "app:language.name.es",
+ "cfg.lang.fr": "app:language.name.fr",
+ "cfg.lang.hi": "app:language.name.hi",
+ "cfg.lang.id": "app:language.name.id",
+ "cfg.lang.it": "app:language.name.it",
+ "cfg.lang.ja": "app:language.name.ja",
+ "cfg.lang.pt-BR": "app:language.name.pt-BR",
+ "cfg.lang.ru": "app:language.name.ru",
+ "cfg.lang.ur": "app:language.name.ur",
+ "cfg.lang.zh-Hans": "app:language.name.zh-Hans",
+ "cfg.s.torbox": "app:settings.debrid.key",
+ "cfg.s.alldebrid": "app:settings.alldebrid.key",
+ "cfg.s.youtube": "app:settings.tubeAccount",
+ "cfg.s.github": {
+  "en": "GitHub key (diagnostics)",
+  "pt-BR": "Chave do GitHub (diagnóstico)",
+  "es": "Clave de GitHub (diagnóstico)",
+  "fr": "Clé GitHub (diagnostic)",
+  "de": "GitHub-Schlüssel (Diagnose)",
+  "it": "Chiave GitHub (diagnostica)",
+  "ru": "Ключ GitHub (диагностика)",
+  "ja": "GitHubキー（診断）",
+  "zh-Hans": "GitHub 密钥（诊断）",
+  "ar": "مفتاح GitHub (التشخيص)",
+  "hi": "GitHub कुंजी (डायग्नोस्टिक)",
+  "bn": "GitHub কী (ডায়াগনস্টিক)",
+  "id": "Kunci GitHub (diagnostik)",
+  "ur": "GitHub کی کلید (تشخیص)"
+ },
+ "cfg.s.phonePin": {
+  "en": "PIN of the phone page",
+  "pt-BR": "PIN da página do celular",
+  "es": "PIN de la página del móvil",
+  "fr": "PIN de la page du téléphone",
+  "de": "PIN der Handy-Seite",
+  "it": "PIN della pagina del telefono",
+  "ru": "PIN страницы для телефона",
+  "ja": "スマホ用ページのPIN",
+  "zh-Hans": "手机页面的 PIN",
+  "ar": "رمز PIN لصفحة الهاتف",
+  "hi": "फ़ोन पेज का PIN",
+  "bn": "ফোনের পেজের PIN",
+  "id": "PIN halaman ponsel",
+  "ur": "فون کے صفحے کا PIN"
+ },
+ "cfg.configurada": {
+  "en": "configured ✓ …{tail}",
+  "pt-BR": "configurada ✓ …{tail}",
+  "es": "configurada ✓ …{tail}",
+  "fr": "configurée ✓ …{tail}",
+  "de": "eingerichtet ✓ …{tail}",
+  "it": "configurata ✓ …{tail}",
+  "ru": "настроен ✓ …{tail}",
+  "ja": "設定済み ✓ …{tail}",
+  "zh-Hans": "已配置 ✓ …{tail}",
+  "ar": "تم الضبط ✓ …{tail}",
+  "hi": "सेट है ✓ …{tail}",
+  "bn": "সেট করা আছে ✓ …{tail}",
+  "id": "terkonfigurasi ✓ …{tail}",
+  "ur": "ترتیب دی گئی ✓ …{tail}"
+ },
+ "cfg.configuradaSemFim": {
+  "en": "configured ✓",
+  "pt-BR": "configurada ✓",
+  "es": "configurada ✓",
+  "fr": "configurée ✓",
+  "de": "eingerichtet ✓",
+  "it": "configurata ✓",
+  "ru": "настроен ✓",
+  "ja": "設定済み ✓",
+  "zh-Hans": "已配置 ✓",
+  "ar": "تم الضبط ✓",
+  "hi": "सेट है ✓",
+  "bn": "সেট করা আছে ✓",
+  "id": "terkonfigurasi ✓",
+  "ur": "ترتیب دی گئی ✓"
+ },
+ "cfg.naoConfigurada": {
+  "en": "not configured",
+  "pt-BR": "não configurada",
+  "es": "no configurada",
+  "fr": "non configurée",
+  "de": "nicht eingerichtet",
+  "it": "non configurata",
+  "ru": "не настроен",
+  "ja": "未設定",
+  "zh-Hans": "未配置",
+  "ar": "غير مضبوطة",
+  "hi": "सेट नहीं है",
+  "bn": "সেট করা নেই",
+  "id": "belum dikonfigurasi",
+  "ur": "ترتیب نہیں دی گئی"
+ },
+ "cfg.chavesOnde": {
+  "en": "Keys are changed only in Jobee'sLair or on the phone page; here you only see whether they are set.",
+  "pt-BR": "As chaves só mudam na Jobee'sLair ou na página do celular; aqui aparece só se estão configuradas.",
+  "es": "Las claves solo se cambian en Jobee'sLair o en la página del móvil; aquí solo ves si están configuradas.",
+  "fr": "Les clés ne se changent que dans Jobee'sLair ou sur la page du téléphone ; ici, tu vois seulement si elles sont définies.",
+  "de": "Schlüssel lassen sich nur in Jobee'sLair oder auf der Handy-Seite ändern; hier siehst du nur, ob sie gesetzt sind.",
+  "it": "Le chiavi si cambiano solo in Jobee'sLair o nella pagina del telefono; qui vedi solo se sono impostate.",
+  "ru": "Ключи меняются только в Jobee'sLair или на странице для телефона; здесь видно лишь, заданы ли они.",
+  "ja": "キーはJobee'sLairかスマホ用ページでのみ変更できます。ここでは設定済みかどうかだけが分かります。",
+  "zh-Hans": "密钥只能在 Jobee'sLair 或手机页面中修改；这里只显示是否已配置。",
+  "ar": "تُغيَّر المفاتيح فقط في Jobee'sLair أو في صفحة الهاتف؛ هنا يظهر فقط ما إذا كانت مضبوطة.",
+  "hi": "कुंजियाँ सिर्फ़ Jobee'sLair या फ़ोन पेज पर बदली जाती हैं; यहाँ बस दिखता है कि वे सेट हैं या नहीं।",
+  "bn": "কী শুধু Jobee'sLair বা ফোনের পেজে বদলানো যায়; এখানে শুধু দেখা যায় সেট করা আছে কি না।",
+  "id": "Kunci hanya bisa diubah di Jobee'sLair atau halaman ponsel; di sini hanya terlihat apakah sudah diatur.",
+  "ur": "کلیدیں صرف Jobee'sLair یا فون کے صفحے پر بدلی جاتی ہیں؛ یہاں صرف نظر آتا ہے کہ وہ ترتیب دی گئی ہیں یا نہیں۔"
+ },
+ "cfg.salvo": {
+  "en": "Saved.",
+  "pt-BR": "Salvo.",
+  "es": "Guardado.",
+  "fr": "Enregistré.",
+  "de": "Gespeichert.",
+  "it": "Salvato.",
+  "ru": "Сохранено.",
+  "ja": "保存しました。",
+  "zh-Hans": "已保存。",
+  "ar": "تم الحفظ.",
+  "hi": "सहेज लिया।",
+  "bn": "সংরক্ষিত হয়েছে।",
+  "id": "Tersimpan.",
+  "ur": "محفوظ ہو گیا۔"
+ },
+ "cfg.naoSalvou": {
+  "en": "Not saved ({e}).",
+  "pt-BR": "Não salvou ({e}).",
+  "es": "No se guardó ({e}).",
+  "fr": "Non enregistré ({e}).",
+  "de": "Nicht gespeichert ({e}).",
+  "it": "Non salvato ({e}).",
+  "ru": "Не сохранено ({e}).",
+  "ja": "保存できませんでした（{e}）。",
+  "zh-Hans": "未能保存（{e}）。",
+  "ar": "لم يتم الحفظ ({e}).",
+  "hi": "सहेज नहीं सका ({e})।",
+  "bn": "সংরক্ষণ হয়নি ({e})।",
+  "id": "Tidak tersimpan ({e}).",
+  "ur": "محفوظ نہیں ہوا ({e})۔"
+ },
+ "cfg.invalido": {
+  "en": "This value is not accepted.",
+  "pt-BR": "Esse valor não é aceito.",
+  "es": "Este valor no se acepta.",
+  "fr": "Cette valeur n'est pas acceptée.",
+  "de": "Dieser Wert wird nicht akzeptiert.",
+  "it": "Questo valore non è accettato.",
+  "ru": "Это значение не принимается.",
+  "ja": "この値は使えません。",
+  "zh-Hans": "不接受此值。",
+  "ar": "هذه القيمة غير مقبولة.",
+  "hi": "यह मान स्वीकार नहीं है।",
+  "bn": "এই মানটি গ্রহণযোগ্য নয়।",
+  "id": "Nilai ini tidak diterima.",
+  "ur": "یہ قدر قبول نہیں۔"
+ },
+ "cfg.pedeAcesso": {
+  "en": "Pair this device to see and change the settings.",
+  "pt-BR": "Pareie este aparelho para ver e mudar as configurações.",
+  "es": "Vincula este dispositivo para ver y cambiar los ajustes.",
+  "fr": "Associe cet appareil pour voir et modifier les réglages.",
+  "de": "Koppele dieses Gerät, um die Einstellungen zu sehen und zu ändern.",
+  "it": "Associa questo dispositivo per vedere e modificare le impostazioni.",
+  "ru": "Подключите это устройство, чтобы просматривать и менять настройки.",
+  "ja": "このデバイスをペアリングすると、設定を確認・変更できます。",
+  "zh-Hans": "请配对此设备以查看和更改设置。",
+  "ar": "اقرن هذا الجهاز لعرض الإعدادات وتغييرها.",
+  "hi": "सेटिंग्स देखने और बदलने के लिए इस डिवाइस को पेयर करें।",
+  "bn": "সেটিংস দেখতে ও বদলাতে এই ডিভাইসটি পেয়ার করুন।",
+  "id": "Pasangkan perangkat ini untuk melihat dan mengubah pengaturan.",
+  "ur": "سیٹنگز دیکھنے اور بدلنے کے لیے اس ڈیوائس کو پیئر کریں۔"
+ },
+ "cfg.antigo": {
+  "en": "This payload does not keep the settings yet (Jobe .51 or newer).",
+  "pt-BR": "Este payload ainda não guarda as configurações (Jobe .51 ou mais nova).",
+  "es": "Este payload aún no guarda los ajustes (Jobe .51 o más reciente).",
+  "fr": "Ce payload ne conserve pas encore les réglages (Jobe .51 ou plus récente).",
+  "de": "Dieser Payload speichert die Einstellungen noch nicht (Jobe .51 oder neuer).",
+  "it": "Questo payload non conserva ancora le impostazioni (Jobe .51 o più recente).",
+  "ru": "Этот payload пока не хранит настройки (нужна Jobe .51 или новее).",
+  "ja": "このpayloadはまだ設定を保存しません（Jobe .51以降が必要）。",
+  "zh-Hans": "此 payload 还不保存设置（需要 Jobe .51 或更新版本）。",
+  "ar": "هذا الـ payload لا يحفظ الإعدادات بعد (يتطلب Jobe .51 أو أحدث).",
+  "hi": "यह payload अभी सेटिंग्स नहीं सहेजता (Jobe .51 या नया चाहिए)।",
+  "bn": "এই payload এখনও সেটিংস রাখে না (Jobe .51 বা নতুন দরকার)।",
+  "id": "Payload ini belum menyimpan pengaturan (Jobe .51 atau lebih baru).",
+  "ur": "یہ payload ابھی سیٹنگز محفوظ نہیں کرتا (Jobe .51 یا نیا چاہیے)۔"
+ },
+ "cfg.ajuda": {
+  "en": "Changes here go to the PS5 right away; Jobee'sLair picks them up when it opens.",
+  "pt-BR": "O que mudar aqui vai para o PS5 na hora; a Jobee'sLair pega quando abrir.",
+  "es": "Lo que cambies aquí va al PS5 al instante; Jobee'sLair lo recoge al abrirse.",
+  "fr": "Ce que tu changes ici part tout de suite vers la PS5 ; Jobee'sLair le récupère à son ouverture.",
+  "de": "Änderungen hier gehen sofort an die PS5; Jobee'sLair übernimmt sie beim Öffnen.",
+  "it": "Le modifiche qui vanno subito alla PS5; Jobee'sLair le recupera quando si apre.",
+  "ru": "Изменения отсюда сразу уходят на PS5; Jobee'sLair подхватит их при открытии.",
+  "ja": "ここでの変更はすぐにPS5に反映され、Jobee'sLairは起動時にそれを取り込みます。",
+  "zh-Hans": "在此所做的更改会立即发送到 PS5；Jobee'sLair 打开时会读取。",
+  "ar": "ما تغيّره هنا يذهب إلى PS5 فورًا؛ ويلتقطه Jobee'sLair عند فتحه.",
+  "hi": "यहाँ जो बदलेंगे वह तुरंत PS5 पर चला जाता है; Jobee'sLair खुलने पर उसे ले लेता है।",
+  "bn": "এখানে যা বদলাবেন তা সঙ্গে সঙ্গে PS5-এ যায়; Jobee'sLair খুললে তা নিয়ে নেয়।",
+  "id": "Perubahan di sini langsung dikirim ke PS5; Jobee'sLair mengambilnya saat dibuka.",
+  "ur": "یہاں جو بدلیں گے وہ فوراً PS5 پر چلا جاتا ہے؛ Jobee'sLair کھلنے پر اسے اٹھا لیتا ہے۔"
+ },
+ "cfg.parear": {
+  "en": "Pair this device",
+  "pt-BR": "Parear este aparelho"
+ },
+ "tc.titulo": {
+  "en": "Full screen on the PS5",
+  "pt-BR": "Tela cheia no PS5",
+  "es": "Pantalla completa en el PS5",
+  "fr": "Plein écran sur la PS5",
+  "de": "Vollbild auf der PS5",
+  "it": "Schermo intero su PS5",
+  "ru": "Полноэкранный режим на PS5",
+  "ja": "PS5で全画面",
+  "zh-Hans": "在 PS5 上全屏",
+  "ar": "ملء الشاشة على PS5",
+  "hi": "PS5 पर पूर्ण स्क्रीन",
+  "bn": "PS5-এ পূর্ণ স্ক্রিন",
+  "id": "Layar penuh di PS5",
+  "ur": "PS5 پر مکمل اسکرین"
+ },
+ "tc.texto": {
+  "en": "Jobe asks glibren to go back to the home screen, apply the test payload ps5-web-browser-fullscreen and reopen this page in full screen.",
+  "pt-BR": "A Jobe pede ao glibren para voltar à tela inicial, aplicar o payload de teste ps5-web-browser-fullscreen e reabrir esta página em tela cheia.",
+  "es": "Jobe le pide a glibren volver a la pantalla de inicio, aplicar el payload de prueba ps5-web-browser-fullscreen y reabrir esta página en pantalla completa.",
+  "fr": "Jobe demande à glibren de revenir à l'écran d'accueil, d'appliquer le payload de test ps5-web-browser-fullscreen et de rouvrir cette page en plein écran.",
+  "de": "Jobe bittet glibren, zum Startbildschirm zurückzukehren, den Test-Payload ps5-web-browser-fullscreen anzuwenden und diese Seite im Vollbild neu zu öffnen.",
+  "it": "Jobe chiede a glibren di tornare alla schermata iniziale, applicare il payload di test ps5-web-browser-fullscreen e riaprire questa pagina a schermo intero.",
+  "ru": "Jobe просит glibren вернуться на главный экран, применить тестовый payload ps5-web-browser-fullscreen и открыть эту страницу заново на весь экран.",
+  "ja": "Jobeはglibrenにホーム画面へ戻り、テスト用payload ps5-web-browser-fullscreen を適用して、このページを全画面で開き直すよう依頼します。",
+  "zh-Hans": "Jobe 会请求 glibren 返回主屏幕，应用测试 payload ps5-web-browser-fullscreen，并以全屏重新打开此页面。",
+  "ar": "يطلب Jobe من glibren العودة إلى الشاشة الرئيسية وتطبيق payload الاختباري ps5-web-browser-fullscreen وإعادة فتح هذه الصفحة بملء الشاشة.",
+  "hi": "Jobe, glibren से होम स्क्रीन पर लौटने, टेस्ट payload ps5-web-browser-fullscreen लागू करने और इस पेज को पूर्ण स्क्रीन में फिर खोलने को कहता है।",
+  "bn": "Jobe, glibren-কে হোম স্ক্রিনে ফিরতে, টেস্ট payload ps5-web-browser-fullscreen প্রয়োগ করতে এবং এই পেজ পূর্ণ স্ক্রিনে আবার খুলতে বলে।",
+  "id": "Jobe meminta glibren kembali ke layar utama, menerapkan payload uji ps5-web-browser-fullscreen, dan membuka ulang halaman ini dalam layar penuh.",
+  "ur": "Jobe، glibren سے کہتا ہے کہ ہوم اسکرین پر واپس جائے، ٹیسٹ payload ps5-web-browser-fullscreen لگائے اور اس صفحے کو مکمل اسکرین میں دوبارہ کھولے۔"
+ },
+ "tc.risco": {
+  "en": "Test: it may restart the PS5 interface. Restarting the console undoes it.",
+  "pt-BR": "Teste: pode reiniciar a interface do PS5. Reiniciar o console desfaz.",
+  "es": "Prueba: puede reiniciar la interfaz del PS5. Reiniciar la consola lo deshace.",
+  "fr": "Test : peut redémarrer l'interface de la PS5. Redémarrer la console l'annule.",
+  "de": "Test: Kann die PS5-Oberfläche neu starten. Ein Neustart der Konsole macht es rückgängig.",
+  "it": "Test: può riavviare l'interfaccia della PS5. Riavviare la console lo annulla.",
+  "ru": "Тест: может перезапустить интерфейс PS5. Перезагрузка консоли отменяет изменение.",
+  "ja": "テスト：PS5のインターフェースが再起動する場合があります。本体を再起動すると元に戻ります。",
+  "zh-Hans": "测试：可能会重启 PS5 界面。重启主机即可还原。",
+  "ar": "اختبار: قد يعيد تشغيل واجهة PS5. إعادة تشغيل الجهاز تُلغي ذلك.",
+  "hi": "टेस्ट: इससे PS5 का इंटरफ़ेस रीस्टार्ट हो सकता है। कंसोल रीस्टार्ट करने से यह हट जाता है।",
+  "bn": "টেস্ট: এতে PS5-এর ইন্টারফেস রিস্টার্ট হতে পারে। কনসোল রিস্টার্ট করলে এটি মুছে যায়।",
+  "id": "Uji coba: dapat memulai ulang antarmuka PS5. Memulai ulang konsol akan membatalkannya.",
+  "ur": "ٹیسٹ: اس سے PS5 کا انٹرفیس ری اسٹارٹ ہو سکتا ہے۔ کنسول ری اسٹارٹ کرنے سے یہ ختم ہو جاتا ہے۔"
+ },
+ "tc.ok": {
+  "en": "Apply",
+  "pt-BR": "Aplicar",
+  "es": "Aplicar",
+  "fr": "Appliquer",
+  "de": "Anwenden",
+  "it": "Applica",
+  "ru": "Применить",
+  "ja": "適用",
+  "zh-Hans": "应用",
+  "ar": "تطبيق",
+  "hi": "लागू करें",
+  "bn": "প্রয়োগ করুন",
+  "id": "Terapkan",
+  "ur": "لاگو کریں"
+ },
+ "tc.indo": {
+  "en": "Going back to the home screen… the browser reopens by itself in a few seconds.",
+  "pt-BR": "Voltando à tela inicial… o navegador reabre sozinho em alguns segundos.",
+  "es": "Volviendo a la pantalla de inicio… el navegador se reabre solo en unos segundos.",
+  "fr": "Retour à l'écran d'accueil… le navigateur se rouvre tout seul dans quelques secondes.",
+  "de": "Zurück zum Startbildschirm… der Browser öffnet sich in wenigen Sekunden von selbst wieder.",
+  "it": "Ritorno alla schermata iniziale… il browser si riapre da solo tra qualche secondo.",
+  "ru": "Возврат на главный экран… браузер сам откроется через несколько секунд.",
+  "ja": "ホーム画面に戻っています… 数秒でブラウザが自動的に開き直します。",
+  "zh-Hans": "正在返回主屏幕… 浏览器将在几秒后自动重新打开。",
+  "ar": "جارٍ العودة إلى الشاشة الرئيسية… سيُعاد فتح المتصفح تلقائيًا خلال ثوانٍ.",
+  "hi": "होम स्क्रीन पर लौट रहे हैं… ब्राउज़र कुछ सेकंड में अपने आप फिर खुल जाएगा।",
+  "bn": "হোম স্ক্রিনে ফিরছি… কয়েক সেকেন্ডে ব্রাউজার নিজে থেকেই আবার খুলবে।",
+  "id": "Kembali ke layar utama… browser akan terbuka lagi sendiri dalam beberapa detik.",
+  "ur": "ہوم اسکرین پر واپس جا رہے ہیں… براؤزر چند سیکنڈ میں خود دوبارہ کھل جائے گا۔"
+ },
+ "tc.jogo": {
+  "en": "Close the open game or app first: if the PS5 interface restarts, it closes without saving.",
+  "pt-BR": "Feche antes o jogo ou app aberto: se a interface do PS5 reiniciar, ele fecha sem salvar.",
+  "es": "Cierra antes el juego o la app abiertos: si la interfaz del PS5 se reinicia, se cierra sin guardar.",
+  "fr": "Ferme d'abord le jeu ou l'app ouverts : si l'interface de la PS5 redémarre, ils se ferment sans sauvegarde.",
+  "de": "Schließe zuerst das geöffnete Spiel oder die App: Startet die PS5-Oberfläche neu, wird es ohne Speichern beendet.",
+  "it": "Chiudi prima il gioco o l'app aperti: se l'interfaccia della PS5 si riavvia, si chiudono senza salvare.",
+  "ru": "Сначала закройте открытую игру или приложение: если интерфейс PS5 перезапустится, они закроются без сохранения.",
+  "ja": "先に開いているゲームやアプリを閉じてください。PS5のインターフェースが再起動すると、保存されずに終了します。",
+  "zh-Hans": "请先关闭已打开的游戏或应用：如果 PS5 界面重启，它会在不保存的情况下关闭。",
+  "ar": "أغلق اللعبة أو التطبيق المفتوح أولًا: إذا أُعيد تشغيل واجهة PS5 فسيُغلق دون حفظ.",
+  "hi": "पहले खुला गेम या ऐप बंद करें: अगर PS5 का इंटरफ़ेस रीस्टार्ट हुआ तो वह बिना सेव किए बंद हो जाएगा।",
+  "bn": "আগে খোলা গেম বা অ্যাপ বন্ধ করুন: PS5-এর ইন্টারফেস রিস্টার্ট হলে সেটি সেভ না হয়েই বন্ধ হয়ে যাবে।",
+  "id": "Tutup dulu game atau aplikasi yang terbuka: jika antarmuka PS5 dimulai ulang, ia akan tertutup tanpa menyimpan.",
+  "ur": "پہلے کھلا ہوا گیم یا ایپ بند کریں: اگر PS5 کا انٹرفیس ری اسٹارٹ ہوا تو وہ بغیر محفوظ کیے بند ہو جائے گا۔"
+ },
+ "tc.ocupado": {
+  "en": "glibren is busy with another payload: wait and try again.",
+  "pt-BR": "O glibren está ocupado com outro payload: espere e tente de novo.",
+  "es": "glibren está ocupado con otro payload: espera e inténtalo de nuevo.",
+  "fr": "glibren est occupé avec un autre payload : attends et réessaie.",
+  "de": "glibren ist mit einem anderen Payload beschäftigt: Warte kurz und versuche es erneut.",
+  "it": "glibren è occupato con un altro payload: aspetta e riprova.",
+  "ru": "glibren занят другим payload: подождите и повторите попытку.",
+  "ja": "glibrenは別のpayloadで処理中です。しばらくしてからもう一度お試しください。",
+  "zh-Hans": "glibren 正忙于处理另一个 payload：请稍等后重试。",
+  "ar": "glibren مشغول بـ payload آخر: انتظر وحاول مرة أخرى.",
+  "hi": "glibren किसी दूसरे payload में व्यस्त है: रुकें और फिर कोशिश करें।",
+  "bn": "glibren অন্য একটি payload নিয়ে ব্যস্ত: অপেক্ষা করে আবার চেষ্টা করুন।",
+  "id": "glibren sedang sibuk dengan payload lain: tunggu lalu coba lagi.",
+  "ur": "glibren کسی اور payload میں مصروف ہے: انتظار کریں اور دوبارہ کوشش کریں۔"
+ },
+ "tc.semGlibren": {
+  "en": "glibren did not answer on this PS5.",
+  "pt-BR": "O glibren não respondeu neste PS5.",
+  "es": "glibren no respondió en este PS5.",
+  "fr": "glibren n'a pas répondu sur cette PS5.",
+  "de": "glibren hat auf dieser PS5 nicht geantwortet.",
+  "it": "glibren non ha risposto su questa PS5.",
+  "ru": "glibren не ответил на этой PS5.",
+  "ja": "このPS5でglibrenから応答がありませんでした。",
+  "zh-Hans": "glibren 在此 PS5 上没有响应。",
+  "ar": "لم يستجب glibren على هذا الـ PS5.",
+  "hi": "इस PS5 पर glibren ने जवाब नहीं दिया।",
+  "bn": "এই PS5-এ glibren সাড়া দেয়নি।",
+  "id": "glibren tidak merespons di PS5 ini.",
+  "ur": "اس PS5 پر glibren نے جواب نہیں دیا۔"
+ },
+ "link.texto": {
+  "en": "The full Jobe (new): store with covers, game pages, downloads and settings, for phone, PC and the PS5 browser.",
+  "pt-BR": "A Jobe completa (nova): loja com capas, fichas, downloads e configurações, para celular, PC e o navegador do PS5.",
+  "es": "La Jobe completa (nueva): tienda con carátulas, fichas de juegos, descargas y ajustes, para móvil, PC y el navegador del PS5.",
+  "fr": "La Jobe complète (nouvelle) : boutique avec jaquettes, fiches de jeux, téléchargements et réglages, pour téléphone, PC et le navigateur de la PS5.",
+  "de": "Die komplette Jobe (neu): Store mit Covern, Spieleseiten, Downloads und Einstellungen, für Handy, PC und den PS5-Browser.",
+  "it": "La Jobe completa (nuova): store con copertine, schede dei giochi, download e impostazioni, per telefono, PC e il browser della PS5.",
+  "ru": "Полная Jobe (новая): магазин с обложками, страницами игр, загрузками и настройками — для телефона, ПК и браузера PS5.",
+  "ja": "フル版のJobe（新）：カバー画像、ゲームページ、ダウンロード、設定を備えたストア。スマホ、PC、PS5ブラウザで使えます。",
+  "zh-Hans": "完整版 Jobe（新）：包含封面、游戏页面、下载和设置的商店，适用于手机、电脑和 PS5 浏览器。",
+  "ar": "Jobe الكاملة (الجديدة): متجر بأغلفة وصفحات للألعاب وتنزيلات وإعدادات، للهاتف والكمبيوتر ومتصفح PS5.",
+  "hi": "पूरा Jobe (नया): कवर, गेम पेज, डाउनलोड और सेटिंग्स वाला स्टोर, फ़ोन, PC और PS5 ब्राउज़र के लिए।",
+  "bn": "সম্পূর্ণ Jobe (নতুন): কভার, গেম পেজ, ডাউনলোড ও সেটিংস সহ স্টোর, ফোন, পিসি ও PS5 ব্রাউজারের জন্য।",
+  "id": "Jobe lengkap (baru): toko dengan sampul, halaman game, unduhan, dan pengaturan, untuk ponsel, PC, dan browser PS5.",
+  "ur": "مکمل Jobe (نیا): کورز، گیم پیجز، ڈاؤن لوڈز اور سیٹنگز والا اسٹور، فون، پی سی اور PS5 براؤزر کے لیے۔"
+ },
+ "link.botao": {
+  "en": "Open the full Jobe",
+  "pt-BR": "Abrir a Jobe completa",
+  "es": "Abrir la Jobe completa",
+  "fr": "Ouvrir la Jobe complète",
+  "de": "Komplette Jobe öffnen",
+  "it": "Apri la Jobe completa",
+  "ru": "Открыть полную Jobe",
+  "ja": "フル版Jobeを開く",
+  "zh-Hans": "打开完整版 Jobe",
+  "ar": "فتح Jobe الكاملة",
+  "hi": "पूरा Jobe खोलें",
+  "bn": "সম্পূর্ণ Jobe খুলুন",
+  "id": "Buka Jobe lengkap",
+  "ur": "مکمل Jobe کھولیں"
+ }
+}

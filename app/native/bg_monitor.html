@@ -27,6 +27,9 @@ header{display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-are
 .lock.gear{padding:6px 10px}
 .lock.gear svg{width:18px;height:18px}
 .pinned{position:sticky;top:0;z-index:5;background:var(--ink);border-bottom:1px solid var(--line)}
+/* Fase 8: o caminho para a Jobe completa (/app), logo abaixo do cabecalho */
+.applink{display:block;margin:6px max(var(--pad),env(safe-area-inset-right)) 6px max(var(--pad),env(safe-area-inset-left));padding:8px 12px;border:1px solid #3b6fd8;border-radius:8px;background:rgba(59,111,216,.16);color:var(--fg);font-size:14px;font-weight:600;text-decoration:none;text-align:center;overflow-wrap:anywhere}
+.applink:focus{outline:3px solid #ffd34d;outline-offset:2px}
 .pinned header{border-bottom:0}
 .pinned.scrolled{box-shadow:0 8px 18px rgba(0,0,0,.55)}
 .pinned .summary{margin:0 max(var(--pad),env(safe-area-inset-right)) 10px max(var(--pad),env(safe-area-inset-left))}
@@ -189,6 +192,7 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
   <button class="lock" id="lock" type="button"></button>
   <button class="lock gear" id="gear" type="button" hidden aria-label="Trocar IP"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
 </header>
+  <a class="applink" id="appLink" href="/app">Abrir a Jobe completa →</a>
   <div class="summary">
     <div><span id="lblActive">Baixando</span><b id="sumActive">–</b></div>
     <div><span id="lblSpeed">Velocidade</span><b id="sumSpeed">–</b></div>
@@ -2997,6 +3001,19 @@ body.fopen{overflow:hidden}
   window.pairHook = () => { if (box.open) load(); else render(); };
   box.addEventListener("toggle", () => { if (box.open) load(); });
   render();
+})();
+</script>
+<script>
+"use strict";
+// Fase 8: o texto do link para a Jobe completa (/app) nos 14 idiomas (gerado por tools/web-app/textos.mjs).
+/*APPLINK-INICIO*/
+var APPLINK = {"pt-BR":{"botao":"Abrir a Jobe completa","texto":"A Jobe completa (nova): loja com capas, fichas, downloads e configurações, para celular, PC e o navegador do PS5."},"en":{"botao":"Open the full Jobe","texto":"The full Jobe (new): store with covers, game pages, downloads and settings, for phone, PC and the PS5 browser."},"es":{"botao":"Abrir la Jobe completa","texto":"La Jobe completa (nueva): tienda con carátulas, fichas de juegos, descargas y ajustes, para móvil, PC y el navegador del PS5."},"fr":{"botao":"Ouvrir la Jobe complète","texto":"La Jobe complète (nouvelle) : boutique avec jaquettes, fiches de jeux, téléchargements et réglages, pour téléphone, PC et le navigateur de la PS5."},"de":{"botao":"Komplette Jobe öffnen","texto":"Die komplette Jobe (neu): Store mit Covern, Spieleseiten, Downloads und Einstellungen, für Handy, PC und den PS5-Browser."},"it":{"botao":"Apri la Jobe completa","texto":"La Jobe completa (nuova): store con copertine, schede dei giochi, download e impostazioni, per telefono, PC e il browser della PS5."},"ru":{"botao":"Открыть полную Jobe","texto":"Полная Jobe (новая): магазин с обложками, страницами игр, загрузками и настройками — для телефона, ПК и браузера PS5."},"ja":{"botao":"フル版Jobeを開く","texto":"フル版のJobe（新）：カバー画像、ゲームページ、ダウンロード、設定を備えたストア。スマホ、PC、PS5ブラウザで使えます。"},"zh-Hans":{"botao":"打开完整版 Jobe","texto":"完整版 Jobe（新）：包含封面、游戏页面、下载和设置的商店，适用于手机、电脑和 PS5 浏览器。"},"ar":{"botao":"فتح Jobe الكاملة","texto":"Jobe الكاملة (الجديدة): متجر بأغلفة وصفحات للألعاب وتنزيلات وإعدادات، للهاتف والكمبيوتر ومتصفح PS5."},"hi":{"botao":"पूरा Jobe खोलें","texto":"पूरा Jobe (नया): कवर, गेम पेज, डाउनलोड और सेटिंग्स वाला स्टोर, फ़ोन, PC और PS5 ब्राउज़र के लिए।"},"bn":{"botao":"সম্পূর্ণ Jobe খুলুন","texto":"সম্পূর্ণ Jobe (নতুন): কভার, গেম পেজ, ডাউনলোড ও সেটিংস সহ স্টোর, ফোন, পিসি ও PS5 ব্রাউজারের জন্য।"},"id":{"botao":"Buka Jobe lengkap","texto":"Jobe lengkap (baru): toko dengan sampul, halaman game, unduhan, dan pengaturan, untuk ponsel, PC, dan browser PS5."},"ur":{"botao":"مکمل Jobe کھولیں","texto":"مکمل Jobe (نیا): کورز، گیم پیجز، ڈاؤن لوڈز اور سیٹنگز والا اسٹور، فون، پی سی اور PS5 براؤزر کے لیے۔"}};
+/*APPLINK-FIM*/
+(function () {
+  var a = document.getElementById("appLink"); if (!a) return;
+  var tag = String(navigator.language || "en").toLowerCase(), c = tag.indexOf("pt") === 0 ? "pt-BR" : tag.indexOf("zh") === 0 ? "zh-Hans" : tag.slice(0, 2);
+  var t = APPLINK[c] || APPLINK.en; if (!t) return;
+  a.textContent = t.botao + " →"; a.title = t.texto; a.setAttribute("aria-label", t.botao + ": " + t.texto);
 })();
 </script>
 </body>
