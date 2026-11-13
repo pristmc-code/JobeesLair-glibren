@@ -22,7 +22,7 @@ import { freePortFrom } from './free-port.mjs';
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const embed = await import(pathToFileURL(path.join(repo, 'tools/bg-monitor/embed.mjs')).href);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const freePort = freePortFrom(16); // Fase 8: bloco de portas so deste arquivo (tests/free-port.mjs)
+const freePort = freePortFrom(13); // Fase 8: bloco de portas so deste arquivo (tests/free-port.mjs)
 
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-app-'));
 const binary = path.join(dir, 'bgdl');
@@ -84,7 +84,7 @@ test('Fase 8: a pagina /app segue o padrao de tela e o navegador do PS5', () => 
   for (const piece of ['"/api/store/game?id="', '"/api/store/add"', '"/api/status"', '"/api/jobs/"', '"/api/unlock"', 'CHAVE: "jobe.session"', 'X-Session',
     '"/api/pair"', '"/api/pair/request"', '"/api/pair/confirm"', '"jobe.deviceName"', 'Auth.com(', 'Usar o PIN', 'Código da TV', 'navigator.getGamepads', 'gamepadconnected', 'keydown', 'requestAnimationFrame', 'ResizeObserver', 'loading = "lazy"', 'data-src',
     'visibilitychange', '/PlayStation/', 'html.ps5', 'clamp(15px,min(1.04vw,1.95vh),20px)', 'requestFullscreen', 'webkitRequestFullscreen', '"jobe.app.tela"',
-    '"/api/teste/enviar"', 'guardaCursor', 'GP.rodaAte', 'window.jobeVoltar', '"← JOGOS"', '"← GAMES"', 'Biblioteca (em breve)', 'Homebrew (em breve)', 'Configurações (em breve)',
+    '"/api/teste/enviar"', 'guardaCursor', 'GP.rodaAte', 'window.jobeTelaCheiaPs5', 'k === 116 || k === 117', 'CODIGOS = { 38:', 'jobeGuarda', 'GP.porTeclas', 'window.jobeVoltar', '"← JOGOS"', '"← GAMES"', 'Biblioteca (em breve)', 'Homebrew (em breve)', 'Configurações (em breve)',
     '(max-height:500px) and (min-width:600px)', '(min-width:761px) and (min-height:501px)', '100dvh', '[hidden]{display:none!important}']) assert.ok(page.includes(piece), piece);
   assert.ok(!/text-overflow|nowrap|ellipsis/.test(page), 'texto quebra a linha, sem reticencias');
   assert.match(page, /\.fila\{display:grid;grid-auto-flow:column;grid-auto-columns:minmax\(0,1fr\)/, 'botoes de uma linha com a mesma largura');
@@ -168,7 +168,7 @@ test('Fase 8: a pagina monta contra a API falsa nos 5 tamanhos e na area util do
   assert.deepEqual(result.falhas, [], 'regras de tela, controle e teclado');
   assert.equal(r.status, 0);
   const medidas = JSON.parse(readFileSync(path.join(out, 'medidas.json'), 'utf8'));
-  assert.deepEqual(medidas.resultados.map((x) => x.tamanho), ['360x780', '412x915', '780x360', '1280x800', '1920x1080', '1600x860-ps5', '1280x720-ps5']);
+  assert.deepEqual(medidas.resultados.map((x) => x.tamanho), ['360x780', '412x915', '780x360', '1280x800', '1920x1080', '1540x700-ps5', '1232x560-ps5']);
   for (const m of medidas.resultados) {
     assert.ok(m.montagem.cartoes > 0 && m.montagem.estado.count === 2639, `${m.tamanho}: montou com os 2.639 jogos`);
     assert.ok(m.rolagem.maxCartoesNoDom < 200, `${m.tamanho}: lista virtual`);

@@ -1,7 +1,7 @@
 // Fase 8: mede e confere a Jobe web completa (app/native/bg_app.html) no Chromium, com o Playwright, contra a API falsa
 // (tools/web-app/api-falsa.mjs, 2.639 jogos). Para cada tamanho (celular em pe 360x780 e 412x915, deitado 780x360, PC
-// 1280x800, TV 1920x1080 e a area util provavel do navegador do PS5 com moldura, 1600x860 e 1280x720, as tres com o
-// user agent do PS5):
+// 1280x800, e o navegador do PS5 com o user agent dele: 1920x1080 (tela cheia pelo patch), 1540x700 (com a moldura) e
+// 1232x560 (zoom de 125%)):
 //   - montagem: do inicio do script ate a 1a pagina de capas na tela (window.jobeApp.montagemMs) e desde a navegacao;
 //   - rolagem: a grade inteira de cima a baixo, 35% da altura por quadro (bem mais rapido que um polegar), com o tempo
 //     de cada quadro (media, p95, pior), quantos cartoes existiam no DOM (lista virtual) e quantas capas foram pedidas;
@@ -47,9 +47,10 @@ const TODOS = [
   { nome: '780x360', w: 780, h: 360, movel: true },
   { nome: '1280x800', w: 1280, h: 800, movel: false },
   { nome: '1920x1080', w: 1920, h: 1080, movel: false, ps5: true },
-  // a area util provavel do navegador do PS5 (a moldura come parte da TV; o numero real vem das medidas da /app e /teste)
-  { nome: '1600x860-ps5', w: 1600, h: 860, movel: false, ps5: true },
-  { nome: '1280x720-ps5', w: 1280, h: 720, movel: false, ps5: true },
+  // navegador do PS5 com a moldura (1540x700, PS5 real) e com o zoom de 125% (~1232x560, o minimo); 1920x1080 acima e o
+  // PS5 com o patch de tela cheia (ps5/PESQUISA-navegador-ps5-tela-cheia.md)
+  { nome: '1540x700-ps5', w: 1540, h: 700, movel: false, ps5: true },
+  { nome: '1232x560-ps5', w: 1232, h: 560, movel: false, ps5: true },
 ];
 const pedidos = typeof args.tamanhos === 'string' ? args.tamanhos.split(',') : null;
 const TAMANHOS = pedidos ? TODOS.filter((t) => pedidos.includes(t.nome)) : TODOS;
@@ -111,7 +112,8 @@ async function medirTamanho(navegador, api, t, jogo) {
     conferir(tela.ps5, `${t.nome}: o UA do PS5 nao marcou html.ps5`);
     conferir(tela.navL >= t.w - 2 && tela.navA <= t.h * 0.12, `${t.nome}: no PS5 a navegacao devia ser um cabecalho baixo (${tela.navL}x${tela.navA})`);
   }
-  conferir(tela.telaCheia, `${t.nome}: o botao Tela cheia devia aparecer no Chromium (tem a API)`);
+  // fora do PS5 o Chromium tem a Fullscreen API: o botao aparece; no PS5 nao (a moldura e do ShellUI; so o gancho do payload)
+  conferir(tela.telaCheia === !t.ps5, `${t.nome}: botao Tela cheia ${tela.telaCheia ? 'visivel' : 'escondido'} (esperado ${t.ps5 ? 'escondido no PS5' : 'visivel'})`);
   const r1 = await pagina.evaluate(REGRAS);
   await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-loja.png`) });
   // o 1o botao da navegacao e "Jogos" (fora da loja vira "<- JOGOS")

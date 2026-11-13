@@ -179,8 +179,9 @@ html.toque .card:focus{border-color:transparent;box-shadow:none}
 #aviso.ok{border-color:#2f6b4c}#aviso.ruim{border-color:#7a2f2f}
 .medidas{white-space:pre-wrap;overflow-wrap:anywhere;font:.82rem/1.45 ui-monospace,Consolas,monospace;background:var(--bg);border:1px solid var(--linha);border-radius:var(--r);padding:.6rem;margin:0 0 .8rem;color:var(--tx)}
 
-/* ---- Navegador do PS5 (html.ps5): a moldura do navegador come parte da tela (area util < 1920x1080, PS5 real) e a
-   tela cheia nao e garantida. Ideias da Orbit Store 1.8.5 (GPL-3, src/styles.css e src/controller.ts, reescritas):
+/* ---- Navegador do PS5 (html.ps5): com a moldura a area util e 1540x700 px de CSS (dpr 1; PS5 real, medido em
+   capturas: ps5/PESQUISA-navegador-ps5-tela-cheia.md), 1920x1080 com o patch de tela cheia do ShellUI e ~1232x560 com
+   o zoom de 125%. A ALTURA e o gargalo. Ideias da Orbit Store 1.8.5 (GPL-3, src/styles.css e src/controller.ts, reescritas):
    fonte-base pela LARGURA real (clamp(15px, 1.04vw, 20px)) - aqui tambem pela altura, para 1280x720 caber -, cabecalho
    no alto em vez de barra lateral, sem transicoes (o navegador do PS5 repinta sombras a cada movimento do direcional).
    Nada usa 1080 fixo: tudo sai de innerWidth/innerHeight (vw/vh) e a grade calcula as colunas pela largura real. ---- */
@@ -395,7 +396,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
         if (r.status === 200 && r.data.ok === true) {
           self.pareamento = true; self.local = r.data.local === true; self.pinOn = r.data.pinOn !== false; self.pinSet = r.data.pinSet !== false;
           // Como a Orbit (App.tsx: platform "ps5" + sessao local), aberta em 127.0.0.1 = o navegador do proprio PS5
-          if (self.local && !root.classList.contains("ps5")) { root.classList.add("ps5"); medidas(true); anotarTela(); }
+          if (self.local && !root.classList.contains("ps5")) { root.classList.add("ps5"); prepararTela(); medidas(true); anotarTela(); }
         }
         else if (r.status === 404) self.pareamento = false;
       });
@@ -1044,22 +1045,52 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   }
   function trocarSecao(passo) { var k = (SECOES.indexOf(secao) + passo + SECOES.length) % SECOES.length; ir(SECOES[k]); setTimeout(function () { var b = navBtns[k]; if (b) b.focus(); }, 0); }
   window.jobeVoltar = voltar; // o app Android (Jobe Controle) chama no botao voltar, como na pagina do celular
-  var TECLAS = { ArrowUp: "cima", ArrowDown: "baixo", ArrowLeft: "esq", ArrowRight: "dir" };
+  // Teclas. No navegador do PS5 o controle chega como keydown (PESQUISA-navegador-ps5-tela-cheia.md, PS5 real):
+  // X = 13 (Enter), O = 27 (Escape) e o navegador TAMBEM volta o historico (popstate), direcional = 37-40,
+  // triangulo = 112 (F1), quadrado = 113 (F2), L1/R1/L2 = 116/117/118 (F5/F6/F7). O analogico esquerdo e o cursor do
+  // navegador (gruda nos botoes; o clique dele passa pela guardaCursor). Firmwares antigos: e.key "Left"/"Esc" ou so keyCode.
+  var TECLAS = { ArrowUp: "cima", ArrowDown: "baixo", ArrowLeft: "esq", ArrowRight: "dir", Up: "cima", Down: "baixo", Left: "esq", Right: "dir" };
+  var CODIGOS = { 38: "cima", 40: "baixo", 37: "esq", 39: "dir" };
+  var ultimoPop = 0;
+  addEventListener("popstate", function () { ultimoPop = performance.now(); });
   document.addEventListener("keydown", function (e) {
     var t = e.target, tag = t && t.tagName ? t.tagName : "", campo = tag === "INPUT" && t.type !== "checkbox", sel = tag === "SELECT";
-    var d = TECLAS[e.key];
+    var k = e.keyCode || e.which || 0, ps5 = root.classList.contains("ps5");
+    var d = TECLAS[e.key] || CODIGOS[k];
+    if (ps5 && (d || k === 13 || k === 27 || (k >= 112 && k <= 118))) GP.porTeclas = true; // a Gamepad API nao repete o que ja veio por tecla
     if (d) {
       if (sel && (d === "cima" || d === "baixo")) return; // o select troca o valor
       if (campo && (d === "esq" || d === "dir")) return; // o cursor dentro do texto
       e.preventDefault(); mover(d); return;
     }
-    if (e.key === "Escape" || (e.key === "Backspace" && !campo)) { if (voltar()) e.preventDefault(); return; }
+    if (e.key === "Escape" || e.key === "Esc" || k === 27 || (e.key === "Backspace" && !campo)) {
+      e.preventDefault();
+      // No PS5 o O tambem anda o historico: se o popstate chegar (ficha aberta por pushState), ele ja voltou; senao, volta aqui.
+      if (ps5 && (k === 27 || e.key === "Escape" || e.key === "Esc")) { var agora = performance.now(); setTimeout(function () { if (ultimoPop < agora) voltar(); }, 180); }
+      else voltar();
+      return;
+    }
+    if (ps5 && !campo && !sel) {
+      if (k === 13) { e.preventDefault(); modoKb(); if (performance.now() - GP.cliqueEm > 350) ativar(); return; } // X: um so, mesmo com a Gamepad API
+      if (k === 112 && secao === "loja") { e.preventDefault(); modoKb(); $("bFiltros").click(); $("bFiltros").focus(); return; }
+      if (k === 113 && secao === "loja") { e.preventDefault(); modoKb(); $("busca").focus(); return; }
+      if (k === 116 || k === 117) { e.preventDefault(); modoKb(); trocarSecao(k === 116 ? -1 : 1); return; } // sem recarregar (F5)
+      if (k === 118) { e.preventDefault(); modoKb(); if (secao === "loja" && $("ficha").hidden) focarCartao(0); else { var pn = painelAtual(); if (pn) pn.scrollTop = 0; } return; }
+    }
     if (e.key === "Tab" || e.key === "Enter") modoKb();
   });
+  // No PS5, O na tela inicial da pagina sairia dela (historico do navegador): uma entrada "guarda" segura a /app aberta.
+  var hashVisto = location.hash;
+  addEventListener("hashchange", function () { hashVisto = location.hash; });
+  addEventListener("popstate", function () {
+    if (!root.classList.contains("ps5")) return;
+    setTimeout(function () { if (location.hash === hashVisto && !(history.state && history.state.jobeGuarda)) { try { history.pushState({ jobeGuarda: 1 }, "", location.href); } catch (x) {} } }, 0);
+  });
+  function guardaHistorico() { if (root.classList.contains("ps5") && !(history.state && history.state.jobeGuarda)) { try { history.pushState({ jobeGuarda: 1 }, "", location.href); } catch (x) {} } }
   // Eco do cursor: nos 350 ms depois do X, um clique "de verdade" (isTrusted) e descartado quando cai fora do elemento
   // focado (o cursor estava em outro lugar) ou quando a pagina ja clicou nele (seria o 2o clique). So passa o clique
   // nativo no proprio campo/select focado, que a pagina nao sabe abrir sozinha no navegador do PS5.
-  var GP = { ativo: false, antes: [], prox: {}, cliqueEm: 0, alvo: null, clicou: false, navegando: false, rodaAte: 0, quadro: 0 };
+  var GP = { ativo: false, antes: [], prox: {}, cliqueEm: 0, alvo: null, clicou: false, navegando: false, rodaAte: 0, quadro: 0, porTeclas: false };
   document.addEventListener("click", function (e) {
     if (!e.isTrusted || performance.now() - GP.cliqueEm >= 350 || !GP.alvo) return;
     var dentro = GP.alvo === e.target || (GP.alvo.contains && GP.alvo.contains(e.target));
@@ -1083,6 +1114,10 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       var ant = GP.antes[n] || [], agora = [];
       for (var b = 0; b < p.buttons.length; b++) agora[b] = Boolean(p.buttons[b] && (p.buttons[b].pressed || p.buttons[b].value > 0.5));
       var ax = p.axes && p.axes.length > 1 ? p.axes : [0, 0];
+      // No PS5, se o controle ja chega por teclas (keydown), a Gamepad API so rola com o analogico direito: os botoes
+      // viriam em dobro e o analogico esquerdo e o cursor do navegador.
+      var soRolar = GP.porTeclas && root.classList.contains("ps5");
+      if (soRolar) { agora = []; ax = [0, 0, ax.length > 2 ? ax[2] : 0, ax.length > 3 ? ax[3] : 0]; }
       var dirs = { cima: agora[12] || ax[1] < -0.55, baixo: agora[13] || ax[1] > 0.55, esq: agora[14] || ax[0] < -0.55, dir: agora[15] || ax[0] > 0.55 };
       for (var d in dirs) {
         var chave = n + d;
@@ -1093,13 +1128,13 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       // analogico direito: rola o painel (~0,9 px por ms no maximo, como a Orbit)
       var dt = GP.quadro ? Math.min(50, Math.max(0, t - GP.quadro)) : 16, vy = ax.length > 3 ? ax[3] : 0;
       if (Math.abs(vy) > 0.25) { var pn = painelAtual(); if (pn) { pn.scrollTop += vy * dt * 0.9; GP.rodaAte = t + 100; } }
-      if (apertou(0)) { modoKb(); ativar(); }
+      if (apertou(0) && performance.now() - GP.cliqueEm > 350) { modoKb(); ativar(); }
       if (apertou(1)) { modoKb(); voltar(); }
       if (apertou(4)) { modoKb(); trocarSecao(-1); }
       if (apertou(5)) { modoKb(); trocarSecao(1); }
       if (apertou(3) && secao === "loja") { modoKb(); $("bFiltros").click(); $("bFiltros").focus(); }
       if (apertou(2) && secao === "loja") { modoKb(); $("busca").focus(); }
-      GP.antes[n] = agora;
+      GP.antes[n] = soRolar ? [] : agora;
     }
     GP.quadro = t;
     if (algum) requestAnimationFrame(lerControle); else { GP.ativo = false; GP.quadro = 0; }
@@ -1108,24 +1143,34 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   addEventListener("gamepadconnected", ligarControle);
   try { var ja = navigator.getGamepads ? navigator.getGamepads() : []; for (var q = 0; q < ja.length; q++) if (ja[q]) ligarControle(); } catch (e) {}
 
-  // ---- Tela cheia (so aparece quando o navegador oferece) e as medidas da tela ----
-  // O navegador do PS5 tem moldura; se requestFullscreen/webkitRequestFullscreen existir, o botao tenta, e some se o
-  // pedido for recusado (o resultado vai para as medidas). Sem a API, o botao nem aparece. A Orbit nao tenta tela cheia
-  // no navegador: so o app nativo dela e tela cheia.
+  // ---- Tela cheia e as medidas da tela ----
+  // FORA do PS5 (celular, PC): o botao usa a Fullscreen API quando o navegador oferece e some se o pedido for recusado.
+  // NO PS5 a pagina nao tira a moldura: ela e desenhada pelo ShellUI, fora do WebKit, e a Fullscreen API nao funciona
+  // (PESQUISA-navegador-ps5-tela-cheia.md). O unico caminho e o payload ps5-web-browser-fullscreen (owendswang, GPL-3),
+  // que corrige o ShellUI na memoria; o PS5 Web File Manager faz assim: volta a tela inicial, aplica o patch e reabre o
+  // navegador na mesma URL. GANCHO (nao implementado agora): quando o payload tiver isso, ele define
+  // window.jobeTelaCheiaPs5 = { pronta: function () -> boolean, pedir: function (url) -> Promise } (por exemplo um
+  // POST /api/browser/fullscreen que reabre esta URL) e o botao vira o "⛶" no PS5. Sem o gancho, nada aparece no PS5.
   var tela = { suporte: "", resultado: "nao tentado" };
-  (function () {
+  function ganchoPs5() { var g = window.jobeTelaCheiaPs5; return g && typeof g.pedir === "function" && (typeof g.pronta !== "function" || g.pronta()) ? g : null; }
+  function prepararTela() {
     var d = document, e = root;
-    if (e.requestFullscreen && d.fullscreenEnabled !== false) tela.suporte = "requestFullscreen";
+    tela.suporte = "";
+    if (root.classList.contains("ps5")) { if (ganchoPs5()) tela.suporte = "ps5-patch"; }
+    else if (e.requestFullscreen && d.fullscreenEnabled !== false) tela.suporte = "requestFullscreen";
     else if (e.webkitRequestFullscreen) tela.suporte = "webkitRequestFullscreen";
     else if (e.webkitRequestFullScreen) tela.suporte = "webkitRequestFullScreen";
     $("bTela").hidden = !tela.suporte;
-  })();
+    if (tela.suporte === "ps5-patch") $("bTela").textContent = "⛶ " + L.telaCheia;
+  }
+  prepararTela();
   function emTelaCheia() { return Boolean(document.fullscreenElement || document.webkitFullscreenElement || document.webkitCurrentFullScreenElement); }
   function pintarTela() { $("bTela").textContent = emTelaCheia() ? L.sairTela : L.telaCheia; }
   function falhouTela(motivo) { tela.resultado = "recusado: " + motivo; $("bTela").hidden = true; anotarTela(); }
   $("bTela").onclick = function () {
     try {
       if (emTelaCheia()) { if (document.exitFullscreen) document.exitFullscreen(); else if (document.webkitExitFullscreen) document.webkitExitFullscreen(); return; }
+      if (tela.suporte === "ps5-patch") { tela.resultado = "pedido ao payload"; anotarTela(); ganchoPs5().pedir(location.href); return; }
       var p = root[tela.suporte](), antes = innerWidth + "x" + innerHeight;
       if (p && p.then) p.then(function () { tela.resultado = "aceito (" + antes + " -> " + innerWidth + "x" + innerHeight + ")"; anotarTela(); }, function (x) { falhouTela(String(x && x.name || x)); });
       else setTimeout(function () { if (emTelaCheia()) { tela.resultado = "aceito (" + antes + " -> " + innerWidth + "x" + innerHeight + ")"; anotarTela(); } else falhouTela("sem efeito"); }, 600);
@@ -1143,7 +1188,8 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       "janela (innerWidth x innerHeight): " + innerWidth + "x" + innerHeight + (vv ? ", visualViewport " + Math.round(vv.width) + "x" + Math.round(vv.height) + " escala " + vv.scale : ""),
       "documento (clientWidth x clientHeight): " + root.clientWidth + "x" + root.clientHeight + ", tela " + screen.width + "x" + screen.height + ", disponivel " + screen.availWidth + "x" + screen.availHeight + ", dpr " + (window.devicePixelRatio || 1),
       "fonte-base: " + getComputedStyle(root).fontSize + "; grade: " + (st.lista ? "lista" : (st.cols || "?") + " colunas") + ", " + Math.round(grade.clientWidth) + "x" + Math.round(grade.clientHeight) + " px",
-      "tela cheia: " + (tela.suporte || "sem API") + "; " + tela.resultado + "; agora " + (emTelaCheia() ? "em tela cheia" : "com moldura")].join("\n");
+      "tela cheia: " + (tela.suporte || (root.classList.contains("ps5") ? "sem gancho do payload (patch do ShellUI)" : "sem API")) + "; " + tela.resultado + "; agora " +
+        (emTelaCheia() || (root.classList.contains("ps5") && innerWidth >= 1900 && innerHeight >= 1060) ? "em tela cheia" : "com moldura")].join("\n");
   }
   var telaT = 0;
   function anotarTela() {
@@ -1176,6 +1222,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   medidas(true);
   recomecar();
   setTimeout(anotarTela, 800);
+  guardaHistorico();
 })();
 </script>
 </body>
