@@ -1,5 +1,5 @@
 // Fase 3: a copia do catalogo embutido que o app deixa para o payload (app/state/catalog-payload.js faz o mesmo no
-// console com FileSystem.copyAsync): index.json, formats.js, ratings.js, packs/ e art/ em <dest>, e por ultimo
+// console com FileSystem.copyAsync): o mesmo desenho de app/data (catalog/index.json, catalog/art/, packs/, formats.js, ratings.js) em <dest>, e por ultimo
 // version.json ({version, files:[{name, size}]}), que o payload confere antes de usar a copia.
 // Uso: node tools/fase3/stage-bundled.mjs <pasta app/> <destino> [versao]   (ou import { stageBundled })
 import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -8,9 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 export function bundledFiles(appDir) {
   const data = path.join(appDir, 'data');
-  const files = [['index.json', 'catalog/index.json'], ['formats.js', 'formats.js'], ['ratings.js', 'ratings.js']];
+  const files = [['catalog/index.json', 'catalog/index.json'], ['formats.js', 'formats.js'], ['ratings.js', 'ratings.js']];
   for (const name of ['releases.pack', 'releases.idx', 'pages.pack', 'pages.idx']) files.push([`packs/${name}`, `packs/${name}`]);
-  for (const name of readdirSync(path.join(data, 'catalog/art')).filter((file) => /^\d+\.json$/.test(file))) files.push([`art/${name}`, `catalog/art/${name}`]);
+  for (const name of readdirSync(path.join(data, 'catalog/art')).filter((file) => /^\d+\.json$/.test(file))) files.push([`catalog/art/${name}`, `catalog/art/${name}`]);
   return files.map(([to, from]) => ({ to, from: path.join(data, from) }));
 }
 

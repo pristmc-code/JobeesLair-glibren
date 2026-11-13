@@ -145,7 +145,7 @@ static void ct_detail(const Catalog* c, const CtGame* g, CtDetail* d, const char
     if (text) { JP jp = {text, text + len, 0}; jp_object(&jp, ct_page_field, d); free(text); d->page_found = 1; }
     if (g->lazy[0] >= 0) {
       char path[800];
-      snprintf(path, sizeof path, "%s/art/%d.json", c->bundled_dir, g->lazy[0]);
+      snprintf(path, sizeof path, "%s/catalog/art/%d.json", c->bundled_dir, g->lazy[0]);
       size_t size = 0;
       char* art = ct_read_file(path, &size, 8u << 20);
       if (art) { CtArtRead r = {d, g->lazy[1], 0}; JP jp = {art, art + size, 0}; jp_array(&jp, ct_art_item, &r); ct_free(art); }
@@ -307,7 +307,7 @@ static void ct_rank_item(const CtItem* t, int index, CtRanked* r) {
   k[0] = ct_is_dlc(label) || ct_is_backport(label);
   k[1] = ct_item_unavailable(t) ? 1 : 0;
   k[2] = 0; // linkHealth "dead": so o app sabe
-  k[3] = grank > GR_BROWSER && grank < GR_UNAVAILABLE;
+  k[3] = grank == GR_BROWSER + 0.5; // group > browser && group < unavailable: so o torrent sem chave de debrid (3.5)
   k[4] = standing == 1;
   k[5] = 0; // "unreachable": so o app sabe
   k[6] = 0; // compatible1360 === false: ct_source_order preenche (precisa da plataforma do jogo)

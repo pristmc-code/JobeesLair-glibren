@@ -32,6 +32,7 @@ import { SearchScreen } from './search/index.jsx';
 import { TubeScreen } from './tube/TubeScreen.jsx';
 import { getGame, hurryCatalog, isCatalogReady, warmCovers, whenCatalogReady } from './state/catalog.js';
 import { startStoreExport } from './state/store-export.js';
+import { startCatalogPayload } from './state/catalog-payload.js';
 import { refreshFeeds } from './state/feeds.js';
 import { startOrbitFeed } from './state/orbit-feed.js';
 import { t as tNow } from './i18n/core.js';
@@ -157,6 +158,13 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
     (0, useEffect)(() => {
       if (HOMEBREW_ONLY) return void 0;
       const id = setTimeout(startStoreExport, STORE_EXPORT_DELAY_MS);
+      return () => clearTimeout(id);
+    }, []);
+    // Fase 3: o catalogo embutido desta versao e as listas do jogador para o payload montar a loja sozinho
+    // (state/catalog-payload.js), logo depois da exportacao da loja.
+    (0, useEffect)(() => {
+      if (HOMEBREW_ONLY) return void 0;
+      const id = setTimeout(startCatalogPayload, STORE_EXPORT_DELAY_MS + 5e3);
       return () => clearTimeout(id);
     }, []);
     (0, useEffect)(() => HOMEBREW_ONLY ? void 0 : startCompanionIfEnabled(), []);

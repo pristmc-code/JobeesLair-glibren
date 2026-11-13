@@ -1,10 +1,11 @@
 // Fase 3: o catalogo no payload residente. Parte do bg_catalog.c.
 //
 // Pastas (no PS5 /data/JobeesLair/catalog; BGDL_CATALOG_DIR nos testes):
-//   bundled/        a copia do catalogo embutido que o app deixa a cada versao (state/catalog-payload.js): index.json,
-//                   formats.js, ratings.js, packs/{releases,pages}.{pack,idx}, art/<n>.json e, por ultimo, version.json
+//   bundled/        a copia do catalogo embutido que o app deixa a cada versao (state/catalog-payload.js), com o desenho
+//                   de app/data: catalog/index.json, catalog/art/<n>.json, packs/{releases,pages}.{pack,idx}, formats.js,
+//                   ratings.js e, por ultimo, version.json
 //                   ({version, files:[{name, size}]}). Sem o version.json (ou com um tamanho errado) a copia nao vale.
-//   config.json     o que o app diz das listas (state/catalog-payload.js): {feeds:[...], mirrors:{feed:[...]}, orbit:{on,id},
+//   config.json     o que o app diz das listas (state/catalog-payload.js): {feeds:[...], mirrors:[{url, list}], orbit:{on,id},
 //                   hidden:[...], ps4, coverWidth, firmware, maxMb}. Sem ele: so o catalogo ao vivo.
 //   feeds/<k>.json  a copia de cada feed da web que o PAYLOAD baixou (o texto decifrado, k = stableKey do endereco) e
 //   feeds/<k>.meta  o estado dela ({url, from, etag, fetchedAt, games, name, mirrors, error}).
@@ -32,6 +33,9 @@
 
 #ifdef __GLIBC__
 #include <malloc.h>
+#endif
+#if !defined(__linux__)
+#include <sys/user.h> // struct kinfo_proc (a residente no PS5)
 #endif
 #define CT_FEED_MAX_BYTES (8u * 1024 * 1024)
 #define CT_LISTS_HOME "https://raw.githubusercontent.com/JVK3R/JobeesLair-Lists/main/"
@@ -329,7 +333,7 @@ static void cat_check(void) {
   // Antes de comecar: os arquivos lidos ja passariam do teto? (cada feed e lido inteiro, um por vez)
   const size_t limit = (size_t)max_mb << 20;
   size_t biggest = cat_file_size(path);
-  snprintf(path, sizeof path, "%s/index.json", bundled);
+  snprintf(path, sizeof path, "%s/catalog/index.json", bundled);
   const size_t index_bytes = cat_file_size(path);
   for (int f = 0; f < feeds.n; ++f) { const size_t s = cat_file_size(feeds.path[f]); if (s > biggest) biggest = s; }
   if (index_bytes + biggest > limit) {

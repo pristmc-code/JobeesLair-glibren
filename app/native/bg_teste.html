@@ -98,6 +98,13 @@ a{color:var(--ice)}
   </section>
 
   <section class="card">
+    <h2 id="ctTitle"></h2>
+    <p class="note" id="ctText"></p>
+    <div class="row"><button type="button" class="btn primary" id="ctGo"></button></div>
+    <p class="out" id="ctOut"></p>
+  </section>
+
+  <section class="card">
     <h2 id="resTitle"></h2>
     <p class="note" id="resText"></p>
     <textarea id="resBox" readonly spellcheck="false"></textarea>
@@ -130,6 +137,10 @@ var T = {
     slGo: "Marcar agora", slMarked: "Marcado: pid {pid}, às {at}. Agora ponha o PS5 em repouso.",
     slAlive: "Continuou vivo: mesmo pid {pid}, ligado há {up} (relógio) / {mono} (contador do processo).", slRestarted: "Reiniciou: pid antigo {old} → novo {pid} (ligado há {up}).",
     slGap: "Intervalo desde o último pedido: {gap}.", slNone: "Primeira visita neste aparelho: toque em Marcar agora.",
+    ctTitle: "6. Catálogo no payload (Fase 3)", ctText: "O catálogo da loja montado pelo próprio payload: tempo de montagem, memória que ele guarda e a residente antes e depois, e o tempo de algumas consultas feitas agora no console.",
+    ctGo: "Medir o catálogo", ctNone: "O payload ainda não montou o catálogo ({state}{detail}).",
+    ctBuild: "Montado em {ms} ms ({listed} jogos, {entries} entradas); guarda {bytes}, pico da montagem {peak} (teto {limit}); residente {before} → {after}, agora {now}.",
+    ctPhases: "Fases (ms): {phases}.", ctQuery: "{name}: {ms} ms ({kb} KB)",
     resTitle: "Resultados", resText: "O texto abaixo junta tudo. Enviar diagnóstico manda junto com os logs para o GitHub (precisa da chave do diagnóstico, na página de Downloads).",
     resCopy: "Copiar resultados", resSend: "Enviar diagnóstico", copied: "Copiado.", copyManual: "Texto selecionado: copie com o menu do navegador.",
     sending: "Enviando… {n} de {t}", sent: "Enviado (pasta {f}).", noKey: "Falta a chave do GitHub: configure em Diagnóstico, na página de Downloads.", busy: "Já tem um envio em andamento.",
@@ -157,6 +168,10 @@ var T = {
     slGo: "Mark now", slMarked: "Marked: pid {pid}, at {at}. Now put the PS5 in rest mode.",
     slAlive: "Stayed alive: same pid {pid}, up {up} (clock) / {mono} (process counter).", slRestarted: "Restarted: old pid {old} → new {pid} (up {up}).",
     slGap: "Time since the last request: {gap}.", slNone: "First visit on this device: tap Mark now.",
+    ctTitle: "6. Catalog in the payload (Phase 3)", ctText: "The store catalog built by the payload itself: build time, the memory it keeps and the resident size before and after, and the time of a few queries run now on the console.",
+    ctGo: "Measure the catalog", ctNone: "The payload has not built the catalog yet ({state}{detail}).",
+    ctBuild: "Built in {ms} ms ({listed} games, {entries} entries); keeps {bytes}, build peak {peak} (limit {limit}); resident {before} → {after}, now {now}.",
+    ctPhases: "Phases (ms): {phases}.", ctQuery: "{name}: {ms} ms ({kb} KB)",
     resTitle: "Results", resText: "The text below has everything. Send diagnostics sends it with the logs to GitHub (needs the diagnostics key, on the Downloads page).",
     resCopy: "Copy results", resSend: "Send diagnostics", copied: "Copied.", copyManual: "Text selected: copy it with the browser menu.",
     sending: "Sending… {n} of {t}", sent: "Sent (folder {f}).", noKey: "The GitHub key is missing: set it in Diagnostics, on the Downloads page.", busy: "A send is already running.",
@@ -171,7 +186,7 @@ var DEMO = location.protocol === "file:" || /[?&]demo\b/.test(location.search);
 var SESSION_KEY = "jobe.session", SEEN_KEY = "jobe.teste.visto";
 var session = "";
 try { var saved = localStorage.getItem(SESSION_KEY); if (/^[0-9a-f]{32}$/.test(saved || "")) session = saved; } catch (e) {}
-var R = { fullscreen: null, gamepad: { seen: {}, pressed: {}, axesMoved: {}, keys: {} }, store: null, memory: {}, rest: null };
+var R = { fullscreen: null, gamepad: { seen: {}, pressed: {}, axesMoved: {}, keys: {} }, store: null, memory: {}, rest: null, catalog: null };
 
 for (var key in L) { var el = $(key); if (el && typeof L[key] === "string" && el.tagName !== "INPUT") el.textContent = L[key]; }
 
@@ -185,6 +200,7 @@ function demoApi(method, path, body) {
     for (var i = off; i < Math.min(total, off + 200); i++) games.push({ id: "PPSA" + String(10000 + i), title: "Jogo de teste número " + (i + 1) + (i % 7 ? "" : " — edição com um nome bem comprido para quebrar a linha"), code: "PPSA" + String(10000 + i), platform: i % 3 ? "ps5" : "ps4" });
     return { status: 200, data: { ok: true, total: total, count: games.length, offset: off, limit: 200, games: games } };
   }
+  if (path === "/api/teste/catalogo") return { status: 200, data: { ok: true, state: "ready", buildMs: 812.4, bytes: 2420459, peak: 9456546, limit: 33554432, rssBefore: 14311424, rssAfter: 22489408, rssNow: 22530368, rssAfterQueries: 22600000, listed: 2981, entries: 3198, phasesMs: { index: 40, tables: 8, feeds: 420, formats: 230, ratings: 2, texts: 60, sorts: 40, facets: 5 }, queries: [{ name: "pagina relevancia", status: 200, ms: 2.1, bytes: 30000 }, { name: "ficha", status: 200, ms: 140.2, bytes: 20000 }] } };
   if (path === "/api/teste/enviar") return { status: 200, data: { ok: true, state: "running" } };
   if (path === "/api/diag") return { status: 200, data: { ok: true, configured: true, state: "done", folder: "2026-11-13_120000", sent: 12, total: 12 } };
   return { status: 404, data: {} };
@@ -438,6 +454,23 @@ $("slGo").onclick = function () {
 setInterval(function () { if (session && document.visibilityState !== "hidden") api("GET", "/api/teste/estado").then(function (r) { if (r.status === 200) rest(r.data); }); }, 15000);
 document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && session) readMemory(L.memNow, "now"); });
 
+// ---- 6. Catalogo no payload (Fase 3) -----------------------------------------------------------------------
+$("ctGo").onclick = function measureCatalog() {
+  $("ctGo").disabled = true;
+  guardedGet("/api/teste/catalogo", measureCatalog).then(function (r) {
+    $("ctGo").disabled = false;
+    if (!r) return;
+    var d = r.data || {};
+    if (r.status !== 200 || !d.listed) { $("ctOut").textContent = fill(L.ctNone, { state: d.state || r.status, detail: d.error ? ": " + d.error : "" }); R.catalog = { state: d.state || r.status, error: d.error || "" }; results(); return; }
+    var phases = Object.keys(d.phasesMs || {}).map(function (k) { return k + " " + d.phasesMs[k]; }).join(", ");
+    var lines = [fill(L.ctBuild, { ms: Math.round(d.buildMs), listed: d.listed, entries: d.entries, bytes: mb(d.bytes), peak: mb(d.peak), limit: mb(d.limit), before: mb(d.rssBefore), after: mb(d.rssAfter), now: mb(d.rssAfterQueries || d.rssNow) }), fill(L.ctPhases, { phases: phases })];
+    (d.queries || []).forEach(function (q) { lines.push(fill(L.ctQuery, { name: q.name, ms: q.ms, kb: Math.round(q.bytes / 1024) })); });
+    $("ctOut").textContent = lines.join("\n");
+    R.catalog = d;
+    results();
+  });
+};
+
 // ---- Resultados -------------------------------------------------------------------------------------------
 function results() {
   var g = R.gamepad, lines = [];
@@ -454,6 +487,10 @@ function results() {
   lines.push("[4 memoria] " + (mem.join("; ") || "nao feito"));
   var r = R.rest;
   lines.push("[5 repouso] " + (r ? (r.alive ? "continuou vivo" : "reiniciou") + " (pid visto " + r.seenPid + ", agora " + r.pid + "); ligado (relogio) " + dur(r.wallUp) + ", contador do processo " + dur(r.monoUp) + "; desde o ultimo pedido " + dur(r.gap) + (r.markedAt ? "; marcado as " + clock(r.markedAt) : "") + (r.previous ? "; processo anterior pid " + r.previous.pid + " ultimo pedido " + clock(r.previous.last) : "") : "nao feito"));
+  var c = R.catalog;
+  lines.push("[6 catalogo] " + (!c ? "nao feito" : !c.listed ? "sem catalogo: " + c.state + (c.error ? " (" + c.error + ")" : "") :
+    "montagem " + Math.round(c.buildMs) + " ms; " + c.listed + " jogos, " + c.entries + " entradas; guarda " + mb(c.bytes) + ", pico " + mb(c.peak) + " (teto " + mb(c.limit) + "); rss " + mb(c.rssBefore) + " -> " + mb(c.rssAfter) + ", depois das consultas " + mb(c.rssAfterQueries) +
+    "; fases " + Object.keys(c.phasesMs || {}).map(function (k) { return k + "=" + c.phasesMs[k]; }).join(",") + "; consultas " + (c.queries || []).map(function (q) { return q.name + "=" + q.ms + "ms"; }).join(", ")));
   $("resBox").value = lines.join("\n");
   return $("resBox").value;
 }

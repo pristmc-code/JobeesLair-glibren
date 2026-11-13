@@ -3,7 +3,7 @@
 
 // Um numero como o JSON.stringify do JS escreve (o menor texto que volta ao mesmo double).
 static void ct_num_json(Buf* b, double v) {
-  if (!isfinite(v)) { buf_str(b, "null"); return; }
+  if (v != v || v > 1.7e308 || v < -1.7e308) { buf_str(b, "null"); return; } // NaN e infinito (sem o isfinite da libm)
   if (v == ct_floor(v) && fabs(v) < 1e21) { buf_fmt(b, "%.0f", v); return; }
   char text[40];
   for (int p = 1; p <= 17; ++p) { snprintf(text, sizeof text, "%.*g", p, v); if (strtod(text, NULL) == v) break; }
@@ -236,7 +236,7 @@ static Catalog* ct_build(const CtInputs* in, char* error, size_t cap) {
   }
   char path[800];
   size_t size;
-  snprintf(path, sizeof path, "%s/index.json", in->bundled_dir);
+  snprintf(path, sizeof path, "%s/catalog/index.json", in->bundled_dir);
   char* text = ct_read_file(path, &size, 32u << 20);
   if (text) {
     CtIndexTop t = {c, 0};
