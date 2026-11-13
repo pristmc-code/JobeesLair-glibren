@@ -94,7 +94,7 @@ import { setPairingSource } from './device-pairing.js';
   // glibren.49 (Fase 2): a versao do bg-downloader.elf embutido neste app (BG_VERSION em app/native/bg_downloader.c; o
   // tests/bg-self-update.test.mjs confere que sao iguais). Vai em <stateDir>/app.json junto com PAYLOAD_API: o payload
   // so usa um baixado MAIS NOVO que este e compativel com esta API (contrato em app/native/bg_self.c).
-  var BG_EMBEDDED_VERSION = "1.36.0";
+  var BG_EMBEDDED_VERSION = "1.36.1";
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
