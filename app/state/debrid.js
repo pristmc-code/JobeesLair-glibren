@@ -324,7 +324,8 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
    * torrent's) and `repacked` (TorBox's zip of many files: no listed checksum applies).
    */
   var debridResolver = {
-    async resolve(source, { signal } = {}) {
+    // glibren.44: `onProgress(fraction)` while TorBox fetches the file from the host (its web download's progress).
+    async resolve(source, { signal, onProgress } = {}) {
       const link = linkOf(source);
       const torrent = isMagnet(link);
       if (source.debrid?.service === "alldebrid") {
@@ -336,7 +337,7 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
       if (!keyOf()) throw new Error("TorBox isn't set up any more. Add its API key in Settings, or choose another source.");
       const hash = md5(link);
       // glibren.6: `torboxZip` (Search TorBox's "All"): the torrent's files as one zip.
-      const result = await torbox().resolve(link, { known: record().items?.[hash], filename: source.filename, signal, onItem: (entry) => remember(hash, entry), zip: Boolean(source.torboxZip) });
+      const result = await torbox().resolve(link, { known: record().items?.[hash], filename: source.filename, signal, onProgress, onItem: (entry) => remember(hash, entry), zip: Boolean(source.torboxZip) });
       remember(hash, result);
       log("torbox", `${result.kind} ${result.id}: ${result.repacked ? "all files as one zip" : `file ${result.fileId}`} ready (${hash.slice(0, 8)})`);
       return torrent ? { url: result.url, expectedBytes: result.repacked ? null : result.size || null, repacked: Boolean(result.repacked) } : { url: result.url };

@@ -65,8 +65,9 @@ import { Text, View } from '@ps5-react/core';
           total: open.reduce((sum, job2) => sum + job2.total, 0),
           counts: {
             moving: jobs.filter((job2) => BUSY.includes(job2.state) && job2.state !== "pausing").length,
-            held: jobs.filter((job2) => ["paused", "pausing", "awaiting-browser"].includes(job2.state)).length,
-            failed: jobs.filter((job2) => job2.state === "failed").length,
+            // glibren.44: one waiting on its own next try (failed, with retryAt) is on hold, not failed.
+            held: jobs.filter((job2) => ["paused", "pausing", "awaiting-browser"].includes(job2.state) || job2.state === "failed" && job2.retryAt).length,
+            failed: jobs.filter((job2) => job2.state === "failed" && !job2.retryAt).length,
             done: jobs.filter((job2) => COMPLETE.includes(job2.state)).length
           },
           samples

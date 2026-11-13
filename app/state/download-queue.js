@@ -344,7 +344,21 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
     // A debrid link old enough to expire soon (LINK_MAX_AGE_MS): `holder` the job or the set's part that keeps it.
     const linkStale = (holder) => Boolean(holder?.linkAt) && Date.now() - holder.linkAt > LINK_MAX_AGE_MS;
     // A link was had: the tries by itself that waited on resolving it start over.
+    // glibren.44: what the card says while a debrid service prepares the file (its web download from the host): the
+    // service and the progress it reports (null: none yet). Cleared once the link is in hand.
+    function preparingNote(job2, source2) {
+      const service = source2?.debrid?.service;
+      if (!service) return void 0;
+      job2.preparing = { service, progress: null };
+      return (fraction) => {
+        const progress = Math.max(0, Math.min(1, Number(fraction) || 0));
+        if (job2.preparing && job2.preparing.progress !== null && Math.floor(job2.preparing.progress * 100) === Math.floor(progress * 100)) return;
+        job2.preparing = { service, progress };
+        change();
+      };
+    }
     function resolvedNow(job2) {
+      delete job2.preparing;
       delete job2.pending;
       delete job2.networkRetries;
       delete job2.rateRetries;
@@ -1226,7 +1240,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
             job2.options = formats.manifest(await response.json());
           } else {
             if (!job2.release.url && !job2.release.browserUrl) throw new Error("This release has no download URL.");
-            const { expectedBytes: known, repacked, ...resolved } = job2.directURL || sourceKind(job2.release) !== "direct" ? await sources.resolve(job2.release, { signal, directURL: job2.directURL }) : { url: webURL(job2.release.url).url };
+            const { expectedBytes: known, repacked, ...resolved } = job2.directURL || sourceKind(job2.release) !== "direct" ? await sources.resolve(job2.release, { signal, directURL: job2.directURL, onProgress: job2.directURL ? void 0 : preparingNote(job2, job2.release) }) : { url: webURL(job2.release.url).url };
             // 0.5.1: the bytes' own size when the resolver learned it (a host's HEAD, a debrid service's file);
             // none at all when it said the listing's is not theirs (null: a torrent's zip); the listing's otherwise.
             // A repack (a torrent's files as one zip) answers to no listed checksum.
@@ -2201,7 +2215,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
           if (!part.options) {
             // glibren.42 (R2-7): the same rule as a single file (0.5.1): the real size the resolver found wins over the
             // catalog's, null turns the size check off, and a repacked file has no catalog sha256 (nor goes to the engine).
-            const { expectedBytes: known, repacked, ...resolved } = await sources.resolve(source2, { signal, directURL: job2.directURL });
+            const { expectedBytes: known, repacked, ...resolved } = await sources.resolve(source2, { signal, directURL: job2.directURL, onProgress: job2.directURL ? void 0 : preparingNote(job2, source2) });
             part.options = { ...resolved, expectedBytes: known === null ? void 0 : known ?? (source2.sizeBytes || void 0), sha256: repacked ? void 0 : source2.sha256 || void 0 };
             delete job2.directURL;
             if (throughDebrid(job2)) part.linkAt = Date.now();

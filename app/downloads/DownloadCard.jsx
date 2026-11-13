@@ -13,7 +13,7 @@ import '../assets/JetBrainsMono-Regular.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { memo, useEffect, useState } from 'react';
 import { SpeedChart } from './SpeedChart.jsx';
-import { STALE_PARTIAL, cause, explainError, finalError } from './errors.js';
+import { STALE_PARTIAL, busyServer, cause, explainError, finalError } from './errors.js';
 import { formatSpeed, formatTimeLeft } from './format.js';
 import { WAITING, clearAction, formatOf, partOf, shownState, stateLabel } from './labels.js';
 import { fractionOf, shapeOf, useProgress } from './useQueue.js';
@@ -23,7 +23,8 @@ import { SPAN_MAX, fitBytes } from '../i18n/fit.js';
 import { useT } from '../i18n/index.js';
 import { BUSY, COMPLETE } from '../state/download-queue.js';
 import { takeOverDownload, useBackgroundOwner } from '../state/background-downloads.js';
-import { readinessOf, readinessText, stageLabel } from '../state/readiness.js';
+import { readinessOf, readinessText, stageLabel, waitingRetry } from '../state/readiness.js';
+import { isoStamp } from '../state/clock.js';
 import { formatBytes } from '../state/size.js';
 import { Button2 } from '../ui/Button.jsx';
 import { CdnSpark } from '../ui/CdnAura.jsx';
@@ -31,7 +32,7 @@ import { Cover } from '../ui/Cover.jsx';
 import { ShimmerText } from '../ui/ShimmerText.jsx';
 import { colors, radius } from '../ui/colors.js';
 import { logical, px } from '../ui/scale.js';
-import { Text, View, motion } from '@ps5-react/core';
+import { DeviceInfo, Text, View, motion } from '@ps5-react/core';
 import { serviceName } from '../state/debrid.js';
 import { errorCode, errorDetail } from '../state/exfat-convert.js';
 import { t as t2Static } from '../i18n/core.js';
@@ -39,6 +40,41 @@ import { t as t2Static } from '../i18n/core.js';
   var CARD_WIDTH = 900;
   var INNER = CARD_WIDTH - 2 * 28 - 2; // the padding and the border
   var THUMB = { width: px(72), height: px(96), borderRadius: radius.sm };
+  // glibren.44: the width of the texts beside the cover. No text on a card is cut with "…" any more (the PS5 showed
+  // "Continua com o app fechado. O botão de download ao lado de Pausar traz de..."): each wraps and the card grows.
+  var TEXT_W = INNER - THUMB.width - 24;
+  // glibren.44: "10:42" in the console's own time.
+  function localClock(ms) {
+    let offset = 0;
+    try {
+      offset = Number(DeviceInfo.utcOffset(ms)) || 0;
+    } catch {
+    }
+    return isoStamp(ms + offset * 6e4).slice(11, 16);
+  }
+  var leftText = (ms) => {
+    const seconds = Math.max(0, Math.ceil(ms / 1e3));
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  };
+  /** glibren.44: who is busy in a busy-server error ("TorBox busy (HTTP 429)", "Vikingfile busy"), or "". */
+  function busyText(t2, job2) {
+    const busy = busyServer(job2.error);
+    if (!busy) return "";
+    const release = job2.release ?? {};
+    const who = busy.torbox ? "TorBox" : release.debrid ? serviceName(release.debrid.service) : release.provider || "?";
+    return busy.code ? t2("downloads.busyWho", { who, code: busy.code }) : t2("downloads.busyWhoNoCode", { who });
+  }
+  // glibren.44: a download waiting on its own next try: why, and when (the clock time and a countdown).
+  function RetryLine({ job: job2, why }) {
+    const t2 = useT();
+    const [, tick] = (0, useState)(0);
+    (0, useEffect)(() => {
+      const id = setInterval(() => tick((n) => n + 1), 1e3);
+      return () => clearInterval(id);
+    }, []);
+    const when = t2("downloads.retryAtTime", { time: localClock(job2.retryAt), left: leftText(job2.retryAt - Date.now()) });
+    return jsx(Text, { style: font(20, AMBER, { width: TEXT_W }), children: why ? `${why} \xB7 ${when}` : when });
+  }
   var ARM_MS = 3e3;
   var AMBER = "#fbbf24", RED = "#f87171", GREEN = "#4ade80";
   var primaryKey = (id) => `downloads:${id}`;
@@ -50,6 +86,7 @@ import { t as t2Static } from '../i18n/core.js';
   function toneOf(job2, ready) {
     if (ready?.tone === "bad") return RED;
     if (ready?.tone === "good") return GREEN;
+    if (ready?.tone === "wait") return AMBER;
     if (["paused", "pausing", "awaiting-browser"].includes(job2.state)) return AMBER;
     return colors.accentHi;
   }
@@ -73,6 +110,8 @@ import { t as t2Static } from '../i18n/core.js';
     // whose button then opens the list of sources.
     // glibren.12: a conversion to .exfat that stopped: try it again (and "Use without converting" beside it).
     if (state === "failed" && convert) return { icon: "restart", label: "downloads.action.retryConvert", onPress: () => run("retryConversion") };
+    // glibren.44: one waiting on its own next try: "Try now" (the same resume), not "Retry".
+    if (ready?.stage === "waiting") return { icon: "restart", label: "downloads.action.retryNow", onPress: () => run("resume") };
     if (state === "failed" && finalError(error2, Boolean(parts))) return { icon: "list", label: "download.otherSource.label", onPress: openGame };
     if (state === "failed") return { icon: "download", label: "downloads.action.retry", onPress: () => run("resume") };
     // 0.5.5 (GitHub issue #2): a lone download whose link expired opens its host's page from here too, where the
@@ -119,11 +158,14 @@ import { t as t2Static } from '../i18n/core.js';
   // The moving part: percentage, meter, sizes and time left, from the job's own progress.
   // glibren.16: `rate` adds the speed after the sizes (a conversion to .exfat, which has no speed trace of its own);
   // `progress` gives the numbers directly (a conversion the payload runs outside the queue: ConversionCard).
-  function CardMeter({ id, tone, moving, complete, waiting: waiting2, label, detail: detail2, rate = false, progress: given = null }) {
+  function CardMeter({ id, tone, moving, complete, waiting: waiting2, label: given2, detail: detail2, rate = false, progress: given = null, zeroLabel = "" }) {
     const t2 = useT();
     const followed = useProgress(id);
     const progress = given ?? followed;
     const { written = 0, total = null, bytesPerSecond = 0 } = progress ?? {};
+    // glibren.44: nothing received yet through a debrid service: what it is doing ("TorBox preparing the file: 40%",
+    // "Waiting for TorBox to prepare the file") instead of a bare "Downloading · 0%".
+    const label = zeroLabel && !written ? zeroLabel : given2;
     const fraction = complete ? 1 : fractionOf(progress);
     const percent = complete || total ? `${Math.floor(fraction * 100)}%` : "—";
     const left = moving && total && bytesPerSecond ? formatTimeLeft((total - written) / bytesPerSecond) : "";
@@ -131,7 +173,7 @@ import { t as t2Static } from '../i18n/core.js';
     const size = detail2 ?? (complete ? formatBytes(total || written) : total ? t2("download.status.progress", { done: formatBytes(written), total: formatBytes(total) }) + speed : written ? t2("download.soFar", { size: formatBytes(written) }) + speed : "");
     return /* @__PURE__ */ (0, jsxs)(View, { style: { gap: 12 }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { style: { width: INNER, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" }, children: [
-        waiting2 ? /* @__PURE__ */ (0, jsx)(View, { style: { width: 600 }, children: /* @__PURE__ */ (0, jsx)(ShimmerText, { textStyle: font(21, colors.fg), background: colors.surface, children: label }) }) : /* @__PURE__ */ (0, jsxs)(Text, { style: font(21, colors.fg, { width: 600, numberOfLines: 1, ellipsizeMode: "tail" }), children: [
+        waiting2 ? /* @__PURE__ */ (0, jsx)(View, { style: { width: 600 }, children: /* @__PURE__ */ (0, jsx)(ShimmerText, { textStyle: font(21, colors.fg), background: colors.surface, children: label }) }) : /* @__PURE__ */ (0, jsxs)(Text, { style: font(21, colors.fg, { width: 600 }), children: [
           fitBytes(label, SPAN_MAX),
           /* @__PURE__ */ (0, jsx)(Text, { style: { color: colors.muted }, children: left ? fitBytes(`  \xB7  ${left}`, SPAN_MAX) : "" })
         ] }),
@@ -146,7 +188,7 @@ import { t as t2Static } from '../i18n/core.js';
         transition: { type: "tween", duration: 0.25, ease: "linear" },
         children: moving ? /* @__PURE__ */ (0, jsx)(View, { style: { position: "absolute", top: 0, bottom: 0, right: 0, width: 18, backgroundColor: "#ffffff66" } }) : null
       }) }),
-      /* @__PURE__ */ (0, jsx)(Text, { style: mono(18, colors.muted, { width: INNER, numberOfLines: 1, ellipsizeMode: "tail" }), children: size || " " })
+      /* @__PURE__ */ (0, jsx)(Text, { style: mono(18, colors.muted, { width: INNER }), children: size || " " })
     ] });
   }
   // A running download's speed and its last minute, drawn only while it downloads.
@@ -167,7 +209,7 @@ import { t as t2Static } from '../i18n/core.js';
       return () => clearInterval(id);
     }, []);
     const seconds = Math.max(0, Math.ceil((job2.autoOpenAt - Date.now()) / 1e3));
-    return /* @__PURE__ */ (0, jsx)(Text, { style: font(20, AMBER, { numberOfLines: 1, ellipsizeMode: "tail" }), children: t2("downloads.nextPartIn", { part: (job2.partIndex ?? 0) + 1, seconds }) });
+    return /* @__PURE__ */ (0, jsx)(Text, { style: font(20, AMBER, { width: TEXT_W }), children: t2("downloads.nextPartIn", { part: (job2.partIndex ?? 0) + 1, seconds }) });
   }
   // The next part's link, captured while this part downloads (download-queue.js scheduleAhead): the countdown
   // to its browser, then where its capture stands.
@@ -181,7 +223,7 @@ import { t as t2Static } from '../i18n/core.js';
     }, [job2.aheadAt]);
     const part = (job2.aheadPart ?? 0) + 1;
     const text = job2.aheadAt ? t2("downloads.aheadIn", { part, seconds: Math.max(0, Math.ceil((job2.aheadAt - Date.now()) / 1e3)) }) : job2.aheadState === "capturing" ? t2("downloads.aheadCapturing", { part }) : job2.aheadState === "ready" ? t2("downloads.aheadReady", { part }) : t2("downloads.aheadFailed", { part });
-    return /* @__PURE__ */ (0, jsx)(Text, { style: font(20, job2.aheadState === "ready" ? GREEN : AMBER, { numberOfLines: 1, ellipsizeMode: "tail" }), children: text });
+    return /* @__PURE__ */ (0, jsx)(Text, { style: font(20, job2.aheadState === "ready" ? GREEN : AMBER, { width: TEXT_W }), children: text });
   }
   function DownloadCardView({ job: job2, game, autoFocus, run, onOpenGame, onFocusRow }) {
     const t2 = useT();
@@ -211,7 +253,14 @@ import { t as t2Static } from '../i18n/core.js';
     // 0.5.5: a busy server's download tries again by itself (download-queue.js retryLater), and says so.
     // glibren.16: a conversion's error already says what to do (downloads.convert.error.*, .cancelled): said as it is.
     const explained = job2.error && (state === "failed" && job2.convert ? { title: job2.error, action: "" } : explainError(job2.error, Boolean(release.parts)));
-    const problem = explained && job2.retryAt ? { ...explained, action: t2("downloads.retryingSoon") } : explained;
+    // glibren.44: waiting on its own next try is not a problem in red: it says who is busy and when it tries (RetryLine).
+    const waitingNow = waitingRetry(job2);
+    const problem = waitingNow ? null : explained;
+    const why = waitingNow ? busyText(t2, job2) || explained?.title || "" : "";
+    // glibren.44: a debrid service preparing the file before any byte (download-queue.js preparingNote).
+    const debridName = release.debrid ? serviceName(release.debrid.service) : "";
+    const preparing = job2.preparing;
+    const zeroLabel = debridName && ["resolving", "connecting", "downloading"].includes(state) ? preparing && preparing.progress !== null && preparing.progress > 0 ? t2("downloads.debridPreparing", { service: debridName, percent: Math.floor(preparing.progress * 100) }) : t2("downloads.debridWaiting", { service: debridName }) : "";
     // The file's own title id is another game's (a PKG's header, download-queue.js noteTitle): said after any problem.
     const mismatch = job2.titleMismatch ? t2("downloads.titleMismatch", { found: job2.titleMismatch, expected: job2.titleId }) : "";
     const note = !problem && !mismatch && background ? t2("downloads.background.hint") : problem ? problem.action ? t2("downloads.problem", { title: problem.title, action: problem.action }) : problem.title : mismatch || (ready.action === "seeWhy" ? t2("ready.seeWhyHint") : state === "downloaded" ? job2.message || t2("downloads.installHint") : state === "installer-required" || state === "converting" ? job2.message || "" : "");
@@ -228,10 +277,10 @@ import { t as t2Static } from '../i18n/core.js';
               ] }),
               cdn ? /* @__PURE__ */ (0, jsx)(CdnSpark, { size: 13 }) : null,
               background ? /* @__PURE__ */ (0, jsx)(View, { style: { borderRadius: radius.sm, backgroundColor: colors.canvas2, paddingHorizontal: 12, paddingVertical: 2 }, children: /* @__PURE__ */ (0, jsx)(Text, { style: mono(16, colors.accentHi, { letterSpacing: 1.5 }), children: fitBytes(t2("downloads.background.chip").toUpperCase(), 96) }) }) : null,
-              /* @__PURE__ */ (0, jsx)(Text, { style: mono(17, colors.subtle, { flex: 1, numberOfLines: 1, ellipsizeMode: "tail" }), children: meta })
+              /* @__PURE__ */ (0, jsx)(Text, { style: mono(17, colors.subtle, { flex: 1 }), children: meta })
             ] }),
-            /* @__PURE__ */ (0, jsx)(Text, { style: font(27, colors.fg, { fontWeight: 600, numberOfLines: 1, ellipsizeMode: "tail", letterSpacing: 0.4 }), children: job2.title }),
-            job2.autoOpenAt && state === "awaiting-browser" ? /* @__PURE__ */ (0, jsx)(NextPartCountdown, { job: job2 }) : job2.aheadState && !problem && BUSY.includes(state) ? /* @__PURE__ */ (0, jsx)(AheadLine, { job: job2 }) : /* @__PURE__ */ (0, jsx)(Text, { style: font(20, problem ? RED : colors.muted, { numberOfLines: 1, ellipsizeMode: "tail" }), children: note || " " })
+            /* @__PURE__ */ (0, jsx)(Text, { style: font(27, colors.fg, { fontWeight: 600, width: TEXT_W, letterSpacing: 0.4 }), children: job2.title }),
+            waitingNow ? jsx(RetryLine, { job: job2, why }) : job2.autoOpenAt && state === "awaiting-browser" ? /* @__PURE__ */ (0, jsx)(NextPartCountdown, { job: job2 }) : job2.aheadState && !problem && BUSY.includes(state) ? /* @__PURE__ */ (0, jsx)(AheadLine, { job: job2 }) : /* @__PURE__ */ (0, jsx)(Text, { style: font(20, problem ? RED : colors.muted, { width: TEXT_W }), children: note || " " })
           ] })
         ] }),
         /* @__PURE__ */ (0, jsx)(CardMeter, {
@@ -242,7 +291,8 @@ import { t as t2Static } from '../i18n/core.js';
           waiting: WAITING.includes(shown),
           label: shown === "finishing" ? stateLabel(shown) : readinessText(ready),
           detail: shown === "finishing" ? t2("downloads.writingToDisk") : null,
-          rate: state === "converting"
+          rate: state === "converting",
+          zeroLabel
         }),
         /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
           /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12 }, children: [
@@ -297,10 +347,10 @@ import { t as t2Static } from '../i18n/core.js';
               jsx(Text, { style: mono(16, tone, { letterSpacing: 1.5 }), children: fitBytes(t2(item.state === "done" ? "downloads.convert.done" : item.state === "failed" ? "downloadState.failed" : "downloadState.converting").toUpperCase(), 96) })
             ] }),
             jsx(View, { style: { borderRadius: radius.sm, backgroundColor: colors.canvas2, paddingHorizontal: 12, paddingVertical: 2 }, children: jsx(Text, { style: mono(16, colors.accentHi, { letterSpacing: 1.5 }), children: fitBytes(t2("downloads.background.chip").toUpperCase(), 96) }) }),
-            jsx(Text, { style: mono(17, colors.subtle, { flex: 1, numberOfLines: 1, ellipsizeMode: "tail" }), children: meta })
+            jsx(Text, { style: mono(17, colors.subtle, { flex: 1 }), children: meta })
           ] }),
-          jsx(Text, { style: font(27, colors.fg, { fontWeight: 600, numberOfLines: 1, ellipsizeMode: "tail", letterSpacing: 0.4 }), children: item.name || game?.title || "" }),
-          jsx(Text, { style: font(20, item.state === "failed" ? RED : colors.muted, { numberOfLines: 1, ellipsizeMode: "tail" }), children: note || " " })
+          jsx(Text, { style: font(27, colors.fg, { fontWeight: 600, width: TEXT_W, letterSpacing: 0.4 }), children: item.name || game?.title || "" }),
+          jsx(Text, { style: font(20, item.state === "failed" ? RED : colors.muted, { width: TEXT_W }), children: note || " " })
         ] })
       ] }),
       jsx(CardMeter, {
@@ -321,4 +371,4 @@ import { t as t2Static } from '../i18n/core.js';
     ] }) });
   }
 
-export { CARD_WIDTH, CancelButton, ConversionCard, DownloadCard, conversionKey, primaryKey };
+export { busyText, CARD_WIDTH, CancelButton, ConversionCard, DownloadCard, conversionKey, primaryKey };

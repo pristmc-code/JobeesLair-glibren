@@ -24,6 +24,7 @@ import { Telemetry } from './Telemetry.jsx';
 import { BackupSheet } from './BackupSheet.jsx';
 import { DiagnosisSheet } from '../game/DiagnosisSheet.jsx';
 import { finalError } from './errors.js';
+import { waitingRetry } from '../state/readiness.js';
 import { useJobs } from './useQueue.js';
 import { formatNumber2, t } from '../i18n/core.js';
 import { SPAN_MAX, fitBytes } from '../i18n/fit.js';
@@ -78,7 +79,9 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
       [count(BUSY), "inProgress"],
       [count(["converting"]) + outside.filter(conversionActive).length, "converting"],
       [count(["paused", "awaiting-browser"]), "paused"],
-      [count(["failed"]), "failed"],
+      // glibren.44: one waiting on its own next try is not "failed" (it has its own section and count).
+      [jobs.filter(waitingRetry).length, "waiting"],
+      [jobs.filter((job2) => job2.state === "failed" && !waitingRetry(job2)).length, "failed"],
       [count(COMPLETE), "completed"]
     ].filter(([n]) => n > 0).map(([n, key]) => t(`downloads.summary.${key}`, { count: n })).join(" \xB7 ");
   }
@@ -248,15 +251,19 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
     const placed = (job2) => job2.removingFrom ?? job2.state;
     // glibren.16: a download being converted is in progress (it was in no section before, so it never showed).
     const active2 = jobs.filter((job2) => BUSY.includes(placed(job2)) || placed(job2) === "converting");
-    const stopped = jobs.filter((job2) => ["paused", "failed", "awaiting-browser"].includes(placed(job2)));
+    // glibren.44: the ones waiting on their own next try, in a section of their own (they were in STOPPED with a
+    // DOWNLOADING chip, "1 failed" and Retry, all at once).
+    const waiting2 = jobs.filter((job2) => !job2.removingFrom && waitingRetry(job2));
+    const stopped = jobs.filter((job2) => ["paused", "failed", "awaiting-browser"].includes(placed(job2)) && !waiting2.includes(job2));
     const done = jobs.filter((job2) => COMPLETE.includes(placed(job2)));
     const outsideActive = outside.filter(conversionActive).map(conversionItem);
     const outsideFailed = outside.filter((item) => item.state === "failed").map(conversionItem);
     const outsideDone = outside.filter((item) => item.state === "done").map(conversionItem);
     const shown = jobs.length + outside.length;
-    const first = active2[0] ?? outsideActive[0] ?? stopped[0] ?? outsideFailed[0] ?? done[0] ?? outsideDone[0];
+    const first = active2[0] ?? outsideActive[0] ?? waiting2[0] ?? stopped[0] ?? outsideFailed[0] ?? done[0] ?? outsideDone[0];
     const sections = [
       { title: "downloads.section.active", tone: colors.accentHi, jobs: [...active2, ...outsideActive] },
+      { title: "downloads.section.waiting", tone: "#fbbf24", jobs: waiting2 },
       { title: "downloads.section.stopped", tone: "#fbbf24", jobs: [...stopped, ...outsideFailed] },
       { title: "downloads.section.completed", tone: "#4ade80", jobs: [...done, ...outsideDone] }
     ].filter((section) => section.jobs.length);
@@ -280,7 +287,7 @@ import { AnimatePresence, FocusScope, ScrollView, Text, View } from '@ps5-react/
           // back. With an announcement up, the first card no longer fits under them, so the page scrolls to it.
           /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 20 }, children: [
             /* @__PURE__ */ (0, jsx)(View, { style: { flex: 1 }, children: /* @__PURE__ */ (0, jsx)(CountBand, {}) }),
-            /* @__PURE__ */ (0, jsx)(QueueActions, { finished: done.length, unfinished: active2.length + stopped.length, run: handlers.runAll, openBackup: () => setBackup("downloads:backup") })
+            /* @__PURE__ */ (0, jsx)(QueueActions, { finished: done.length, unfinished: active2.length + waiting2.length + stopped.length, run: handlers.runAll, openBackup: () => setBackup("downloads:backup") })
           ] }),
           /* @__PURE__ */ (0, jsx)(Telemetry, { error: error2 }),
           /* @__PURE__ */ (0, jsx)(View, { style: { marginTop: 30 }, children: /* @__PURE__ */ (0, jsx)(Section, { ...section, first, handlers, anchor: false }, section.title) })

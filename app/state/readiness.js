@@ -5,8 +5,13 @@
 import { finalError } from '../downloads/errors.js';
 import { t } from '../i18n/core.js';
 
-  var ICON = { downloading: "download", preparing: "settings", installed: "circleCheck", played: "play", wontStart: "alert" };
-  var TONE = { downloading: "accent", preparing: "accent", installed: "good", played: "good", wontStart: "bad" };
+  // glibren.44: "waiting": a download that failed for now and tries again by itself (download-queue.js retryIn: a busy
+  // server, the debrid service still preparing or asking to slow down, the network while resolving). One state only: its
+  // own section, chip and countdown, never counted as failed (the PS5 showed STOPPED + DOWNLOADING + "1 failed" + Retry).
+  var ICON = { downloading: "download", waiting: "restart", preparing: "settings", installed: "circleCheck", played: "play", wontStart: "alert" };
+  var TONE = { downloading: "accent", waiting: "wait", preparing: "accent", installed: "good", played: "good", wontStart: "bad" };
+  /** glibren.44: a download waiting on its own next try (failed, with `retryAt`). */
+  var waitingRetry = (job2) => job2?.state === "failed" && Boolean(job2.retryAt);
   // The queue's states by stage, and the note each one adds (null: none).
   var DOWNLOADING = { queued: "queued", resolving: null, connecting: null, downloading: null, pausing: "pausing", paused: "paused", failed: "failed", "awaiting-browser": "browser" };
   // glibren.12: "converting" (to .exfat, in the background payload).
@@ -21,6 +26,7 @@ import { t } from '../i18n/core.js';
     const state = job2?.state;
     if (!state) return null;
     const stage = (stage2, note = null, extra = {}) => ({ stage: stage2, icon: ICON[stage2], tone: TONE[stage2], note: note && `ready.note.${note}`, action: null, ...extra });
+    if (waitingRetry(job2)) return stage("waiting");
     if (state in DOWNLOADING) {
       // 0.5.4: a refusal Retry would only meet again says to choose another source instead.
       // 0.5.6 (from PS4 Beta 3): one waiting on its own next try (download-queue.js retryLater) isn't stopped, so not
@@ -44,7 +50,7 @@ import { t } from '../i18n/core.js';
   var readinessText = (ready) => ready ? [stageLabel(ready.stage), ready.note ? t(ready.note) : ""].filter(Boolean).join(" \xB7 ") : "";
   // Which of a game's jobs speaks for its card: the game's own over its add-ons and backports, then the one
   // that most needs the gamer (won't start, downloading, getting ready) over the settled ones.
-  var WEIGHT = { wontStart: 0, downloading: 1, preparing: 2, played: 3, installed: 4 };
+  var WEIGHT = { wontStart: 0, downloading: 1, waiting: 1, preparing: 2, played: 3, installed: 4 };
   // The job that speaks for the card, with its readiness ({ job, ready }), or null.
   function cardPick(jobs) {
     let best = null;
@@ -59,4 +65,4 @@ import { t } from '../i18n/core.js';
   }
   var cardReadiness = (jobs) => cardPick(jobs)?.ready ?? null;
 
-export { cardPick, cardReadiness, readinessOf, readinessText, stageLabel };
+export { cardPick, cardReadiness, readinessOf, readinessText, stageLabel, waitingRetry };

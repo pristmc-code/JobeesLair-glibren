@@ -67,5 +67,17 @@ import { t } from '../i18n/core.js';
     return { title: t(`errors.${known[1]}`), action: t(`errors.action.${known[2]}`), final: FINAL.includes(known[1]) };
   }
   var finalError = (error2, set = false) => Boolean(error2) && explainError(error2, set).final === true;
+  /**
+   * glibren.44: who is busy, for a busy-server error (HTTP 429/5xx, TorBox's own server error): { code } with the HTTP
+   * status (or null), or null when the error is another one. The card names the service (the debrid one when the
+   * download goes through it, else the host).
+   */
+  function busyServer(error2) {
+    const message = cause(error2 || "");
+    const http = /HTTP (429|5\d\d)\b/.exec(message);
+    if (http) return { code: http[1], torbox: false };
+    if (/TorBox had a server error/.test(message)) return { code: null, torbox: true };
+    return null;
+  }
 
-export { INCOMPLETE_PART, STALE_PARTIAL, cause, explainError, finalError };
+export { INCOMPLETE_PART, STALE_PARTIAL, busyServer, cause, explainError, finalError };

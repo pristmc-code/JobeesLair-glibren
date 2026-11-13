@@ -152,7 +152,7 @@
       const bytes = Number(head.headers?.["content-length"]);
       return { url: webURL(head.url || file).url, rejectHtml: true, ...Number.isSafeInteger(bytes) && bytes > 0 ? { expectedBytes: bytes } : {} };
     }
-    async function resolve2(release, { signal, directURL } = {}) {
+    async function resolve2(release, { signal, directURL, onProgress } = {}) {
       if (directURL) return direct(directURL, signal);
       const url = release.browserUrl || release.url;
       const kind = sourceKind(release);
@@ -162,7 +162,7 @@
       if (kind === "manifest") throw new Error("Split manifests must be resolved by the queue.");
       if (kind === "debrid") {
         if (!debrid) throw new Error("No debrid service is set up. Add a TorBox or AllDebrid API key in Settings, or choose another source.");
-        const { url: link, expectedBytes, repacked } = await debrid.resolve(release, { signal });
+        const { url: link, expectedBytes, repacked } = await debrid.resolve(release, { signal, onProgress });
         return { url: webURL(link).url, rejectHtml: true, ...expectedBytes === null || Number.isSafeInteger(expectedBytes) && expectedBytes > 0 ? { expectedBytes } : {}, ...repacked ? { repacked: true } : {} };
       }
       if (kind === "browser" || kind === "datanodes") throw new BrowserRequired(url);
