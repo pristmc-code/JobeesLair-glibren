@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { stageBundled } from './stage-bundled.mjs';
+import { compileTo } from '../../tests/payload-build.mjs';
 
 const repo = fileURLToPath(new URL('../..', import.meta.url));
 // FASE3_FIXTURE: outra pasta no mesmo formato (make-fixture.mjs --full: os dados reais inteiros, 3.200 jogos).
@@ -262,7 +263,7 @@ export async function runParity({ binary, variants = ['ps5', 'low', 'ps4', 'hidd
     }
     if (!binary) {
       binary = path.join(work, 'bgdl');
-      const built = spawnSync('cc', ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-o', binary, path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { encoding: 'utf8' });
+      const built = compileTo(binary, 'cc', ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread']);
       if (built.status !== 0) throw new Error(built.stderr);
     }
     const result = { referencia: source, warnings, variantes: {}, problems: [] };

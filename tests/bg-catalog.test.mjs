@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { freePortFrom } from './free-port.mjs';
 import { stageBundled } from '../tools/fase3/stage-bundled.mjs';
+import { assertBuilt, buildSkip, compileTo } from './payload-build.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const FIXTURE = path.join(repo, 'tests/fixtures/fase3');
@@ -27,9 +28,8 @@ const LIVE = 'https://raw.githubusercontent.com/JVK3R/JobeesLair/main/catalog/li
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-catalog-'));
 const binary = path.join(dir, 'bgdl');
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
-const built = compiler && spawnSync(compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-o', binary, path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { encoding: 'utf8' });
-const missing = Boolean(built && built.status !== 0 && /curl\/curl\.h|openssl\/evp\.h|archive\.h|cannot find -l/.test(built.stderr));
-const skip = !compiler ? 'no C compiler' : missing ? 'no libcurl/OpenSSL/libarchive headers' : built.status !== 0 ? `did not compile: ${built.stderr.slice(0, 600)}` : false;
+const built = compiler && compileTo(binary, compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread']);
+const skip = buildSkip(compiler, built);
 const freePort = freePortFrom(10); // Fase 3: bloco de portas so deste arquivo (tests/free-port.mjs)
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha = (text) => createHash('sha256').update(text).digest('hex');
@@ -84,6 +84,7 @@ async function start(base, env = {}) {
 }
 
 test('sem a copia do embutido: 503 no-data, e a loja do celular continua no arquivo do app', { skip }, async () => {
+  assertBuilt(built);
   const base = workspace({ bundled: false });
   const p = await start(base);
   const s = await p.status((x) => x.state === 'no-data');

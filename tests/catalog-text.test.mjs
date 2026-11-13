@@ -12,14 +12,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeJlx } from '../app/state/jlx.js';
+import { assertBuilt, buildSkip, compileTo } from './payload-build.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-cattext-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
 const binary = path.join(dir, 'harness');
-const built = compiler && spawnSync(compiler, ['-std=gnu11', '-O2', '-w', '-o', binary, path.join(repo, 'tests/catalog-text-harness.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { encoding: 'utf8' });
-const skip = !compiler ? 'no C compiler' : built.status !== 0 ? `did not compile: ${built.stderr.slice(0, 400)}` : false;
+const built = compiler && compileTo(binary, compiler, ['-std=gnu11', '-O2', '-w', path.join(repo, 'tests/catalog-text-harness.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread']);
+const skip = buildSkip(compiler, built);
 
 function corpus() {
   const lines = new Set();
@@ -44,6 +45,7 @@ function corpus() {
 const js = (line) => [line.toLowerCase(), line.normalize('NFC'), line.normalize('NFD'), line.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')];
 
 test('minusculas, NFC, NFD e o fold da busca iguais ao JS', { skip }, () => {
+  assertBuilt(built);
   const lines = corpus();
   const run = spawnSync(binary, [], { input: `${lines.join('\n')}\n`, encoding: 'utf8', maxBuffer: 256 << 20 });
   assert.equal(run.status, 0, run.stderr);

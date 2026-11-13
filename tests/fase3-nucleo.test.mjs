@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { freePortFrom } from './free-port.mjs';
+import { compileTo } from './payload-build.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
@@ -37,8 +38,8 @@ test('a mesma paridade com o payload em ASan + UBSan', { skip: skip || (!asan &&
   const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-fase3-asan-'));
   try {
     const binary = path.join(dir, 'bgdl-asan');
-    const built = spawnSync(compiler, ['-std=gnu11', '-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined', '-fno-omit-frame-pointer', '-o', binary,
-      path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { encoding: 'utf8' });
+    const built = compileTo(binary, compiler, ['-std=gnu11', '-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined', '-fno-omit-frame-pointer',
+      path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread']);
     assert.equal(built.status, 0, built.stderr.slice(0, 2000));
     process.env.ASAN_OPTIONS = 'detect_leaks=0:abort_on_error=1';
     const result = await runParity({ binary, variants: ['ps5', 'ps4'], ports });
