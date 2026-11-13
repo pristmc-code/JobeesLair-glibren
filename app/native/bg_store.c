@@ -79,6 +79,8 @@ typedef struct {
 } StIndex;
 
 static pthread_mutex_t g_store_lock = PTHREAD_MUTEX_INITIALIZER; // antes de g_lock, nunca depois
+// Fase 3 (bg_catalog_api.c): com o catalogo montado no payload, a loja sai dele; senao, do store-index.json do app.
+static int catalog_store_list(int fd, const char* query);
 static char g_store_dir[600];
 static StIndex* g_store;
 static int g_store_state; // 0 nao lido, 1 lido, 2 sem o arquivo, 3 invalido
@@ -534,6 +536,7 @@ static void st_store_error(int fd, int state) {
 
 // GET /api/store
 static void store_list(int fd, const char* query) {
+  if (catalog_store_list(fd, query)) return; // Fase 3
   pthread_mutex_lock(&g_store_lock);
   const int state = st_refresh_locked();
   if (state != 1 || !g_store) { pthread_mutex_unlock(&g_store_lock); st_store_error(fd, state); return; }
@@ -848,6 +851,8 @@ static int st_find_detail(const char* id, const char* key, StDetail* d) {
   pthread_mutex_unlock(&g_store_games_lock);
   return st_find_detail_full(id, key, d);
 }
+// Fase 3 (bg_catalog_api.c): o jogo e a ficha a partir do catalogo do payload. 1 achou, 0 nao, -1 sem catalogo.
+static int catalog_store_entry(const char* id, StGame* out, char* key, size_t key_cap, StIndex* tables, StDetail* d);
 static int st_first_solo(const StDetail* d) {
   for (int i = 0; i < d->link_count; ++i) if (st_link_solo(&d->links[i])) return i;
   return -1;
@@ -891,14 +896,15 @@ static void store_game(int fd, const char* query) {
   if (!tables || !d) { free(tables); free(d); monitor_json(fd, 500, "{\"error\":\"out of memory\"}"); return; }
   StGame g;
   char key[96];
-  const int found = st_lookup(id, &g, key, sizeof key, tables);
+  const int from_catalog = catalog_store_entry(id, &g, key, sizeof key, tables, d); // Fase 3
+  const int found = from_catalog >= 0 ? from_catalog : st_lookup(id, &g, key, sizeof key, tables);
   if (found != 1) {
     free(tables); free(d);
     if (found == 0) monitor_json(fd, 404, "{\"error\":\"not-found\"}");
     else st_store_error(fd, found);
     return;
   }
-  const int detail = st_find_detail(id, key, d);
+  const int detail = from_catalog == 1 ? 1 : st_find_detail(id, key, d);
   Buf b = {0};
   buf_str(&b, "{\"ok\":true,\"game\":");
   pthread_mutex_lock(&g_lock);
@@ -947,14 +953,15 @@ static void store_add(int fd, Request* r) {
   if (!d) { monitor_json(fd, 500, "{\"error\":\"out of memory\"}"); return; }
   StGame g;
   char key[96];
-  const int found = st_lookup(id, &g, key, sizeof key, NULL);
+  const int from_catalog = catalog_store_entry(id, &g, key, sizeof key, NULL, d); // Fase 3
+  const int found = from_catalog >= 0 ? from_catalog : st_lookup(id, &g, key, sizeof key, NULL);
   if (found != 1) {
     free(d);
     if (found == 0) monitor_json(fd, 404, "{\"error\":\"not-found\"}");
     else st_store_error(fd, found);
     return;
   }
-  const int chosen = st_find_detail(id, key, d) == 1 ? st_first_solo(d) : -1;
+  const int chosen = (from_catalog == 1 || st_find_detail(id, key, d) == 1) ? st_first_solo(d) : -1;
   const StLink* link = chosen >= 0 ? &d->links[chosen] : NULL;
   // O destino (as regras do app) antes de travar a fila: so quando o payload pode baixar sozinho.
   char root[1024], name[256] = "";

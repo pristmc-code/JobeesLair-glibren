@@ -1,4 +1,5 @@
-// Fase 3 (prototipo): compila os dois nucleos e prepara a pasta /data do B.
+// Fase 3 (prototipo): compila o nucleo B (QuickJS sem tela, guardado para a Fase 6) e prepara a pasta /data dele. O nucleo A
+// (C) entrou no payload (app/native/bg_catalog*.c); a paridade dele e tools/fase3/parity.mjs.
 // Run (WSL): node tools/fase3/build.mjs   (depois de tools/fase3/reference.mjs, que deixa /root/fase3-data/appfs)
 // Saida em /root/fase3-data/bin: a_catalog (A: bg_downloader.c + bg_catalog.c), b_catalog (B: host + QuickJS-ng 0.15),
 // b.bundle.js e b.bundle.min.js, bgdl_base (o payload sem nada novo, para medir o que A soma). E /root/fase3-data/bfs: a
@@ -32,15 +33,12 @@ for (const minify of [false, true]) {
 }
 const cc = (args) => execFileSync('cc', args, { cwd: here, stdio: ['ignore', 'inherit', 'inherit'] });
 const flags = ['-std=gnu11', '-O2', '-w'];
-cc([...flags, '-o', path.join(bin, 'a_catalog'), 'a_main.c', '-lcurl', '-lcrypto', '-larchive', '-lpthread', '-lm']);
-// O payload sem o nucleo (o mesmo main renomeado e o mesmo servidor minimo), para a diferenca de tamanho.
-cc([...flags, '-o', path.join(bin, 'bgdl_base'), 'base_main.c', '-lcurl', '-lcrypto', '-larchive', '-lpthread', '-lm']);
 // B: o host + o motor (as 4 fontes do QuickJS-ng, sem quickjs-libc).
 const qjs = ['quickjs.c', 'libregexp.c', 'libunicode.c', 'dtoa.c'].map((file) => path.join(QJS_SRC, file));
 cc([...flags, '-D_GNU_SOURCE', `-I${QJS_SRC}`, '-o', path.join(bin, 'b_catalog'), 'b_host.c', ...qjs, '-lm', '-lpthread']);
 // O motor sozinho com um main vazio, para separar motor e cola no tamanho.
 cc([...flags, '-D_GNU_SOURCE', `-I${QJS_SRC}`, '-o', path.join(bin, 'qjs_only'), 'qjs_only.c', ...qjs, '-lm', '-lpthread']);
-for (const name of ['a_catalog', 'bgdl_base', 'b_catalog', 'qjs_only']) {
+for (const name of ['b_catalog', 'qjs_only']) {
   copyFileSync(path.join(bin, name), path.join(bin, `${name}.stripped`));
   execFileSync('strip', [path.join(bin, `${name}.stripped`)]);
 }
@@ -59,6 +57,6 @@ for (const name of readdirSync(flat)) {
 }
 console.log(`bfs: ${copied} arquivos`);
 const size = (name) => statSync(path.join(bin, name)).size;
-console.log(JSON.stringify({ a: size('a_catalog.stripped'), base: size('bgdl_base.stripped'), b: size('b_catalog.stripped'), qjs: size('qjs_only.stripped'),
+console.log(JSON.stringify({ b: size('b_catalog.stripped'), qjs: size('qjs_only.stripped'),
   bundle: size('b.bundle.js'), bundleMin: size('b.bundle.min.js') }));
 if (!existsSync(path.join(tree, 'data'))) throw new Error('bfs vazio: rode tools/fase3/reference.mjs antes');

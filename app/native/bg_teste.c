@@ -160,6 +160,7 @@ static int teste_monitor_route(int fd, Request* r) {
   diag_init();
   if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
   if (get && !strcmp(r->path, "/api/teste/estado")) teste_estado(fd);
+  else if (get && !strcmp(r->path, "/api/teste/catalogo")) teste_catalogo(fd); // Fase 3: o catalogo no payload (bg_catalog_api.c)
   else if (post && !strcmp(r->path, "/api/teste/enviar")) teste_enviar(fd, r);
   else monitor_json(fd, 404, "{\"error\":\"not found\"}");
   return 1;

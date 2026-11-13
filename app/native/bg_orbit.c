@@ -158,6 +158,7 @@ static size_t orbit_known_tidy(OrbitId* ids, size_t count, char hex[17]) {
   return n;
 }
 static int orbit_title_ok(const char* id);
+static void orbit_known_app_locked(OrbitId* ids, size_t count); // Fase 3 (bg_catalog_api.c)
 // Um codigo valido de PS4/PS5 vai para a lista (em maiusculas); o resto e ignorado. 0 sem memoria.
 static int orbit_known_add(OrbitId** ids, size_t* count, size_t* cap, const char* text) {
   char id[10];
@@ -599,10 +600,12 @@ static void orbit_tell_locked(int64_t now) {
   if (text) notify(text);
 }
 
+static volatile int g_orbit_loaded; // Fase 3: o estado e os codigos conhecidos ja lidos (o catalogo espera para saber se a lista entra)
 static void* orbit_loop(void* unused) {
   (void)unused;
   orbit_load();
   orbit_known_load();
+  __atomic_store_n(&g_orbit_loaded, 1, __ATOMIC_RELEASE);
   pthread_mutex_lock(&g_orbit_lock);
   // Ao subir, a proxima tentativa conta da ultima (um payload reiniciado nao baixa de novo antes das 6 h).
   g_orbit.next_try = g_orbit.last_try ? g_orbit.last_try + g_orbit_every : 0;
@@ -688,7 +691,7 @@ static int orbit_route(int fd, Request* r) {
       g_orbit.kick = 1;
     // glibren.27: a lista nova fica com o payload (orbit_known_set_locked fica com ela); o laco regrava o feed.
     if (!o.has_known) free(o.known);
-    else if (orbit_known_set_locked(o.known, o.count)) logk_("orbit: %zu codigos conhecidos pelo app", g_known_count);
+    else { orbit_known_app_locked(o.known, o.count); logf_("orbit: %zu codigos conhecidos pelo app", o.count); } // Fase 3: unidos aos do catalogo do payload
     pthread_cond_broadcast(&g_orbit_wake);
     pthread_mutex_unlock(&g_orbit_lock);
   } else if (strcmp(r->method, "GET")) {

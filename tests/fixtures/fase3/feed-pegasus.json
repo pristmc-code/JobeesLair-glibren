@@ -1,0 +1,72 @@
+{
+ "name": "Pegasus Fixture",
+ "packages": [
+  {
+   "titleId": "PPSA90010",
+   "title": "Pegasus Game",
+   "version": "01.002",
+   "description": "<p>First line &amp; more.</p><p>Second line</p><br/>Third",
+   "posterUrl": "https://example.com/p.jpg",
+   "downloadLinks": [
+    {
+     "name": "EUR 12.xx Base - Akirabox part 1",
+     "url": "https://akirabox.com/a1",
+     "details": {
+      "buildKey": "base",
+      "hostLabel": "AkiraBox"
+     }
+    },
+    {
+     "name": "EUR 12.xx Base - Akirabox part 2",
+     "url": "https://akirabox.com/a2",
+     "details": {
+      "buildKey": "base",
+      "hostLabel": "AkiraBox"
+     }
+    },
+    {
+     "url": "https://vikingfile.com/f/xyz",
+     "details": {
+      "buildKey": "FPKG",
+      "hostLabel": "VikingFile"
+     }
+    }
+   ]
+  },
+  {
+   "titleId": "ppsa90010",
+   "title": "Pegasus Game (USA)",
+   "description": "Other region",
+   "downloadLinks": [
+    {
+     "name": "USA DLC pack",
+     "url": "https://akirabox.com/d1",
+     "details": {
+      "buildKey": "dlc",
+      "hostLabel": "AkiraBox"
+     }
+    },
+    {
+     "name": "dup",
+     "url": "https://akirabox.com/a1"
+    }
+   ]
+  },
+  {
+   "titleId": "CUSA90011",
+   "title": "Pegasus PS4",
+   "originalPosterUrl": "https://example.com/o.jpg",
+   "downloadLinks": [
+    {
+     "name": "Base - 1fichier",
+     "url": "https://1fichier.com/?abc"
+    }
+   ]
+  },
+  {
+   "titleId": "PPSA90012",
+   "title": "Sem links",
+   "downloadLinks": "nao e lista"
+  }
+ ]
+}

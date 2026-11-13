@@ -1,0 +1,203 @@
+{
+ "version": 1,
+ "name": "Fixture da Fase 3",
+ "mirrors": [
+  "https://mirror.example/fase3.json"
+ ],
+ "ratings": {
+  "PPSA90001": [
+   4.6,
+   1200
+  ],
+  "PPSA90004": [
+   3.9,
+   250
+  ],
+  "CUSA90003": [
+   4.1,
+   90
+  ]
+ },
+ "games": [
+  {
+   "id": "PPSA90001",
+   "title": "Pokémon Fixture Edition",
+   "developer": "Game Freak",
+   "publisher": "Nintendo",
+   "releaseDate": "2025-02-01",
+   "addedAt": "2026-11-10",
+   "genres": [
+    "Role Playing Game (RPG) / Adventure",
+    "Action"
+   ],
+   "features": [
+    "Online Multiplayer"
+   ],
+   "recommendations": 900,
+   "metacritic": 81,
+   "sizeGb": 30,
+   "art": {
+    "cover": "https://image.api.playstation.com/vulcan/ap/rnd/1/a.png?w=384&thumb=false",
+    "hero": "https://example.com/hero1.jpg",
+    "tint": "#112233",
+    "coverFallbacks": [
+     "https://image.api.playstation.com/x.png?w=384"
+    ]
+   },
+   "about": [
+    "A long enough paragraph about this invented game, with lower case letters so it counts as the summary of the page."
+   ],
+   "summary": "A long enough",
+   "shots": [
+    "https://example.com/s1.jpg",
+    "ftp://bad"
+   ],
+   "releases": [
+    {
+     "url": "https://example.com/files/Pokemon.Fixture.part1.rar",
+     "label": "USA Base (v01.00) part 1",
+     "provider": "example",
+     "sizeBytes": 1000000000
+    },
+    {
+     "url": "https://example.com/files/Pokemon.Fixture.part2.rar",
+     "label": "USA Base (v01.00) part 2",
+     "provider": "example",
+     "sizeBytes": 500000000
+    },
+    {
+     "url": "https://archive.org/download/fix/Pokemon.exfat",
+     "label": "EUR exFAT image",
+     "format": "exfat",
+     "sizeBytes": 31000000000,
+     "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+     "url": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Pokemon+Fixture.rar",
+     "label": "Torrent pack"
+    },
+    {
+     "url": "https://example.com/files/Pokemon.Fixture.Backport.Files.rar",
+     "label": "Backport files 4.xx"
+    }
+   ]
+  },
+  {
+   "id": "PPSA90002",
+   "title": "ΣΟΦΟΣ Ο ΘΕΟΣ",
+   "developer": "Αθήνα",
+   "publisher": "ΣΣ",
+   "releaseDate": "2024-06-01",
+   "genres": [
+    "Simulator"
+   ],
+   "recommendations": 10,
+   "releases": [
+    {
+     "url": "https://www.mediafire.com/file/abc/sofos.zip",
+     "label": "Mediafire"
+    },
+    {
+     "url": "https://download123.mediafire.com/abc/sofos.zip",
+     "label": "Mediafire direct"
+    }
+   ]
+  },
+  {
+   "id": "CUSA90003",
+   "title": "İstanbul Racer",
+   "platform": "ps4",
+   "releaseDate": "2019-01-01",
+   "genres": [
+    "Driving/Racing"
+   ],
+   "recommendations": 50,
+   "releases": [
+    {
+     "url": "https://vikingfile.com/d/abc123/Istanbul.pkg",
+     "label": "Vikingfile PKG"
+    },
+    {
+     "url": "https://datanodes.to/xyz/Istanbul.pkg",
+     "label": "DataNodes"
+    }
+   ]
+  },
+  {
+   "id": "PPSA90004",
+   "title": "art of rally fixture",
+   "releaseDate": "2023-03-03",
+   "addedAt": "2026-11-12",
+   "genres": [
+    "Racing"
+   ],
+   "recommendations": 3000,
+   "art": {
+    "hero": "https://example.com/hero4.jpg"
+   },
+   "releases": [
+    {
+     "url": "https://example.com/rally-folder-dump.7z",
+     "label": "Folder dump",
+     "sizeBytes": 12345678901
+    },
+    {
+     "url": "https://example.com/rally.ffpkg",
+     "browserUrl": "https://page.example/rally"
+    }
+   ]
+  },
+  {
+   "id": "PPSA90005",
+   "title": "Fixture™ Deluxe PS5",
+   "releaseDate": "2022-12-12",
+   "genres": [
+    "Shooter"
+   ],
+   "recommendations": "not a number",
+   "releases": [
+    {
+     "url": "https://example.com/fix5.pkg",
+     "format": "fpkg",
+     "label": "FPKG 11.xx"
+    },
+    {
+     "url": "not a url"
+    },
+    {
+     "url": "https://example.com/a part 0.rar",
+     "label": "Set part 0"
+    }
+   ]
+  },
+  {
+   "id": "PPSA90001",
+   "title": "Duplicado (o primeiro vale)",
+   "releases": [
+    {
+     "url": "https://example.com/dup.exfat"
+    }
+   ]
+  },
+  {
+   "id": "PPSA03753",
+   "title": "Ja no embutido",
+   "releases": [
+    {
+     "url": "https://cdn.overdrive.example/files/known.exfat",
+     "provider": "Overdrive CDN",
+     "label": "Overdrive CDN exFAT"
+    }
+   ]
+  },
+  {
+   "id": "XXXX00000",
+   "title": "codigo invalido",
+   "releases": [
+    {
+     "url": "https://example.com/x.exfat"
+    }
+   ]
+  }
+ ]
+}

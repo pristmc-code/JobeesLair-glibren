@@ -1,0 +1,28 @@
+{
+ "version": 1,
+ "games": [
+  {
+   "id": "PPSA90020",
+   "title": "Local Game",
+   "genres": [
+    "Puzzle"
+   ],
+   "releaseDate": "2021-05-05",
+   "releases": [
+    {
+     "url": "https://github.com/a/b/releases/download/v1/local.exfat",
+     "sizeBytes": 2000000000
+    }
+   ]
+  },
+  {
+   "id": "CUSA90021",
+   "title": "Zebra local",
+   "releases": [
+    {
+     "url": "https://example.com/z.pkg"
+    }
+   ]
+  }
+ ]
+}

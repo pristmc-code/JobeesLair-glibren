@@ -107,6 +107,9 @@
 #ifndef BG_VERSION
 #define BG_VERSION "1.35.0"
 #endif
+// Fase 3 (branch fase3, NAO publicada): o catalogo da loja montado no payload (GET /api/catalog, /options, /search,
+// /home, /related, /game, /sources, /status; POST /api/catalog/rebuild e /refresh; /api/store a partir do catalogo;
+// GET /api/teste/catalogo; bg_catalog*.c). AO PUBLICAR: subir BG_API e PAYLOAD_API para 35 (o app novo depende disso).
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
@@ -3900,6 +3903,7 @@ static int refuse_field(JP* jp, const char* key, void* ctx) {
 
 // glibren.20: o catalogo do Orbit Store como feed da Jobe (GET/POST /orbit).
 #include "bg_orbit.c"
+static int catalog_route(int fd, Request* r); // Fase 3 (bg_catalog_api.c)
 // glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build).
 #include "bg_library.c"
 
@@ -4327,6 +4331,7 @@ static void route(int fd, Request* r) {
   if (strcmp(r->path, "/bye") && mono_ms() - g_bye_ms >= BYE_GRACE_MS) g_last_app_ms = mono_ms();
   if (conv_route(fd, r)) return; // glibren.12: /convert
   if (orbit_route(fd, r)) return; // glibren.20: /orbit
+  if (catalog_route(fd, r)) return; // Fase 3: /api/catalog
   if (lb_route(fd, r)) return; // glibren.38: /library/build
   if (diag_app_route(fd, r)) return; // glibren.44: /diag e /diag/send
   if (jobe_app_route(fd, r)) return; // glibren.44: /jobe e /jobe/state
@@ -6920,6 +6925,7 @@ static void auto_after_download(Job* j) {
 
 // glibren (item 2): a loja completa na pagina do celular.
 #include "bg_store.c"
+#include "bg_catalog.c" // Fase 3: o catalogo da loja no payload (montagem, feeds, /api/catalog, a loja do celular)
 // glibren.44: o diagnostico pelo GitHub (envio e .zip pela pagina do celular e pelo app).
 #include "bg_diag.c"
 // glibren.44: a area Jobe da pagina do celular (versao e "Atualizar a Jobe"; quem atualiza e o app).
@@ -7251,6 +7257,7 @@ int main(void) {
   if (!converter_started) logf_("conversao para .exfat: thread nao criada");
   orbit_setup(); // glibren.20: a lista Orbit Store (so baixa quando o app a liga)
   if (spawn_thread(orbit_loop, NULL, NULL)) logf_("orbit: thread nao criada");
+  catalog_setup(); // Fase 3: o catalogo da loja (montagem numa thread, feeds baixados pelo payload)
   lb_setup(); // glibren.38: a rede da Biblioteca TorBox (continua uma rodada deixada no meio)
   if (spawn_thread(lb_loop, NULL, NULL)) logf_("biblioteca: thread nao criada");
   pthread_t starter; // glibren.18: os pedidos do celular comecados com o app fechado
