@@ -55,6 +55,11 @@ static const char* const DIAG_TOKEN_PREFIXES[] = {"github_pat_", "ghp_", "gho_",
 static pthread_mutex_t g_diag_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t g_diag_once = PTHREAD_ONCE_INIT;
 static char g_diag_dir[512], g_tube_dir[512], g_app_logs_root[512], g_github_base[256], g_glibren_base[160];
+// glibren.44: a pasta da ultima rodada (sem sufixo) e quantas ja usaram essa hora: duas rodadas no mesmo segundo nao
+// caem na mesma pasta (no GitHub, um PUT num arquivo que ja existe sem "sha" da 422). BGDL_DIAG_FOLDER_AT (so no PC)
+// fixa a hora da pasta, para o teste conferir o sufixo sem depender do relogio.
+static char g_diag_last_folder[24], g_diag_fixed_folder[24];
+static int g_diag_folder_uses;
 static struct {
   int running;
   char state[12], folder[24], error[16];
@@ -70,6 +75,7 @@ static void diag_setup(void) {
   copy_text(g_github_base, sizeof g_github_base, env_or("BGDL_GITHUB_BASE", "https://api.github.com"));
   copy_text(g_glibren_base, sizeof g_glibren_base, env_or("BGDL_GLIBREN_BASE", "http://127.0.0.1:8765"));
   copy_text(g_diag.state, sizeof g_diag.state, "idle");
+  copy_text(g_diag_fixed_folder, sizeof g_diag_fixed_folder, env_or("BGDL_DIAG_FOLDER_AT", ""));
 }
 static void diag_init(void) { pthread_once(&g_diag_once, diag_setup); }
 
@@ -583,6 +589,7 @@ static void diag_finish(const char* state, const char* error, long http) {
   pthread_mutex_unlock(&g_diag_lock);
 }
 static void diag_folder(char* out, size_t cap) {
+  if (g_diag_fixed_folder[0]) { copy_text(out, cap, g_diag_fixed_folder); return; }
   time_t now = time(NULL);
   struct tm tm;
   localtime_r(&now, &tm);
@@ -647,6 +654,16 @@ static int diag_start(const char* from, char* error, size_t cap) {
   diag_folder(job->folder, sizeof job->folder);
   pthread_mutex_lock(&g_diag_lock);
   if (g_diag.running) { pthread_mutex_unlock(&g_diag_lock); free(job); copy_text(error, cap, "busy"); return 409; }
+  // a mesma hora da rodada anterior: -2, -3...
+  if (!strcmp(job->folder, g_diag_last_folder)) {
+    char base[24];
+    copy_text(base, sizeof base, job->folder);
+    if (g_diag_folder_uses < 99) ++g_diag_folder_uses;
+    snprintf(job->folder, sizeof job->folder, "%.17s-%u", base, (unsigned)g_diag_folder_uses % 100u);
+  } else {
+    copy_text(g_diag_last_folder, sizeof g_diag_last_folder, job->folder);
+    g_diag_folder_uses = 1;
+  }
   g_diag.running = 1;
   copy_text(g_diag.state, sizeof g_diag.state, "running");
   copy_text(g_diag.folder, sizeof g_diag.folder, job->folder);

@@ -102,7 +102,7 @@ async function fakeGlibren() {
 }
 
 let run = 0;
-async function startPayload(githubBase, glibrenPort) {
+async function startPayload(githubBase, glibrenPort, env = {}) {
   const base = path.join(dir, `run${++run}`);
   for (const sub of ['state', 'tube', 'apps/PPSA99471/logs', 'diag']) mkdirSync(path.join(base, sub), { recursive: true });
   writeFileSync(path.join(base, 'debrid.json'), JSON.stringify({ torbox: { key: TORBOX_KEY }, alldebrid: { key: ALLDEBRID_KEY } }));
@@ -118,7 +118,7 @@ async function startPayload(githubBase, glibrenPort) {
   const api = await freePort(), monitor = await freePort();
   const child = spawn(binary, [], { env: { ...process.env, BGDL_DIR: path.join(base, 'state'), BGDL_PORT: String(api), BGDL_MONITOR_PORT: String(monitor), BGDL_ORBIT_DIR: path.join(base, 'orbit'),
     BGDL_LIBRARY: path.join(base, 'lista.json'), BGDL_KEYFILE: path.join(base, 'debrid.json'), BGDL_NOTIFY_FILE: path.join(base, 'notify.txt'), BGDL_DIAG_DIR: path.join(base, 'diag'),
-    BGDL_TUBE_DIR: path.join(base, 'tube'), BGDL_APP_LOGS_ROOT: path.join(base, 'apps'), BGDL_GITHUB_BASE: githubBase, BGDL_GLIBREN_BASE: `http://127.0.0.1:${glibrenPort}` },
+    BGDL_TUBE_DIR: path.join(base, 'tube'), BGDL_APP_LOGS_ROOT: path.join(base, 'apps'), BGDL_GITHUB_BASE: githubBase, BGDL_GLIBREN_BASE: `http://127.0.0.1:${glibrenPort}`, ...env },
     stdio: ['ignore', 'pipe', 'ignore'] });
   children.add(child);
   child.on('exit', () => children.delete(child));
@@ -284,12 +284,11 @@ test('glibren.44: envio pelo app contra o GitHub falso: um PUT por arquivo, past
   assert.match(diario, new RegExp(`diagnostico: enviado \\(\\d+ arquivo\\(s\\), pasta ${end.folder}, pedido pelo app\\)`));
   assert.ok(!diario.includes(GITHUB_KEY));
   // pela pagina do celular tambem (usa a Memoria/versoes que o app mandou por ultimo)
-  await wait(1100); // outra pasta (a hora tem segundos)
   gh.state.puts = [];
   assert.equal((await p.page('/api/diag/send', { method: 'POST', body: {}, session: p.session })).status, 200);
   const again = await p.until();
   assert.equal(again.state, 'done');
-  assert.notEqual(again.folder, end.folder);
+  assert.notEqual(again.folder, end.folder, 'outra pasta, mesmo no mesmo segundo');
   assert.equal(JSON.parse(gh.state.puts.find((put) => put.url.endsWith('/info.json')).text).from, 'celular');
   p.child.kill('SIGTERM');
 });
@@ -402,4 +401,21 @@ test('glibren.44: a pagina do celular tem o Diagnostico (chave, enviar, .zip) e 
   const c = readFileSync(path.join(repo, 'app/native/bg_diag.c'), 'utf8');
   assert.equal(c.match(/static const char\* const DIAG_SECRET_NAMES\[\]/g).length, 1, 'a lista de regras num lugar so');
   assert.ok(!/logk?f?_\([^;]*key\b[^;]*\);/.test(c.replace(/chave do GitHub (gravada|removida)/g, '')), 'nenhuma linha do diario com a chave');
+});
+
+test('glibren.44: duas rodadas no mesmo segundo nao usam a mesma pasta (-2, -3...), sem depender do relogio', { skip }, async () => {
+  const gh = await fakeGitHub();
+  const p = await startPayload(`http://127.0.0.1:${gh.port}`, await fakeGlibren(), { BGDL_DIAG_FOLDER_AT: '2026-01-02_030405' });
+  assert.equal((await p.page('/api/diag/key', { method: 'POST', body: { key: GITHUB_KEY }, session: p.session })).status, 200);
+  const folders = [];
+  for (let round = 0; round < 3; round++) {
+    gh.state.puts = [];
+    assert.equal((await p.call('POST', '/diag/send', {})).status, 200);
+    const end = await p.until();
+    assert.equal(end.state, 'done', JSON.stringify(end));
+    folders.push(end.folder);
+    assert.ok(gh.state.puts.every((put) => put.url.includes(`/contents/${end.folder}/`)), 'os PUTs vao para a pasta da rodada');
+  }
+  assert.deepEqual(folders, ['2026-01-02_030405', '2026-01-02_030405-2', '2026-01-02_030405-3']);
+  p.child.kill('SIGTERM');
 });
