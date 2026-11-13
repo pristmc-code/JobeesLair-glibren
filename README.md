@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.48**: Homebrew: also lists darkxex's PS5 Homebrew Catalog (one entry per app, the newer version, "darkxex" on the card; files checked by the catalog's Ed25519 signature and SHA-256); switch in Settings > Catalog feeds > Homebrew.
 > **glibren.47**: Smaller image: the catalog's releases and store pages ship as two pack files read one item at a time (530 MB -> under 250 MB); new /teste page on the phone page (full screen, controller, big store, memory, rest mode).
 > **glibren.46**: Signed updates: from this build on, the app installs a newer release only if its manifest is signed with the glibren key (size and SHA-256 of each file checked against it).
 > **glibren.45**: Quieter when nobody is using it (fan): animations stop after 15 s idle, the catalog is built in small parts, the screen saver no longer redraws the whole screen every frame, and a "Save energy" setting.

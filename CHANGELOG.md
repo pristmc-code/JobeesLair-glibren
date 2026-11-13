@@ -6,6 +6,20 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.48** (fork): the Homebrew section also lists the [PS5 Homebrew Catalog](https://github.com/darkxex/ps5-homebrew-catalog)
+  by darkxex (GPL-3.0-or-later; data only, none of its code). `state/darkxex-catalog.js` reads its `catalog/v1.json`
+  feed one app at a time (`json-scan.js`), keeps a copy (`homebrew-darkxex.json`) and fetches it again in the same
+  refresh as the Jobe's list, at most every 30 minutes. Reservations, withdrawn apps and records without a link or
+  SHA-256 are left out, and so are six tools the Jobe does not list (FPKG/dump converters, trophy unlocker, save keys,
+  another store). The two lists are joined without duplicates: the same repository, or the same title ID with a
+  similar name, is one entry, with the newer version (tag numbers, then date); the same title ID with another name
+  keeps both and each page warns that installing one replaces the other. Cards from the catalog say "darkxex"; the
+  app page names the list(s). Before installing one of its files the app checks it against the catalog's signed API
+  (`manifest.json` + `manifest.sig`, Ed25519 with either of the catalog's two keys, sequence never lower, the app's
+  `apps/<id>.json` by the manifest's SHA-256) and installs the signed link; the native download refuses a file whose
+  SHA-256 does not match. A format the app does not install yet shows "Not supported yet". "darkxex catalog" switch
+  (on by default) in Settings > Catalog feeds > Homebrew and at the bottom of the section; credits in the section,
+  README and NOTICE (14 languages).
 - **glibren.47** (fork): a smaller image and a test page for the console's browser. The bundled catalog's releases
   (2,114 files) and store pages (2,074 files) now ship as two pack files each, `data/packs/releases.pack` +
   `releases.idx` and `pages.pack` + `pages.idx` (`tools/catalog/data-pack.mjs`; the folders stay the source in the
