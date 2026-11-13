@@ -61,6 +61,7 @@ import { setDiagnosticsSource } from './diagnostics.js';
 import { setJobeSource } from './jobe-remote.js';
 import { setPayloadSelfSource } from './payload-self.js';
 import { setPairingSource } from './device-pairing.js';
+import { setConsoleFirmware } from './device.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
@@ -352,6 +353,8 @@ function createBackgroundDownloads({
         const answer = await call(token, "GET", "/health");
         if (answer.status === 200 && answer.data?.ok) adoptRemote(answer.data);
         if (answer.status === 200 && answer.data?.ok && "ip" in answer.data) addressSeen(answer.data.ip);
+        // glibren.54: o firmware de verdade, lido do kernel pelo payload (o do processo do app pode vir fingido)
+        if (answer.status === 200 && answer.data?.ok && setConsoleFirmware(answer.data.firmware)) log(`console firmware ${answer.data.firmware} (from the payload)`);
         return answer.status === 200 && answer.data?.ok ? answer.data : null;
       } catch {
         return null;

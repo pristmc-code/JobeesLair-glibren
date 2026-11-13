@@ -175,6 +175,23 @@ static void copy_text(char* out, size_t cap, const char* text) {
   out[n] = 0;
 }
 
+#ifdef __PROSPERO__
+#include <ps5/kernel.h> // kernel_get_fw_version (ps5-payload-sdk)
+#endif
+// glibren.54: o firmware DE VERDADE do console ("12.00"; vazio = nao sabe), lido do kernel como o glibren faz. O que o
+// processo do app ve (sceKernelGetSystemSwVersion) pode vir fingido pelo ambiente (13.090.001 num PS5 12.00, 1o diagnostico
+// real de 13/11): o app usa este, do "firmware" do /health. No PC: BGDL_FIRMWARE.
+static void bg_firmware(char* out, size_t cap) {
+  out[0] = 0;
+#ifdef __PROSPERO__
+  const uint32_t v = kernel_get_fw_version();
+  if (v) snprintf(out, cap, "%x.%02x", (unsigned)((v >> 24) & 0xff), (unsigned)((v >> 16) & 0xff));
+#else
+  const char* text = getenv("BGDL_FIRMWARE");
+  if (text) copy_text(out, cap, text);
+#endif
+}
+
 // ---- Configuracao ---------------------------------------------------------------------------------------
 
 static char g_dir[512];
@@ -4347,8 +4364,9 @@ static void route(int fd, Request* r) {
   }
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/crash")) { crash_route(fd); return; } // pac1
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/health")) {
-    char body[1100], ip[64];
+    char body[1200], ip[64], fw[16];
     current_ip(ip, sizeof ip);
+    bg_firmware(fw, sizeof fw); // glibren.54
     int replace = 0;
     self_health(&replace); // glibren.49
     uint64_t settings_rev = 0; // Fase 7: o app sabe por aqui que as configuracoes estao no payload e quando mudaram
@@ -4360,13 +4378,13 @@ static void route(int fd, Request* r) {
              "\"concurrencyBy\":\"%s\",\"concurrencyStamp\":%u,\"speedLimit\":%d,\"speedLimitBy\":\"%s\",\"speedLimitStamp\":%u,"
              "\"ip\":\"%s\",\"monitor\":%s,\"monitorPort\":%d,\"pinSet\":%s,\"pauseOnCloseSeconds\":%lld,\"quiet\":%s,"
              "\"convertPauseSeconds\":%d,\"convertWriteLimit\":%d,\"convertSyncMB\":%d,\"crash\":%s,\"minAppApi\":%d,\"replace\":%s,"
-             "\"settings\":%d,\"settingsRev\":%llu,\"settingsStore\":\"%s\"}",
+             "\"settings\":%d,\"settingsRev\":%llu,\"settingsStore\":\"%s\",\"firmware\":\"%s\"}",
              BG_VERSION, BG_API, (int)getpid(), active ? "\"" : "", active ? active->id : "null", active ? "\"" : "", g_job_count,
              g_running_count, g_max_running, g_concurrency_remote ? "remote" : "app", g_concurrency_stamp,
              g_speed_limit, g_speed_remote ? "remote" : "app", g_speed_stamp, ip, g_monitor_on ? "true" : "false",
              g_monitor_port_now(), g_pin_hash[0] ? "true" : "false", (long long)(g_quiet_ms / 1000), quiet_now() ? "true" : "false",
              g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb, g_crash_id[0] ? "true" : "false", BG_MIN_APP_API, replace ? "true" : "false",
-             settings_schema, (unsigned long long)settings_rev, settings_store);
+             settings_schema, (unsigned long long)settings_rev, settings_store, fw);
     pthread_mutex_unlock(&g_lock);
     respond(fd, 200, body);
     return;
@@ -4643,6 +4661,19 @@ static void load_token(void) {
   g_token[64] = 0;
   if (!save_atomic(path, g_token, 64, 0600)) logf_("token nao gravado: %s", strerror(errno));
   chmod(path, 0600);
+}
+// glibren.54: <dir>/firmware = o firmware de verdade ("12.00"), para o app ler ja na abertura (state/device.js), antes de
+// falar com o payload; o "firmware" do /health diz o mesmo depois.
+static void save_firmware(void) {
+  char path[600], fw[16];
+  bg_firmware(fw, sizeof fw);
+  if (!fw[0]) return;
+  snprintf(path, sizeof path, "%s/firmware", g_dir);
+  char* old = read_text(path, 64, NULL);
+  const int same = old && !strcmp(trim_value(old), fw);
+  free(old);
+  if (!same && !save_atomic(path, fw, strlen(fw), 0644)) logf_("firmware nao gravado: %s", strerror(errno));
+  logf_("firmware do console: %s", fw);
 }
 
 // ---- Pagina do celular (0.0.0.0:34201) ------------------------------------------------------------------
@@ -7226,6 +7257,7 @@ int main(void) {
     else logk_("agendamento da thread principal: indisponivel (%d)", got);
   }
   load_token();
+  save_firmware(); // glibren.54
   printf("ready\n");
   fflush(stdout);
 #ifdef __PROSPERO__

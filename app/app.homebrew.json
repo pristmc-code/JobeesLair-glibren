@@ -25,6 +25,8 @@
   "resources": [
     "data/catalog",
     "data/packs",
+    "data/formats.js",
+    "data/ratings.js",
     "data/homebrew.json",
     "data/private",
     "i18n/locales"

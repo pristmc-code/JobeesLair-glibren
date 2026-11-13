@@ -26,7 +26,7 @@ const fs = {
   readDir: (p) => readdirSync(real(p), { withFileTypes: true }).map((e) => ({ name: e.name, isDirectory: e.isDirectory(), isFile: e.isFile(), size: e.isFile() ? statSync(path.join(real(p), e.name)).size : 0 })),
   copyAsync: (from, to) => { copies++; assert.ok(!existsSync(real(to)), `${to} nao pode existir (como no motor)`); cpSync(real(from), real(to), { recursive: true }); return { done: Promise.resolve() }; },
 };
-const { CATALOG_BUNDLED, CATALOG_CONFIG, catalogConfig, stageBundled, writeCatalogConfig } = await import('../app/state/catalog-payload.js');
+const { CATALOG_BUNDLED, CATALOG_CONFIG, CATALOG_PARTS, catalogConfig, stageBundled, writeCatalogConfig } = await import('../app/state/catalog-payload.js');
 const { VERSION } = await import('../app/version.js');
 const { ORBIT_FEED } = await import('../app/state/orbit-feed.js');
 
@@ -55,4 +55,18 @@ test('a copia do embutido: o mesmo desenho de app/data, version.json por ultimo 
   for (const [name, size] of listed) assert.equal(statSync(real(`${CATALOG_BUNDLED}/${name}`)).size, size, name);
   assert.ok(!fs.exists(`${CATALOG_BUNDLED}.tmp`), 'a pasta temporaria virou a de verdade');
   assert.equal(copies, 4);
+});
+
+// glibren.54 (1o diagnostico real, 13/11): a .52/.53 copiava /app0/data/formats.js e ratings.js, que nao entravam na imagem
+// (nao estavam nos "resources"): a copia falhava no console e o catalogo do payload nunca montava. No PC o teste passava
+// porque le o app/ do repositorio. Agora: tudo o que a copia le esta nos resources dos dois app.json (o pacote.sh confere
+// tambem na imagem montada).
+test('tudo o que a copia le do /app0 esta nos resources do app.json e do app.homebrew.json', () => {
+  for (const name of ['app.json', 'app.homebrew.json']) {
+    const resources = JSON.parse(readFileSync(path.join(repo, 'app', name), 'utf8')).resources;
+    for (const [from] of CATALOG_PARTS) {
+      const inApp = from.replace(/^\/app0\//, '');
+      assert.ok(resources.some((entry) => inApp === entry || inApp.startsWith(`${entry}/`)), `${name}: ${inApp} fora dos resources`);
+    }
+  }
 });

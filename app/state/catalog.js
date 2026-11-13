@@ -45,12 +45,14 @@ import { memorySample } from './memory-meter.js';
   // label, as before. Unknown firmware reads as 13.60.
   // Read once the console has said its firmware (it cannot change while the app runs): readyHere asks for
   // every game of every pass.
-  var lowKnown;
+  // glibren.54: guardado por firmware (o de verdade pode chegar do payload depois da abertura, state/device.js).
+  var lowKnown, lowFor;
   var lowFirmware = () => {
-    if (lowKnown !== void 0) return lowKnown;
     try {
       const text = deviceFacts().firmware;
+      if (lowKnown !== void 0 && lowFor === text) return lowKnown;
       if (!text) return null;
+      lowFor = text;
       lowKnown = ps5FakePackagesLaunch(text) === true ? firmwareText(consoleFirmware(text)) : null;
       return lowKnown;
     } catch {

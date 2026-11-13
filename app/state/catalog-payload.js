@@ -26,6 +26,10 @@ import { PS4 } from './ps4.js';
   var CONFIG = `${CATALOG_DIR}/config.json`;
   // O que vai para a copia: [origem no app, destino em bundled/].
   var PARTS = [["/app0/data/catalog", "catalog"], ["/app0/data/packs", "packs"], ["/app0/data/formats.js", "formats.js"], ["/app0/data/ratings.js", "ratings.js"]];
+  // glibren.54: sem estes o payload monta igual (sem os formatos e as notas do embutido): uma imagem que nao os traz (a .52/.53
+  // nao os empacotava: "read the source: No such file", 1o diagnostico real de 13/11) nao impede a copia. Os outros sao
+  // obrigatorios. Os quatro estao nos "resources" do app.json e do app.homebrew.json (tests/catalog-payload.test.mjs confere).
+  var OPTIONAL = new Set(["formats.js", "ratings.js"]);
 
   /** O config.json que o payload le (sem gravar). */
   function catalogConfig() {
@@ -106,12 +110,18 @@ import { PS4 } from './ps4.js';
       try {
         if (fs.exists(tmp)) fs.removeTree(tmp);
         fs.mkdir(tmp, { recursive: true });
+        const copied = [];
         for (const [from, to] of PARTS) {
+          if (OPTIONAL.has(to) && !fs.exists(from)) {
+            log(`[catalog-payload] ${from} is not in the image: the payload builds without it`);
+            continue;
+          }
           const task = fs.copyAsync(from, `${tmp}/${to}`, { verify: false, resume: false });
           await task?.done;
+          copied.push(to);
         }
         const files = [];
-        for (const [, to] of PARTS) {
+        for (const to of copied) {
           const info = fs.stat(`${tmp}/${to}`);
           if (info?.isDirectory) listFiles(fs, `${tmp}/${to}`, `${to}/`, files);
           else files.push({ name: to, size: info?.size ?? 0 });
@@ -139,4 +149,4 @@ import { PS4 } from './ps4.js';
     onOrbitFeed(again);
   }
 
-export { BUNDLED as CATALOG_BUNDLED, CATALOG_DIR, CONFIG as CATALOG_CONFIG, catalogConfig, stageBundled, startCatalogPayload, writeCatalogConfig };
+export { PARTS as CATALOG_PARTS, BUNDLED as CATALOG_BUNDLED, CATALOG_DIR, CONFIG as CATALOG_CONFIG, catalogConfig, stageBundled, startCatalogPayload, writeCatalogConfig };

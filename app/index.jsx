@@ -311,7 +311,9 @@ import { beginRemoteStore } from './state/remote-store.js';
     (0, useEffect)(() => {
       let facts = {};
       try {
-        facts = { version: VERSION, firmware: deviceFacts().firmware ?? "unknown" };
+        // glibren.54: o firmware de verdade (do payload) e, quando difere, o que o processo do app ve (state/device.js)
+        const device = deviceFacts();
+        facts = { version: VERSION, firmware: device.firmware ?? "unknown", ...device.appFirmware && device.appFirmware !== device.firmware ? { appSees: device.appFirmware } : {} };
       } catch {
       }
       installLogger(facts);

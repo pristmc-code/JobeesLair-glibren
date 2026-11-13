@@ -172,7 +172,9 @@ typedef struct { uint32_t size; char text[0x1c]; uint32_t version; } CtSwVersion
 int sceKernelGetSystemSwVersion(CtSwVersion*) __attribute__((weak));
 #endif
 static void cat_firmware(const CtConfig* cfg, char* out, size_t cap) {
-  out[0] = 0;
+  // glibren.54: o firmware de verdade (kernel) primeiro; o da chamada do sistema e o do app podem vir fingidos.
+  bg_firmware(out, cap);
+  if (out[0]) return;
 #ifdef __PROSPERO__
   if (sceKernelGetSystemSwVersion) {
     CtSwVersion v;
