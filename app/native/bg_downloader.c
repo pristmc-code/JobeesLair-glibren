@@ -39,6 +39,7 @@
 //     POST /quit                   encerra limpo (checkpoint gravado)
 //     POST /bye                    glibren.5: o app avisa que vai fechar (botao "Sair"): conta como fechado ja, sem
 //                                  esperar o silencio, e aplica a pausa ao fechar conforme a opcao
+//     GET  /diag, POST /diag/send  glibren.44: o diagnostico pelo GitHub (e /api/diag* na pagina do celular): ver bg_diag.c
 // - Fila persistida em <dir>/jobs.json (tmp + fsync + rename + fsync da pasta). Um download por vez.
 // - Varias conexoes por arquivo (faixas HTTP Range + If-Range, janela AIMD) e retomada no MESMO formato
 //   .part/.resume/.complete do motor nativo do ps5-react (native/shared/network.cpp): o app e o payload
@@ -97,7 +98,7 @@
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
 // app/state/background-downloads.js sempre que o app passar a depender de algo novo daqui.
-#define BG_API 29 // glibren.44: account.json da Biblioteca TorBox enxuto (so os arquivos que o app usa + codes; sem rota nova); glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
+#define BG_API 30 // glibren.44 (diagnostico): GET /diag, POST /diag/send e /api/diag* na pagina do celular (bg_diag.c); glibren.44: account.json da Biblioteca TorBox enxuto (so os arquivos que o app usa + codes; sem rota nova); glibren.43: /switch espera o foco sair do app antigo (kern.msgbuf) e um ritmo so para o TorBox (sem rota nova); glibren.38: a rede da Biblioteca TorBox (GET/POST /library/build, bg_library.c); glibren (item 2): a loja completa na pagina do celular (GET /api/store, /api/store/game, POST /api/store/add; bg_store.c); pac1: pausa entre conversoes e limite de escrita (POST /config), marcos da conversao, GET /crash; glibren.31: POST /switch (a troca de app: espera um fechar e abre o outro); glibren.27: a lista Orbit com os codigos que o app ja conhece (POST /orbit "known"); glibren.26: feed Orbit enxuto e regravado (ORBIT_CONV); glibren.25: retorno da conversao (fila, ja convertido) e estado da lista Orbit
 #define BG_PROCESS "jobe-bgdl.elf"
 #define BG_TITLE "PPSA99471"
 #define DEFAULT_PORT 34200
@@ -4269,6 +4270,7 @@ static void switch_route(int fd, Request* r) {
 }
 
 static void auto_plan_route(int fd, const char* query); // glibren.18 (perto da Biblioteca TorBox)
+static int diag_app_route(int fd, Request* r); // glibren.44: o diagnostico pelo GitHub (bg_diag.c)
 static void route(int fd, Request* r) {
   // glibren.31: a troca de app vem tambem do app de videos, sem o token (ver switch_route).
   if (!strcmp(r->path, "/switch")) { switch_route(fd, r); return; }
@@ -4278,6 +4280,7 @@ static void route(int fd, Request* r) {
   if (conv_route(fd, r)) return; // glibren.12: /convert
   if (orbit_route(fd, r)) return; // glibren.20: /orbit
   if (lb_route(fd, r)) return; // glibren.38: /library/build
+  if (diag_app_route(fd, r)) return; // glibren.44: /diag e /diag/send
   if (conv_app_route(fd, r)) return; // glibren.22: /backup e /log (a tela Pasta BACKUP do app)
   // glibren.18: o destino que o payload daria a um pedido do celular (o teste o compara com o do app).
   if (!strcmp(r->method, "GET") && !strncmp(r->path, "/auto/plan", 10) && (!r->path[10] || r->path[10] == '?')) {
@@ -6842,6 +6845,8 @@ static void auto_after_download(Job* j) {
 
 // glibren (item 2): a loja completa na pagina do celular.
 #include "bg_store.c"
+// glibren.44: o diagnostico pelo GitHub (envio e .zip pela pagina do celular e pelo app).
+#include "bg_diag.c"
 
 static void monitor_route(int fd, Request* r, uint32_t ip) {
   char* query = strchr(r->path, '?');
@@ -6850,6 +6855,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/library/game")) { monitor_library_game(fd, query); return; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/library/add")) { monitor_library_add(fd, r); return; }
   if (store_route(fd, r, query)) return; // glibren (item 2): /api/store
+  if (diag_monitor_route(fd, r)) return; // glibren.44: /api/diag (chave do GitHub, enviar, .zip)
   if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {
     monitor_send(fd, 200, "text/html; charset=utf-8", BG_MONITOR_HTML, BG_MONITOR_HTML_SIZE);

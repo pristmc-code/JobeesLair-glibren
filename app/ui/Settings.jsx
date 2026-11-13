@@ -40,6 +40,7 @@ import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackg
 import { CONVERT_OPTIONS, setConvertOption, useConvertOptions } from '../state/convert-options.js';
 import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { memorySample, memorySnapshot, subscribeMemory } from '../state/memory-meter.js';
+import { DiagnosticsRow } from './DiagnosticsRow.jsx'; // glibren.44
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
 import { setScreenSaver, showScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
@@ -1040,6 +1041,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       } }) : null,
       jsx(ReportRow, {}),
       jsx(MemoryRows, {}),
+      jsx(DiagnosticsRow, { Row, Callout }), // glibren.44: o diagnostico pelo GitHub
       jsx(OnlineRows, {}),
       /* @__PURE__ */ (0, jsx)(Folded, { focusKey: "settings:credits", name: t2("settings.about.creditsRow"), paragraphs: [tWhole("settings.about.origin"), tWhole("settings.about.credits")] })
     ] });

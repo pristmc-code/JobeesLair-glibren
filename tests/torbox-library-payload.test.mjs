@@ -205,7 +205,7 @@ test('glibren.38: no payload, or an old one (api < 27): the whole run in the app
   // background-downloads.js so entrega o payload com api >= 27 (o que um payload antigo responde vira null).
   const text = readFileSync(path.join(repo, 'app/state/background-downloads.js'), 'utf8');
   assert.match(text, /Number\(answer\.data\.api\) >= 27/);
-  assert.match(text, /var PAYLOAD_API = 29;/);
+  assert.match(text, /var PAYLOAD_API = 30;/);
 });
 
 // ======================================================================================================================

@@ -57,6 +57,7 @@ import { noteConversionWait, setBackupSource, setConversionSource } from './payl
 import { setCrashSource } from './crash-notice.js';
 import { setOrbitSource } from './orbit-feed.js';
 import { setLibraryPayload } from './torbox-library-payload.js';
+import { setDiagnosticsSource } from './diagnostics.js';
 
   var SETTINGS = "settings.json";
   var ELF = "/app0/bg-downloader.elf";
@@ -80,7 +81,8 @@ import { setLibraryPayload } from './torbox-library-payload.js';
   // payload da .42 que ainda estiver no ar (sem rota nova).
   // glibren.44: 29, account.json da Biblioteca TorBox so com os arquivos que o app usa (+ "codes"): o payload da .43
   // mandava todos os arquivos de cada item da conta e o app segurava ~20 MB (sem rota nova).
-  var PAYLOAD_API = 29;
+  // glibren.44: 30, o diagnostico pelo GitHub (GET /diag, POST /diag/send; /api/diag* na pagina do celular; bg_diag.c).
+  var PAYLOAD_API = 30;
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -1180,6 +1182,13 @@ function createBackgroundDownloads({
       }
     };
     setBackupSource(wrapper.backup);
+    // glibren.44: o diagnostico pelo GitHub (state/diagnostics.js): enviar sobe o payload se preciso (so no PS5); o
+    // estado so pergunta a um payload no ar.
+    wrapper.diagnostics = {
+      status: () => backupCall(false, "GET", "/diag"),
+      send: (body) => backupCall(true, "POST", "/diag/send", body)
+    };
+    setDiagnosticsSource(wrapper.diagnostics);
     current = wrapper;
     return wrapper;
   }

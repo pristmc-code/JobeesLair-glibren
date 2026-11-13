@@ -34,8 +34,8 @@ const make = (payload, extra = {}) => createBackgroundDownloads({
   payloads: { send: () => ({ ok: true }) }, log: () => {}, pollMs: 5, startWaitMs: 50, ...extra
 });
 
-test('pac1: PAYLOAD_API 24 (pausa/limite/pedacos na conversao e GET /crash); item 2: 26 (loja completa); glibren.38: 27 (a rede da Biblioteca TorBox); glibren.43: 28 (primeiro plano no /switch, ritmo unico do TorBox); glibren.44: 29 (account.json enxuto da Biblioteca TorBox)', () => {
-  assert.equal(PAYLOAD_API, 29);
+test('pac1: PAYLOAD_API 24 (pausa/limite/pedacos na conversao e GET /crash); item 2: 26 (loja completa); glibren.38: 27 (a rede da Biblioteca TorBox); glibren.43: 28 (primeiro plano no /switch, ritmo unico do TorBox); glibren.44: 29 (account.json enxuto da Biblioteca TorBox) e 30 (diagnostico)', () => {
+  assert.equal(PAYLOAD_API, 30);
 });
 
 test('pac1: opcoes da conversao desligadas por padrao, guardadas so quando ligadas, avisadas e lidas de volta', async () => {

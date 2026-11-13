@@ -1053,6 +1053,141 @@ pinOnOpen();
   window.convHook(lastStatus);
 })();
 </script>
+<!-- glibren.44: Diagnostico (o mesmo lugar do "Ver diario do payload"): a chave do GitHub (colada uma vez; a pagina so
+     ve "configurada, termina em ...xxxx"), "Enviar diagnostico" (o payload envia ao repositorio privado
+     pristmc-code/ps5-diagnosticos) e "Baixar diagnostico (.zip)". Tudo com o PIN (api/guarded/openPin/session). -->
+<style>
+.diag{margin:14px 0 4px;border:1px solid var(--line,#2a2f3a);border-radius:14px;padding:10px 14px}
+.diag summary{cursor:pointer;font-weight:600;padding:4px 0}
+.diag .dg-body{display:flex;flex-direction:column;gap:10px;padding-top:8px}
+.diag label{font-size:13px;color:var(--subtle)}
+.diag input{width:100%;box-sizing:border-box;padding:10px;border-radius:10px;border:1px solid var(--line,#2a2f3a);background:transparent;color:inherit;font:inherit}
+.diag .row{display:flex;gap:8px;flex-wrap:wrap}
+.diag .dg-note{font-size:13px;color:var(--subtle)}
+.diag .dg-ok{color:#4ade80}
+.diag .dg-err{color:#f87171}
+</style>
+<script>
+"use strict";
+(() => {
+  const D = {
+    pt: { title: "Diagnóstico (enviar os logs)", text: "Manda os logs do PS5, sem chaves, senhas, links temporários e e-mails, para o repositório privado de diagnósticos no GitHub. Funciona com a Jobee'sLair fechada.",
+      unlock: "Liberar com o PIN", keyLabel: "Chave do GitHub para diagnóstico", keyHint: "Cole aqui a chave (github_pat_…) criada só para o repositório ps5-diagnosticos. Ela fica só no PS5.",
+      save: "Salvar chave", keySet: "Chave configurada ✓, termina em …{t}", noKey: "Nenhuma chave salva.", remove: "Remover", removed: "Chave removida.", saved: "Chave salva.",
+      send: "Enviar diagnóstico", zip: "Baixar diagnóstico (.zip)", zipWait: "Montando o .zip…", zipFail: "Não deu para montar o .zip. Tente de novo.", zipApp: "O .zip só baixa pelo navegador do celular (o app JobeControle não salva arquivos). Aqui, use Enviar diagnóstico.",
+      sending: "Enviando… {n} de {t}", sent: "Enviado ✓ (pasta {f})", fail: "Não deu. Tente de novo.",
+      errors: { "no-key": "Falta a chave do GitHub: cole-a acima.", key: "Isso não parece uma chave do GitHub (github_pat_…).", busy: "Já há um envio em andamento.",
+        unauthorized: "Chave inválida ou expirada (401). Crie outra e cole acima.", forbidden: "A chave não tem permissão no repositório (403). Confira Contents: Read and write.",
+        "no-repo": "A chave não vê o repositório ps5-diagnosticos (404). Confira o repositório escolhido na chave.", network: "Sem internet: o PS5 não falou com o GitHub.",
+        http: "O GitHub respondeu HTTP {h}.", nothing: "Nada para enviar.", memory: "O PS5 ficou sem memória para montar o envio." } },
+    en: { title: "Diagnostics (send the logs)", text: "Sends the PS5 logs, without keys, passwords, temporary links or e-mails, to the private diagnostics repository on GitHub. Works with Jobee'sLair closed.",
+      unlock: "Unlock with the PIN", keyLabel: "GitHub key for diagnostics", keyHint: "Paste the key (github_pat_…) made only for the ps5-diagnosticos repository. It stays only on the PS5.",
+      save: "Save key", keySet: "Key set ✓, ends in …{t}", noKey: "No key saved.", remove: "Remove", removed: "Key removed.", saved: "Key saved.",
+      send: "Send diagnostics", zip: "Download diagnostics (.zip)", zipWait: "Building the .zip…", zipFail: "The .zip could not be built. Try again.", zipApp: "The .zip only downloads in the phone's browser (the JobeControle app does not save files). Here, use Send diagnostics.",
+      sending: "Sending… {n} of {t}", sent: "Sent ✓ (folder {f})", fail: "It did not work. Try again.",
+      errors: { "no-key": "The GitHub key is missing: paste it above.", key: "That does not look like a GitHub key (github_pat_…).", busy: "A send is already running.",
+        unauthorized: "Invalid or expired key (401). Create another and paste it above.", forbidden: "The key has no permission on the repository (403). Check Contents: Read and write.",
+        "no-repo": "The key does not see the ps5-diagnosticos repository (404). Check the repository chosen for the key.", network: "No internet: the PS5 could not reach GitHub.",
+        http: "GitHub answered HTTP {h}.", nothing: "Nothing to send.", memory: "The PS5 ran out of memory building the send." } }
+  }[L === T.pt ? "pt" : "en"];
+  const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+  const box = document.createElement("details"); box.className = "diag";
+  const head = document.createElement("summary"); head.textContent = D.title;
+  const body = document.createElement("div"); body.className = "dg-body";
+  box.append(head, body);
+  $("foot").before(box);
+  let info = null, polling = null, msg = "", msgClass = "", demo = { configured: false, tail: "", state: "idle", folder: "", error: "", http: 0, sent: 0, total: 0 };
+  const say = (text, cls = "") => { msg = text; msgClass = cls; render(); };
+  const why = (d) => fill(D.errors[d?.error] || D.fail, { h: d?.http || "?" });
+  async function call(method, path, data) {
+    if (DEMO) {
+      if (path === "/api/diag/key") Object.assign(demo, { configured: true, tail: String(data.key).slice(-4) });
+      if (path === "/api/diag/key/remove") Object.assign(demo, { configured: false, tail: "" });
+      if (path === "/api/diag/send") { if (!demo.configured) return { status: 400, data: { error: "no-key" } }; Object.assign(demo, { state: "done", folder: "2026-11-12_204512", sent: 9, total: 9 }); return { status: 200, data: { ok: true, state: "running" } }; }
+      return { status: 200, data: { ok: true, ...demo } };
+    }
+    return await api(method, path, data).catch(() => ({ status: 0, data: {} }));
+  }
+  // 401: a sessao do PIN caiu; pede o PIN e repete o que estava fazendo.
+  const relock = (again) => { session = ""; lockButton(); pending = again; openPin(); };
+  async function load() {
+    const r = await call("GET", "/api/diag");
+    if (r.status === 401) return relock(load);
+    if (r.status === 200) info = r.data;
+    if (info && info.state === "running") follow();
+    else if (info && info.state === "done" && polling) { stop(); say(fill(D.sent, { f: info.folder }), "dg-ok"); return; }
+    else if (info && info.state === "failed" && polling) { stop(); say(why(info), "dg-err"); return; }
+    render();
+  }
+  function stop() { if (polling) { clearInterval(polling); polling = null; } }
+  function follow() { if (!polling) polling = setInterval(load, 1500); }
+  async function saveKey() {
+    const input = body.querySelector("input");
+    const key = (input?.value || "").trim();
+    const r = await call("POST", "/api/diag/key", { key });
+    if (r.status === 401) return relock(saveKey);
+    if (input) input.value = "";
+    if (r.status === 200) { info = r.data; say(D.saved, "dg-ok"); } else say(why(r.data), "dg-err");
+  }
+  async function removeKey() {
+    const r = await call("POST", "/api/diag/key/remove", {});
+    if (r.status === 401) return relock(removeKey);
+    if (r.status === 200) { info = r.data; say(D.removed); } else say(D.fail, "dg-err");
+  }
+  async function send() {
+    const r = await call("POST", "/api/diag/send", {});
+    if (r.status === 401) return relock(send);
+    if (r.status !== 200) return say(why(r.data), "dg-err");
+    msg = ""; follow(); await load();
+  }
+  async function zip() {
+    say(D.zipWait);
+    let blob = null, status = 0;
+    if (DEMO) { blob = new Blob(["demo"], { type: "application/zip" }); status = 200; }
+    else {
+      try { const res = await fetch("/api/diag/zip", { headers: session ? { "X-Session": session } : {}, cache: "no-store" }); status = res.status; if (status === 200) blob = await res.blob(); } catch { status = 0; }
+    }
+    if (status === 401) return relock(zip);
+    if (!blob) return say(D.zipFail, "dg-err");
+    const now = new Date(), p = (n) => String(n).padStart(2, "0");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `diagnostico-${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}.zip`;
+    document.body.append(a); a.click(); a.remove();
+    say("");
+  }
+  const button = (text, fn, cls = "btn") => { const b = document.createElement("button"); b.type = "button"; b.className = cls; b.textContent = text; b.onclick = () => guarded(fn); return b; };
+  function render() {
+    body.textContent = "";
+    const intro = document.createElement("div"); intro.className = "dg-note"; intro.textContent = D.text; body.append(intro);
+    if (!session && !DEMO) { body.append(button(D.unlock, load, "btn primary")); }
+    else if (info) {
+      const state = document.createElement("div");
+      if (info.configured) {
+        state.textContent = fill(D.keySet, { t: info.tail }); state.className = "dg-ok";
+        const row = document.createElement("div"); row.className = "row"; row.append(state, button(D.remove, removeKey, "btn danger")); body.append(row);
+      } else {
+        const label = document.createElement("label"); label.textContent = D.keyLabel;
+        const input = document.createElement("input"); input.type = "password"; input.autocomplete = "off"; input.spellcheck = false; input.placeholder = "github_pat_…";
+        const hint = document.createElement("div"); hint.className = "dg-note"; hint.textContent = D.keyHint;
+        state.textContent = D.noKey; state.className = "dg-note";
+        body.append(label, input, hint, button(D.save, saveKey, "btn primary"), state);
+      }
+      const actions = document.createElement("div"); actions.className = "row";
+      const running = info.state === "running";
+      const go = button(running ? fill(D.sending, { n: info.sent || 0, t: info.total || "?" }) : D.send, send, "btn primary"); go.disabled = running || !info.configured;
+      // glibren.44: a WebView do app JobeControle nao tem gerenciador de downloads (um blob nao vira arquivo)
+      const inApp = /JobeControle\//.test(navigator.userAgent);
+      actions.append(go);
+      if (!inApp) actions.append(button(D.zip, zip));
+      body.append(actions);
+      if (inApp) { const n = document.createElement("div"); n.className = "dg-note"; n.textContent = D.zipApp; body.append(n); }
+    }
+    if (msg) { const m = document.createElement("div"); m.className = msgClass || "dg-note"; m.textContent = msg; body.append(m); }
+  }
+  box.addEventListener("toggle", () => { if (box.open && (session || DEMO)) load(); else if (!box.open) stop(); render(); });
+  render();
+})();
+</script>
 <!-- glibren: Biblioteca TorBox (a lista de jogos confirmados no TorBox que o app monta): ver, filtrar e incluir downloads.
      Bloco separado; usa o api/guarded/openPin/session da pagina. glibren.9: capas e fotos direto dos enderecos do catalogo
      (o celular tem internet; a CSP do payload libera img-src https:), ficha do jogo ao tocar (fotos, videos do YouTube,
