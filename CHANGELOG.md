@@ -6,6 +6,23 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.51** (fork): Jobe's settings live in the download payload (Phase 7, `app/native/bg_settings.c`). The
+  payload keeps `<bg>/settings.json` (`{schema, rev, store, migratedFrom, values}`, written with `.part` + fsync +
+  rename + fsync of the folder; a leftover `.part` is dropped on read), validated key by key (`SETTING_SPECS`: type and
+  limits). With no file it imports the app's old `settings.json` once, leaving out secrets and invalid values. The app
+  (`state/settings-sync.js`) sends each change (`POST /settings`, pending changes kept in `settings-sync.json`) and
+  adopts the payload's when `settingsRev` in `/health` moves; keys coming from the phone page go through the same
+  setters as the Settings screen (`state/settings-apply.js`). The phone page reads and changes the preferences through
+  `GET/POST /api/settings` (`monitor_allowed`); speed, simultaneous downloads, pause on close and conversion take effect
+  at once. Secrets never leave where they are (TorBox/AllDebrid keys, the diagnostics GitHub key, the YouTube account,
+  the companion and page PINs): the payload only tells "set" (and, to a paired device or the PS5 itself, the last
+  characters of a key). Without the payload, or with an older one, everything stays in the app's `settings.json` as
+  before. `BG_API`/`PAYLOAD_API` 35, payload 1.35.0 (`BG_MIN_APP_API` stays 33: the app's local API only gained routes).
+- Tests: `tests/bg-settings.test.mjs` (8, real payload: migration, secrets, validation, power loss mid-write) and
+  `tests/settings-sync.test.mjs` (6). Test binaries are now built in their own folder (`tests/payload-build.mjs`): the
+  orphan-payload cleanup used to kill the compiler writing to `/tmp/jl-*/bgdl`, and the whole file showed as "skipped".
+  Only a missing compiler or missing headers skip now; any other build failure fails every test of the file at once.
+  The TorBox pace test (`torbox-library-payload`) counts by window instead of every single gap (flaky under load).
 - **glibren.50** (fork): per-device pairing for the phone page (Orbit model, `app/native/bg_pair.c`). A phone, PC or
   the JobeControle app asks for a code once; the PS5 shows a 6-digit code in a notification (in the player's language,
   `pairText` in POST /config) and on Jobe's screen (`ui/PairCodeNotice.jsx`, reads GET /pair every 3 s without taking
