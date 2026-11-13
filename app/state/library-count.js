@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { BUNDLED, bundledIndex } from './catalog.js';
 import { feedIndexEntries, feedIndexVersion, subscribeFeeds } from './feeds.js';
 import { shownVersion, sourceShown, subscribeStore } from './store-mode.js';
+import { remoteCounts } from './remote-store.js';
 
   // `lists`: arrays of [id, direct] pairs. { titles, direct } over their union.
   function tally(lists) {
@@ -21,6 +22,9 @@ import { shownVersion, sourceShown, subscribeStore } from './store-mode.js';
   var cached = null, cachedAt = -1;
   // The current count, recomputed only when a feed's list changed since the last one.
   function libraryCount() {
+    // Fase 4: com a loja aberta pelo catalogo do payload, os numeros dele (os jogos mostrados e os com download direto).
+    const remote = remoteCounts();
+    if (remote) return { ...remote, feeds: 0 };
     // glibren.26: só os catálogos que a loja mostra (Configurações > Feeds > Mostrar na loja).
     const version = `${feedIndexVersion()}:${shownVersion()}`;
     if (!cached || version !== cachedAt) {

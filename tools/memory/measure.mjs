@@ -21,6 +21,8 @@ const ESBUILD_JS = first([process.env.ESBUILD_JS, '/root/forks/tube-service/inne
   '/root/forks/youtube-maxd/companion/innertube/node_modules/esbuild/lib/main.js']);
 const LIVE = first([process.env.MEM_LIVE, '/root/jlxdata/live.jlx']);
 const ORBIT = first([process.env.MEM_ORBIT, '/root/m27/slim.json']);
+const REMOTE_LOJA = process.env.MEM_REMOTE_LOJA || '/root/f4b/remote-loja';
+const REMOTE_ORBIT = process.env.MEM_REMOTE_ORBIT || '/root/f4b/remote-orbit';
 const WORK = process.env.MEM_WORK || path.join(process.env.TMPDIR || '/tmp', 'jobe-mem-measure');
 for (const [name, value] of Object.entries({ QJS, ESBUILD_JS, MEM_LIVE: LIVE, MEM_ORBIT: ORBIT })) if (!value) throw new Error(`${name} not found: set it`);
 
@@ -82,11 +84,23 @@ const ALL = [
   ['procurar', 'procurar', orbit.fs, 'Procurar no TorBox, Orbit ligada', 'orbit'],
   ['youtube', 'youtube', orbit.fs, 'uma pagina do YouTube, Orbit ligada', 'orbit'],
   ['exportar', 'exportar', orbit.fs, 'loja completa exportada ao payload (celular), Orbit ligada', 'orbit'],
+  ['modulos', 'modulos', loja.fs, 'Fase 4: so os modulos da loja (local e pelo payload), nada montado', null],
+  ['loja-modulos', 'loja-modulos', loja.fs, 'Fase 4: loja montada no app com os mesmos modulos, sem Orbit', null],
+  ['orbit-modulos', 'loja-modulos', orbit.fs, 'Fase 4: loja montada no app com os mesmos modulos, Orbit ligada', null],
+  // Fase 4: a loja aberta pelo catalogo do payload (respostas gravadas por tools/fase4/record.mjs com os mesmos dados)
+  ['loja-remota', 'loja-remota', loja.fs, 'loja aberta pelo payload + 6 paginas da grade + um filtro, sem Orbit', null, REMOTE_LOJA],
+  ['orbit-remota', 'loja-remota', loja.fs, 'loja aberta pelo payload + 6 paginas da grade + um filtro, Orbit ligada', null, REMOTE_ORBIT],
+  ['busca-remota', 'busca-remota', loja.fs, 'loja aberta pelo payload + 3 paginas da busca "the", Orbit ligada', null, REMOTE_ORBIT],
+  ['ficha-remota', 'ficha-remota', loja.fs, 'loja aberta pelo payload + 48 fichas (16 guardadas), Orbit ligada', null, REMOTE_ORBIT],
 ];
 const wanted = process.argv.slice(2);
 const mb = (kb) => (kb / 1024).toFixed(1).replace('.', ',');
 const peaks = {};
-for (const [name, scenario, fs, what, floor] of ALL.filter(([name]) => !wanted.length || wanted.includes(name))) {
+for (const [name, scenario, fs, what, floor, remote] of ALL.filter(([name]) => !wanted.length || wanted.includes(name))) {
+  if (remote) {
+    if (!existsSync(remote)) { console.log(`${name.padEnd(17)} sem ${remote}: rode tools/fase4/record.mjs`); continue; }
+    process.env.MEM_REMOTE = remote;
+  }
   const result = peak(scenario, fs, (peaks[floor] ?? 1152) - 128);
   if (result.kb) peaks[name] = result.kb;
   console.log(result.error ? `${name.padEnd(17)} FALHOU: ${result.error}` : `${name.padEnd(17)} pico ${mb(result.kb).padStart(5)} MB  ${what} (${result.note})`);

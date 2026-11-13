@@ -20,7 +20,7 @@
 import { FileSystem, Platform } from '@ps5-react/core';
 import { DATA_DIR } from './data-dir.js';
 import { stableKey } from './feed-format.js';
-import { FACETS, SORTS, allListed, ratingScore, readyHere, readyLabel, sortGames, sourcesOfGame } from './catalog.js';
+import { FACETS, SORTS, allListed, isRemoteCatalog, ratingScore, readyHere, readyLabel, sortGames, sourcesOfGame } from './catalog.js';
 import { sourceShown, subscribeStore } from './store-mode.js';
 import { describeSource, isBackport, isDlc, sourceOrder } from '../game/sources.js';
 import { sourceKind } from './download-sources.js';
@@ -293,7 +293,9 @@ import { createFramePace } from './frame-pace.js';
   function startStoreExport() {
     // So no PS5 (o payload so roda la) e com um runtime que grava em pedacos.
     if (Platform.OS !== "ps5" || typeof FileSystem.appendFile !== "function") return;
-    const run = () => exportStore().catch((error) => console.log(`[store-export] failed: ${error?.message ?? error}`));
+    // Fase 4: com a loja aberta pelo catalogo do payload nada e exportado (a /api/store do celular sai do catalogo dele;
+    // o store-index.json da abertura anterior fica como reserva).
+    const run = () => isRemoteCatalog() ? Promise.resolve() : exportStore().catch((error) => console.log(`[store-export] failed: ${error?.message ?? error}`));
     void run();
     subscribeStore(() => void run());
   }

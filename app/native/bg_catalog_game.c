@@ -169,6 +169,66 @@ static void ct_detail(const Catalog* c, const CtGame* g, CtDetail* d, const char
   }
   if (g->hero && !d->hero && d->page_hero) { d->hero = d->page_hero; d->page_hero = NULL; }
 }
+// Fase 4 (BG_API 37): so a arte (e, com `summary`, o resumo da pagina) de um jogo, para as cartas largas da pagina
+// inicial (o carrossel e Destaques): sem os links do pacote e, de um jogo de feed, so o feed da pagina dele.
+static void ct_art_only(const Catalog* c, const CtGame* g, CtDetail* d, int summary) {
+  memset(d, 0, sizeof *d);
+  size_t len = 0;
+  if (!g->from_feed) {
+    if (summary) {
+      char* text = ct_pack_item(c->bundled_dir, "pages", g->id, &len);
+      if (text) { JP jp = {text, text + len, 0}; jp_object(&jp, ct_page_field, d); free(text); d->page_found = 1; }
+    }
+    if (g->lazy[0] >= 0) {
+      char path[800];
+      snprintf(path, sizeof path, "%s/catalog/art/%d.json", c->bundled_dir, g->lazy[0]);
+      size_t size = 0;
+      char* art = ct_read_file(path, &size, 8u << 20);
+      if (art) { CtArtRead r = {d, g->lazy[1], 0}; JP jp = {art, art + size, 0}; jp_array(&jp, ct_art_item, &r); ct_free(art); }
+    }
+  } else if (g->page_feed >= 0 && g->page_feed < c->nfeeds && c->feeds[g->page_feed].path && c->feeds[g->page_feed].path[0]) {
+    size_t size = 0;
+    char* feed = ct_read_file(c->feeds[g->page_feed].path, &size, 16u << 20);
+    if (feed) {
+      if (ct_jlx_decode(feed, &size)) {
+        CtFind find = {g->id, d, 1, 0};
+        CtFeedVisit v;
+        memset(&v, 0, sizeof v);
+        v.c = (Catalog*)c; v.fn = ct_find_fn; v.ctx = &find; v.url = c->feeds[g->page_feed].url;
+        ct_visit_feed(&v, feed, size);
+        ct_free(v.name); ct_strlist_free(&v.mirrors);
+      }
+      ct_free(feed);
+    }
+  }
+  if (g->hero && !d->hero && d->page_hero) { d->hero = d->page_hero; d->page_hero = NULL; }
+}
+static const char* ct_summary_of(const CtDetail* d);
+// As cartas com a arte (hero, logo, logoAspect, logoDark) e, com `summary`, o resumo (summaryOf) e a descricao.
+static void ct_cards_art(Buf* out, const Catalog* c, CtGame* const* v, int n, int summary) {
+  buf_str(out, "[");
+  for (int i = 0; i < n; ++i) {
+    if (i) buf_str(out, ",");
+    CtDetail d;
+    ct_art_only(c, v[i], &d, summary);
+    ct_card(out, c, v[i]);
+    out->size--; // reabre a carta
+    buf_str(out, ",\"art\":{\"cover\":"); buf_json(out, ct_s(v[i]->cover));
+    if (v[i]->tint) { buf_str(out, ",\"tint\":"); buf_json(out, v[i]->tint); }
+    if (v[i]->hero && d.hero) { buf_str(out, ",\"hero\":"); buf_json(out, d.hero); }
+    if (v[i]->logo && d.logo) { buf_str(out, ",\"logo\":"); buf_json(out, d.logo); }
+    if (d.has_logo_aspect) { buf_str(out, ",\"logoAspect\":"); ct_num_json(out, d.logo_aspect); }
+    if (d.logo_dark) { buf_str(out, ",\"logoDark\":"); buf_json(out, d.logo_dark); }
+    buf_str(out, "}");
+    if (summary) {
+      const char* sum = ct_summary_of(&d);
+      buf_str(out, ",\"summary\":"); buf_json(out, sum ? sum : ct_s(d.summary));
+    }
+    buf_str(out, "}");
+    ct_detail_free(&d);
+  }
+  buf_str(out, "]");
+}
 static const char* ct_release_platform(const CtGame* g) { return !strncasecmp(g->id, "PPSA", 4) ? "ps5" : !strncasecmp(g->id, "CUSA", 4) ? "ps4" : NULL; }
 static void ct_rel_fields_json(Buf* out, const CtRel* r, int skip_links, const char* unavailable, const char* label) {
   static const char* const KEYS[CT_REL_FIELDS] = {"id", "format", "filename", "url", "browserUrl", "version", "category", "provider", "source", "flow", "label",
@@ -431,13 +491,7 @@ static void ct_game(const Catalog* c, const char* query, const char* const* feed
   out->size--; // reabre a carta
   buf_str(out, ",\"developer\":"); buf_json(out, g->dev);
   buf_str(out, ",\"publisher\":"); buf_json(out, g->pub);
-  buf_str(out, ",\"features\":[");
-  for (int k = 0; k < g->features.n; ++k) { if (k) buf_str(out, ","); buf_json(out, c->features.v[g->features.v[k]]); }
-  buf_str(out, "],\"providers\":[");
-  for (int k = 0; k < g->providers.n; ++k) { if (k) buf_str(out, ","); buf_json(out, c->providers.v[g->providers.v[k]]); }
-  buf_str(out, "],\"recommendations\":"); if (g->has_rec) ct_num_json(out, g->rec); else buf_str(out, "null");
-  buf_str(out, ",\"metacritic\":"); if (g->has_meta) buf_fmt(out, "%d", g->metacritic); else buf_str(out, "null");
-  buf_str(out, ",\"work\":"); if (g->work >= 0) buf_fmt(out, "%d", g->work); else buf_str(out, "null");
+  // providers, metacritic, features, recommendations e work ja vem na carta (ct_card, BG_API 37)
   buf_str(out, ",\"addedAt\":"); ct_json_or_null(out, g->added[0] ? g->added : NULL);
   buf_fmt(out, ",\"listed\":%s,\"shown\":%s,\"fromFeed\":%s,\"sources\":[", g->listed ? "true" : "false", g->shown ? "true" : "false", g->from_feed ? "true" : "false");
   int m = 0;
@@ -492,4 +546,27 @@ static void ct_game(const Catalog* c, const char* query, const char* const* feed
   ct_items_free(&items);
   ct_detail_free(&d);
   ct_query_free(&q);
+}
+
+// GET /api/catalog/cards?ids=A,B,C (Fase 4, BG_API 37): as cartas de jogos pelo codigo (ate 200), na ordem pedida; os
+// que o catalogo nao conhece ficam de fora. A TV pede assim os jogos da fila de downloads, dos vistos e dos favoritos.
+static void ct_cards_ids(const Catalog* c, const char* query, Buf* out) {
+  char* copy = strdup(query ? query : "");
+  if (!copy) abort();
+  CtGame* list[200]; int n = 0;
+  for (char* save = NULL, *pair = strtok_r(copy, "&", &save); pair; pair = strtok_r(NULL, "&", &save)) {
+    if (strncmp(pair, "ids=", 4)) continue;
+    char* value = pair + 4;
+    ct_url_decode(value);
+    for (char* s2 = NULL, *id = strtok_r(value, ",", &s2); id && n < 200; id = strtok_r(NULL, ",", &s2)) {
+      CtGame* g = (CtGame*)ct_find_game(c, id);
+      int dup = 0;
+      for (int i = 0; i < n && g; ++i) if (list[i] == g) dup = 1;
+      if (g && !dup) list[n++] = g;
+    }
+  }
+  buf_str(out, "{\"ok\":true,\"games\":");
+  ct_cards(out, c, list, n);
+  buf_str(out, "}");
+  free(copy);
 }

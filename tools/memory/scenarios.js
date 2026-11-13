@@ -375,6 +375,60 @@ if (scenario === 'prep-loja' || scenario === 'prep-orbit') {
   const after = typeof std.mem === 'function' ? std.mem() : [0, 0];
   std.err.puts(`FICHA ${files ? 'arquivos' : 'pacote'} games=${count} links=${links} first_ms=${(first / 1e3).toFixed(2)} avg_ms=${(total / count / 1e3).toFixed(3)} slowest_ms=${(slowest / 1e3).toFixed(2)} heap_before_MB=${(before / 1048576).toFixed(2)} heap_after_MB=${(after[0] / 1048576).toFixed(2)} peak_MB=${(after[1] / 1048576).toFixed(2)}\n`);
   note = `ficha ${count}`;
+} else if (scenario === 'modulos') {
+  // Fase 4: so os modulos que a loja (local ou pelo payload) carrega, com a montagem segura: o piso das duas.
+  globalThis.__jobeHoldCatalog = true;
+  keep.catalog = await import('../../app/state/catalog.js');
+  keep.remote = await import('../../app/state/remote-store.js');
+  if (keep.catalog.isLocalCatalogBuilt()) throw new Error('montou');
+  note = 'modulos';
+} else if (scenario === 'loja-modulos') {
+  // a loja montada aqui com os mesmos modulos de "modulos" carregados (a comparacao justa com as "-remota")
+  keep.remote = await import('../../app/state/remote-store.js');
+  const catalog = await store();
+  note = `games ${catalog.catalogEntries().length}`;
+} else if (scenario.endsWith('-remota')) {
+  // Fase 4: a loja aberta pelo catalogo do payload (state/remote-store.js), sem montar nada no app. As respostas sao as do
+  // payload de verdade com os mesmos dados (tools/fase4/record.mjs, arquivo em MEM_REMOTE). loja-remota: abrir a loja
+  // (opcoes, pagina inicial) + 6 paginas da grade + um filtro com as contagens; busca-remota: abrir + 3 paginas da busca
+  // "the"; ficha-remota: abrir + as fichas das 48 primeiras (a ultima e a guardada; 16 no maximo).
+  globalThis.__jobeHoldCatalog = true;
+  const dir = std.getenv('MEM_REMOTE');
+  const recorded = JSON.parse(std.loadFile(`${dir}/index.json`));
+  const served = (url) => {
+    const route = url.replace(/^http:\/\/127\.0\.0\.1:\d+/, '');
+    const hit = recorded.routes[route];
+    return hit ? reply(hit.status, std.loadFile(`${dir}/${hit.file}`), url) : reply(404, '{"ok":false,"error":"not recorded"}', url);
+  };
+  globalThis.__MEM_HTTP = async (url, options) => url.startsWith('http://127.0.0.1:') ? served(url, options) : reply(404, 'not found', url);
+  const catalog = await import('../../app/state/catalog.js');
+  const remoteMod = await import('../../app/state/catalog-remote.js');
+  const { beginRemoteStore } = await import('../../app/state/remote-store.js');
+  const client = remoteMod.createRemoteCatalog({ http: Http, readToken: () => 'a'.repeat(64) });
+  const step = (what) => { if (std.getenv('MEM_STEPS') && typeof std.mem === 'function') { std.gc(); std.err.puts(`STEP ${what} now ${(std.mem()[0] / 1048576).toFixed(1)} peak ${(std.mem()[1] / 1048576).toFixed(1)}
+`); } };
+  step('modulos');
+  const realNow = Date.now;
+  Date.now = () => Date.UTC(2026, 10, 13, 12); // o "today" gravado
+  const opened = await beginRemoteStore({ client, fs: FileSystem, platform: 'ps5', seed: 12345, log: () => {} });
+  Date.now = realNow;
+  if (!opened) throw new Error(`a loja nao abriu pelo payload: ${client.status().reason}`);
+  step('aberta');
+  keep.catalog = catalog;
+  keep.grid = [];
+  const view = { filters: catalog.NO_FILTERS, query: '', sort: 'relevance' };
+  if (scenario === 'loja-remota') {
+    for (let offset = 0; offset < 48 * 6; offset += 48) keep.grid.push(...(await client.page(view, offset)).games);
+    const action = { filters: { ...catalog.NO_FILTERS, genre: ['Action'] }, query: '', sort: 'relevance' };
+    keep.filtered = await client.page(action, 0);
+    keep.counts = await client.options(action);
+  } else if (scenario === 'busca-remota') {
+    for (let offset = 0; offset < 48 * 3; offset += 48) keep.grid.push(...(await client.page({ ...view, query: 'the' }, offset, 'search')).games);
+  } else if (scenario === 'ficha-remota') {
+    for (const card of (await client.page(view, 0)).games) keep.ficha = await client.game(card.id);
+  } else throw new Error(`unknown scenario ${scenario}`);
+  if (catalog.isLocalCatalogBuilt() || !catalog.isRemoteCatalog()) throw new Error('a loja foi montada no app');
+  note = `remota ${recorded.shown ?? '?'} listados, grade ${keep.grid.length}, ${JSON.stringify(client.status())}`;
 } else if (scenario !== 'base') {
   throw new Error(`unknown scenario ${scenario}`);
 }

@@ -14,6 +14,7 @@ import { useStoreActions } from '../state/store.jsx';
 import { GameCard } from '../ui/GameCard.jsx';
 import { noteRow } from '../state/cover-warm.js';
 import { onStoreMode } from '../state/store-mode.js';
+import { remoteHome } from '../state/remote-store.js';
 
   var WIDTH4 = 152;
   // 0.5.3: the most played games on PlayStation (the most rated on its store), less those the rows above already show
@@ -24,6 +25,9 @@ import { onStoreMode } from '../state/store-mode.js';
   // glibren.9: again from the TorBox store's games when the store's version changes (after the rows above, which
   // registered first).
   onStoreMode(() => {
+    // Fase 4: com a loja aberta pelo catalogo do payload, a fileira vem dele.
+    const home = remoteHome();
+    if (home) return void (POPULAR = home.popular);
     POPULAR = oneEach(otherThan(games.filter((game) => game.ratingCount > 0).sort((a, b) => b.ratingCount - a.ratingCount || b.recommendations - a.recommendations), [...featured, ...FEATURED, ...TOP, ...READY])).slice(0, 15);
   });
   var PopularRail = (0, memo)(function PopularRail2() {

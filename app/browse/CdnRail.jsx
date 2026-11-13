@@ -8,6 +8,7 @@ import { memo } from 'react';
 import { GameRail } from './GameRail.jsx';
 import { games } from '../data/catalog-index.js';
 import { onStoreMode } from '../state/store-mode.js';
+import { remoteHome } from '../state/remote-store.js';
 import { useT } from '../i18n/index.js';
 import { CDN_HOST, NO_FILTERS, onCdn, oneEach, sortGames } from '../state/catalog.js';
 import { useNavActions } from '../state/nav.jsx';
@@ -27,7 +28,8 @@ import { Image, Text, View, motion, useIsFocused } from '@ps5-react/core';
   var SERVED = oneEach(sortGames(games.filter(onCdn), "relevance"));
   // glibren.9: again from the TorBox store's games when the store's version changes.
   onStoreMode(() => {
-    SERVED = oneEach(sortGames(games.filter(onCdn), "relevance"));
+    // Fase 4: com a loja aberta pelo catalogo do payload, a fileira vem dele.
+    SERVED = remoteHome()?.cdn ?? oneEach(sortGames(games.filter(onCdn), "relevance"));
   });
   noteRow(SERVED);
   var lift2 = { type: "tween", duration: 0.3, ease: EASE_OUT };

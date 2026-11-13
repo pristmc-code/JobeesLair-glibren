@@ -844,7 +844,7 @@ static int catalog_route(int fd, Request* r) {
   }
   CatQuery fn = !strcmp(path, "/api/catalog") ? ct_page : !strcmp(path, "/api/catalog/options") ? ct_options : !strcmp(path, "/api/catalog/search") ? ct_search :
                 !strcmp(path, "/api/catalog/home") ? ct_home : !strcmp(path, "/api/catalog/related") ? ct_related : !strcmp(path, "/api/catalog/game") ? cat_game_q :
-                !strcmp(path, "/api/catalog/sources") ? cat_sources_q : NULL;
+                !strcmp(path, "/api/catalog/sources") ? cat_sources_q : !strcmp(path, "/api/catalog/cards") ? ct_cards_ids : NULL;
   if (!get || !fn) { respond_error(fd, 404, "not found"); return 1; }
   int status = 0;
   size_t size = 0;

@@ -33,7 +33,7 @@ const canonical = (value) => JSON.stringify(value, (key, v) => v && typeof v ===
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---- 1. A referencia -------------------------------------------------------------------------------------------------
-async function makeReference(work, variants) {
+export async function makeReference(work, variants) {
   const QJS = first([process.env.QJS_PEAK, '/root/forks/qjs-peak/build/qjs']);
   const ESBUILD_JS = first([process.env.ESBUILD_JS, '/root/forks/tube-service/innertube/node_modules/esbuild/lib/main.js']);
   if (!QJS || !ESBUILD_JS) return null;
@@ -68,7 +68,7 @@ async function makeReference(work, variants) {
 
 // ---- 2. O payload ------------------------------------------------------------------------------------------------------
 const freeLocalPort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
-async function startPayload(binary, work, variant, ports) {
+export async function startPayload(binary, work, variant, ports) {
   const base = path.join(work, `payload-${variant}`);
   rmSync(base, { recursive: true, force: true });
   const cat = path.join(base, 'state/catalog');

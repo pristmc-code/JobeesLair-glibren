@@ -143,8 +143,17 @@ import { energySaverOn } from '../state/power.js';
       games.length = twins.length = features.length = 0;
     }
   }
-  if (!CATALOG_PACED) for (const steps = indexSteps(); !steps.next().done; ) ;
+  // Fase 4: o app pode deixar a loja com o catalogo do payload (state/catalog-remote.js) e so montar a dele se precisar;
+  // fora do console (testes, medicoes no qjs) quem quer isso avisa antes de carregar (globalThis.__jobeHoldCatalog).
+  var CATALOG_HELD = (() => {
+    try {
+      return globalThis.__jobeHoldCatalog === true;
+    } catch {
+      return false;
+    }
+  })();
+  if (!CATALOG_PACED && !CATALOG_HELD) for (const steps = indexSteps(); !steps.next().done; ) ;
   /** How many art files were read since launch (tests). */
   var artFilesRead = () => artReads;
 
-export { CATALOG_PACED, COVER_WIDTH, artFilesRead, catalogLoad, coverSize, features, games, hasArt, indexSteps, twins };
+export { CATALOG_HELD, CATALOG_PACED, COVER_WIDTH, artFilesRead, catalogLoad, coverSize, features, games, hasArt, indexSteps, twins };

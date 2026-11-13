@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { GenreCard } from './GenreCard.jsx';
 import { games } from '../data/catalog-index.js';
 import { onStoreMode } from '../state/store-mode.js';
+import { remoteHome } from '../state/remote-store.js';
 import { useT } from '../i18n/index.js';
 import { genres } from '../state/catalog.js';
 import { useStoreActions, useStoreState } from '../state/store.jsx';
@@ -17,6 +18,13 @@ import { colors } from '../ui/colors.js';
   // glibren.9: worked out again from the TorBox store's games when the store's version changes.
   var RAIL;
   function rail() {
+  // Fase 4: com a loja aberta pelo catalogo do payload, os generos e as capas vem dele (a mesma regra, ct_home "genres").
+  const home = remoteHome();
+  if (home?.genres) {
+    RAIL = home.genres;
+    noteRow(RAIL.flatMap(({ covers }) => covers), 30);
+    return;
+  }
   const used = /* @__PURE__ */ new Set();
   RAIL = genres.map((genre) => ({ genre, matches: games.filter((game) => game.genres.includes(genre)).sort((a, b) => b.recommendations - a.recommendations) })).filter(({ matches }) => matches.length >= 3).sort((a, b) => b.matches.length - a.matches.length).map(({ genre, matches }) => {
     const covers = [...matches.filter((game) => !used.has(game.id)), ...matches.filter((game) => used.has(game.id))].slice(0, 3);

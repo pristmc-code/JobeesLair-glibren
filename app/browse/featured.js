@@ -5,6 +5,7 @@
 import { games, hasArt } from '../data/catalog-index.js';
 import { oneEach, ratingScore, sortGames } from '../state/catalog.js';
 import { onStoreMode } from '../state/store-mode.js';
+import { remoteHome } from '../state/remote-store.js';
 
   var SLIDES = 5;
   // The pool: games with a banner and a logo, the most rated on the PlayStation Store first, 4.3 stars or more
@@ -46,10 +47,11 @@ import { onStoreMode } from '../state/store-mode.js';
     for (const game of ranked) if (picks.length < SLIDES && !picks.includes(game)) picks.push(game);
     return shuffle(picks);
   }
-  var featured = pickFeatured();
+  // Fase 4: com a loja aberta pelo catalogo do payload, o carrossel vem dele (o mesmo sorteio, com a semente da abertura).
+  var featured = remoteHome()?.carousel ?? pickFeatured();
   // glibren.9: picked again from the TorBox store's games when the store's version changes (state/store-mode.js).
   onStoreMode(() => {
-    featured = pickFeatured();
+    featured = remoteHome()?.carousel ?? pickFeatured();
   });
 
 export { SLIDES, TOP_POOL, featured, pickFeatured, studioOf };

@@ -580,7 +580,22 @@ static void ct_card(Buf* out, const Catalog* c, const CtGame* g) {
   if (g->tint) { buf_str(out, ",\"tint\":"); buf_json(out, g->tint); }
   buf_str(out, ",\"genres\":[");
   for (int k = 0; k < g->genres.n; ++k) { if (k) buf_str(out, ","); buf_json(out, c->genres.v[g->genres.v[k]]); }
-  buf_str(out, "]}");
+  // Fase 4 (BG_API 37): o que o GameCard da TV le alem disso: o selo Metacritic, os sites (onCdn) e as plataformas das
+  // edicoes da obra (game.platforms, catalog.js: editionsOf, ordenado).
+  buf_str(out, "],\"metacritic\":"); if (g->has_meta) buf_fmt(out, "%d", g->metacritic); else buf_str(out, "null");
+  buf_str(out, ",\"providers\":[");
+  for (int k = 0; k < g->providers.n; ++k) { if (k) buf_str(out, ","); buf_json(out, c->providers.v[g->providers.v[k]]); }
+  int plat = 1 << g->platform;
+  if (g->work >= 0) for (int i = 0; i < c->count; ++i) if (c->all[i]->work == g->work) plat |= 1 << c->all[i]->platform;
+  buf_fmt(out, "],\"platforms\":[%s%s%s]", plat & 2 ? "\"ps4\"" : "", (plat & 3) == 3 ? "," : "", plat & 1 ? "\"ps5\"" : "");
+  // e o que os Favoritos filtram e ordenam na TV (catalog.js FACETS/SORTS/oneEach sobre as cartas): recursos, obra e
+  // recomendacoes.
+  buf_str(out, ",\"features\":[");
+  for (int k = 0; k < g->features.n; ++k) { if (k) buf_str(out, ","); buf_json(out, c->features.v[g->features.v[k]]); }
+  buf_str(out, "],\"work\":"); if (g->work >= 0) buf_fmt(out, "%d", g->work); else buf_str(out, "null");
+  buf_str(out, ",\"recommendations\":"); if (g->has_rec) ct_num_json(out, g->rec); else buf_str(out, "null");
+  // a posicao do jogo na ordem do catalogo (o desempate das ordens do app, que sao estaveis)
+  buf_fmt(out, ",\"pos\":%d}", g->entry);
 }
 static void ct_cards(Buf* out, const Catalog* c, CtGame* const* v, int n) {
   buf_str(out, "[");
@@ -755,6 +770,7 @@ static int ct_cmp_feat(const void* ctx, const CtGame* a, const CtGame* b) {
 static int ct_cmp_hero(const void* ctx, const CtGame* a, const CtGame* b) { const Catalog* c = ctx; int d = ct_from_archive(c, b) - ct_from_archive(c, a); return d ? d : ct_rec_cmp(a, b); }
 static int ct_cmp_newest(const void* ctx, const CtGame* a, const CtGame* b) { (void)ctx; return ct_cmp(CT_NEWEST, a, b); }
 static int ct_cmp_added(const void* ctx, const CtGame* a, const CtGame* b) { (void)ctx; int d = strcmp(b->added, a->added); if (d) return (d > 0) - (d < 0); return ct_sign(ct_score(b) - ct_score(a)); }
+static int ct_cmp_recs(const void* ctx, const CtGame* a, const CtGame* b) { (void)ctx; return ct_rec_cmp(a, b); } // GenreRail: b.recommendations - a.recommendations
 static int ct_cmp_rank(const void* ctx, const CtGame* a, const CtGame* b) { const int s = *(const int*)ctx; return a->rank[s] < b->rank[s] ? -1 : a->rank[s] > b->rank[s]; }
 // featured.js studioOf: o primeiro "nome" da desenvolvedora (ou editora, ou id) em minusculas.
 static void ct_studio(const CtGame* g, char* out, size_t cap) {
@@ -835,7 +851,9 @@ static void ct_iso_date(int64_t ms, char out[11]) {
   snprintf(text, sizeof text, "%04d-%02u-%02u", (int)y, m, d);
   copy_text(out, 11, text);
 }
+static void ct_cards_art(Buf* out, const Catalog* c, CtGame* const* v, int n, int summary); // bg_catalog_game.c
 // GET /api/catalog/home: as fileiras da pagina inicial, cada uma ja na ordem e no tamanho do app.
+// Fase 4 (BG_API 37): o carrossel vem com a arte e o resumo, e Destaques com a arte (cartas largas da TV).
 static void ct_home(const Catalog* c, const char* query, Buf* out) {
   CtQuery q;
   ct_query_parse(query, &q);
@@ -848,7 +866,7 @@ static void ct_home(const Catalog* c, const char* query, Buf* out) {
   const int nfeat = ct_pick_featured(c, q.seed ? q.seed : (unsigned)time(NULL), featured);
   buf_str(out, "{\"ok\":true,");
   ct_meta_json(out, c);
-  buf_str(out, ",\"carousel\":"); ct_cards(out, c, featured, nfeat);
+  buf_str(out, ",\"carousel\":"); ct_cards_art(out, c, featured, nfeat, 1);
   memcpy(shown, featured, sizeof *featured * (size_t)nfeat); nshown = nfeat;
   // FEATURED: com banner, Archive.org primeiro, depois recomendados; sem o carrossel; um por jogo; 12
   int n = 0;
@@ -857,7 +875,7 @@ static void ct_home(const Catalog* c, const char* query, Buf* out) {
   n = ct_other_than(a, n, featured, nfeat);
   n = ct_one_each(a, n);
   if (n > 12) n = 12;
-  buf_str(out, ",\"featured\":"); ct_cards(out, c, a, n);
+  buf_str(out, ",\"featured\":"); ct_cards_art(out, c, a, n, 0);
   CtGame* featured_row[12]; const int nfr = n; memcpy(featured_row, a, sizeof *a * (size_t)n);
   // RECENT: com data, mais novos; um por jogo; 15
   n = 0;
@@ -908,6 +926,43 @@ static void ct_home(const Catalog* c, const char* query, Buf* out) {
   for (int i = 0; i < c->nlisted; ++i) { CtGame* g = c->by_rank[CT_RELEVANCE][i]; if (g->shown && c->cdn >= 0 && ct_ids_has(&g->providers, c->cdn)) a[n++] = g; }
   n = ct_one_each(a, n);
   buf_str(out, ",\"cdn\":"); ct_cards(out, c, a, n);
+  // GENRES (Fase 4, BG_API 37; GenreRail.jsx): os generos (em ordem de nome) com 3+ jogos, os com mais jogos primeiro; cada um
+  // com a contagem e 3 capas pelos mais recomendados, as que outro genero ainda nao usou primeiro.
+  {
+    const int G = c->genres.n;
+    int* count = calloc((size_t)G + 1, sizeof *count);
+    int* order = malloc(sizeof *order * ((size_t)G + 1));
+    CtGame** used = malloc(sizeof *used * ((size_t)G * 3 + 1));
+    if (!count || !order || !used) abort();
+    for (int i = 0; i < N; ++i) for (int k = 0; k < c->games[i]->genres.n; ++k) count[c->games[i]->genres.v[k]]++;
+    int ng = 0;
+    for (int k = 0; k < G; ++k) if (count[k] >= 3) order[ng++] = k;
+    for (int x = 1; x < ng; ++x) for (int y = x; y > 0 && strcmp(c->genres.v[order[y - 1]], c->genres.v[order[y]]) > 0; --y) { int t = order[y]; order[y] = order[y - 1]; order[y - 1] = t; }
+    for (int x = 1; x < ng; ++x) for (int y = x; y > 0 && count[order[y - 1]] < count[order[y]]; --y) { int t = order[y]; order[y] = order[y - 1]; order[y - 1] = t; }
+    int nused = 0;
+    buf_str(out, ",\"genres\":[");
+    for (int o = 0; o < ng; ++o) {
+      const int k = order[o];
+      int m = 0;
+      for (int i = 0; i < N; ++i) if (ct_ids_has(&c->games[i]->genres, k)) a[m++] = c->games[i];
+      ct_sort(a, m, ct_cmp_recs, NULL);
+      CtGame* covers[3]; int nc = 0;
+      for (int pass = 0; pass < 2 && nc < 3; ++pass)
+        for (int i = 0; i < m && nc < 3; ++i) {
+          int was = 0;
+          for (int u = 0; u < nused; ++u) if (used[u] == a[i]) { was = 1; break; }
+          if (was == pass) covers[nc++] = a[i];
+        }
+      for (int i = 0; i < nc; ++i) { int was = 0; for (int u = 0; u < nused; ++u) if (used[u] == covers[i]) was = 1; if (!was) used[nused++] = covers[i]; }
+      if (o) buf_str(out, ",");
+      buf_str(out, "{\"genre\":"); buf_json(out, c->genres.v[k]);
+      buf_fmt(out, ",\"count\":%d,\"covers\":", m);
+      ct_cards(out, c, covers, nc);
+      buf_str(out, "}");
+    }
+    buf_str(out, "]");
+    free(count); free(order); free(used);
+  }
   buf_str(out, "}");
   free(a); free(shown);
   ct_query_free(&q);

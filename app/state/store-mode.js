@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { games } from '../data/catalog-index.js';
-import { allListed, catalogSources, editionsOf, refreshDerived, sourcesOfGame, whenCatalogReady } from './catalog.js';
+import { allListed, catalogSources, editionsOf, ensureLocalCatalog, isRemoteCatalog, onLocalCatalog, refreshDerived, sourcesOfGame, whenCatalogReady } from './catalog.js';
 import { DATA_DIR } from './data-dir.js';
 import { loadList, saveList } from './saved.js';
 import { libraryPaths, readConfirmedIds } from './torbox-library.js';
@@ -34,6 +34,8 @@ import { FileSystem, Platform } from '@ps5-react/core';
   /** Os jogos listados dos catálogos que a loja mostra. */
   var shownListed = () => hidden.size ? allListed.filter((game) => sourcesOfGame(game).some((source) => !hidden.has(source))) : allListed;
   var sourceShown = (id) => !hidden.has(id);
+  /** Fase 4: os catalogos escondidos como estao nas configuracoes (state/catalog-payload.js, com a loja aberta pelo payload). */
+  var hiddenSources = () => [...hidden];
   // glibren.26: muda a cada catálogo mostrado/escondido (o contador de títulos refaz a conta).
   var hiddenVersion = 0;
   var shownVersion = () => hiddenVersion;
@@ -64,6 +66,14 @@ import { FileSystem, Platform } from '@ps5-react/core';
    */
   function applyStoreMode(next, { save = true } = {}) {
     if (!MODES.includes(next)) return { ok: false, reason: "unknown" };
+    // Fase 4: a loja TorBox e a lista do app: com a loja aberta pelo catalogo do payload, a escolha fica gravada e a loja e
+    // montada aqui; ao terminar (onLocalCatalog, abaixo) a versao gravada vale.
+    if (next === "torbox" && isRemoteCatalog()) {
+      if (!confirmedIds()) return { ok: false, reason: "never" };
+      if (save) saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), storeMode: next });
+      void ensureLocalCatalog("torbox");
+      return { ok: true, reason: "" };
+    }
     let list = shownListed();
     if (next === "torbox") {
       const ids = confirmedIds();
@@ -162,7 +172,7 @@ import { FileSystem, Platform } from '@ps5-react/core';
   // glibren.45: com a loja pronta (state/catalog.js whenCatalogReady: na hora, ou no console depois da montagem em partes).
   // Montada em partes, os módulos que tiraram linhas e índices da lista enquanto ela estava vazia refazem os seus
   // (applyStoreMode chama os onStoreMode), antes de a loja aparecer.
-  whenCatalogReady((paced) => {
+  function savedChoice(paced) {
     let applied = false;
     try {
       const saved = loadList(SETTINGS, "settings").storeMode;
@@ -183,6 +193,17 @@ import { FileSystem, Platform } from '@ps5-react/core';
       console.log(`[store-mode] saved choice not read: ${error?.message || error}`);
     }
     if (paced && !applied) applyStoreMode(mode, { save: false });
+  }
+  whenCatalogReady((paced) => {
+    // Fase 4: aberta pelo catalogo do payload: a loja inteira (as fileiras saem do payload, browse/Lanes.jsx); os
+    // catalogos escondidos o payload ja tira (config.json).
+    if (isRemoteCatalog()) applyStoreMode("full", { save: false });
+    else savedChoice(paced);
+  });
+  // Fase 4: a loja montada aqui depois de ter aberto pelo payload (ele caiu, ou a loja TorBox foi escolhida): a versao
+  // gravada vale e a loja e montada de novo (epoch).
+  onLocalCatalog((late) => {
+    if (late) savedChoice(true);
   });
 
-export { MODES, applyStoreMode, setSourceShown, shownVersion, sourceShown, subscribeStore, libraryChanged, onStoreMode, storeEpoch, storeMode, toggleStoreMode, torBoxGames, torBoxStoreCount, useStoreMode };
+export { hiddenSources, MODES, applyStoreMode, setSourceShown, shownVersion, sourceShown, subscribeStore, libraryChanged, onStoreMode, storeEpoch, storeMode, toggleStoreMode, torBoxGames, torBoxStoreCount, useStoreMode };

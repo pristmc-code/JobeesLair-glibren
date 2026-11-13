@@ -27,6 +27,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { colors, radius } from '../ui/colors.js';
 import { Text, View, useIsFocused } from '@ps5-react/core';
 import { useEffect, useState } from 'react';
+import { remoteHome } from '../state/remote-store.js';
 
   var PORTRAIT = 152;
   // Famous games with banner art, the ones Archive.org serves (fastest) first.
@@ -34,8 +35,22 @@ import { useEffect, useState } from 'react';
   // 0.5.3: not the carousel's games (browse/featured.js), right above it, nor their other editions.
   // glibren.9: the rows are worked out again when the store's version changes (state/store-mode.js): `let` bindings
   // reassigned in rows(), which the store's next build reads.
-  var FEATURED, RECENT, TOP, WEEK_AGO, NEW_ALL, NEW_WEEK, READY_ALL, READY, FIRST_FEATURED;
+  var FEATURED, RECENT, TOP, WEEK_AGO, NEW_ALL, NEW_WEEK, READY_ALL, READY, FIRST_FEATURED, NEW_COUNT, READY_COUNT;
   function rows() {
+  // Fase 4: com a loja aberta pelo catalogo do payload, as fileiras vem prontas dele (GET /api/catalog/home, a mesma regra).
+  const home = remoteHome();
+  if (home) {
+    FEATURED = home.featured;
+    RECENT = home.recent;
+    TOP = home.top;
+    NEW_ALL = NEW_WEEK = home.newWeek;
+    READY_ALL = READY = home.ready;
+    NEW_COUNT = home.newWeekCount;
+    READY_COUNT = home.readyCount;
+    for (const row of [RECENT, NEW_WEEK, READY, TOP]) noteRow(row);
+    FIRST_FEATURED = FEATURED.length ? `lane:featured:${FEATURED[0].id}` : void 0;
+    return;
+  }
   FEATURED = oneEach(otherThan([...games].filter((game) => hasArt(game, "hero")).sort((a, b) => fromArchive(b) - fromArchive(a) || b.recommendations - a.recommendations), featured)).slice(0, 12);
   RECENT = oneEach(sortGames(games.filter((game) => game.releaseDate), "newest")).slice(0, 15);
   // 0.5.1: by PlayStation Store rating, weighed by how many rated (state/catalog.js topRated), over every game.
@@ -52,6 +67,8 @@ import { useEffect, useState } from 'react';
   // Their first covers warm first at launch (state/cover-warm.js); the Featured row draws banners.
   for (const row of [RECENT, NEW_WEEK, READY, TOP]) noteRow(row);
   FIRST_FEATURED = FEATURED.length ? `lane:featured:${FEATURED[0].id}` : void 0;
+  NEW_COUNT = NEW_ALL.length;
+  READY_COUNT = READY_ALL.length;
   }
   rows();
   onStoreMode(rows);
@@ -135,11 +152,11 @@ import { useEffect, useState } from 'react';
       setSort("relevance");
       focusLater("catalog:filters");
     };
-    return /* @__PURE__ */ (0, jsx)(Lane, { name: "ready", title: readyLabel(t2("browse.lane.ready")), list: READY, accent: READY_GREEN, count: READY_ALL.length, seeAll });
+    return /* @__PURE__ */ (0, jsx)(Lane, { name: "ready", title: readyLabel(t2("browse.lane.ready")), list: READY, accent: READY_GREEN, count: READY_COUNT, seeAll });
   });
   var NewLane = (0, memo)(function NewLane2() {
     const t2 = useT();
-    return jsx(Lane, { name: "new", title: t2("browse.lane.newWeek"), list: NEW_WEEK, count: NEW_ALL.length });
+    return jsx(Lane, { name: "new", title: t2("browse.lane.newWeek"), list: NEW_WEEK, count: NEW_COUNT });
   });
   var TopLane = (0, memo)(function TopLane2() {
     const t2 = useT();

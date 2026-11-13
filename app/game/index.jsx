@@ -21,7 +21,8 @@ import { VersionSheet } from './VersionSheet.jsx';
 import { VideosSheet } from './VideosSheet.jsx';
 import { TorBoxSheet } from './TorBoxSheet.jsx';
 import { useT } from '../i18n/index.js';
-import { featureLabel, relatedGames } from '../state/catalog.js';
+import { featureLabel, getGame, relatedGames } from '../state/catalog.js';
+import { onRemoteCatalog, remoteCatalog, remoteCatalogOn } from '../state/catalog-remote.js';
 import { downloadQueue } from '../state/downloads.js';
 import { useLinkWatch } from '../state/links.js';
 import { useNavActions } from '../state/nav.jsx';
@@ -122,4 +123,28 @@ import { colors, radius } from '../ui/colors.js';
     ] }) });
   }
 
-export { GameScreen };
+  // Fase 4: a ficha pela rota (index.jsx): com a loja aberta pelo catalogo do payload, a ficha inteira vem dele
+  // (GET /api/catalog/game: links, pagina, arte, edicoes, relacionados); enquanto chega, a tela fica vazia. Sem payload, o
+  // jogo da loja montada aqui, como antes.
+  function GameRoute({ id, download, onBack, onOpenGame }) {
+    const [, setFlip] = (0, useState)(0);
+    (0, useEffect)(() => onRemoteCatalog(() => setFlip((n) => n + 1)), []);
+    const known = getGame(id);
+    const needs = remoteCatalogOn() && (!known || known.remote && !known.full);
+    const [loaded, setLoaded] = (0, useState)(null);
+    (0, useEffect)(() => {
+      if (!needs) return void 0;
+      let live = true;
+      void remoteCatalog().game(id).then((game) => {
+        if (live) setLoaded(game && !game.notFound ? game : false);
+      });
+      return () => {
+        live = false;
+      };
+    }, [id, needs]);
+    const game = needs ? loaded && loaded.id === id ? loaded : null : known;
+    if (!game) return /* @__PURE__ */ (0, jsx)(View, { style: { flex: 1, backgroundColor: colors.canvas } });
+    return /* @__PURE__ */ (0, jsx)(GameScreen, { game, download, onBack, onOpenGame }, game.id);
+  }
+
+export { GameRoute, GameScreen };

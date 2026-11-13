@@ -26,6 +26,7 @@ import { useLocale, useT } from '../i18n/index.js';
 import { FIRST_KEY, KeyboardSheet } from './DockKeyboard.jsx';
 import { forgetSearch, rememberSearch, useSearchHistory } from './history.js';
 import { searchGames } from './match.js';
+import { useRemoteGrid } from '../browse/useRemoteGrid.js';
 import { HomebrewGrid } from '../homebrew/HomebrewScreen.jsx';
 import { hb } from '../homebrew/palette.js';
 import { FACETS, NO_FILTERS, activeCount, filterGames, optionLabel, sortGames } from '../state/catalog.js';
@@ -157,17 +158,22 @@ import { FocusScope, ScrollView, Text, View, motion } from '@ps5-react/core';
     const trimmed = query.trim();
     // glibren.14: com a busca aberta, o R3 troca a versão da loja (ui/StoreKey.jsx): os resultados são refeitos.
     const { epoch } = useStoreMode();
-    const list = useMemo(() => {
+    // Fase 4: com a loja aberta pelo catalogo do payload, os resultados vem dele (GET /api/catalog/search, pagina por pagina).
+    const remote = useRemoteGrid({ filters, query: trimmed, sort, wishlist, route: "search" });
+    const local = useMemo(() => {
+      if (remote) return null;
       const passing = filterGames({ filters, query: "", wishlist });
       if (!trimmed) return sortGames(passing, sort);
       const passed = new Set(passing);
       return sortGames(searchGames(trimmed).filter((game) => passed.has(game)), sort);
-    }, [trimmed, filters, wishlist, sort, epoch]);
+    }, [remote === null, trimmed, filters, wishlist, sort, epoch]);
+    const list = remote ? remote.games : local;
+    const total = remote ? remote.total : local.length;
     const title = trimmed ? t2("search.resultsFor", { query: trimmed }) : filters.wishlist ? t2("catalog.favorites") : t2("catalog.library");
     const signature = JSON.stringify([trimmed, filters, sort, epoch]);
     return jsxs(View, { scrollAnchor: true, style: { gap: 4 }, children: [
-      jsx(Heading, { title, count: t2("catalog.gameCount", { count: list.length }), note: filters.format.includes("ready") ? t2("search.readyNote") : "" }),
-      list.length ? jsx(GameGrid, { games: list, signature, enter: false }, signature) : jsx(Empty, { text: trimmed ? t2("search.noMatch", { query: trimmed }) : t2("search.noneFiltered") })
+      jsx(Heading, { title, count: t2("catalog.gameCount", { count: total }), note: filters.format.includes("ready") ? t2("search.readyNote") : "" }),
+      remote?.loading ? null : list.length ? jsx(GameGrid, { games: list, signature, enter: false, onMore: remote?.more }, signature) : jsx(Empty, { text: trimmed ? t2("search.noMatch", { query: trimmed }) : t2("search.noneFiltered") })
     ] });
   });
   var AppResults = memo(function AppResults2({ query }) {

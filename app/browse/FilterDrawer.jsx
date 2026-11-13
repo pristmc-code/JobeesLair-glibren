@@ -3,10 +3,12 @@
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
-import { memo, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { formatNumber2 } from '../i18n/core.js';
 import { useT } from '../i18n/index.js';
-import { FACETS, activeCount, facetCounts, facetTitle, filterGames, oneEach, optionLabel } from '../state/catalog.js';
+import { FACETS, activeCount, facetCounts, facetTitle, filterGames, listCounts, oneEach, optionLabel } from '../state/catalog.js';
+import { remoteCatalog } from '../state/catalog-remote.js';
+import { favoriteGames, remoteGrids } from './useRemoteGrid.js';
 import { useNavActions } from '../state/nav.jsx';
 import { useStore } from '../state/store.jsx';
 import { Button2 } from '../ui/Button.jsx';
@@ -22,6 +24,37 @@ import { colors, radius } from '../ui/colors.js';
   var WIDTH3 = 480;
   var slide = { type: "tween", duration: 0.24, ease: EASE_OUT };
   var TILE_LIMIT = 3;
+  // Fase 4: com a loja aberta pelo catalogo do payload, as contagens e o total vem dele (GET /api/catalog/options com os
+  // filtros, e o total da grade); com os Favoritos, das cartas deles (state/catalog.js listCounts). null = caminho local;
+  // { counts: {}, total: 0, loading: true } enquanto chega.
+  function useRemoteCounts(store) {
+    const { filters, query = "", wishlist = [], sort } = store;
+    const wanted = remoteGrids();
+    const signature = JSON.stringify([filters, query, filters.wishlist ? wishlist : 0]);
+    const [answer, setAnswer] = useState(null);
+    useEffect(() => {
+      if (!wanted) return void 0;
+      let live = true;
+      const everyCopy = Boolean(filters.platform?.length || query.trim());
+      const view = { filters, query, sort: sort ?? "relevance" };
+      const work = filters.wishlist ? favoriteGames({ filters: { ...filters, ...Object.fromEntries(FACETS.map((facet) => [facet.key, []])) }, query: "", sort: "relevance", wishlist, everyCopy: true }).then((cards) => {
+        if (!cards) return null;
+        const counts = Object.fromEntries(FACETS.map((facet) => [facet.key, listCounts(cards, store, facet)]));
+        return favoriteGames({ filters, query, sort: "relevance", wishlist, everyCopy }).then((list) => list && { counts, total: list.length });
+      }) : Promise.all([remoteCatalog().options(view), remoteCatalog().page(view, 0)]).then(([options, page]) => options && page && {
+        counts: Object.fromEntries(FACETS.map((facet) => [facet.key, Object.fromEntries((options.counts?.[facet.key] ?? []).map(({ value, count }) => [value, count]))])),
+        total: page.total
+      });
+      work.then((result) => {
+        if (live && result) setAnswer({ signature, ...result });
+      });
+      return () => {
+        live = false;
+      };
+    }, [wanted, signature]);
+    if (!wanted) return null;
+    return answer?.signature === signature ? answer : { counts: {}, total: answer?.total ?? 0, loading: true };
+  }
   var PILL_LIMIT = 12;
   function TileFace({ facet, value, label, count, active: active2 }) {
     const t2 = useT();
@@ -70,11 +103,11 @@ import { colors, radius } from '../ui/colors.js';
       /* @__PURE__ */ (0, jsx)(Text, { style: focused ? { fontFamily: "Exo2", fontSize: 21, color: colors.fg, lineHeight: 30 } : { fontFamily: "Exo2", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("filters.clearFacet") })
     ] });
   }
-  function Facet({ facet, store, autoFocus }) {
+  function Facet({ facet, store, autoFocus, remote }) {
     const t2 = useT();
     const [expanded, setExpanded] = (0, useState)(false);
     const { focusLater } = useNavActions();
-    const counts = facetCounts(store, facet);
+    const counts = remote ? remote.counts[facet.key] ?? {} : facetCounts(store, facet);
     const picked = store.filters[facet.key];
     const tiles = facet.options.length <= TILE_LIMIT;
     const folded = !tiles && !expanded && facet.options.length > PILL_LIMIT;
@@ -97,7 +130,7 @@ import { colors, radius } from '../ui/colors.js';
             facet: facet.key,
             value,
             label: optionLabel(option),
-            count: counts[value],
+            count: counts[value] ?? 0,
             active: picked.includes(value),
             onPress: () => store.toggleFilter(facet.key, value),
             focusKey: index === 0 ? `filters:${facet.key}` : `filters:${facet.key}:${value}`,
@@ -120,7 +153,8 @@ import { colors, radius } from '../ui/colors.js';
     const { filters, clearFilters } = store;
     const { focusLater } = useNavActions();
     const count = activeCount(filters);
-    const total = (filters.platform?.length || store.query?.trim() ? filterGames(store) : oneEach(filterGames(store))).length;
+    const remote = useRemoteCounts(store);
+    const total = remote ? remote.total : (filters.platform?.length || store.query?.trim() ? filterGames(store) : oneEach(filterGames(store))).length;
     const opened = (0, useRef)(JSON.stringify(filters));
     const close = () => {
       if (JSON.stringify(filters) !== opened.current) focusLater("catalog:filters");
@@ -137,7 +171,7 @@ import { colors, radius } from '../ui/colors.js';
           /* @__PURE__ */ (0, jsx)(Text, { style: { fontFamily: "Exo2", fontSize: 21, color: colors.muted, lineHeight: 30 }, children: t2("catalog.gameCount", { count: total }) })
         ] }),
         /* @__PURE__ */ (0, jsxs)(ScrollView, { style: { marginHorizontal: -24, flex: 1, paddingHorizontal: 24 }, children: [
-          FACETS.map((facet, index) => /* @__PURE__ */ (0, jsx)(Facet, { facet, store, autoFocus: index === 0 }, facet.key)),
+          FACETS.map((facet, index) => /* @__PURE__ */ (0, jsx)(Facet, { facet, store, remote, autoFocus: index === 0 }, facet.key)),
           /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 18, paddingBottom: 36, paddingTop: 30 }, children: [
             count > 0 && /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", size: "lg", label: t2("filters.clearAll"), onPress: () => {
               clearFilters();

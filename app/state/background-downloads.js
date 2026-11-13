@@ -90,11 +90,13 @@ import { setPairingSource } from './device-pairing.js';
   // glibren.49: 33, a atualizacao propria assinada do payload (GET/POST /self-update; "minAppApi" e "replace" no /health).
   // glibren.50: 34, o pareamento por aparelho (GET /pair, POST /pair/remove|pin, "pairText" no POST /config; bg_pair.c).
   // glibren.51: 35, as configuracoes no payload (GET/POST /settings; "settings"/"settingsRev"/"settingsStore" no /health).
-  var PAYLOAD_API = 36;
+  // glibren.54: 37, a Fase 4 (a TV pede as paginas da loja: /api/catalog/cards, cartas com metacritic/providers/platforms,
+  // arte na pagina inicial; state/catalog-remote.js exige 37 para o caminho remoto).
+  var PAYLOAD_API = 37;
   // glibren.49 (Fase 2): a versao do bg-downloader.elf embutido neste app (BG_VERSION em app/native/bg_downloader.c; o
   // tests/bg-self-update.test.mjs confere que sao iguais). Vai em <stateDir>/app.json junto com PAYLOAD_API: o payload
   // so usa um baixado MAIS NOVO que este e compativel com esta API (contrato em app/native/bg_self.c).
-  var BG_EMBEDDED_VERSION = "1.36.1";
+  var BG_EMBEDDED_VERSION = "1.37.0";
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 

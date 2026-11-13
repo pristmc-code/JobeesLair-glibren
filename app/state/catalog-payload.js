@@ -14,10 +14,10 @@ import { FileSystem, Platform } from '@ps5-react/core';
 import { DATA_DIR } from './data-dir.js';
 import { VERSION } from '../version.js';
 import { COVER_WIDTH } from '../data/catalog-index.js';
-import { catalogSources } from './catalog.js';
+import { catalogSources, isRemoteCatalog } from './catalog.js';
 import { feedsSnapshot, subscribeFeeds } from './feeds.js';
 import { ORBIT_FEED, onOrbitFeed, orbitFeedOn } from './orbit-feed.js';
-import { sourceShown, subscribeStore } from './store-mode.js';
+import { hiddenSources, sourceShown, subscribeStore } from './store-mode.js';
 import { deviceFacts } from './device.js';
 import { PS4 } from './ps4.js';
 
@@ -31,7 +31,9 @@ import { PS4 } from './ps4.js';
   function catalogConfig() {
     let hidden = [];
     try {
-      hidden = catalogSources().map((source) => source.id).filter((id) => !sourceShown(id));
+      // Fase 4: com a loja aberta pelo payload o app nao conhece os catalogos (catalogSources vazio): os escondidos das
+      // configuracoes, como estao.
+      hidden = isRemoteCatalog() ? hiddenSources() : catalogSources().map((source) => source.id).filter((id) => !sourceShown(id));
     } catch {
     }
     let feeds = [];

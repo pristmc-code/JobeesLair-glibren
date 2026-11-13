@@ -13,7 +13,7 @@
 
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useState } from 'react';
-import { AppRegistry, FocusScope, Platform, ReleaseImages, View, motion } from '@ps5-react/core';
+import { AppRegistry, FileSystem, FocusScope, Http, Platform, ReleaseImages, View, motion } from '@ps5-react/core';
 // First of the app's own imports: the earlier version's files are carried over before any module reads one.
 import { migrationLog } from './state/title-migration-run.js';
 // Second: light motion on the PS4 is set before anything animates.
@@ -26,11 +26,11 @@ import { HomebrewScreen } from './homebrew/HomebrewScreen.jsx';
 import { HomebrewApp } from './homebrew/HomebrewApp.jsx';
 import { SettingsScreen } from './ui/Settings.jsx';
 import { startHomebrewRefresh } from './state/homebrew-store.js';
-import { GameScreen } from './game/index.jsx';
+import { GameRoute } from './game/index.jsx';
 import { LocaleProvider, useLocale } from './i18n/index.js';
 import { SearchScreen } from './search/index.jsx';
 import { TubeScreen } from './tube/TubeScreen.jsx';
-import { getGame, hurryCatalog, isCatalogReady, warmCovers, whenCatalogReady } from './state/catalog.js';
+import { getGame, hurryCatalog, isCatalogReady, isRemoteCatalog, warmCovers, whenCatalogReady } from './state/catalog.js';
 import { startStoreExport } from './state/store-export.js';
 import { startCatalogPayload } from './state/catalog-payload.js';
 import { refreshFeeds } from './state/feeds.js';
@@ -85,11 +85,12 @@ import { useInterfaceSounds } from './ui/sounds.js';
 import './state/picture-route.js';
 import { takeStartStack } from './state/return-screen-run.js';
 import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
+import { beginRemoteStore } from './state/remote-store.js';
 
   function Screen({ screen: screen2 }) {
     const { openGame, pop, push } = useNavActions();
     const openCard = (game) => openGame(game.id, `card:${game.id}`);
-    if (screen2.name === "game") return /* @__PURE__ */ (0, jsx)(GameScreen, { game: getGame(screen2.id), download: screen2.download, onBack: pop, onOpenGame: openCard });
+    if (screen2.name === "game") return /* @__PURE__ */ (0, jsx)(GameRoute, { id: screen2.id, download: screen2.download, onBack: pop, onOpenGame: openCard });
     if (screen2.name === "downloads") return /* @__PURE__ */ (0, jsx)(DownloadsScreen, { onBack: pop, onOpenGame: openGame });
     // The Files section opens on the library (the games); its files are one level down ("storage").
     if (screen2.name === "files") return /* @__PURE__ */ (0, jsx)(LibraryScreen, { onBack: pop, onOpenGame: openGame });
@@ -136,6 +137,10 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
   // After the covers warm: a feed's new copy is only read at the next launch, so nothing here waits on it.
   var FEEDS_DELAY_MS = 8e3;
   var STORE_EXPORT_DELAY_MS = 2e4;
+  // Fase 4: no PS5 a loja abre com o catalogo do payload quando ele esta no ar (state/remote-store.js); senao (ou se ele
+  // cair depois) e montada aqui como antes. Chamado ao carregar o modulo: a montagem local comeca no proximo quadro e fica
+  // segura ate a resposta.
+  if (!HOMEBREW_ONLY) void beginRemoteStore({ http: Http, fs: FileSystem, platform: Platform.OS });
   function App() {
     useInterfaceSounds();
     useInterfaceHaptics();
@@ -150,7 +155,9 @@ import { advertiseTube, takeTubeStartStack } from './state/tube-request-run.js';
       // glibren.20: e a lista Orbit Store: a opcao vai ao payload, e uma lista parada avisa (uma vez por problema).
       const id = setTimeout(() => {
         startOrbitFeed(tNow);
-        void refreshFeeds();
+        // Fase 4: com a loja aberta pelo catalogo do payload, quem baixa os feeds e o payload (bg_catalog_api.c feeds_loop);
+        // o app nao baixa nem le os dele nesta abertura (a copia do app fica para quando ele montar a loja de novo).
+        if (!isRemoteCatalog()) void refreshFeeds();
       }, FEEDS_DELAY_MS);
       return () => clearTimeout(id);
     }, []);

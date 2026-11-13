@@ -19,7 +19,7 @@
 // MODIFIED (glibren.47): the bundled releases and pages come from two pack files read one item at a time
 // (state/data-pack.js, tools/catalog/data-pack.mjs), not 4,188 small files: the image is ~275 MB smaller.
 
-import { CATALOG_PACED, catalogLoad, coverSize, features, games, indexSteps, twins } from '../data/catalog-index.js';
+import { CATALOG_HELD, CATALOG_PACED, catalogLoad, coverSize, features, games, indexSteps, twins } from '../data/catalog-index.js';
 import { formats as bundledFormats } from '../data/formats.js';
 import { formatDate2, t } from '../i18n/core.js';
 import { createPageCache } from './page-cache.js';
@@ -308,6 +308,8 @@ import { memorySample } from './memory-meter.js';
     yield* facetSteps();
   }
   function editionsOf(game) {
+    // Fase 4: um jogo do catalogo do payload (state/catalog-remote.js) traz as edicoes da ficha ({id, platform, listed}).
+    if (game.remote) return (game.editionList ?? [game]).map((edition2) => edition2.id === game.id ? game : getGame(edition2.id) ?? { ...edition2, titleId: edition2.id, remote: true, stub: true });
     return [...editionsByWork.get(game.work) ?? [game]].sort((a, b) => b.platform.localeCompare(a.platform) || Number(listed.has(b)) - Number(listed.has(a)) || a.titleId.localeCompare(b.titleId));
   }
   /** The catalog's games and where they come from, for the TorBox library: [{ game, sources }], other editions too. */
@@ -324,11 +326,17 @@ import { memorySample } from './memory-meter.js';
     pools.clear();
     countsKept.clear();
     relatedCache.clear();
-    genres = [...new Set(games.flatMap((game) => game.genres))].sort();
+    // Fase 4: com a loja aberta pelo payload os generos sao os dele (openRemoteStore).
+    if (!remoteActive) genres = [...new Set(games.flatMap((game) => game.genres))].sort();
     memorySample("loja:trocar");
   }
 
-  var getGame = (id) => byId.get(id);
+  // Fase 4: sem a loja montada aqui, o que o catalogo do payload ja mandou (cartas e fichas guardadas, state/catalog-remote.js).
+  var remoteLookup = null;
+  var setRemoteLookup = (fn) => {
+    remoteLookup = fn;
+  };
+  var getGame = (id) => byId.get(id) ?? (remoteLookup ? remoteLookup(id) : void 0);
   function listedId(id) {
     const game = byId.get(id);
     if (!game || listed.has(game)) return id;
@@ -541,6 +549,18 @@ import { memorySample } from './memory-meter.js';
     return result;
   }
   var filterGames = (state) => matching(state);
+  /** Fase 4: os filtros sobre uma lista dada (os Favoritos vindos do payload), sem guardar nada. */
+  function filterList(list, { filters, query = "", wishlist = [] }) {
+    const q = query.trim().toLowerCase();
+    return list.filter((game) => (!q || searchText(game).includes(q)) && FACETS.every((facet) => passes(game, facet, filters[facet.key])) && (!filters.wishlist || wishlist.includes(game.id)));
+  }
+  /** Fase 4: as contagens de um filtro sobre uma lista dada (o facetCounts dos Favoritos vindos do payload). */
+  function listCounts(list, state, facet) {
+    const { filters, query = "", wishlist = [] } = state;
+    const q = query.trim().toLowerCase();
+    const pool = list.filter((game) => (!q || searchText(game).includes(q)) && FACETS.every((other) => facet.any && other === facet || passes(game, other, filters[other.key])) && (!filters.wishlist || wishlist.includes(game.id)));
+    return Object.fromEntries(facet.options.map(({ value }) => [value, pool.filter((game) => facet.has(game, value)).length]));
+  }
   function facetCounts(state, facet) {
     const kept = countsKept.get(facet.key);
     if (sameInputs(kept, state)) return kept.result;
@@ -549,13 +569,15 @@ import { memorySample } from './memory-meter.js';
     countsKept.set(facet.key, { filters: state.filters, query: state.query, wishlist: state.wishlist, result });
     return result;
   }
-  var summaryOf = (game) => game.about.find((text) => text.length > 80 && text !== text.toUpperCase()) ?? game.shortDescription;
+  var summaryOf = (game) => game.remote && game.summary != null ? game.summary : (game.about ?? []).find((text) => text.length > 80 && text !== text.toUpperCase()) ?? game.shortDescription;
   // The games sharing the most genres with `game`, then the most recommended; ties keep catalog order. One
   // pass that keeps only the best `limit` (the whole catalog was sorted with the shared count worked out in
   // the comparator), remembered per game: the list is complete once this module has loaded, and the game
   // page asks on every render.
   var relatedCache = /* @__PURE__ */ new Map();
   function relatedGames(game, limit = 6) {
+    // Fase 4: a ficha do payload ja traz os relacionados (ct_related_list, a mesma regra).
+    if (game.remote) return (game.related ?? []).slice(0, limit);
     const key = `${game.id}\n${limit}`;
     const known = relatedCache.get(key);
     if (known) return known;
@@ -621,19 +643,73 @@ import { memorySample } from './memory-meter.js';
     if (took > stats.longest) stats.longest = took;
     return over;
   }
-  function built() {
+  // Fase 4: com o catalogo do payload no ar (state/catalog-remote.js), a loja abre sem montar nada aqui: index.jsx segura a
+  // montagem (holdCatalogBuild) antes do primeiro quadro, e depois ou libera a loja com o payload (openRemoteStore) ou monta
+  // como antes (startCatalogBuild). Precisou da loja inteira depois (loja TorBox, payload caiu): startCatalogBuild e, ao
+  // terminar, os onLocalCatalog (store-mode.js refaz as linhas e a loja e montada de novo).
+  var held = CATALOG_HELD;
+  var buildStarted = false;
+  var localBuilt = false;
+  var remoteActive = false;
+  var localWaiters = [];
+  /** Fase 4: segura a montagem (chamar antes do primeiro quadro; no console a montagem comeca num timer). */
+  function holdCatalogBuild() {
+    if (!buildStarted) held = true;
+  }
+  var isRemoteCatalog = () => remoteActive;
+  var isLocalCatalogBuilt = () => localBuilt;
+  /** Fase 4: `fn(late)` quando a loja montada aqui fica pronta (late: a loja ja tinha aberto com o payload). */
+  function onLocalCatalog(fn) {
+    localWaiters.push(fn);
+  }
+  // Quem desliga o catalogo do payload (state/remote-store.js), para quem precisa da loja inteira aqui.
+  var localDisabler = null;
+  var setLocalDisabler = (fn) => {
+    localDisabler = fn;
+  };
+  /**
+   * Fase 4: o que so funciona com a loja inteira aqui (a Biblioteca TorBox, a loja TorBox, a lista de catalogos das
+   * Configuracoes) chama isto: com o payload no ar, ele e desligado nesta abertura e a loja e montada aqui. -> a promessa
+   * de quando ela estiver pronta (na hora, se ja esta).
+   */
+  function ensureLocalCatalog(reason = "local") {
+    if (localBuilt) return Promise.resolve();
+    return new Promise((resolve) => {
+      localWaiters.push(() => resolve());
+      if (remoteActive && localDisabler) localDisabler(reason);
+      else startCatalogBuild();
+    });
+  }
+  function release(paced) {
     ready = true;
-    stats.frames = pace.slowest();
-    console.log(`[catalog] built: ${entries.length} games in ${stats.steps} part(s)${CATALOG_PACED ? `, the slowest frame ${pace.slowest()} ms` : ""}; work ${stats.total} ms, the longest part ${stats.longest} ms, the slowest step ${stats.slowest.ms} ms in ${stats.slowest.phase || "-"} (${Object.entries(stats.phases).map(([name, ms]) => `${name} ${ms}`).join(", ")})`);
     for (const fn of waiters.splice(0)) {
       try {
-        fn(CATALOG_PACED);
+        fn(paced);
       } catch (error) {
         console.log(`[catalog] after the build: ${error?.message || error}`);
       }
     }
   }
-  {
+  function built() {
+    localBuilt = true;
+    stats.frames = pace.slowest();
+    console.log(`[catalog] built: ${entries.length} games in ${stats.steps} part(s)${CATALOG_PACED ? `, the slowest frame ${pace.slowest()} ms` : ""}; work ${stats.total} ms, the longest part ${stats.longest} ms, the slowest step ${stats.slowest.ms} ms in ${stats.slowest.phase || "-"} (${Object.entries(stats.phases).map(([name, ms]) => `${name} ${ms}`).join(", ")})`);
+    const late = ready;
+    remoteActive = false;
+    if (!late) release(CATALOG_PACED);
+    for (const fn of localWaiters.splice(0)) {
+      try {
+        fn(late);
+      } catch (error) {
+        console.log(`[catalog] after the late build: ${error?.message || error}`);
+      }
+    }
+  }
+  /** Monta a loja aqui (uma vez): no console em partes, um quadro de cada vez; fora dele de uma vez. */
+  function startCatalogBuild() {
+    held = false;
+    if (buildStarted) return;
+    buildStarted = true;
     const steps = buildSteps();
     if (!CATALOG_PACED) {
       runPart(steps, Infinity);
@@ -654,5 +730,35 @@ import { memorySample } from './memory-meter.js';
       setTimeout(part, 0);
     }
   }
+  /**
+   * Fase 4: a loja abre com o catalogo do payload: as opcoes dos filtros vem dele (`options`: a resposta do
+   * GET /api/catalog/options) e nada e montado aqui. -> false quando a loja ja abriu (montada aqui).
+   */
+  function openRemoteStore(options) {
+    if (buildStarted || ready) return false;
+    remoteActive = true;
+    const take = (key) => Array.isArray(options?.[key]) ? options[key] : [];
+    hosts.splice(0, hosts.length, ...take("provider").map((value) => ({ value, name: HOST_NAMES[value] ?? value })));
+    genres = [...take("genre")].sort();
+    for (const facet of FACETS) {
+      if (!facet.optionsOf) continue;
+      const values = take(facet.key);
+      let list;
+      if (facet.key === "format") list = values.map((value) => value === "ready" ? { value: "ready", label: "release.compat.ready", name: "13.60 Ready" } : { value, label: `release.type.${value}`, name: value });
+      else if (facet.key === "genre" || facet.key === "feature") list = named(values, facet.key);
+      else continue;
+      facet.options.splice(0, facet.options.length, ...list);
+    }
+    features.splice(0, features.length, ...take("feature"));
+    memorySample("loja:payload");
+    release(true);
+    return true;
+  }
+  // Sem ninguem segurar: como antes (no console, a montagem comeca no proximo quadro; index.jsx pode segurar ate la).
+  if (!CATALOG_PACED) {
+    if (!held) startCatalogBuild();
+  } else setTimeout(() => {
+    if (!held) startCatalogBuild();
+  }, 0);
 
-export { BUNDLED, catalogBuildStats, catalogReady, hurryCatalog, isCatalogReady, whenCatalogReady, allListed, catalogEntries, catalogSources, sourcesOfGame, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };
+export { ensureLocalCatalog, setLocalDisabler, filterList, holdCatalogBuild, isLocalCatalogBuilt, isRemoteCatalog, listCounts, onLocalCatalog, setRemoteLookup, startCatalogBuild, openRemoteStore, BUNDLED, catalogBuildStats, catalogReady, hurryCatalog, isCatalogReady, whenCatalogReady, allListed, catalogEntries, catalogSources, sourcesOfGame, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };

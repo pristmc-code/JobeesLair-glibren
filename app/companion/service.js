@@ -27,7 +27,7 @@
 
 import { useEffect, useState } from 'react';
 import { describeSource } from '../game/sources.js';
-import { filterGames, getGame, NO_FILTERS, sortGames } from '../state/catalog.js';
+import { ensureLocalCatalog, filterGames, getGame, isRemoteCatalog, NO_FILTERS, sortGames } from '../state/catalog.js';
 import { COMPLETE } from '../state/download-queue.js';
 import { downloadQueue, driveName } from '../state/downloads.js';
 import { driveSnapshot, refreshDrives } from '../state/drives.js';
@@ -63,7 +63,15 @@ import { createLive } from './live.js';
   // What the companion reads and does on the console: api.js answers phones from it and builds the live events.
   var deps = {
     catalog: {
-      search: (query) => sortGames(filterGames({ filters: NO_FILTERS, query, wishlist: [] }), "relevance"),
+      // Fase 4: a busca do companheiro le a loja inteira: com a loja aberta pelo payload, ela passa a ser montada aqui
+      // (a primeira busca volta vazia).
+      search: (query) => {
+        if (isRemoteCatalog()) {
+          void ensureLocalCatalog("companion");
+          return [];
+        }
+        return sortGames(filterGames({ filters: NO_FILTERS, query, wishlist: [] }), "relevance");
+      },
       getGame
     },
     describe: describeSource,

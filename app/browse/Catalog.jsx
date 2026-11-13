@@ -12,6 +12,7 @@ import { useLocale, useT } from '../i18n/index.js';
 import { games } from '../data/catalog-index.js';
 import { activeCount, filterGames, oneEach, sortGames } from '../state/catalog.js';
 import { onStoreMode } from '../state/store-mode.js';
+import { useRemoteGrid } from './useRemoteGrid.js';
 import { useNavActions } from '../state/nav.jsx';
 import { useStore } from '../state/store.jsx';
 import { ButtonGlyph } from '../ui/ButtonHints.jsx';
@@ -61,8 +62,9 @@ import { colors, radius } from '../ui/colors.js';
     if (!list) bySort.set(key, list = everyCopy ? sortGames(pool, sort) : oneEach(sortGames(pool, sort)));
     return list;
   }
-  var sameGrid = (a, b) => a.signature === b.signature && a.enter === b.enter && a.games.length === b.games.length && a.games.every((game, i) => game === b.games[i]);
-  var Grid = (0, memo)(function Grid2({ games: games2, enter: enter3 }) {
+  var sameGrid = (a, b) => a.signature === b.signature && a.enter === b.enter && a.onMore === b.onMore && a.games.length === b.games.length && a.games.every((game, i) => game === b.games[i]);
+  // Fase 4: `onMore` = a grade vem do payload (browse/useRemoteGrid.js) e pede a proxima pagina quando chega ao fim.
+  var Grid = (0, memo)(function Grid2({ games: games2, enter: enter3, onMore }) {
     const { openGame } = useNavActions();
     const [limit, setLimit] = (0, useState)(BATCH);
     const [filled, setFilled] = (0, useState)(STEP);
@@ -103,7 +105,10 @@ import { colors, radius } from '../ui/colors.js';
         columnGap: 24,
         initialNumRows: 3,
         keyExtractor: (game) => game.id,
-        onEndReached: () => setLimit((count) => count + BATCH),
+        onEndReached: () => {
+          setLimit((count) => count + BATCH);
+          if (onMore) onMore();
+        },
         renderItem
       }
     );
@@ -123,12 +128,16 @@ import { colors, radius } from '../ui/colors.js';
     const { rtl } = useLocale();
     const store = useStore();
     const { filters, query } = store;
-    const results = (0, useMemo)(
+    // Fase 4: com o catalogo do payload no ar, a grade vem dele, pagina por pagina; senao (ou se ele falhar), a de antes.
+    const remote = useRemoteGrid({ filters, query, sort: store.sort, wishlist: store.wishlist });
+    const local = (0, useMemo)(
       // 0.5.1: a game once, unless a platform is picked (then that platform's edition is the one wanted) or a
       // search is typed (search lists every copy).
-      () => gridOf(activeCount(filters) === 0 && !query.trim() ? games : filterGames(store), store.sort, Boolean(filters.platform?.length || query.trim())),
-      [filters, query, store.wishlist, store.sort]
+      () => remote ? null : gridOf(activeCount(filters) === 0 && !query.trim() ? games : filterGames(store), store.sort, Boolean(filters.platform?.length || query.trim())),
+      [remote === null, filters, query, store.wishlist, store.sort]
     );
+    const results = remote ? remote.games : local;
+    const total = remote ? remote.total : local.length;
     const settled = (0, useRef)(false);
     (0, useEffect)(() => {
       settled.current = true;
@@ -144,7 +153,7 @@ import { colors, radius } from '../ui/colors.js';
     return /* @__PURE__ */ (0, jsx)(FocusScope, { restoreFocus: false, onAction, children: /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, children: [
       /* @__PURE__ */ (0, jsxs)(Text, { style: { fontFamily: "Exo2", fontSize: 30, fontWeight: 600, color: colors.fg, lineHeight: 42, letterSpacing: 0.4 }, children: [
         fitBytes(title, SPAN_MAX),
-        /* @__PURE__ */ (0, jsx)(Text, { style: { fontWeight: 400, color: colors.subtle }, children: fitBytes(`  ${t2("catalog.gameCount", { count: results.length })}`, SPAN_MAX) })
+        /* @__PURE__ */ (0, jsx)(Text, { style: { fontWeight: 400, color: colors.subtle }, children: fitBytes(`  ${t2("catalog.gameCount", { count: total })}`, SPAN_MAX) })
       ] }),
       /* @__PURE__ */ (0, jsxs)(View, { style: { zIndex: 10, marginTop: 24, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 }, children: [
         /* @__PURE__ */ (0, jsx)(View, { focusKey: "catalog:filters", onPress: onOpenFilters, style: (_state) => [
@@ -155,7 +164,7 @@ import { colors, radius } from '../ui/colors.js';
         /* @__PURE__ */ (0, jsx)(SortSelect, {}),
         /* @__PURE__ */ (0, jsx)(ActiveFilters, {})
       ] }),
-      results.length > 0 ? /* @__PURE__ */ (0, jsx)(Grid, { games: results, signature, enter: settled.current }, signature) : /* @__PURE__ */ (0, jsx)(
+      remote?.loading ? null : results.length > 0 ? /* @__PURE__ */ (0, jsx)(Grid, { games: results, signature, enter: settled.current, onMore: remote?.more }, signature) : /* @__PURE__ */ (0, jsx)(
         EmptyState,
         {
           query,

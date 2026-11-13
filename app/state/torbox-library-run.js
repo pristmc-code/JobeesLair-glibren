@@ -4,7 +4,7 @@
 // deixa a rodada aberta para continuar depois.
 
 import { useEffect, useState } from 'react';
-import { BUNDLED, catalogEntries, catalogSources } from './catalog.js';
+import { BUNDLED, catalogEntries, catalogSources, ensureLocalCatalog, isRemoteCatalog } from './catalog.js';
 import { DATA_DIR } from './data-dir.js';
 import { cancellation } from './download-sources.js';
 import { torBoxApi } from './debrid.js';
@@ -44,6 +44,8 @@ import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
   var kept = null;
   function librarySummary() {
     if (kept) return kept;
+    // Fase 4: sem a loja montada aqui o resumo sairia vazio; ele e feito quando ela estiver (startLibrary/librarySources).
+    if (isRemoteCatalog()) return { builtAt: null, games: 0, confirmed: 0, broken: 0, unchecked: 0, open: null };
     try {
       kept = summarize(readLibrary(FileSystem, paths()), catalogEntries());
       return kept;
@@ -60,6 +62,11 @@ import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
   }
   /** As fontes que o jogador pode escolher: o catálogo embutido, o ao vivo e cada feed incluído, com seus jogos. */
   function librarySources() {
+    // Fase 4: a lista dos catalogos e do app: com a loja aberta pelo payload, ela passa a ser montada aqui.
+    if (isRemoteCatalog()) {
+      void ensureLocalCatalog("torbox-library");
+      return [];
+    }
     return catalogSources().map(({ id, count }) => ({ id, count, kind: id === BUNDLED ? "bundled" : id === LIVE_FEED ? "live" : "feed", name: id === BUNDLED || id === LIVE_FEED ? null : feedName(id) ?? id }));
   }
   /**
@@ -68,6 +75,9 @@ import { DeviceInfo, FileSystem, Platform } from '@ps5-react/core';
    */
   function startLibrary({ sources = null, fresh = false, onlyNew = false } = {}) {
     if (current) return current.promise;
+    // Fase 4: a montagem casa os jogos do catalogo inteiro (catalogEntries): com a loja aberta pelo payload, ela e montada
+    // aqui antes (e o catalogo do payload fica de lado nesta abertura).
+    if (isRemoteCatalog()) return ensureLocalCatalog("torbox-library").then(() => startLibrary({ sources, fresh, onlyNew }));
     // O motor JS do console não tem AbortController: o sinal de cancelamento é o do app (download-sources.js).
     const controller = cancellation();
     const where = paths();
