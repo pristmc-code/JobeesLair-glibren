@@ -321,6 +321,13 @@ consoles read directly; `npm run homebrew:pull` refreshes the copy shipped in th
 before a release. The same repository is the home of **Jobee'sLair Homebrew**, the Homebrew section built on its
 own (`packaging/homebrew-edition.sh`, title `PPSA99472`), which installs beside the store.
 
+Since glibren.48 the section also lists the [PS5 Homebrew Catalog](https://github.com/darkxex/ps5-homebrew-catalog)
+by darkxex (GPL-3.0-or-later; https://prosperostore.net), read live from its `catalog/v1.json` feed and joined to the
+list above (one entry per app, the newer version, "darkxex" on its card). Before installing one of its files the app
+checks it against the catalog's signed API (`api/v1/manifest.json` + `manifest.sig`, Ed25519) and the native download
+checks the file's SHA-256. Only the catalog's data is used, none of its code. Settings > Catalog feeds > Homebrew turns
+it off.
+
 To publish: raise the version in `app/version.js`, build, test the image on a console, then publish a
 release tagged with the same version (`v0.5.0`). Attach `JobeesLair.exfat` and `update.zip`
 (`ps5-react/dist/PPSA99471.zip` renamed) so installed copies can update themselves.
@@ -333,6 +340,8 @@ release tagged with the same version (`v0.5.0`). Attach `JobeesLair.exfat` and `
 - **drakmor** ([ShadowMount+](https://github.com/drakmor/ShadowMountPlus))
 - **nexgen999** ([PS5 Repository List](https://github.com/nexgen999/PS5-Repository-List)): the Homebrew section's
   list comes from it, with their permission, and grows with it
+- **darkxex** and the catalog's maintainers ([PS5 Homebrew Catalog](https://github.com/darkxex/ps5-homebrew-catalog),
+  GPL-3.0-or-later): the Homebrew section's second list (data only)
 - **Every homebrew developer** whose work the Homebrew section lists
 - **PS5 React — created by half144 and PS5 React contributors.**
   The original repository is gone; the framework continues at

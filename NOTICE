@@ -9,3 +9,8 @@ Store by saawant12 (GPL-3.0-or-later). Each of those files says where.
 The app switch of the background payload (app/native/bg_downloader.c, POST /switch) reads the kernel message buffer
 (kern.msgbuf) for SetControllerFocus/VideoOut lines to know when the old app left the foreground. The idea comes from
 ps-game-state-lib by StonedModder (https://github.com/StonedModder/ps-game-state-lib, MIT License); the code is our own.
+
+The Homebrew section's second list is the PS5 Homebrew Catalog by darkxex and its maintainers
+(https://github.com/darkxex/ps5-homebrew-catalog, GPL-3.0-or-later; https://prosperostore.net). The app reads its
+published data (titles, links, SHA-256 and the signed API); no code of the catalog is included. tests/fixtures/darkxex
+holds a few of its records as published on 13/11/2026, for the tests.

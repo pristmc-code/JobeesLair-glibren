@@ -6,6 +6,9 @@
 // stopped at the buttons before), and it grows with its content instead of cutting wrapped buttons off; a
 // "Homebrew › category" trail and the section's own color (palette.js).
 // MODIFIED (0.5.3): the facts' names in the player's language (they were always English).
+// MODIFIED (glibren.48): the list the app came from (the Jobe's, the darkxex catalog, or both) in the tags and the facts;
+// an app sharing its title ID with another says so; one whose file the Jobe cannot install yet says "Not supported yet"
+// instead of Install. Those texts wrap (no ellipsis).
 
 import '../assets/Exo2.ttf';
 import '../assets/JetBrainsMono-Regular.ttf';
@@ -58,6 +61,7 @@ import { AnimatePresence, FocusScope, Image, Linking, Platform, ScrollView, Text
   }
   // What the app's file does once installed, in one line: the reason to read before installing.
   function whatItDoes(t2, app, file) {
+    if (!file) return t2("homebrew.unsupportedDetail");
     const role = roleOf(file);
     if (role === "app") return t2("homebrew.does.app");
     if (role === "payload") return t2("homebrew.does.payload");
@@ -129,11 +133,14 @@ import { AnimatePresence, FocusScope, Image, Linking, Platform, ScrollView, Text
     const buttons = [];
     if (task) {
       const percent = task.total ? Math.min(100, Math.floor(task.written / task.total * 100)) : null;
-      const text = task.phase === "waiting" ? t2(task.waitFor === "unpack" ? "homebrew.phase.waitingUnpack" : "homebrew.phase.waiting") : task.phase === "downloading" ? t2("homebrew.phase.downloading", { percent: percent ?? 0 }) : task.phase === "extracting" ? t2("homebrew.phase.extracting") : t2("homebrew.phase.installing");
+      const text = task.phase === "waiting" ? t2(task.waitFor === "unpack" ? "homebrew.phase.waitingUnpack" : "homebrew.phase.waiting") : task.phase === "checking" ? t2("homebrew.phase.checking") : task.phase === "downloading" ? t2("homebrew.phase.downloading", { percent: percent ?? 0 }) : task.phase === "extracting" ? t2("homebrew.phase.extracting") : t2("homebrew.phase.installing");
       buttons.push(jsx(Button2, { focusKey: "hb:install", variant: "primary", tint: hbTint(), size: "lg", label: text, icon: "download", onPress: () => {} }, "main"));
       buttons.push(jsx(Button2, { focusKey: "hb:cancel", variant: "outline", size: "lg", label: t2("homebrew.cancel"), icon: "x", onPress: () => store.cancel(app.id) }, "cancel"));
     } else if (status.update) {
       buttons.push(jsx(Button2, { focusKey: "hb:install", variant: "primary", tint: hbTint(), size: "lg", label: t2("homebrew.updateTo", { version: app.release.tag }), icon: "restart", onPress: () => install(status.record?.file && app.files.some((f) => f.name === status.record.file) ? status.record.file : void 0) }, "main"));
+    } else if (!app.files.length) {
+      // glibren.48: listed, but no file the Jobe installs yet (a darkxex format it does not handle).
+      buttons.push(jsx(Button2, { focusKey: "hb:install", variant: "outline", size: "lg", label: t2("homebrew.unsupported", { format: String(app.unsupported ?? "?").toUpperCase() }), icon: "alert", onPress: () => onMessage({ bad: true, text: t2("homebrew.unsupportedDetail") }) }, "main"));
     } else if (!status.installed) {
       buttons.push(jsx(Button2, { focusKey: "hb:install", variant: "primary", tint: hbTint(), size: "lg", label: status.failed ? t2("homebrew.retry") : t2("homebrew.install"), icon: status.failed ? "restart" : "download", onPress: () => install() }, "main"));
     }
@@ -193,10 +200,12 @@ import { AnimatePresence, FocusScope, Image, Linking, Platform, ScrollView, Text
     const categoryKey = `homebrew.category.${app.category}`;
     const categoryName = t2(categoryKey) === categoryKey ? category?.name ?? "" : t2(categoryKey);
     const tags = [
-      jsx(Tag, { icon: "package", text: t2(`homebrew.kind.${roleOf(app.files[0])}`) }, "kind"),
-      jsx(Tag, { icon: "star", text: String(app.stars) }, "stars"),
-      jsx(Tag, { text: app.release.tag }, "tag")
-    ];
+      jsx(Tag, { icon: "package", text: t2(`homebrew.kind.${app.files[0] ? roleOf(app.files[0]) : "app"}`) }, "kind"),
+      app.stars ? jsx(Tag, { icon: "star", text: String(app.stars) }, "stars") : null,
+      jsx(Tag, { text: app.release.tag }, "tag"),
+      // glibren.48: the list it came from.
+      app.sources?.includes("darkxex") ? jsx(Tag, { icon: "list", text: sourceText(app) }, "source") : null
+    ].filter(Boolean);
     if (app.release.prerelease) tags.push(jsx(Tag, { text: t2("homebrew.prerelease"), tone: "warn" }, "pre"));
     if (status.update) tags.push(jsx(Tag, { icon: "restart", text: t2("homebrew.updateFrom", { version: status.record.tag }), tone: "accent" }, "update"));
     else if (status.record) tags.push(jsx(Tag, { icon: "check", text: t2("homebrew.installedVersion", { version: status.record.tag }) }, "installed"));
@@ -218,6 +227,7 @@ import { AnimatePresence, FocusScope, Image, Linking, Platform, ScrollView, Text
           jsx(Text, { style: { fontFamily: "Exo2", fontSize: 23, lineHeight: 32, color: colors.muted, numberOfLines: 1 }, children: t2("homebrew.by", { author: app.author, repo: app.repo }) }),
           jsx(View, { style: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 6 }, children: tags }),
           jsx(View, { style: { marginTop: 18 }, children: jsx(Actions, { app, status, onFiles, onMessage, onRemove }) }),
+          ...(app.conflicts ?? []).map((name) => jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: "#fbbf24", width: 1100 }, children: t2("homebrew.conflict", { name }) }, `conflict:${name}`)),
           message ? jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: message.bad ? "#fca5a5" : "#86efac", width: 1100 }, children: message.text }) : status.failed ? jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: "#fca5a5", width: 1100 }, children: t2("homebrew.failed", { error: status.failed }) }) : null
         ] })
       ] })
@@ -229,6 +239,7 @@ import { AnimatePresence, FocusScope, Image, Linking, Platform, ScrollView, Text
     const rows = [
       [t2("homebrew.facts.repository"), app.repo],
       [t2("homebrew.facts.license"), app.license || t2("homebrew.noLicense")],
+      [t2("homebrew.facts.source"), sourceText(app)],
       [t2("homebrew.facts.stars"), String(app.stars)],
       [t2("homebrew.facts.release"), app.release.title || app.release.tag],
       [t2("homebrew.facts.released"), when(t2, app.release.date)],
@@ -239,7 +250,8 @@ import { AnimatePresence, FocusScope, Image, Linking, Platform, ScrollView, Text
       jsx(Text, { style: HEADING, children: t2("homebrew.facts") }),
       ...rows.map(([name, value]) => jsxs(View, { style: { gap: 2 }, children: [
         jsx(Text, { style: { fontFamily: "Exo2", fontSize: 18, lineHeight: 26, color: colors.subtle }, children: name }),
-        jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: colors.fg, numberOfLines: 2, ellipsizeMode: "tail" }, children: value })
+        // glibren.48: wraps as long as it needs (a long list name, a long licence), never cut with an ellipsis.
+        jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: colors.fg, width: 432 }, children: value })
       ] }, name)),
       jsx(Text, { style: { marginTop: 18, fontFamily: "Exo2", fontSize: 24, fontWeight: 600, lineHeight: 34, color: colors.fg }, children: t2("homebrew.files") }),
       ...app.files.map((file) => jsxs(View, { style: { gap: 2 }, children: [
@@ -247,6 +259,13 @@ import { AnimatePresence, FocusScope, Image, Linking, Platform, ScrollView, Text
         jsx(Text, { style: MONO, children: `${t2(`homebrew.kind.${roleOf(file)}`)}${file.size ? ` · ${formatBytes(file.size)}` : ""}` })
       ] }, file.name))
     ] });
+  }
+  // glibren.48: the list(s) an app came from, by their names (not translated: they are the lists' own names).
+  function sourceText(app) {
+    const names = [];
+    if (!app.sources || app.sources.includes("jobe")) names.push("Jobe (nexgen999)");
+    if (app.sources?.includes("darkxex")) names.push("darkxex");
+    return names.join(" + ");
   }
   function Paragraphs({ title, text, focusKey }) {
     // 0.5.3: an app's README and release notes are its maker's words (English, mostly): left to right even in a

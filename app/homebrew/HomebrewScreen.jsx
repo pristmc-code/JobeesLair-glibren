@@ -13,13 +13,15 @@
 // search page on homebrew alone (search/index.jsx); the panel this section had of its own is gone. Back from an
 // app's page comes back to the grid, the sort and the tile it was opened from: the section was mounted anew and
 // came back on everything, at the top.
+// MODIFIED (glibren.48): the darkxex catalog (state/darkxex-catalog.js) in the header's credit line and in the credits,
+// with its switch (the same as Settings > Homebrew); both credit texts wrap.
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { GameRail } from '../browse/GameRail.jsx';
 import { LATIN_IN_RTL, latin, useLocale, useT } from '../i18n/index.js';
-import { homebrew, useHomebrew } from '../state/homebrew-store.js';
+import { homebrew, setDarkxexCatalog, useDarkxexCatalog, useHomebrew } from '../state/homebrew-store.js';
 import { usePower } from '../state/power.js';
 import { useNavActions, useNavState } from '../state/nav.jsx';
 import { Button2 } from '../ui/Button.jsx';
@@ -105,7 +107,7 @@ import { FocusScope, Image, ScrollView, Text, View, VirtualList, motion, useFocu
         // The list itself comes from nexgen999's PS5 Repository List (tools/homebrew/build-index.mjs).
         jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 8 }, children: [
           jsx(Icon, { name: "list", size: 14, color: tone.glow }),
-          jsx(Text, { style: { fontFamily: "Exo2", fontSize: 19, lineHeight: 28, color: tone.glow }, children: t2("homebrew.listBy") })
+          jsx(Text, { style: { flex: 1, fontFamily: "Exo2", fontSize: 19, lineHeight: 28, color: tone.glow }, children: t2(homebrew().index.darkxex ? "homebrew.listByBoth" : "homebrew.listBy") })
         ] })
       ] }),
       jsx(View, { focusKey: "hb:search", onPress: onSearch, style: (state) => ({ position: "relative", width: 420, height: 60, flexDirection: "row", alignItems: "center", gap: 14, borderRadius: radius.md, borderWidth: 2, borderColor: state.focused ? tone.hi : colors.line, backgroundColor: state.focused ? colors.surface2 : colors.surface, paddingHorizontal: 24 }), children: jsx(SearchFace, {}) }),
@@ -267,11 +269,29 @@ import { FocusScope, Image, ScrollView, Text, View, VirtualList, motion, useFocu
       ] })
     ] });
   }
+  // glibren.48: the darkxex switch at the bottom of the section (the same setting as Settings > Homebrew).
+  function DarkxexSwitch() {
+    const t2 = useT();
+    const on = useDarkxexCatalog();
+    const tone = hb();
+    const stats = homebrew().index.darkxex;
+    const detail = !on ? t2("settings.darkxexOff") : stats ? t2("settings.darkxexOn", { added: stats.added, duplicates: stats.duplicates }) : t2("settings.darkxexWaiting");
+    return jsxs(View, { focusKey: "hb:darkxex", onPress: () => void setDarkxexCatalog(!on), style: (state) => ({ position: "relative", marginTop: 12, flexDirection: "row", alignItems: "center", gap: 24, borderRadius: radius.md, paddingHorizontal: 20, paddingVertical: 14, backgroundColor: state.focused ? colors.surface2 : "transparent" }), children: [
+      jsx(FocusRing, { round: "md", color: tone.hi }),
+      jsxs(View, { style: { flex: 1, gap: 2 }, children: [
+        jsx(Text, { style: { fontFamily: "Exo2", fontSize: 22, fontWeight: 600, lineHeight: 30, color: colors.fg }, children: t2("settings.darkxex") }),
+        jsx(Text, { style: { fontFamily: "Exo2", fontSize: 19, lineHeight: 28, color: colors.muted }, children: detail })
+      ] }),
+      jsx(View, { style: { width: 76, height: 44, borderRadius: radius.pill, borderWidth: 1, borderColor: on ? tone.hi : colors.line, backgroundColor: on ? tone.accent : colors.surface3 }, children: jsx(View, { style: { position: "absolute", left: on ? 34 : 4, top: 4, width: 34, height: 34, borderRadius: radius.pill, backgroundColor: on ? tone.fg : colors.muted } }) })
+    ] });
+  }
   function Credits() {
     const t2 = useT();
     return jsxs(View, { style: { marginTop: 84, marginHorizontal: -48, borderTopWidth: 2, borderColor: colors.line, paddingHorizontal: 48, paddingVertical: 42, gap: 8 }, children: [
       jsx(Text, { style: { fontFamily: "Exo2", fontSize: 21, lineHeight: 30, color: colors.muted }, children: t2("homebrew.credits") }),
-      jsx(Text, { style: { fontFamily: "Exo2", fontSize: 19, lineHeight: 28, color: colors.subtle }, children: t2("homebrew.creditsList") })
+      jsx(Text, { style: { fontFamily: "Exo2", fontSize: 19, lineHeight: 28, color: colors.subtle }, children: t2("homebrew.creditsList") }),
+      jsx(Text, { style: { fontFamily: "Exo2", fontSize: 19, lineHeight: 28, color: colors.subtle }, children: t2("homebrew.creditsDarkxex") }),
+      jsx(DarkxexSwitch, {})
     ] });
   }
   // ---- The section -------------------------------------------------------------------------------------

@@ -4,6 +4,8 @@
 // MODIFIED (0.5.0 Pre Release 2): focus and the update badge in the section's own color (palette.js).
 // MODIFIED (0.5.4): the focus frame is drawn inside the tile, over its art. Outside it, the engine's cached scale
 // cut it off, so a focused tile showed only its corners and players couldn't tell which one they were on.
+// MODIFIED (glibren.48): an app from the darkxex catalog (state/darkxex-catalog.js) says so on the art's top-right corner;
+// an app with no file the Jobe installs yet (`unsupported`) is still drawn.
 
 import '../assets/Exo2.ttf';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
@@ -57,15 +59,21 @@ import { Text, View, motion, useIsFocused } from '@ps5-react/core';
       jsx(Text, { style: { fontFamily: "Exo2", fontSize: 17, fontWeight: 600, lineHeight: 24, color }, children: label })
     ] });
   }
+  // glibren.48: which list the app came from, when it is the darkxex catalog (alone or with the Jobe's).
+  function SourceBadge({ app }) {
+    if (!app.sources?.includes("darkxex")) return null;
+    return jsx(View, { style: { position: "absolute", right: 12, top: 12, height: 32, justifyContent: "center", borderRadius: radius.sm, backgroundColor: `${colors.canvas}d9`, paddingHorizontal: 10 }, children: jsx(Text, { style: { fontFamily: "Exo2", fontSize: 16, fontWeight: 600, lineHeight: 22, color: hb().glow }, children: "darkxex" }) });
+  }
   function Face({ app }) {
     const t2 = useT();
     const { rtl } = useLocale();
     const focused = useIsFocused();
-    const kind = roleOf(app.files[0]);
+    const kind = app.files[0] ? roleOf(app.files[0]) : "app";
     return jsxs(Fragment, { children: [
       jsxs(motion.View, { initial: false, animate: SCALES ? focused ? lift : rest : { y: focused ? -6 : 0 }, transition: focusMotion, style: { width: TILE, height: TILE }, children: [
         jsx(HomebrewArt, { app, size: TILE }),
         jsx(StatusBadge, { id: app.id }),
+        jsx(SourceBadge, { app }),
         jsx(FocusInset, { radius: radius.lg, color: hb().hi })
       ] }),
       jsxs(View, { style: { marginTop: 14, width: TILE, gap: 2 }, children: [

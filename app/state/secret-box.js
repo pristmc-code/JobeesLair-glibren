@@ -146,4 +146,4 @@ function open(box, secret) {
 /** 64 hex characters derived from `entropy` (random text) and the moment: a new secret. */
 var newSecret = (entropy) => hex(sha256(utf8(`${entropy}|${Date.now()}|${Math.random()}|${Math.random()}`)));
 
-export { hex, hmac, newSecret, open, seal, sha256, utf8 };
+export { fromUtf8, hex, hmac, newSecret, open, seal, sha256, utf8 };

@@ -25,15 +25,24 @@
 // name an app's release gives it counts as installed, version unknown.
 // One install runs at a time, in the order asked; the console's runtime runs one network task at a time
 // anyway, so an install also waits for a game download in progress.
+// glibren.48: a second list, the PS5 Homebrew Catalog (darkxex; state/darkxex-catalog.js), joined to this one when the
+// "Catalogo darkxex" switch is on (on by default): its last copy in <dataDir>/homebrew-darkxex.json, the live one
+// fetched in the same refresh (at most every DARKXEX_EVERY_MS). A file from it carries the catalog's sha256 (the
+// native download refuses a file that does not match) and, before downloading, is confirmed against the catalog's
+// signed API (`darkxexConfirm`): its link and sha256 are the signed ones, or nothing is installed.
 
 import { extractInTurn } from './archive-turn.js';
 import { stagingOf } from './extraction-staging.js';
 import { normalizeIndex, roleOf } from './homebrew-index.js';
+import { FEED_URL as DARKXEX_FEED_URL, mergeCatalogs, parseDarkxexFeed } from './darkxex-catalog.js';
 
   // 0.5.1: the index is built and kept in its own repository, apart from the store's.
   var INDEX_URL = "https://raw.githubusercontent.com/JVK3R/JobeesLair-Homebrew/main/index.json";
   // Http.request takes at most 4 MiB; the index is about half a megabyte.
   var MAX_INDEX_BYTES = 4 * 1024 * 1024;
+  // glibren.48: the darkxex feed is ~170 KB (about 1 KB an app); fetched again at most every 30 minutes.
+  var MAX_DARKXEX_BYTES = 2 * 1024 * 1024;
+  var DARKXEX_EVERY_MS = 30 * 6e4;
   var slugOf = (id) => id.replace("/", "__").replace(/[^A-Za-z0-9_.-]/g, "_");
   var baseName = (path) => path.slice(path.lastIndexOf("/") + 1);
   var parentOf = (path) => path.slice(0, path.lastIndexOf("/")) || "/";
@@ -86,12 +95,22 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
     now = Date.now,
     log = (line) => console.log(`[homebrew] ${line}`),
     // 0.5.2: told when an install finishes ({app, ok: true}) or fails ({app, ok: false, error}); not when cancelled.
-    onInstalled = () => {}
+    onInstalled = () => {},
+    // glibren.48: whether the darkxex catalog is joined to the list (the setting), and the signed check of one of its
+    // files before it downloads ({ file, app } -> { url, name, sha256, size } or throws). Without a check, a darkxex
+    // file is not installed.
+    darkxexOn = () => false,
+    darkxexConfirm = null
   }) {
     const indexFile = `${dataDir}/homebrew-index.json`;
     const installedFile = `${dataDir}/homebrew-installed.json`;
+    const darkxexFile = `${dataDir}/homebrew-darkxex.json`;
     const listeners = /* @__PURE__ */ new Set();
     let index = null;
+    // glibren.48: the Jobe's own list (`base`, as adopt() keeps it) and the darkxex catalog's apps ({ fetched, commit,
+    // apps }); `index` is the two joined (rebuild).
+    let base = null;
+    let darkxex = null;
     let installed = {};
     // Installs by app id: { appId, file, phase, written, total, error, startedAt }.
     const tasks = /* @__PURE__ */ new Map();
@@ -121,17 +140,70 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
     function adopt(doc, from) {
       const next = normalizeIndex(doc);
       if (!next || !next.apps.length) return false;
-      if (index && next.generated <= index.generated) return false;
+      if (base && next.generated <= base.generated) return false;
       // 0.5.3: an app whose newest release holds only stand-ins keeps the release the index before had, when that
       // one has the app in it, so it still installs and no "update" to nothing is offered (an index built before
       // the builder passed such releases over listed Spectrum Library 1.4.9, a 4-byte Void.pkg).
       const apps = next.apps.map((app) => {
-        const before = index?.byId.get(app.id);
+        const before = base?.apps.find((item) => item.id === app.id);
         return app.files.every(standIn) && before && !before.files.every(standIn) ? { ...app, release: before.release, files: before.files, with: before.with } : app;
       });
-      index = { ...next, apps, from, byId: new Map(apps.map((app) => [app.id, app])) };
+      base = { ...next, apps, from };
       log(`index from ${from}: ${next.apps.length} apps`);
+      rebuild();
       return true;
+    }
+    // The list the section shows: the Jobe's, with the darkxex catalog's apps when its switch is on.
+    function rebuild() {
+      const list = base ?? { generated: 0, categories: [], apps: [], from: "none" };
+      const joining = Boolean(darkxexOn() && darkxex?.apps?.length);
+      const joined = joining ? mergeCatalogs(list, darkxex.apps, new Map(list.categories.map((c) => [c.id, c.name]))) : { ...list, stats: null };
+      index = { ...joined, from: list.from, darkxex: joining ? { commit: darkxex.commit, fetched: darkxex.fetched, ...joined.stats } : null, byId: new Map(joined.apps.map((app) => [app.id, app])) };
+      if (joining) log(`darkxex catalog joined: ${joined.stats.added} apps added, ${joined.stats.duplicates} already listed (${joined.stats.newer} newer there)`);
+    }
+    // The darkxex catalog's last copy (written by refreshDarkxex): { fetched, commit, apps }.
+    function readDarkxex() {
+      const saved = readJSON(darkxexFile);
+      if (saved && saved.version === 1 && Array.isArray(saved.apps)) darkxex = { fetched: Number(saved.fetched) || 0, commit: String(saved.commit ?? ""), apps: saved.apps };
+    }
+    async function refreshDarkxex({ force = false } = {}) {
+      if (!darkxexOn()) return false;
+      if (!force && darkxex?.fetched && now() - darkxex.fetched < DARKXEX_EVERY_MS) return false;
+      try {
+        const response = await http.request(DARKXEX_FEED_URL, { maxBytes: MAX_DARKXEX_BYTES });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const parsed = parseDarkxexFeed(await response.text());
+        if (!parsed || !parsed.apps.length) throw new Error("not the catalog's feed");
+        darkxex = { fetched: now(), commit: parsed.commit, apps: parsed.apps };
+        try {
+          writeJSON(darkxexFile, { version: 1, ...darkxex });
+        } catch (error) {
+          log(`darkxex catalog not kept: ${error.message}`);
+        }
+        log(`darkxex catalog ${parsed.commit.slice(0, 8)}: ${parsed.apps.length} apps (${parsed.skipped} left out)`);
+        return true;
+      } catch (error) {
+        log(`darkxex catalog not refreshed: ${error.message}`);
+        return false;
+      }
+    }
+    // The switch changed (Settings, the section's own row): joins or leaves the catalog now, and fetches it when there
+    // is no copy yet.
+    function darkxexChanged() {
+      load();
+      rebuild();
+      scanFound();
+      emit();
+      if (darkxexOn() && !darkxex?.apps?.length) {
+        return refreshDarkxex({ force: true }).then((got) => {
+          if (!got) return false;
+          rebuild();
+          scanFound();
+          emit();
+          return true;
+        });
+      }
+      return Promise.resolve(false);
     }
     function load() {
       if (index) return index;
@@ -143,7 +215,8 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
       }
       const cached = readJSON(indexFile);
       if (cached) adopt(cached, "the last download");
-      if (!index) index = { generated: 0, categories: [], apps: [], from: "none", byId: /* @__PURE__ */ new Map() };
+      readDarkxex();
+      rebuild();
       const saved = readJSON(installedFile);
       installed = saved && saved.version === 1 && saved.apps && typeof saved.apps === "object" ? saved.apps : {};
       pruneGone();
@@ -160,20 +233,32 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
       refreshing = (async () => {
         load();
         try {
-          const response = await http.request(INDEX_URL, { maxBytes: MAX_INDEX_BYTES });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const doc = JSON.parse(await response.text());
-          if (!adopt(doc, "GitHub")) return false;
+          let changed = false;
           try {
-            writeJSON(indexFile, doc);
+            const response = await http.request(INDEX_URL, { maxBytes: MAX_INDEX_BYTES });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const doc = JSON.parse(await response.text());
+            if (adopt(doc, "GitHub")) {
+              changed = true;
+              try {
+                writeJSON(indexFile, doc);
+              } catch (error) {
+                log(`index not kept: ${error.message}`);
+              }
+            }
           } catch (error) {
-            log(`index not kept: ${error.message}`);
+            log(`index not refreshed: ${error.message}`);
           }
-          emit();
-          return true;
-        } catch (error) {
-          log(`index not refreshed: ${error.message}`);
-          return false;
+          // glibren.48: then the darkxex catalog, one request after the other (the runtime runs one at a time anyway).
+          if (await refreshDarkxex()) {
+            rebuild();
+            changed = true;
+          }
+          if (changed) {
+            scanFound();
+            emit();
+          }
+          return changed;
         } finally {
           refreshing = null;
         }
@@ -231,6 +316,8 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
         else if (file.kind === "archive-image") names.push(baseName(file.inner));
         else if (file.kind === "app" && file.folder && file.folder !== ".") names.push(baseName(file.folder));
       }
+      // glibren.48: a darkxex app's folder is its title ID.
+      if (app.titleId && !names.includes(app.titleId)) names.push(app.titleId);
       return names;
     }
     // Apps installed by hand: what each drive's homebrew/ folder holds, matched by name. Read once at load
@@ -313,7 +400,9 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
         }
       }
       update(task, { phase: "downloading", written: 0, total: file.size || null });
-      const download = downloads.enqueue({ url: file.url, destination, rejectHtml: true, ...(file.size ? { expectedBytes: file.size } : {}), ...(root ? { storageRoot: root } : {}) });
+      // glibren.48: a file with the catalog's sha256 is checked by the native download, which refuses it when it does
+      // not match ("SHA-256 mismatch").
+      const download = downloads.enqueue({ url: file.url, destination, rejectHtml: true, ...(file.size ? { expectedBytes: file.size } : {}), ...(file.sha256 ? { sha256: file.sha256 } : {}), ...(root ? { storageRoot: root } : {}) });
       task.cancel = () => download.cancel();
       const off = download.subscribe((snapshot) => {
         if (snapshot.state === "queued") {
@@ -830,7 +919,7 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
     }
     async function runInstall(task) {
       const app = index.byId.get(task.appId);
-      const file = task.file;
+      let file = task.file;
       const slug = slugOf(app.id);
       if (task.helperOnly) {
         // Only the helper again (after Remove helper): the app itself stays as it is.
@@ -842,6 +931,22 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
         installed[app.id] = record;
         saveInstalled();
         return;
+      }
+      if (!file) throw new Error(unsupportedText(app));
+      // glibren.48: a darkxex file is confirmed against the catalog's signed API first; the signed link and sha256 are
+      // the ones downloaded and checked.
+      if (file.darkxex) {
+        if (!darkxexConfirm) throw new Error(`Could not check ${app.name} against the darkxex catalog's signature.`);
+        update(task, { phase: "checking" });
+        let signed;
+        try {
+          signed = await darkxexConfirm({ file, app });
+        } catch (error) {
+          throw new Error(darkxexFailure(error, app));
+        }
+        if (task.cancelled) throw Object.assign(new Error("Cancelled."), { name: "AbortError" });
+        if (signed.url !== file.url || signed.sha256 !== file.sha256) log(`${app.id}: the signed catalog has ${signed.url} (${signed.sha256.slice(0, 12)}...), the list had ${file.url}`);
+        task.file = file = { ...file, url: signed.url, name: signed.name || file.name, sha256: signed.sha256, size: signed.size || file.size };
       }
       const role = roleOf(file);
       // What was installed before, for dropReplaced and dropOtherKind (the record is written anew at the end).
@@ -973,6 +1078,7 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
     // their version took its first file, so an update switched EVO Player's "-pro" build for the plain one.
     function updateFileOf(app, record) {
       const was = record?.file;
+      if (!app.files.length) return null;
       if (!was) return app.files[0];
       return app.files.find((item) => item.name === was) ?? app.files.find((item) => item.kind === record.kind && variantOf(item.name) === variantOf(was)) ?? app.files[0];
     }
@@ -982,6 +1088,7 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
       load();
       const app = index.byId.get(id);
       if (!app) throw new Error("No such app.");
+      if (!app.files.length) throw new Error(unsupportedText(app));
       const file = fileName2 ? app.files.find((item) => item.name === fileName2) : updateFileOf(app, installed[id]);
       if (!file) throw new Error("No such file in this release.");
       const current = tasks.get(id);
@@ -1172,6 +1279,8 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
     return {
       load,
       refresh,
+      // glibren.48: the darkxex switch changed (state/homebrew-store.js setDarkxexCatalog).
+      darkxexChanged,
       get index() {
         return load();
       },
@@ -1206,4 +1315,15 @@ import { normalizeIndex, roleOf } from './homebrew-index.js';
     };
   }
 
-export { INDEX_URL, createHomebrew, slugOf, variantOf };
+  // glibren.48: an app whose file the Jobe does not install yet (a darkxex format other than zip or a disk image).
+  var unsupportedText = (app) => `${app.name} is not supported yet: Jobee'sLair cannot install its ${String(app.unsupported ?? "").toUpperCase() || "file"} yet.`;
+  // glibren.48: why a darkxex file was not confirmed, in plain words.
+  function darkxexFailure(error, app) {
+    const reason = error?.reason ?? "";
+    if (reason === "signature" || reason === "rollback") return `${app.name} was not installed: the darkxex catalog's signature did not check out (${reason}). Try again later.`;
+    if (reason === "hash") return `${app.name} was not installed: its entry in the darkxex catalog does not match the signed list. Try again later.`;
+    if (reason === "gone" || reason === "unlisted") return `${app.name} is no longer in the darkxex catalog, so it was not installed.`;
+    return `${app.name} was not installed: the darkxex catalog could not be checked (${error?.message ?? error}).`;
+  }
+
+export { INDEX_URL, createHomebrew, darkxexFailure, slugOf, variantOf };

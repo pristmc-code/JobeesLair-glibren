@@ -166,6 +166,8 @@ import { finalError } from '../downloads/errors.js';
       logo: app.logo || null,
       version: app.release.tag,
       kind: app.files[0]?.kind ?? "",
+      // glibren.48: the list(s) it came from (["jobe"], ["darkxex"] or both).
+      sources: app.sources ?? ["jobe"],
       state: hbState(status),
       percent: hbPercent(status)
     };

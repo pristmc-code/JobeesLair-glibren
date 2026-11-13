@@ -45,6 +45,7 @@ import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../stat
 import { SIMULTANEOUS_CHOICES, setSimultaneousDownloads, useSimultaneousDownloads } from '../state/simultaneous-downloads.js';
 import { setScreenSaver, showScreenSaver, useScreenSaverOn } from '../state/screen-saver.js';
 import { setEnergySaver, usePower } from '../state/power.js';
+import { homebrew, setDarkxexCatalog, useDarkxexCatalog, useHomebrewVersion } from '../state/homebrew-store.js';
 import { setTypingChoice, useTypingChoice } from '../state/system-keyboard.js';
 import { useNavActions } from '../state/nav.jsx';
 import { downloadQueue, driveName } from '../state/downloads.js';
@@ -215,6 +216,20 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       jsx(CardHead, { icon: "power", title: t2("settings.card.energy") }),
       jsx(Row, { focusKey: "settings:energySaver", name: t2("settings.energySaver"), detail: saver ? t2("settings.energySaverOn") : t2("settings.energySaverOff"), end: jsx(Switch, { on: saver }), onPress: () => setEnergySaver(!saver) }),
       ...["settings.energyWhat", "settings.energyRest"].map((key) => jsx(View, { style: { flexDirection: "row" }, children: jsx(LongText, { style: text(20, colors.muted), box: { flex: 1 }, children: t2(key) }) }, key))
+    ] });
+  }
+  // glibren.48: the Homebrew section's second list, the darkxex catalog (state/darkxex-catalog.js): on by default. The
+  // note wraps as long as it needs (ui/LongText.jsx), in every language.
+  function HomebrewCard() {
+    const t2 = useT();
+    const on = useDarkxexCatalog();
+    useHomebrewVersion();
+    const stats = on ? homebrew().index.darkxex : null;
+    const detail = !on ? t2("settings.darkxexOff") : stats ? t2("settings.darkxexOn", { added: stats.added, duplicates: stats.duplicates }) : t2("settings.darkxexWaiting");
+    return jsxs(View, { scrollAnchor: true, style: CARD, children: [
+      jsx(CardHead, { icon: "package", title: t2("settings.card.homebrew") }),
+      jsx(Row, { focusKey: "settings:darkxex", name: t2("settings.darkxex"), detail, end: jsx(Switch, { on }), onPress: () => void setDarkxexCatalog(!on) }),
+      jsx(View, { style: { flexDirection: "row" }, children: jsx(LongText, { style: text(20, colors.muted), box: { flex: 1 }, children: t2("settings.darkxexWhat") }) })
     ] });
   }
   // glibren.32: the game page's Videos (game/VideosSheet.jsx): play the first result at once instead of the list.
@@ -1122,8 +1137,9 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     const closed = (key) => focusLater(key);
     const cards = {
       companion: [/* @__PURE__ */ (0, jsx)(CompanionCard, { onChoosePin: setPinMode }, "companion")],
-      downloads: [/* @__PURE__ */ (0, jsx)(DownloadsCard, { onPhonePin: setPhonePinMode }, "downloads")],
-      feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onAddFile: () => setPickingFile(true), onMirror: setMirrorOf }, "feeds")],
+      // glibren.48: the homebrew-only edition has no Feeds page, so its Homebrew card goes under Downloads.
+      downloads: [/* @__PURE__ */ (0, jsx)(DownloadsCard, { onPhonePin: setPhonePinMode }, "downloads"), ...HOMEBREW_ONLY ? [jsx(HomebrewCard, {}, "homebrew")] : []],
+      feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onAddFile: () => setPickingFile(true), onMirror: setMirrorOf }, "feeds"), jsx(HomebrewCard, {}, "homebrew")],
       debrid: [/* @__PURE__ */ (0, jsx)(DebridCard, { onKey: () => setKeying(true), onAllDebridKey: () => setKeyingAll(true) }, "debrid")],
       torboxLibrary: [jsx(TorBoxLibraryCard, {}, "torboxLibrary")],
       look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver"), jsx(EnergyCard, {}, "energy"), jsx(VideosCard, {}, "videos")],

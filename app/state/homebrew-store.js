@@ -11,12 +11,64 @@ import { downloadQueue, driveName } from './downloads.js';
 import { createHomebrew } from './homebrew.js';
 import { online } from './online.js';
 import { formatBytes } from './size.js';
+import { loadList, saveList } from './saved.js';
+import { confirmDarkxexFile } from './darkxex-catalog.js';
 
   var PS5 = Platform.OS === "ps5";
   // Payloads live on the console's own /data, where loaders and the companion's helper can reach them.
   var PAYLOAD_DIR = PS5 ? "/data/JobeesLair/payloads" : `${FileSystem.dataDir}/JobeesLair/payloads`;
   var REFRESH_DELAY_MS = 12e3;
   var store = null;
+  // glibren.48: "Catalogo darkxex" (settings.json `homebrewDarkxex`; on unless turned off). Read once.
+  var SETTINGS = "settings.json";
+  var darkxexSetting = null;
+  var darkxexListeners = /* @__PURE__ */ new Set();
+  function darkxexCatalogOn() {
+    if (darkxexSetting === null) {
+      try {
+        darkxexSetting = loadList(SETTINGS, "settings").homebrewDarkxex !== false;
+      } catch {
+        darkxexSetting = true;
+      }
+    }
+    return darkxexSetting;
+  }
+  function setDarkxexCatalog(on) {
+    darkxexSetting = Boolean(on);
+    try {
+      saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), homebrewDarkxex: darkxexSetting });
+    } catch (error) {
+      console.log(`[homebrew] darkxex switch not saved: ${error?.message || error}`);
+    }
+    console.log(`[homebrew] darkxex catalog ${darkxexSetting ? "on" : "off"}`);
+    for (const listener of [...darkxexListeners]) listener(darkxexSetting);
+    return homebrew().darkxexChanged();
+  }
+  function useDarkxexCatalog() {
+    const [on, setOn] = useState(darkxexCatalogOn);
+    useEffect(() => {
+      darkxexListeners.add(setOn);
+      return () => darkxexListeners.delete(setOn);
+    }, []);
+    return on;
+  }
+  // The highest signed catalog sequence accepted (darkxex-catalog.js verifyManifest: never lower).
+  var sequenceFile = () => `${DATA_DIR}/homebrew-darkxex-sequence.json`;
+  function readSequence() {
+    try {
+      return Number(JSON.parse(FileSystem.readFile(sequenceFile())).sequence) || 0;
+    } catch {
+      return 0;
+    }
+  }
+  async function confirmDarkxex({ file, app }) {
+    const signed = await confirmDarkxexFile({ get: (url, options) => Http.request(url, options), file, repo: app.repo, minSequence: readSequence() });
+    try {
+      if (signed.sequence > readSequence()) FileSystem.writeFile(sequenceFile(), JSON.stringify({ sequence: signed.sequence }));
+    } catch {
+    }
+    return signed;
+  }
   // ShadowMount asked the way the library asks it: `now` pauses the download in progress for the moment it takes
   // (the runtime runs one network task at a time, so a request would otherwise wait behind the whole file);
   // `background` is skipped while a download holds the network.
@@ -42,7 +94,9 @@ import { formatBytes } from './size.js';
       readBundled: () => FileSystem.readFile("/app0/data/homebrew.json"),
       platform: Platform.OS,
       // 0.5.2: which apps install and which fail, for the dashboard (state/online.js; only with stats on).
-      onInstalled: (result) => online().installed(result)
+      onInstalled: (result) => online().installed(result),
+      darkxexOn: darkxexCatalogOn,
+      darkxexConfirm: confirmDarkxex
     });
     return store;
   }
@@ -101,4 +155,4 @@ import { formatBytes } from './size.js';
     return count;
   }
 
-export { PAYLOAD_DIR, homebrew, startHomebrewRefresh, useHomebrew, useHomebrewStatus, useHomebrewUpdates, useHomebrewVersion };
+export { PAYLOAD_DIR, darkxexCatalogOn, homebrew, setDarkxexCatalog, startHomebrewRefresh, useDarkxexCatalog, useHomebrew, useHomebrewStatus, useHomebrewUpdates, useHomebrewVersion };
