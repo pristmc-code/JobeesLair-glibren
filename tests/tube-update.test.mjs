@@ -337,6 +337,65 @@ test('ensure: the downloaded version starts; an older service already up is used
   assert.deepEqual(updater.inUse(), { source: 'downloaded', version: '0.2.0' });
 });
 
+// glibren.44 (PS5 real, .42/.43): um 0.1.x sem a conta do YouTube ficava no ar ate o PS5 reiniciar, mesmo com o 0.2.x
+// embutido ou baixado: o player dizia "o servico do YouTube em uso ainda nao sabe entrar".
+test('glibren.44: ensure: an older service up, a newer one ready and nothing using it: the new one starts now', async () => {
+  const { w, net, http, payloads } = serviceWorld({ versions: { [`${DIR}/tube-service.elf`]: '0.2.0' } });
+  const updater = w.make();
+  await updater.check();
+  net.up = '0.1.0'; // o embutido antigo, de outra execucao do app
+  const service = createTubeService({ http, fs: w.fs, payloads, platform: 'ps5', updater, startWaitMs: 60, startPollMs: 5, log: () => {} });
+  assert.equal(service.newerReady('0.1.0'), '0.2.0');
+  assert.deepEqual(await service.ensure(), { ok: true, version: '0.2.0' });
+  assert.equal(net.quits, 1, 'the old one was asked to quit');
+  assert.deepEqual(net.sends, [`${DIR}/tube-service.elf`]);
+  assert.equal(service.runningVersion(), '0.2.0');
+  assert.equal(service.newerReady(), null, 'nothing newer now');
+  // A tela que chama com o proprio hold (held: 1) tambem troca: ela ainda nao usa o servico.
+  const again = serviceWorld({ versions: { [`${DIR}/tube-service.elf`]: '0.2.0' } });
+  const updater2 = again.w.make();
+  await updater2.check();
+  again.net.up = '0.1.0';
+  const service2 = createTubeService({ http: again.http, fs: again.w.fs, payloads: again.payloads, platform: 'ps5', updater: updater2, startWaitMs: 60, startPollMs: 5, log: () => {} });
+  const mine = service2.hold();
+  assert.equal((await service2.ensure({ held: 1 })).version, '0.2.0');
+  mine();
+});
+
+test('glibren.44: ensure: with something using the old service (a player, a screen with results) it stays; upgradeNow (asked by the player) swaps it, never with a job running', async () => {
+  const { w, net, http, payloads } = serviceWorld({ versions: { [`${DIR}/tube-service.elf`]: '0.2.0' } });
+  const updater = w.make();
+  await updater.check();
+  net.up = '0.1.0';
+  const service = createTubeService({ http, fs: w.fs, payloads, platform: 'ps5', updater, startWaitMs: 60, startPollMs: 5, log: () => {} });
+  const player = service.hold();
+  assert.deepEqual(await service.ensure(), { ok: true, version: '0.1.0' }, 'in use: kept, as before');
+  assert.equal(net.quits, 0);
+  assert.equal(service.idle(), false);
+  // Um job em andamento segura ate o pedido do jogador.
+  const job = service.job({ action: 'resolve' }, {}).catch(() => {});
+  assert.deepEqual(await service.upgradeNow(), { ok: false, reason: 'busy' });
+  await job;
+  const swapped = await service.upgradeNow();
+  assert.equal(swapped.ok, true);
+  assert.equal(swapped.upgraded, true);
+  assert.equal(swapped.version, '0.2.0');
+  assert.equal(net.quits, 1);
+  assert.deepEqual(await service.upgradeNow(), { ok: false, reason: 'none' }, 'nothing newer any more');
+  player();
+});
+
+test('glibren.44: upgradeNow with no newer version ready says so and keeps the one up', async () => {
+  const { w, net, http, payloads } = serviceWorld({});
+  const updater = w.make(); // sem check: so o embutido
+  net.up = '0.1.0';
+  const service = createTubeService({ http, fs: w.fs, payloads, platform: 'ps5', updater, startWaitMs: 60, startPollMs: 5, log: () => {} });
+  await service.ensure();
+  assert.deepEqual(await service.upgradeNow(), { ok: false, reason: 'none' });
+  assert.equal(net.quits, 0);
+  assert.equal(service.runningVersion(), '0.1.0');
+});
+
 // glibren.42 (A6): "Back to the built-in version" (Settings > Videos) marks the downloaded ones ahead of it as bad at once.
 test('revertToEmbedded: the downloaded version ahead of the built-in one is set aside; a newer one is still downloaded later', async () => {
   const w = world({ manifests: { '0.2.0': manifest() } });

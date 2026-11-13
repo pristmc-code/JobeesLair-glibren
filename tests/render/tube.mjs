@@ -150,6 +150,44 @@ const expired = screen('Player (account expired)', { type: TubePlayer, props: { 
 assert.ok(expired.some((line) => /sign-in expired/.test(line)), expired.join('|'));
 const refusedVideo = screen('Player (account not allowed)', { type: TubePlayer, props: { item: items[0], service: withAccount, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'account_not_allowed' } } });
 assert.ok(refusedVideo.some((line) => /Not even your YouTube account/.test(line)), refusedVideo.join('|'));
+// glibren.44: a Google account without its age confirmed; codes with a suffix (service 0.2.2) keep their own text by
+// the start, and the generic one shows the whole code.
+const ageCheck = screen('Player (account age not confirmed)', { type: TubePlayer, props: { item: items[0], service: withAccount, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'account_age_unverified' } } });
+assert.ok(ageCheck.includes('Your Google account needs to confirm its age on youtube.com to watch this video.'), ageCheck.join('|'));
+const suffixed = screen('Player (code with a suffix)', { type: TubePlayer, props: { item: items[0], service: withAccount, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'extraction_failed: HTTP 400 INVALID_ARGUMENT (the request was refused by the player)' } } });
+assert.ok(suffixed.includes('This video didn\'t play (extraction_failed: HTTP 400 INVALID_ARGUMENT (the request was refused by the player)).'), suffixed.join('|'));
+const { problemText } = await load('app/tube/TubePlayer.jsx');
+const t2 = (key, values) => (values ? `${key}:${JSON.stringify(values)}` : key);
+assert.equal(problemText(t2, 'account_age_unverified: AGE_CHECK_REQUIRED', true), 'tube.accountAgeUnverified');
+assert.equal(problemText(t2, 'authentication_required: LOGIN_REQUIRED', false), 'tube.needsSignInOld');
+assert.equal(problemText(t2, 'authentication_requiredX', true), 'tube.playFailed:{"error":"authentication_requiredX"}', 'only the code or the code and a suffix');
+// glibren.44: the player's retry: a video that asks for an account on an old service with a newer one ready swaps the
+// service (upgradeNow) and plays, once per video; anything else fails as before.
+{
+  const { resolveWithUpgrade } = await load('app/tube/TubePlayer.jsx');
+  const needs = Object.assign(new Error('needs'), { code: 'authentication_required' });
+  const fake = (extra) => ({ hasAccount: () => false, newerReady: () => '0.2.1', cancelPrefetch() { this.cancelled = (this.cancelled ?? 0) + 1; }, upgradeNow: async () => { fake.swaps++; return { ok: true, version: '0.2.1', upgraded: true }; }, ...extra });
+  fake.swaps = 0;
+  // 1) antigo + novo pronto: troca e o segundo resolve toca.
+  let tries = 0;
+  const service = fake();
+  const state = { upgraded: false };
+  const info = await resolveWithUpgrade(service, async () => { if (++tries === 1) throw needs; return { title: 'ok' }; }, { state });
+  assert.deepEqual(info, { title: 'ok' });
+  assert.equal(tries, 2);
+  assert.equal(fake.swaps, 1);
+  assert.equal(service.cancelled, 1, 'the prefetches go first (a job running would hold the swap)');
+  // 2) uma vez so: o mesmo video pedindo login de novo mostra o erro.
+  await assert.rejects(resolveWithUpgrade(service, async () => { throw needs; }, { state }), { code: 'authentication_required' });
+  assert.equal(fake.swaps, 1);
+  // 3) servico com a conta, nada novo pronto, troca recusada, outro erro, player fechado: o erro como antes.
+  for (const [extra, stopped, error] of [[{ hasAccount: () => true }, false, needs], [{ newerReady: () => null }, false, needs], [{ upgradeNow: async () => ({ ok: false, reason: 'busy' }) }, false, needs],
+    [{}, false, Object.assign(new Error('x'), { code: 'extraction_failed: UNPLAYABLE' })], [{}, true, needs]]) {
+    let calls = 0;
+    await assert.rejects(resolveWithUpgrade(fake(extra), async () => { calls++; throw error; }, { state: { upgraded: false }, stopped: () => stopped }), { code: error.code });
+    assert.equal(calls, 1);
+  }
+}
 const throughAccount = screen('Player (playing through the account)', { type: TubePlayer, props: { item: items[0], service: withAccount, onClose() {}, start: { info: { ...info, signedIn: true }, choice: 0, phase: 'playing' } } });
 assert.ok(throughAccount.includes('PlayStation  ·  1080p H264 / AAC  ·  through your account'), throughAccount.join('|'));
 console.log('\nOK: YouTube inside the app (sheet, results, player)');
@@ -161,8 +199,16 @@ const account = (extra) => ({ isReady: () => true, hasAccount: () => true, ensur
 assert.equal(offeredBy(account({ hasAccount: () => false }), null), 'no', 'a service up without the feature');
 assert.equal(offeredBy({ isReady: () => false }, { source: 'embedded', version: '0.1.0' }), 'no', 'an older one would start');
 assert.equal(offeredBy({ isReady: () => false }, { source: 'embedded', version: '0.2.0' }), 'unknown');
-const hidden = screen('Settings (old service: no account rows)', { type: TubeAccountRows, props: { service: account({ hasAccount: () => false }) } });
-assert.equal(hidden.length, 0, hidden.join('|'));
+// glibren.44: an older service no longer hides the row: it says which version can't sign in and, with a newer one ready,
+// offers "Update the service now"; without one, says so.
+const oldRow = screen('Settings (old service, newer ready)', { type: TubeAccountRows, props: { service: account({ hasAccount: () => false, runningVersion: () => '0.1.0', newerReady: () => '0.2.1' }) } });
+for (const label of ['YouTube account', 'The YouTube service in use (0.1.0) can\'t sign in to an account yet.', 'Update the service now', 'Version 0.2.1 is ready. After the update, the sign-in shows here.']) assert.ok(oldRow.includes(label), `${label}: ${oldRow.join('|')}`);
+assert.ok(pressable.has('settings:tubeAccountUpdate') && pressable.has('settings:tubeAccount'));
+const oldNone = screen('Settings (old service, nothing newer)', { type: TubeAccountRows, props: { service: account({ hasAccount: () => false, runningVersion: () => '0.1.0', newerReady: () => null }) } });
+assert.ok(oldNone.includes('The YouTube service in use (0.1.0) can\'t sign in to an account yet. No newer version of the service is available yet.'), oldNone.join('|'));
+assert.ok(!pressable.has('settings:tubeAccountUpdate'));
+const oldIdle = screen('Settings (old service not up, Settings knows its version)', { type: TubeAccountRows, props: { service: { isReady: () => false, newerReady: (v) => (v === '0.1.0' ? '0.2.1' : null) }, info: { source: 'embedded', version: '0.1.0' } } });
+assert.ok(oldIdle.includes('Update the service now'), oldIdle.join('|'));
 const unknown = screen('Settings (service not up yet)', { type: TubeAccountRows, props: { service: { isReady: () => false }, info: null } });
 assert.ok(unknown.includes('YouTube account') && unknown.includes('Press to check'), unknown.join('|'));
 assert.ok(pressable.has('settings:tubeAccount'));

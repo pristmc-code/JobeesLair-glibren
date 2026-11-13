@@ -3,8 +3,13 @@
 // few seconds (POST /v1/account/signin/poll, the interval it gives) until it is done, refused or expired; signed in,
 // the row shows the account's name and "Sign out". The credentials never reach the app: they stay in the service
 // (/data/JobeesLair/tube/account.json, 0600, on the console only).
-// With an older service (no "account" feature) the rows are hidden; with the service not up yet, the row only says
-// "Press to check" and starts it on demand (the service is never started just by opening Settings).
+// glibren.44: with an older service (no "account" feature) the row stays (it was hidden, and on the PS5 the player
+// said "the service in use can't sign in" with nothing to do about it): it says which version is in use and, with a
+// newer one ready, offers "Update the service now" (tube-service.js upgradeNow: quit + start the new one), then the
+// sign-in. With the service not up yet, the row only says "Press to check" and starts it on demand (the service is
+// never started just by opening Settings).
+// glibren.44: after a state change that removes the focused row (the code's "Cancel" when the sign-in is done, the
+// update row), focus goes to the account row explicitly (an app close was seen on the PS5 right after signing in).
 // Also here: "Back to the built-in version" (A6), shown while a downloaded service version is ahead of the built-in one.
 
 import '../assets/Exo2.ttf';
@@ -18,7 +23,7 @@ import { FocusRing } from './FocusRing.jsx';
 import { Icon } from './Icon.jsx';
 import { QRCode } from './QRCode.jsx';
 import { colors, radius } from './colors.js';
-import { Text, View, useIsFocused } from '@ps5-react/core';
+import { Text, View, useFocusActions, useIsFocused } from '@ps5-react/core';
 
   // The first service version that signs in (tube-service VERSION 0.2.0, api 2).
   var ACCOUNT_SINCE = "0.2.0";
@@ -54,8 +59,34 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
    */
   function TubeAccountRows({ service = tubeService(), info = null, start = null }) {
     const t2 = useT();
-    // idle (not asked yet) | checking | out | in | code | busy | hidden. `start`: the tests' state ({ state, name, code }).
-    const [state, setState] = useState(() => start?.state ?? (offeredBy(service, info) === "no" ? "hidden" : service.isReady?.() ? "checking" : "idle"));
+    // idle (not asked yet) | checking | out | in | code | busy | old (glibren.44: the service in use can't sign in).
+    // `start`: the tests' state ({ state, name, code }).
+    const [state, setState] = useState(() => start?.state ?? (offeredBy(service, info) === "no" ? "old" : service.isReady?.() ? "checking" : "idle"));
+    const { focus } = useFocusActions();
+    // glibren.44: the row to focus after the next commit (the focused one may be gone with the state change).
+    const focusNext = useRef("");
+    useEffect(() => {
+      const key = focusNext.current;
+      if (!key) return;
+      focusNext.current = "";
+      try {
+        focus?.(key);
+      } catch {
+      }
+    }, [state]);
+    const moveTo = (next, key = "settings:tubeAccount") => {
+      focusNext.current = key;
+      setState(next);
+    };
+    // The version up (or the one Settings says would start) and a newer one ready to replace it.
+    const inUse = () => (service.isReady?.() ? service.runningVersion?.() : null) || info?.version || "";
+    const ready = () => {
+      try {
+        return service.newerReady?.(inUse() || void 0) ?? null;
+      } catch {
+        return null;
+      }
+    };
     const [name, setName] = useState(() => start?.name ?? "");
     const [code, setCode] = useState(() => start?.code ?? null); // { code, url, expiresIn, interval }
     const [note, setNote] = useState("");
@@ -80,7 +111,7 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
     const failed = (error) => {
       if (!live.current.alive) return;
       setNote(t2("settings.tubeAccountFailed", { error: error?.code ?? error?.message ?? String(error) }));
-      setState("idle");
+      moveTo("idle");
     };
     async function refresh() {
       setState("checking");
@@ -89,7 +120,7 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
         if (!live.current.alive) return;
         if (!up?.ok) throw Object.assign(new Error(up?.reason ?? "service"), { code: up?.reason ?? "service" });
         if (!service.hasAccount?.()) {
-          setState("hidden");
+          moveTo("old");
           return;
         }
         const now = await service.account();
@@ -110,15 +141,15 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
           stopPolling();
           setCode(null);
           setNote("");
-          setName(answer.name ?? "");
-          setState("in");
+          setName(typeof answer.name === "string" ? answer.name : "");
+          moveTo("in");
           return;
         }
         if (answer.state === "denied" || answer.state === "expired") {
           stopPolling();
           setCode(null);
           setNote(t2(answer.state === "denied" ? "settings.tubeAccountDenied" : "settings.tubeAccountExpired"));
-          setState("out");
+          moveTo("out");
           return;
         }
         const next = answer.interval ?? interval;
@@ -149,7 +180,7 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
         current.misses = 0;
         const round = current.round;
         setCode(started);
-        setState("code");
+        moveTo("code", "settings:tubeAccountCancel");
         current.timer = setTimeout(() => void poll(round, started.interval), started.interval * 1e3);
       } catch (error) {
         failed(error);
@@ -158,7 +189,33 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
     function cancel() {
       stopPolling();
       setCode(null);
-      setState("out");
+      moveTo("out");
+    }
+    // glibren.44: "Update the service now": the newer version replaces the one up (never with a video job running),
+    // then the sign-in starts (or the account shows, when already signed in on that service).
+    async function update() {
+      setState("busy");
+      setNote("");
+      try {
+        const done = await service.upgradeNow();
+        if (!live.current.alive) return;
+        if (!done?.ok) {
+          setNote(t2(done?.reason === "busy" ? "settings.tubeAccountBusy" : done?.reason === "none" ? "settings.tubeAccountNoUpdate" : "settings.tubeAccountFailed", { error: done?.reason ?? "?" }));
+          moveTo(service.hasAccount?.() ? "out" : "old");
+          return;
+        }
+        if (!service.hasAccount?.()) {
+          moveTo("old");
+          return;
+        }
+        const now = await service.account();
+        if (!live.current.alive) return;
+        setName(now.name);
+        if (now.signedIn) moveTo("in");
+        else await signIn();
+      } catch (error) {
+        failed(error);
+      }
     }
     async function signOut() {
       setState("busy");
@@ -167,13 +224,20 @@ import { Text, View, useIsFocused } from '@ps5-react/core';
         if (!live.current.alive) return;
         setName("");
         setNote("");
-        setState("out");
+        moveTo("out");
       } catch (error) {
         failed(error);
       }
     }
-    if (state === "hidden") return null;
     const hint = t2("settings.tubeAccountDetail");
+    if (state === "old") {
+      const version = inUse() || "?";
+      const next = ready();
+      return jsxs(Fragment, { children: [
+        jsx(Row, { focusKey: "settings:tubeAccount", name: t2("settings.tubeAccount"), detail: note || `${t2("settings.tubeAccountOld", { version })}${next ? "" : ` ${t2("settings.tubeAccountNoUpdate")}`}`, hint, icon: "chevronRight", onPress: () => void refresh() }),
+        next ? jsx(Row, { focusKey: "settings:tubeAccountUpdate", name: t2("settings.tubeAccountUpdateNow"), detail: t2("settings.tubeAccountUpdateReady", { version: next }), icon: "chevronRight", onPress: () => void update() }) : null
+      ] });
+    }
     if (state === "code" && code) return jsxs(View, { style: { gap: 14 }, children: [
       jsx(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.tubeAccount") }),
       jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 28 }, children: [

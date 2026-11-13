@@ -13,7 +13,9 @@
 //     sem mais nenhuma, diz o erro. glibren.42 (A11): os links sao renovados de novo depois de um tempo tocando
 //     (FRESH_AFTER_MS), ate FRESH_MAX vezes por video (antes, uma vez so: um video longo ou pausado por horas parava).
 //   - glibren.42: video que pede login (authentication_required) manda entrar em Configuracoes > Videos; conta vencida
-//     ou sem acesso dizem isso; o que abriu pela conta mostra "pela sua conta" na barra.
+//     ou sem acesso dizem isso; o que abriu pela conta mostra "pela sua conta" na barra. glibren.44: com um servico
+//     antigo (sem a conta) e uma versao nova pronta, troca o servico e tenta o video de novo uma vez; conta sem a idade
+//     confirmada (account_age_unverified, servico 0.2.2) tem texto proprio.
 //   - glibren-fast: abre na hora (o resolve pode ja estar pronto: o pre-resolve da tela de resultados) com a miniatura
 //     do video e um indicador ate o primeiro quadro (fase "opening" entre o resolve e o onLoad/primeiro onProgress).
 
@@ -40,13 +42,42 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
   var SUBTITLE_TRACK = 1e3;
   var FRESH_AFTER_MS = 6e4;
   var FRESH_MAX = 8;
-  // glibren.42: os erros do servico que tem texto proprio (o resto mostra o codigo em tube.playFailed).
+  // glibren.42: os erros do servico que tem texto proprio (o resto mostra o codigo em tube.playFailed, inteiro).
+  // glibren.44: o servico 0.2.2 manda codigos com sufixo ("extraction_failed: UNPLAYABLE (...)"): o texto proprio vale
+  // pelo comeco do codigo; o generico mostra o codigo todo. account_age_unverified: a conta precisa confirmar a idade.
+  var codeIs = (code, name) => code === name || code.startsWith(`${name}:`) || code.startsWith(`${name} `);
   function problemText(t2, code, accountOffered) {
-    if (code === "authentication_required") return t2(accountOffered ? "tube.needsSignIn" : "tube.needsSignInOld");
-    if (code === "account_expired") return t2("tube.accountExpired");
-    if (code === "account_not_allowed") return t2("tube.accountNotAllowed");
-    return t2("tube.playFailed", { error: code || "?" });
+    const value = String(code ?? "");
+    if (codeIs(value, "authentication_required")) return t2(accountOffered ? "tube.needsSignIn" : "tube.needsSignInOld");
+    if (codeIs(value, "account_expired")) return t2("tube.accountExpired");
+    if (codeIs(value, "account_not_allowed")) return t2("tube.accountNotAllowed");
+    if (codeIs(value, "account_age_unverified")) return t2("tube.accountAgeUnverified");
+    return t2("tube.playFailed", { error: value || "?" });
   } // os arquivos de `subtitles` sao listados a partir de 1000 (docs/VIDEO.md)
+  /**
+   * glibren.44: o resolve do player (`run`), e uma segunda vez quando o video pede login e o servico no ar e um antigo
+   * sem a conta, com uma versao nova pronta: troca o servico agora (tube-service.js upgradeNow; nunca com outro job
+   * andando) e tenta de novo, uma vez por video (`state.upgraded`). `stopped()`: o player fechou.
+   */
+  async function resolveWithUpgrade(service, run, { state, stopped = () => false, log = () => {} }) {
+    try {
+      return await run();
+    } catch (error) {
+      const code = String(error?.code ?? error?.message ?? "");
+      if (stopped() || state.upgraded || !codeIs(code, "authentication_required") || service.hasAccount?.() || !service.newerReady?.() || !service.upgradeNow) throw error;
+      state.upgraded = true;
+      service.cancelPrefetch?.();
+      let swapped = null;
+      try {
+        swapped = await service.upgradeNow();
+      } catch (swapError) {
+        swapped = { ok: false, reason: swapError?.message ?? String(swapError) };
+      }
+      log(`needs an account; service ${swapped?.ok ? `now ${swapped.version ?? ""}` : `not swapped (${swapped?.reason ?? "?"})`}`);
+      if (!swapped?.ok || stopped()) throw error;
+      return run();
+    }
+  }
   var HINTS = [
     { button: "cross", label: "tube.hint.pause" },
     { button: "l1r1", label: "tube.hint.seek" },
@@ -110,7 +141,7 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     // glibren-tube-quality: quem decodifica o video aberto ("sceVideodec2" = o do PS5, "ffmpeg" = software), do onStatus.
     const [decoder, setDecoder] = useState("");
     const video = useRef(null);
-    const live = useRef({ position: 0, segments: [], skipUntil: 0, tries: 0, freshCount: 0, freshAt: 0, alive: true, abort: null });
+    const live = useRef({ position: 0, segments: [], skipUntil: 0, tries: 0, freshCount: 0, freshAt: 0, alive: true, abort: null, upgraded: false });
     const barTimer = useRef(null);
     const noticeTimer = useRef(null);
     const showBar = () => {
@@ -133,7 +164,11 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         for (const listener of [...listeners]) listener();
       };
       try {
-        const next = await service.resolve(item.id, { locale: getLocale?.() ?? "en", fresh, signal });
+        const next = await resolveWithUpgrade(service, () => service.resolve(item.id, { locale: getLocale?.() ?? "en", fresh, signal }), {
+          state,
+          stopped: () => !state.alive || signal.aborted,
+          log: (line) => console.log(`tube: ${item.id} ${line}`)
+        });
         if (!state.alive || signal.aborted) return;
         const same = keepLabel ? next.choices.findIndex((entry) => entry.label === keepLabel) : -1;
         setInfo(next);
@@ -141,7 +176,7 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         setPhase("opening");
       } catch (error) {
         if (!state.alive || signal.aborted) return;
-        setProblem(error?.code ?? error?.message ?? String(error));
+        setProblem(String(error?.code ?? error?.message ?? String(error)));
         setPhase("failed");
       }
     };
@@ -308,4 +343,4 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     ] }) });
   }
 
-export { TubePlayer };
+export { problemText, resolveWithUpgrade, TubePlayer };

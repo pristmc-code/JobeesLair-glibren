@@ -228,7 +228,9 @@ import { REPO, VERSION } from '../version.js';
     startWaitMs = 15e3,
     startPollMs = 400,
     jobPollMs = 400,
-    jobTimeoutMs = 9e4,
+    // glibren.44: 2 min (era 90 s): no servico 0.2.2 a primeira reproducao pela conta leva ~30 s so na analise do player,
+    // depois da tentativa sem conta.
+    jobTimeoutMs = 12e4,
     requestMs = 1e4,
     prefetchMax = 2,
     cacheKeep = 3,
@@ -335,20 +337,59 @@ import { REPO, VERSION } from '../version.js';
     }
     // Uma subida por vez: quem pede enquanto outra corre espera a mesma.
     let ensuring = null;
-    function ensure() {
-      if (!ensuring) ensuring = ensureNow().finally(() => {
+    /** `held`: quantos `hold()` sao de quem pede (a tela que chama ainda nao usa o servico): ver ensureNow. */
+    function ensure({ held = 0 } = {}) {
+      if (!ensuring) ensuring = ensureNow(held).finally(() => {
         ensuring = null;
       });
       return ensuring;
     }
-    async function ensureNow() {
+    /** glibren.44: ninguem usa o servico agora (fora os `held` hold() de quem pergunta): nenhum job, nenhum pre-resolve. */
+    const idle = (held = 0) => holds <= held && !active && !pending.size;
+    /**
+     * glibren.44: a versao mais nova pronta para subir no lugar de `version` (a do ar), ou null: o primeiro candidato do
+     * updater, mais novo que ela, ou qualquer um quando a do ar foi posta de lado (A6).
+     */
+    function newerReady(version = runningVersion) {
+      if (!updater || !version) return null;
+      let best = null;
+      try {
+        best = updater.candidates()[0] ?? null;
+      } catch {
+      }
+      const setAside = typeof updater.isBad === "function" && updater.isBad(version);
+      if (!best?.version || best.version === version || !newer(best.version, version) && !setAside) return null;
+      return best.version;
+    }
+    async function ensureNow(held = 0) {
       let state = await health();
       if (state && upToDate(state) && readToken()) {
-        // O que ja esta no ar serve (mesmo com uma versao mais nova pronta: ela entra quando ninguem usa).
+        const version = typeof state.version === "string" ? state.version : null;
+        // glibren.44: com uma versao mais nova pronta e ninguem usando, ela entra agora (antes so entrava quando a ultima
+        // tela soltava o servico, refreshIfIdle, e um 0.1.x sem a conta do YouTube ficava no ar ate o PS5 reiniciar). Com
+        // algo em uso, o que ja esta no ar serve, como antes.
+        const next = newerReady(version);
+        if (next && idle(held)) {
+          log(`service ${version} is up and ${next} is ready, nothing uses it: restarting it now`);
+          ready = false;
+          runningVersion = null;
+          await call("POST", "/v1/quit", { timeoutMs: 3e3 }).catch(() => {
+          });
+          await wait(500);
+          state = await health();
+        } else {
+          ready = true;
+          runningVersion = version;
+          learn(state);
+          if (updater && !updater.state?.().running) updater.noteRunning("running", runningVersion);
+          return { ok: true, version: state.version ?? "" };
+        }
+      }
+      if (state && upToDate(state) && readToken() && !newerReady(typeof state.version === "string" ? state.version : null)) {
+        // O antigo saiu e outro (o mesmo) ja respondeu: serve.
         ready = true;
         runningVersion = typeof state.version === "string" ? state.version : null;
         learn(state);
-        if (updater && !updater.state?.().running) updater.noteRunning("running", runningVersion);
         return { ok: true, version: state.version ?? "" };
       }
       ready = false;
@@ -408,19 +449,29 @@ import { REPO, VERSION } from '../version.js';
         if (!holds) void refreshIfIdle();
       };
     }
+    /**
+     * glibren.44: troca o servico do ar pela versao mais nova pronta agora, a pedido (Configuracoes > Videos "Atualizar
+     * o servico agora", o player num video que pede login com um servico sem a conta). Os hold() das telas nao seguram
+     * (quem pede e o jogador), mas um job ou pre-resolve em andamento sim. -> o de ensure() e `upgraded`, ou
+     * { ok: false, reason: "busy" | "none" } (nada mais novo pronto).
+     */
+    async function upgradeNow() {
+      if (active || pending.size) return { ok: false, reason: "busy" };
+      const before = ready ? runningVersion : null;
+      if (ready && !newerReady()) return { ok: false, reason: "none" };
+      const result = await ensure({ held: holds });
+      const after = ready ? runningVersion : null;
+      if (result?.ok && before && after === before) return { ok: false, reason: "none", version: after };
+      return { ...result, upgraded: Boolean(result?.ok && after && after !== before) };
+    }
     /** Com ninguem usando e uma versao mais nova pronta que a do ar: pede ao servico para sair (POST /v1/quit); o
      *  proximo ensure() sobe a nova. True quando pediu. */
     async function refreshIfIdle() {
-      if (holds || active || pending.size || !ready || !updater || !runningVersion) return false;
-      let best = null;
-      try {
-        best = updater.candidates()[0] ?? null;
-      } catch {
-      }
+      if (!idle() || !ready || !updater || !runningVersion) return false;
       // glibren.42 (A6): also when the one up was set aside ("Back to the built-in version", or marked bad).
-      const setAside = typeof updater.isBad === "function" && updater.isBad(runningVersion);
-      if (!best?.version || best.version === runningVersion || !newer(best.version, runningVersion) && !setAside) return false;
-      log(`service ${runningVersion} is idle and ${best.version} is ${setAside ? "the one to use now" : "ready"}: restarting it`);
+      const next = newerReady();
+      if (!next) return false;
+      log(`service ${runningVersion} is idle and ${next} is ready: restarting it`);
       ready = false;
       runningVersion = null;
       await call("POST", "/v1/quit", { timeoutMs: 3e3 }).catch(() => {
@@ -644,7 +695,7 @@ import { REPO, VERSION } from '../version.js';
       cache.clear();
       return { signedIn: false };
     }
-    return { ensure, offered, hasAccount, account, signIn, signInPoll, signOut, elfPath, elfCandidates, health, readToken, job, search, more, resolve, prefetch, cancelPrefetch, sponsor, hold, refreshIfIdle, isReady: () => ready, runningVersion: () => runningVersion };
+    return { ensure, offered, hasAccount, account, signIn, signInPoll, signOut, elfPath, elfCandidates, health, readToken, job, search, more, resolve, prefetch, cancelPrefetch, sponsor, hold, refreshIfIdle, newerReady, upgradeNow, idle, isReady: () => ready, runningVersion: () => runningVersion };
   }
 
   // O servico do app (o Http, o FileSystem e os Payloads do ps5-react), criado no primeiro uso.
