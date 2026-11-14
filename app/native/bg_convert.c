@@ -1838,6 +1838,8 @@ static int auto_extract(Conv* c, const char* work, char* err, size_t cap) {
 }
 // glibren.20b: RAR (cifrado ou nao) pelo rar-extract.elf do app, num processo separado (bg_rar.c).
 #include "bg_rar.c"
+// glibren.60: .7z com LZMA2 em varios nucleos (LZMA SDK, bg_7z.c); o resto segue pela libarchive.
+#include "bg_7z.c"
 
 // glibren.20: uma conversao de compactado que nao deu direto: extrai em <disco>/BACKUP/_temp/<id> (o mesmo disco do
 // original, entao sem copiar entre discos) e a MESMA conversao segue com a pasta do jogo ("dir") ou o .pkg de PS5 de
@@ -1879,6 +1881,18 @@ static void conv_extract_in_place(Conv* c) {
       extracted = auto_extract(c, work, err, sizeof err);
     } else {
       extracted = rar;
+    }
+  } else if (sz7_name_is_7z(c->source)) {
+    // glibren.60: .7z LZMA2 em varios nucleos; o que nao for para esse caminho (-1) vai a libarchive, do zero
+    const int fast = sz7_extract(c, work, err, sizeof err);
+    if (fast < 0 && !c->cancel && !g_stop) {
+      logk_("conversao %s: 7z sem o caminho multinucleo (%s); extraindo pela libarchive", c->id, err);
+      conv_remove_tree(work, 0);
+      mkdir_p(work);
+      err[0] = 0;
+      extracted = auto_extract(c, work, err, sizeof err);
+    } else {
+      extracted = fast > 0;
     }
   } else {
     extracted = auto_extract(c, work, err, sizeof err);
