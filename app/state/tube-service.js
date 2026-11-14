@@ -171,12 +171,15 @@ import { REPO, VERSION } from '../version.js';
    * glibren.55: a qualidade seguinte depois de um erro do player em `failed` (sem as de `tried`, pelos rotulos): o mesmo
    * formato mais baixo; depois as outras ate a mesma altura, H.264 antes; depois qualquer uma; -1 sem nenhuma. Antes ia
    * para a proxima da lista, que e o VP9 da mesma altura: um erro no H.264 trocava o formato sozinho e de vez.
+   * glibren.59: o VP9 saiu da queda automatica (pisca no PS5 real, relato 14/11/2026): so entra se o jogador escolheu
+   * VP9 (a qualidade que falhou e VP9). Sem mais H.264, -1: o player diz o erro e o VP9 fica no R2 (manual).
    */
   function fallbackChoice(list, failed, tried = /* @__PURE__ */ new Set()) {
     const current = list[failed];
     if (!current) return -1;
     const family = familyOf(current);
-    const left = list.map((choice, index) => ({ choice, index })).filter(({ choice, index }) => index !== failed && !tried.has(choice.label));
+    const allowed = (choice) => family === "vp9" || familyOf(choice) !== "vp9";
+    const left = list.map((choice, index) => ({ choice, index })).filter(({ choice, index }) => index !== failed && !tried.has(choice.label) && allowed(choice));
     const lower = left.filter(({ choice }) => familyOf(choice) === family && choice.height < current.height);
     if (lower.length) return bestOf(lower);
     const rank = (choice) => ({ h264: 0, hevc: 1, vp9: 2 })[familyOf(choice)] ?? 3;

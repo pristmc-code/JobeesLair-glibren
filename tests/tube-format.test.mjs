@@ -95,9 +95,8 @@ test('erro do player: desce no mesmo formato (o H.264 nao vira VP9 sozinho), dep
   next = fallbackChoice(list, next, tried);
   assert.equal(labelOf(next), '720p 30 fps H264 / AAC');
   tried.add(labelOf(next));
-  next = fallbackChoice(list, next, tried);
-  assert.equal(list[next].family, 'vp9', 'sem mais H.264: um VP9 ate a mesma altura');
-  assert.equal(labelOf(next), '720p 60 fps VP9 / OPUS');
+  // glibren.59: sem mais H.264 o VP9 NAO entra sozinho (pisca no PS5): -1, o player diz o erro; VP9 so pelo R2.
+  assert.equal(fallbackChoice(list, next, tried), -1, 'sem mais H.264: nada (VP9 so manual)');
   // VP9 escolhido que falha: desce no VP9.
   assert.equal(labelOf(fallbackChoice(list, at('1440p 60 fps VP9 / OPUS'), new Set(['1440p 60 fps VP9 / OPUS']))), '1080p 60 fps VP9 / OPUS');
   // Tudo tentado: -1 (o player diz o erro).

@@ -9,8 +9,12 @@
 //   - Legendas: a do idioma do app (WebVTT do servico, prop `subtitles`, faixa 1000); Triangulo liga/desliga (fica
 //     guardado, state/tube-settings.js); o texto e desenhado pelo app (onSubtitle).
 //   - SponsorBlock (Configuracoes > Videos, ligado por padrao): ao entrar num trecho, pula para o fim dele.
-//   - X pausa/continua; Esquerda/Direita ou L1/R1 voltam/avancam 10 s; Circulo fecha (com a lista de qualidades aberta,
-//     fecha so a lista).
+//   - X pausa/continua; Esquerda/Direita ou L1/R1 voltam/avancam: glibren.59 navegacao progressiva (player-plan.js):
+//     toque = 10 s, segurar acelera (10 s -> 30 s -> 1 min -> 2 min), o alvo aparece na barra e o seek e UM so, ao
+//     soltar; Circulo fecha (com a lista de qualidades aberta, fecha so a lista).
+//   - glibren.59: erro logo depois de um seek, travada e erro do decodificador nao sao "essa qualidade falhou": reabre a
+//     mesma qualidade na mesma posicao (decodificador novo), depois links novos, e so entao desce (no mesmo formato; o
+//     VP9 nunca entra sozinho). Travou (sem andar 20 s) ou nao abriu (45 s): reabre; sem jeito, para com o motivo na tela.
 //   - Erro do player: resolve de novo com links novos (fresh) e reabre na posicao; de novo, tenta a qualidade abaixo
 //     do mesmo formato (glibren.55: tube-service.js fallbackChoice; antes ia para a proxima da lista, o VP9 da mesma
 //     altura, e o H.264 "voltava sozinho" para o VP9), avisando qual; sem mais nenhuma, diz o erro. glibren.42 (A11): os links sao renovados de novo depois de um tempo tocando
@@ -31,6 +35,7 @@ import { useImmersive } from '../state/nav.jsx';
 import { choiceNote, clockText, codecFamily, defaultChoice, fallbackChoice, sponsorSkipTo, tubeService } from '../state/tube-service.js';
 import { setTubeCodec, setTubeSubtitles, tubeCodec, tubeDownloadCap, tubeQuality, tubeSponsorBlock, useTubeCodec, useTubeSubtitles } from '../state/tube-settings.js';
 import { setVideoCap } from '../state/speed-limit.js';
+import { OPEN_MS, STALL_MS, errorPlan, newAttempts, noteSeek, scrubDue, scrubHold, scrubPress, scrubRelease, stallPlan } from './player-plan.js';
 import { holdMedia } from '../state/activity.js';
 import { ButtonHints } from '../ui/ButtonHints.jsx';
 import { Skeleton } from '../ui/Skeleton.jsx';
@@ -40,12 +45,11 @@ import { SideSheet } from '../ui/SideSheet.jsx';
 import { colors, radius } from '../ui/colors.js';
 import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-react/core';
 
-  var SEEK_STEP = 10;
   var BAR_MS = 4e3;
   var NOTICE_MS = 2500;
   var SUBTITLE_TRACK = 1e3;
-  var FRESH_AFTER_MS = 6e4;
-  var FRESH_MAX = 8;
+  // glibren.59: os botoes da navegacao progressiva (D-pad e L1/R1) e o lado de cada um.
+  var SCRUB_BUTTONS = { left: -1, l1: -1, right: 1, r1: 1 };
   // glibren.42: os erros do servico que tem texto proprio (o resto mostra o codigo em tube.playFailed, inteiro).
   // glibren.44: o servico 0.2.2 manda codigos com sufixo ("extraction_failed: UNPLAYABLE (...)"): o texto proprio vale
   // pelo comeco do codigo; o generico mostra o codigo todo. account_age_unverified: a conta precisa confirmar a idade.
@@ -56,6 +60,12 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     if (codeIs(value, "account_expired")) return t2("tube.accountExpired");
     if (codeIs(value, "account_not_allowed")) return t2("tube.accountNotAllowed");
     if (codeIs(value, "account_age_unverified")) return t2("tube.accountAgeUnverified");
+    // glibren.59: os motivos que antes ficavam so no codigo (ou com o player parado).
+    if (codeIs(value, "account_media_refused")) return t2("tube.mediaRefusedAccount");
+    if (codeIs(value, "upstream_media")) return t2("tube.mediaRefused");
+    if (codeIs(value, "stalled")) return t2("tube.stalledFailed");
+    if (codeIs(value, "open_timeout")) return t2("tube.openTimeout");
+    if (value.includes("video decode failed")) return t2("tube.decodeFailed", { error: value });
     return t2("tube.playFailed", { error: value || "?" });
   } // os arquivos de `subtitles` sao listados a partir de 1000 (docs/VIDEO.md)
   /**
@@ -153,7 +163,11 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     // glibren-tube-quality: quem decodifica o video aberto ("sceVideodec2" = o do PS5, "ffmpeg" = software), do onStatus.
     const [decoder, setDecoder] = useState("");
     const video = useRef(null);
-    const live = useRef({ position: 0, segments: [], skipUntil: 0, tries: 0, freshCount: 0, freshAt: 0, alive: true, abort: null, upgraded: false, tried: /* @__PURE__ */ new Set(), cpuSaid: "" });
+    const live = useRef({ position: 0, segments: [], skipUntil: 0, attempts: newAttempts(), alive: true, abort: null, upgraded: false, tried: /* @__PURE__ */ new Set(), cpuSaid: "", scrub: null, movedAt: 0, phaseAt: 0 });
+    // glibren.59: `reload` reabre a mesma qualidade (o <Video> monta de novo: decodificador novo) na posicao startAt;
+    // `scrub`: a navegacao progressiva em andamento ({ target, ... } de player-plan.js), mostrada na barra.
+    const [reload, setReload] = useState(0);
+    const [scrub, setScrub] = useState(null);
     const codecPref = useTubeCodec();
     const barTimer = useRef(null);
     const noticeTimer = useRef(null);
@@ -214,14 +228,27 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         clearTimeout(noticeTimer.current);
       };
     }, []);
-    const seekBy = (delta) => {
-      const duration = info?.duration || Infinity;
-      const target = Math.max(0, Math.min(duration - 1, live.current.position + delta));
-      live.current.position = target;
+    // glibren.59: o seek de verdade (um so por navegacao); erros nos proximos segundos sao do seek (player-plan.js).
+    const seekTo = (target) => {
+      const state = live.current;
+      state.position = target;
+      state.movedAt = Date.now();
+      noteSeek(state.attempts, Date.now());
       setPosition(target);
       video.current?.seek(target);
       showBar();
     };
+    // glibren.59: reabre a MESMA qualidade em `at` (o <Video> monta de novo); nao conta como falha da qualidade.
+    const reopenAt = (at, message) => {
+      const state = live.current;
+      setStartAt(at);
+      setDecoder("");
+      setReload((value) => value + 1);
+      setPhase("opening");
+      state.movedAt = Date.now();
+      if (message) say(message);
+    };
+    const playDuration = () => info?.duration || item.seconds || 0;
     const togglePause = () => {
       setPaused((value) => !value);
       showBar();
@@ -238,10 +265,8 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     // (os erros de antes nao contam contra ela: a primeira falha dela ainda pede links novos).
     const switchTo = (index) => {
       const state = live.current;
-      state.tries = 0;
       state.tried.clear();
-      state.freshCount = 0;
-      state.freshAt = 0;
+      state.attempts = newAttempts();
       state.cpuSaid = "";
       if (index === choice || index < 0) return;
       setStartAt(state.position);
@@ -266,8 +291,8 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     const onProgress = ({ currentTime }) => {
       const state = live.current;
       if (phase === "opening") opened();
+      if (Math.abs(currentTime - state.position) > 0.05) state.movedAt = Date.now();
       state.position = currentTime;
-      state.tries = 0;
       const shown = Math.floor(currentTime);
       if (shown !== Math.floor(position)) setPosition(currentTime);
       if (!state.segments.length || Date.now() < state.skipUntil) return;
@@ -276,31 +301,35 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
       // Um pulo por vez: o proximo onProgress ainda pode vir de antes do seek.
       state.skipUntil = Date.now() + 1500;
       state.position = to;
+      state.movedAt = Date.now();
+      noteSeek(state.attempts, Date.now());
       video.current?.seek(to);
       say(t2("tube.sponsorSkipped"));
     };
     const onError = ({ error }) => {
       const state = live.current;
-      console.log(`tube: player error on ${item.id} (${info?.choices[choice]?.label ?? "?"}): ${error}`);
+      console.log(`tube: player error on ${item.id} (${info?.choices[choice]?.label ?? "?"}) at ${Math.round(state.position)} s: ${error}`);
       setStartAt(state.position);
-      // 1) os links podem ter vencido: resolve de novo e reabre na mesma qualidade e posicao. A primeira vez sempre; as
-      // seguintes so depois de FRESH_AFTER_MS da anterior (um erro logo depois de links novos nao e de link vencido).
-      if (state.freshCount === 0 || state.freshCount < FRESH_MAX && Date.now() - state.freshAt >= FRESH_AFTER_MS) {
-        state.freshCount += 1;
-        state.freshAt = Date.now();
-        state.tries = 0;
+      // glibren.59 (player-plan.js errorPlan): 1) reabre a mesma qualidade na mesma posicao (erro do seek ou do
+      // decodificador: um decodificador novo resolve); 2) links novos (podem ter vencido); 3) so entao a qualidade abaixo
+      // do mesmo formato (fallbackChoice; o VP9 nunca entra sozinho), avisando; sem nenhuma, diz o motivo.
+      const plan = errorPlan(state.attempts, Date.now());
+      console.log(`tube: ${item.id} error plan ${plan}`);
+      if (plan === "reopen") {
+        reopenAt(state.position, t2("tube.reopening"));
+        return;
+      }
+      if (plan === "fresh") {
         setPhase("resolving");
         void load(true, info?.choices[choice]?.label ?? "");
         return;
       }
-      // 2) glibren.55: a qualidade abaixo do mesmo formato, depois as outras (tube-service.js fallbackChoice), uma vez
-      // cada, dizendo qual; o formato guardado (tubeCodec) nao muda: o proximo video abre no escolhido.
-      state.tries += 1;
       const list = info?.choices ?? [];
       if (list[choice]) state.tried.add(list[choice].label);
       const next = fallbackChoice(list, choice, state.tried);
       if (next >= 0) {
         say(t2("tube.fellBack", { label: list[next].label }));
+        state.attempts.reopens = [];
         setDecoder("");
         setChoice(next);
         setPhase("opening");
@@ -309,17 +338,78 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
       setProblem(String(error ?? ""));
       setPhase("failed");
     };
-    // Esquerda/Direita do D-pad voltam/avancam (o X e o Circulo vem pelo FocusScope).
-    useControllerEvents(phase === "playing" && !menu ? (event) => {
-      if (event.type !== "press") return;
-      if (event.button === "left") seekBy(-SEEK_STEP);
-      else if (event.button === "right") seekBy(SEEK_STEP);
-      else if (event.button === "up" || event.button === "down") showBar();
-    } : null);
+    // glibren.59: o player nunca fica parado sem dizer nada. Travou tocando (sem andar STALL_MS, nao pausado, sem
+    // navegacao pendente): reabre na mesma qualidade, depois links novos, depois para com o motivo (stallPlan). Nao abriu
+    // em OPEN_MS: conta como erro do player (errorPlan).
+    useEffect(() => {
+      live.current.phaseAt = Date.now();
+      live.current.movedAt = Date.now();
+    }, [phase, reload, choice, paused]);
+    useEffect(() => {
+      if (phase !== "playing" && phase !== "opening") return void 0;
+      const timer = setInterval(() => {
+        const state = live.current;
+        const now = Date.now();
+        if (phase === "opening") {
+          if (now - state.phaseAt > OPEN_MS) onError({ error: "open_timeout" });
+          return;
+        }
+        if (paused || menu || state.scrub || now - state.movedAt < STALL_MS) return;
+        const plan = stallPlan(state.attempts, now);
+        console.log(`tube: ${item.id} stalled at ${Math.round(state.position)} s: ${plan}`);
+        if (plan === "reopen") reopenAt(state.position, t2("tube.stalled"));
+        else if (plan === "fresh") {
+          setStartAt(state.position);
+          setPhase("resolving");
+          void load(true, info?.choices[choice]?.label ?? "");
+        } else {
+          setProblem("stalled");
+          setPhase("failed");
+        }
+      }, 1e3);
+      return () => clearInterval(timer);
+    }, [phase, paused, menu, choice, reload, info]);
+    // glibren.59: navegacao progressiva (player-plan.js): Esquerda/Direita e L1/R1. Toque = 10 s; segurando, acelera; o
+    // alvo aparece na barra e o seek e um so, SCRUB_COMMIT_MS depois de soltar (toques seguidos somam).
+    const scrubbing = phase === "playing" && !menu;
+    useControllerEvents(scrubbing || scrub ? (event) => {
+      const state = live.current;
+      const now = Date.now();
+      const dir = SCRUB_BUTTONS[event.button];
+      if (event.type === "press" && dir && scrubbing) {
+        state.scrub = scrubPress(state.scrub, dir, state.position, playDuration(), now);
+        setScrub(state.scrub);
+        showBar();
+        return;
+      }
+      if (event.type === "release" && dir && state.scrub?.held && state.scrub.dir === dir) {
+        state.scrub = scrubRelease(state.scrub, playDuration(), now);
+        setScrub(state.scrub);
+        return;
+      }
+      if (event.type === "press" && (event.button === "up" || event.button === "down")) {
+        showBar();
+        return;
+      }
+      if (event.type !== "frame" || !state.scrub) return;
+      if (scrubDue(state.scrub, now)) {
+        const target = state.scrub.target;
+        state.scrub = null;
+        setScrub(null);
+        seekTo(target);
+        return;
+      }
+      const next = scrubHold(state.scrub, playDuration(), now);
+      if (next !== state.scrub) {
+        state.scrub = next;
+        setScrub(next);
+        showBar();
+      }
+    } : null, { frames: true });
     const onAction = (action) => {
       if (menu) return false;
-      if (action === "l1") seekBy(-SEEK_STEP);
-      else if (action === "r1") seekBy(SEEK_STEP);
+      // L1/R1 andam pela navegacao progressiva (useControllerEvents acima): aqui so nao deixam a acao escapar.
+      if (action === "l1" || action === "r1") return true;
       else if (action === "triangle") toggleSubtitles();
       else if (action === "r2" && info?.choices.length) {
         setMenu(true);
@@ -337,7 +427,9 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     };
     const current = info?.choices[choice] ?? null;
     const duration = info?.duration || item.seconds || 0;
-    const progress = duration > 0 ? Math.min(1, position / duration) : 0;
+    // glibren.59: navegando, a barra mostra o alvo (o seek so acontece ao soltar).
+    const shownAt = scrub ? scrub.target : position;
+    const progress = duration > 0 ? Math.min(1, shownAt / duration) : 0;
     const title = info?.title || item.title;
     return jsx(FocusScope, { trap: true, autoFocus: true, onBack, onAction, children: jsxs(View, { style: [FULL, { backgroundColor: "#000000" }], children: [
       current ? jsx(Video, {
@@ -362,7 +454,7 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
             say(t2("tube.cpuDecoding"));
           }
         }
-      }, current.url) : null,
+      }, `${current.url}#${reload}`) : null,
       // A superficie que recebe o X (pausar) e mantem o foco no player.
       jsx(View, { focusKey: "tube:player", autoFocus: true, onPress: togglePause, style: FULL }),
       subsOn && subtitle ? jsx(View, { style: { position: "absolute", left: 160, right: 160, bottom: bar ? 210 : 72, alignItems: "center" }, children: jsx(View, { style: { borderRadius: radius.sm, backgroundColor: "#000000b3", paddingHorizontal: 22, paddingVertical: 10 }, children: jsx(Text, { style: text(36, "#ffffff", { textAlign: "center", fontWeight: 600 }), children: subtitle }) }) }) : null,
@@ -379,7 +471,7 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
           jsx(Text, { style: text(22, "#cbd5e1", { numberOfLines: 1, ellipsizeMode: "tail" }), children: [info?.channel || item.channel, current?.label, info?.signedIn ? t2("tube.signedInPlayback") : "", decoder ? t2(decoder === "sceVideodec2" ? "tube.decoderHardware" : "tube.decoderSoftware") : ""].filter(Boolean).join("  ·  ") }),
           jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 18, marginTop: 10 }, children: [
             jsx(Icon, { name: paused ? "play" : "pause", size: 22, color: "#ffffff" }),
-            jsx(Text, { style: text(22, "#ffffff", { width: 110 }), children: clockText(position) }),
+            jsx(Text, { style: text(22, scrub ? colors.accentHi : "#ffffff", { width: 110 }), children: clockText(shownAt) }),
             jsx(View, { style: { flex: 1, height: 8, borderRadius: radius.pill, backgroundColor: "#ffffff40" }, children: jsx(View, { style: { width: `${Math.round(progress * 1e3) / 10}%`, height: 8, borderRadius: radius.pill, backgroundColor: colors.accentHi } }) }),
             jsx(Text, { style: text(22, "#ffffff", { width: 110, textAlign: "right" }), children: clockText(duration) })
           ] })
