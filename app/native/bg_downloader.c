@@ -1736,6 +1736,7 @@ struct Engine {
   // registra no maximo FAIL_LOG_BURST falhas por minuto (as outras viram um resumo). Antes: 13.500 linhas em 10 s.
   unsigned net_fails, log_count, log_skipped;
   int64_t log_window_at;
+  long deny_status; // glibren.60: o codigo da ultima recusa (401/403/410) que pediu link novo
 };
 
 static volatile unsigned g_epoch; // muda a cada volta do repouso / troca de IP
@@ -2141,6 +2142,18 @@ static int congested(const Conn* c, CURLcode result) {
   }
 }
 
+// glibren.60: a fonte saiu do ar (o app conhece o comeco "Source unavailable: HTTP"; download-queue.js/errors.js).
+#define GONE_TEXT "Source unavailable: HTTP %ld. This link needs a login on the site or was blocked: choose another source."
+static int source_gone(const Job* j, long status) {
+  if (debrid_source(j) || !status) return 0;
+  if (status == 404 || status == 410) return 1;
+  if (status != 401 && status != 403) return 0;
+  char host[200];
+  url_host(j->url, host, sizeof host);
+  const size_t n = strlen(host);
+  return !strcmp(host, "archive.org") || (n > 12 && !strcmp(host + n - 12, ".archive.org"));
+}
+
 // glibren.60: rodadas seguidas sem rede ate o job voltar a fila (1+2+4+8+16+32*4 s, uns 3 min) e o teto do diario.
 #define NET_FAIL_ROUNDS 10
 #define FAIL_LOG_BURST 20
@@ -2483,7 +2496,7 @@ static int probe_source(Engine* e) {
     conn_configure(c);
     CURLcode result = perform_probe(e, c);
     if (stopping(e)) return 0;
-    if (c->status == 401 || c->status == 403 || c->status == 410) { e->needs_renew = 1; return 0; }
+    if (c->status == 401 || c->status == 403 || c->status == 410) { e->needs_renew = 1; e->deny_status = c->status; return 0; }
     char text[400];
     if ((congested(c, result) || (result == CURLE_WRITE_ERROR && c->status >= 500)) && attempt < 6) {
       logf_("job %s: sonda tentativa %u falhou: %s", e->job->id, attempt, describe(c, result, text, sizeof text));
@@ -2491,6 +2504,8 @@ static int probe_source(Engine* e) {
       while (mono_ms() < until && !stopping(e)) sleep_ms(100);
       continue;
     }
+    // glibren.60: 404 de um link direto = a fonte saiu do ar (a mensagem que o app reconhece e mostra: escolher outra).
+    if (c->status == 404 && !debrid_source(e->job)) { engine_fail(e, GONE_TEXT, c->status); return 0; }
     if (c->status >= 400) { engine_fail(e, "range probe failed (HTTP %ld, %s)", c->status, curl_easy_strerror(result)); return 0; }
     if (debrid_source(e->job) && is_html_type(c->content_type)) { // glibren.13: a copia do debrid e uma pagina
       if (c->content_range) { e->known = 1; e->total = c->cr_total; }
@@ -2929,6 +2944,7 @@ static int transfer_ranges(Engine* e) {
         if (c->redirected && e->location[0]) { e->location[0] = 0; continue; } // o link do no expirou: volta a URL original
         logf_("job %s: faixa %u negada (HTTP %ld); link vencido", j->id, i, c->status);
         e->needs_renew = 1;
+        e->deny_status = c->status;
         drop_all(e);
         return 0;
       }
@@ -3218,6 +3234,13 @@ static void run_job(Job* j) {
     // glibren.42 (J8): o link temporario nao foi gravado (so a origem voltou do jobs.json): o app pede outro
     // (renew_link devolve RENEW_NEEDS_APP para quem nao e TorBox).
     if (j->link_hidden && strcmp(j->provider, "torbox")) e->needs_renew = 1;
+    // glibren.60: link direto recusado de vez (410, ou 401/403 do archive.org: item restrito ou retirado) nao e link
+    // vencido: falha com a mensagem de fonte fora do ar (o app sugere outra) em vez de "aguardando o app" (Another World).
+    if (e->needs_renew && source_gone(j, e->deny_status)) {
+      logf_("job %s: fonte fora do ar (HTTP %ld)", j->id, e->deny_status);
+      engine_fail(e, GONE_TEXT, e->deny_status);
+      goto done;
+    }
     if (e->needs_renew) {
       e->needs_renew = 0;
       if (renew_round >= MAX_RENEWALS) { engine_fail(e, "provider denied the file; link expired or browser verification required (HTTP 403)"); goto done; }

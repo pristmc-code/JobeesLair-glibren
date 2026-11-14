@@ -851,6 +851,8 @@ static int diag_app_route(int fd, Request* r) {
     diag_clean_version(a.jobe);
     diag_clean_version(a.tube);
     if (!diag_title_ok(a.title)) a.title[0] = 0;
+    // sem a versao da Jobe nao grava (um corpo vazio apagaria o app-info bom de antes)
+    if (!a.jobe[0]) { respond_error(fd, 400, "expected {memory, versions: {jobe, tube, title}}"); return 1; }
     const int saved = diag_save_app(&a);
     if (!saved) logf_("diagnostico: app-info.json nao gravado");
     if (saved) respond(fd, 200, "{\"ok\":true}"); else respond_error(fd, 500, "not saved");

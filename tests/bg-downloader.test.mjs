@@ -2436,6 +2436,28 @@ test('glibren.55: um 429 segura o job inteiro pelo Retry-After (nenhuma faixa no
   }
 });
 
+test('glibren.60: link direto que sumiu (404/410) falha como fonte fora do ar (escolher outra), nao "aguardando o app"', { skip }, async () => {
+  const base = workspace();
+  const status = { '/gone404.bin': 404, '/gone410.bin': 410 };
+  const gone = http.createServer((req, res) => { res.writeHead(status[req.url] ?? 404, { 'Content-Type': 'text/plain', Connection: 'close' }); res.end('gone'); });
+  const goneAt = await freePort();
+  await new Promise((resolve) => gone.listen(goneAt, '127.0.0.1', resolve));
+  const child = start(base);
+  try {
+    await up(base);
+    for (const [name, code] of Object.entries(status)) {
+      const dest = path.join(base, `disk/downloads${name}`);
+      const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${goneAt}${name}`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 4 });
+      const job = await until(base, data.id, ['failed', 'needs-app', 'completed']);
+      assert.equal(job.state, 'failed', `${name}: ${job.state} ${job.error}`);
+      assert.match(job.error, new RegExp(`^Source unavailable: HTTP ${code}\\. .*choose another source`));
+    }
+  } finally {
+    gone.close();
+    await stop(child);
+  }
+});
+
 test('glibren.60: sem rede no meio (conexao recusada) o job todo espera em rodadas: poucas linhas no diario e volta a fila', { skip }, async () => {
   const base = workspace();
   // Um servidor que responde so a sonda (bytes=0-0) e sai do ar: as faixas seguintes levam conexao recusada.
