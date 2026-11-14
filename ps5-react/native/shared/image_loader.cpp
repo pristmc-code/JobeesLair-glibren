@@ -1025,8 +1025,11 @@ private:
     // the host's, or nothing at all. The host switches to DoH, then to the second DoH server, and the
     // load retries.
     const std::string host = host_of(t.url);
-    const bool blocked = result == CURLE_COULDNT_CONNECT || result == CURLE_COULDNT_RESOLVE_HOST ||
-      result == CURLE_SSL_CONNECT_ERROR || result == CURLE_PEER_FAILED_VERIFICATION || result == CURLE_GOT_NOTHING;
+    // glibren.62: the console's own address (the payload's 127.0.0.1:34201) is never blocked by a DNS: a refusal
+    // there is the payload starting, and a pin made for it ("127.0.0.1:34201:80:...") broke every later load.
+    const bool local = host.rfind("127.", 0) == 0 || host.rfind("localhost", 0) == 0 || host.rfind("[::1]", 0) == 0;
+    const bool blocked = !local && (result == CURLE_COULDNT_CONNECT || result == CURLE_COULDNT_RESOLVE_HOST ||
+      result == CURLE_SSL_CONNECT_ERROR || result == CURLE_PEER_FAILED_VERIFICATION || result == CURLE_GOT_NOTHING);
     // Only a failure on the host's current route moves it on: the loads sent before a switch fail
     // together, and one switch covers them all. A pinned address that stops answering is looked up
     // again on the same server first.
@@ -1050,7 +1053,10 @@ private:
       curl_easy_getinfo(t.curl, CURLINFO_EFFECTIVE_URL, &landed);
       if (landed && host_of(landed) == host && curl_easy_getinfo(t.curl, CURLINFO_PRIMARY_IP, &ip) == CURLE_OK && ip && *ip) {
         const bool tls = t.url.rfind("https:", 0) == 0;
-        const std::string entry = host + (tls ? ":443:" : ":80:") + (std::strchr(ip, ':') ? "[" + std::string(ip) + "]" : std::string(ip));
+        // The host keeps its port in host_of(); CURLOPT_RESOLVE wants "name:port:address".
+        const std::size_t colon = host.rfind(':');
+        const bool ported = colon != std::string::npos && host.find(']', colon) == std::string::npos;
+        const std::string entry = (ported ? host + ":" : host + (tls ? ":443:" : ":80:")) + (std::strchr(ip, ':') ? "[" + std::string(ip) + "]" : std::string(ip));
         doh_pins_.push_back(curl_slist_append(nullptr, entry.c_str()));
         doh->second.pin = doh_pins_.back();
         network::platform_log(("images: " + host + " pinned to " + ip + " from DoH").c_str());

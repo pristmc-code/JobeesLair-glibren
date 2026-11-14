@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.5"
+#define BG_VERSION "1.37.6"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -4959,7 +4959,8 @@ static void save_firmware(void) {
 #include "bg_monitor_html.h"
 
 #define MONITOR_PORT 34201
-#define MONITOR_CLIENTS 4
+#define MONITOR_CLIENTS 12
+#define MONITOR_WAIT_MS 4000
 #define MONITOR_SESSIONS 16
 #define MONITOR_PEERS 32
 #define MONITOR_FREE_TRIES 5
@@ -7419,7 +7420,7 @@ static int open_monitor(void) {
   return fd;
 }
 
-// Liga e desliga a porta conforme a opcao; no maximo MONITOR_CLIENTS conexoes ao mesmo tempo (o resto e fechado).
+// Liga e desliga a porta conforme a opcao; no maximo MONITOR_CLIENTS conexoes ao mesmo tempo (o resto espera a vez ate MONITOR_WAIT_MS e depois e fechado).
 static void* monitor_loop(void* arg) {
   (void)arg;
   int server = -1, failures = 0;
@@ -7451,10 +7452,17 @@ static void* monitor_loop(void* arg) {
       continue;
     }
     failures = 0;
-    pthread_mutex_lock(&g_monitor_lock);
-    const int room = g_monitor_clients < MONITOR_CLIENTS;
-    if (room) ++g_monitor_clients;
-    pthread_mutex_unlock(&g_monitor_lock);
+    // glibren.62: a loja (/app) e a TV pedem dezenas de capas de uma vez; a conexao a mais fechada na hora virava
+    // foto falhada (e, na TV, o carregador achava o payload "bloqueado"). Agora espera a vez ate MONITOR_WAIT_MS.
+    int room = 0;
+    for (int64_t until = mono_ms() + MONITOR_WAIT_MS; !g_stop;) {
+      pthread_mutex_lock(&g_monitor_lock);
+      room = g_monitor_clients < MONITOR_CLIENTS;
+      if (room) ++g_monitor_clients;
+      pthread_mutex_unlock(&g_monitor_lock);
+      if (room || mono_ms() >= until) break;
+      sleep_ms(20);
+    }
     if (!room) { close(client); continue; }
     if (spawn_thread(serve_monitor, (void*)(intptr_t)client, NULL)) {
       close(client);

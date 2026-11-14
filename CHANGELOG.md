@@ -6,6 +6,15 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.62** (fork): covers that stopped showing on the PS5 TV app and in the glibren full-screen store.
+  Download payload 1.37.6.
+  - The payload's phone/app port served 4 connections at once and closed every extra one right away: the store
+    (`/app`) and the TV ask for dozens of covers together, so many came back broken. Extra connections now wait their
+    turn (up to 4 s) and up to 12 are served at once.
+  - TV app image loader: a refused connection to the payload (127.0.0.1:34201) was taken for a DNS block; the address
+    it then pinned kept the port ("127.0.0.1:34201:80:...") and every later picture failed with "Malformed option
+    provided in a setopt" until the app was reopened. Local addresses are never rerouted now, and a pin keeps the
+    host's own port.
 - **glibren.61** (fork): the TorBox key kept on the PS5, so the download payload works without opening the Jobe.
   Download payload 1.37.5.
   - The payload keeps the TorBox/AllDebrid key the app hands it (POST /secret) in `/data/JobeesLair/bg/debrid-keys.json`
