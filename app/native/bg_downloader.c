@@ -3603,7 +3603,8 @@ static int read_request(int fd, Request* r) {
       const char* value = colon + 1;
       while (*value == ' ' || *value == '\t') ++value;
       // glibren.27: ate 256 KiB no /orbit (a lista de codigos que o app ja conhece, ~12 bytes cada); 64 KiB no resto.
-      if (!strcasecmp(line, "content-length")) { uint64_t n; if (!decimal(value, &n) || n > (strcmp(r->path, "/orbit") ? 64u : 256u) * 1024) return 413; r->content_length = (size_t)n; }
+      // Banco de capas pelo celular: ate 512 KiB (BANK_IMG_MAX, bg_covers_bank.c) em /api/capas/enviar.
+      if (!strcasecmp(line, "content-length")) { uint64_t n; if (!decimal(value, &n) || n > (!strncmp(r->path, "/api/capas/enviar", 17) ? 512u : strcmp(r->path, "/orbit") ? 64u : 256u) * 1024) return 413; r->content_length = (size_t)n; }
       else if (!strcasecmp(line, "x-jobe-token")) snprintf(r->token, sizeof r->token, "%s", value);
       else if (!strcasecmp(line, "x-session")) snprintf(r->session, sizeof r->session, "%s", value);
       else if (!strcasecmp(line, "origin")) snprintf(r->origin, sizeof r->origin, "%s", value);
@@ -7145,6 +7146,7 @@ static void auto_after_download(Job* j) {
 #include "bg_settings.c" // Fase 7: as configuracoes da Jobe no payload (uma fonte so)
 #include "bg_app.c"   // Fase 8: a Jobe web completa (/app), esqueleto; convive com a pagina do celular
 #include "bg_capa.c"  // .56: o proxy de capas da /app (navegador do PS5: jogo instalado, cache, rede e DoH)
+#include "bg_covers_bank.c" // banco de capas pelo celular (JobeControle): /api/capas/*, /app/capa?u= (TV)
 // glibren.49: o /health diz se o payload no ar foi posto de lado ("Voltar ao payload embutido"): o app sobe o embutido.
 static void self_health(int* replace) {
   self_init();
@@ -7166,6 +7168,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (self_monitor_route(fd, r)) return; // glibren.49: /api/payload (versao do payload, atualizar, voltar ao embutido)
   if (settings_monitor_route(fd, r)) return; // Fase 7: /api/settings (monitor_allowed)
   if (teste_monitor_route(fd, r)) return; // glibren.47: /teste e /api/teste (testes da Fase 0)
+  if (bank_monitor_route(fd, r, query)) return; // banco de capas pelo celular (bg_covers_bank.c)
   if (capa_monitor_route(fd, r, query)) return; // .56: /app/capa e /api/app/capas (bg_capa.c)
   if (app_monitor_route(fd, r)) return;   // Fase 8: /app (a Jobe web completa; so usa as rotas de sempre)
   if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)

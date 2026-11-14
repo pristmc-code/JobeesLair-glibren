@@ -24,6 +24,10 @@
 
 #include <dirent.h>
 
+// Banco de capas pelo celular (bg_covers_bank.c, incluido depois): olhado PRIMEIRO; o que nada serviu vira "pedida".
+static int bank_send(int fd, const char* id);
+static void bank_ask(const char* id);
+
 #define CAPA_MAX_BYTES (3u * 1024 * 1024)
 #define CAPA_CACHE_MAX_BYTES (48ull * 1024 * 1024)
 #define CAPA_CACHE_MAX_FILES 1500
@@ -345,6 +349,7 @@ static void capa_route(int fd, const char* query) {
   pthread_mutex_lock(&g_capa_lock);
   capa_setup_locked();
   pthread_mutex_unlock(&g_capa_lock);
+  if (bank_send(fd, id)) return; // 0. o banco de capas que o celular mandou
   char path[700];
   // 1. o jogo instalado
   snprintf(path, sizeof path, "%.500s/%s/icon0.png", g_appmeta_dir, id);
@@ -359,7 +364,7 @@ static void capa_route(int fd, const char* query) {
   const int negative = capa_neg_has(id);
   if (negative) ++g_capa_count.sem;
   pthread_mutex_unlock(&g_capa_lock);
-  if (negative) { monitor_json(fd, 404, "{\"error\":\"sem-capa\"}"); return; }
+  if (negative) { bank_ask(id); monitor_json(fd, 404, "{\"error\":\"sem-capa\"}"); return; }
   char* urls[CAPA_URLS] = {0};
   const int n = capa_urls(id, urls);
   int served = 0;
@@ -386,6 +391,7 @@ static void capa_route(int fd, const char* query) {
   if (n) ++g_capa_count.falhou; else ++g_capa_count.sem;
   pthread_mutex_unlock(&g_capa_lock);
   if (!n) capa_log("%s: sem endereco de capa no catalogo", id);
+  bank_ask(id);
   monitor_json(fd, 404, "{\"error\":\"sem-capa\"}");
 }
 
