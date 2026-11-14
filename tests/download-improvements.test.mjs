@@ -965,6 +965,42 @@ test('handoff: a TorBox link is asked ahead (at most a few, one at a time) so th
   assert.equal(asked.length, 1, 'the app downloads it with the link asked ahead, without a second TorBox request');
 });
 
+test('handoff (glibren.60): a TorBox item paused here with an old link still goes to the payload, with its age (the payload renews it)', async () => {
+  const fs = memoryFs();
+  const first = gated();
+  const downloads = engine(fs, (options, index) => index === 0 ? { gate: first.gate } : null);
+  const handed = [];
+  downloads.queueAhead = () => true;
+  downloads.syncQueue = (items) => handed.push(items);
+  let links = 0;
+  const sources = { resolve: async () => ({ url: `https://torbox.example/dl/${++links}` }) };
+  const queue = queueWith({ fs, downloads, sources });
+  const a = queue.enqueue(other(1), image('Alpha.exfat'), '/data');
+  const t = queue.enqueue(other(2), debridPage(), '/data');
+  await until(queue, a, () => downloads.requests.length === 1);
+  for (let i = 0; i < 20 && !handed.at(-1)?.find((entry) => entry.key === t)?.request; i++) await later(100);
+  const realNow = Date.now;
+  const askedAt = realNow();
+  try {
+    Date.now = () => askedAt + 3 * 3600e3; // 3 h depois: o link do TorBox ja venceu
+    queue.pause(t);
+    await later(400);
+    const item = handed.at(-1).find((entry) => entry.key === t);
+    assert.ok(item.paused, 'shown paused on the phone');
+    assert.ok(item.request, 'an old TorBox link no longer leaves it "waiting for the Jobe": the payload renews it');
+    assert.ok(Number.isFinite(item.request.background.linkAt) && item.request.background.linkAt <= askedAt + 1000, 'with the link age, so the payload asks TorBox for another first');
+  } finally {
+    Date.now = realNow;
+  }
+  first.open();
+  assert.equal((await settle(queue, a)).state, 'downloaded');
+});
+
+test('handoff (glibren.60): the job body to the payload carries linkAt only when known', () => {
+  const source = readFileSync(path.join(repo, 'app/state/background-downloads.js'), 'utf8');
+  assert.match(source, /meta\.linkAt > 0 \? \{ linkAt: Math\.round\(meta\.linkAt\) \}/);
+});
+
 test('tuning (glibren.8): TorBox has no fixed cap any more (the glibren.7 limit made the downloads crawl)', () => {
   assert.equal(tuningFor('https://nexus-244.latm.tb-cdn.cx/dld/x?token=').connections, DEFAULT_TUNING.connections);
   assert.ok(!HOST_TUNING.some((entry) => entry.hosts.includes('tb-cdn.cx')));

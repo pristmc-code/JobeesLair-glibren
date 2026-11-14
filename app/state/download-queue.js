@@ -854,8 +854,10 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         } catch {
           return null;
         }
-      } else if (debrid ? linkStale(job2) : sourceKind(release) !== "direct") {
-        // Um link de pagina de site lido antes pode vencer; um do TorBox velho e pedido de novo pelo app.
+      } else if (debrid ? linkStale(job2) && release.debrid?.service !== "torbox" : sourceKind(release) !== "direct") {
+        // Um link de pagina de site lido antes pode vencer; um do AllDebrid velho e pedido de novo pelo app.
+        // glibren.60: um do TorBox velho vai assim mesmo, com a idade (linkAt): o payload pede outro link ao TorBox antes
+        // de comecar (renew_link). Antes ficava "Aguardando a Jobe" (pausado na Jobe antes de chegar ao payload).
         return null;
       }
       const destination = job2.downloadDestination || (job2.downloadDestination = fs.exists(`${job2.artifact.destination}.part`) ? job2.artifact.destination : stagedPath(job2.artifact, job2.root));
@@ -866,7 +868,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         destination,
         storageRoot: job2.root,
         // glibren.8: key = o item da fila, para o payload aplicar as conexoes escolhidas no celular para ele.
-        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: release, key: job2.id, ...systemOf(job2) }
+        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: release, key: job2.id, ...debrid && job2.linkAt ? { linkAt: job2.linkAt } : {}, ...systemOf(job2) }
       };
     }
     // Agendada (e nao na hora): change() roda tambem enquanto a fila ainda esta sendo montada, e varias mudancas
