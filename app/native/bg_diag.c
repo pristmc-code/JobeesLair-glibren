@@ -639,7 +639,19 @@ static void* diag_thread(void* arg) {
   long status = 0;
   int sent = 0;
   for (int i = 0; i < s->count; ++i) {
-    status = diag_put(key, job.folder, message, &s->file[i]);
+    // glibren.60: sem resposta, 409 (dois commits ao mesmo tempo no repositorio), 429 ou 5xx: ate 3 novas tentativas
+    // (2, 5 e 10 s; BGDL_DIAG_RETRY_MS no PC). Um 422 numa nova tentativa e o arquivo que ja tinha subido (a resposta
+    // se perdeu): conta como enviado. Antes, uma falha de rede no meio perdia a rodada inteira.
+    static const int waits[] = {2000, 5000, 10000};
+    int64_t unit = atoll(env_or("BGDL_DIAG_RETRY_MS", "0"));
+    for (int attempt = 0;; ++attempt) {
+      status = diag_put(key, job.folder, message, &s->file[i]);
+      if (attempt && status == 422) status = 201;
+      const int again = status == -1 || status == 409 || status == 429 || status >= 500;
+      if (!again || attempt >= 3) break;
+      logf_("diagnostico: %s tentativa %d falhou (%s%ld); tenta de novo", s->file[i].name, attempt + 1, status == -1 ? "sem resposta" : "HTTP ", status == -1 ? 0L : status);
+      sleep_ms(unit > 0 ? (int)unit : waits[attempt]);
+    }
     if (status != 200 && status != 201) break;
     pthread_mutex_lock(&g_diag_lock);
     g_diag.sent = ++sent;
@@ -814,7 +826,7 @@ static int diag_monitor_route(int fd, Request* r) {
 
 // API do app (o token ja foi conferido). 1 = tratou.
 static int diag_app_route(int fd, Request* r) {
-  if (strcmp(r->path, "/diag") && strcmp(r->path, "/diag/send")) return 0;
+  if (strcmp(r->path, "/diag") && strcmp(r->path, "/diag/send") && strcmp(r->path, "/diag/app")) return 0;
   diag_init();
   if (!strcmp(r->method, "GET") && !strcmp(r->path, "/diag")) { diag_reply_status(fd, 1); return 1; }
   if (!strcmp(r->method, "POST") && !strcmp(r->path, "/diag/send")) {
@@ -827,6 +839,21 @@ static int diag_app_route(int fd, Request* r) {
     if (!diag_title_ok(a.title)) a.title[0] = 0;
     if (!diag_save_app(&a)) logf_("diagnostico: app-info.json nao gravado");
     diag_reply_start(fd, 1, "app");
+    return 1;
+  }
+  // glibren.60: o app manda as versoes e a Memoria ao abrir e de tempos em tempos, sem enviar nada: um diagnostico pedido
+  // pelo celular (app fechado) leva o app-info.json mais recente em vez de "app": null.
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/diag/app")) {
+    DiagApp a;
+    memset(&a, 0, sizeof a);
+    JP jp = {r->body ? r->body : "", r->body ? r->body + r->content_length : "", 0};
+    if (!r->content_length || !jp_object(&jp, diag_app_field, &a)) { respond_error(fd, 400, "expected {memory, versions: {jobe, tube, title}}"); return 1; }
+    diag_clean_version(a.jobe);
+    diag_clean_version(a.tube);
+    if (!diag_title_ok(a.title)) a.title[0] = 0;
+    const int saved = diag_save_app(&a);
+    if (!saved) logf_("diagnostico: app-info.json nao gravado");
+    if (saved) respond(fd, 200, "{\"ok\":true}"); else respond_error(fd, 500, "not saved");
     return 1;
   }
   respond_error(fd, 404, "not found");

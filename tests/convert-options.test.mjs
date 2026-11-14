@@ -116,8 +116,15 @@ test('pac1: queda nova avisa uma vez; OK marca como vista (settings.json) e nao 
     assert.equal(notice.pendingCrash(), null);
     assert.equal(JSON.parse(globalThis.__stubFiles.get(FILE)).crashSeen, CRASH.id);
     assert.equal(await notice.checkCrash(), null, 'vista: nao avisa de novo');
-    payload.crash = { ...CRASH, id: '1762899999', activity: 'none', name: '' };
+    payload.crash = { ...CRASH, id: '1762899999', activity: 'download', name: 'Astro Bot' };
     assert.equal((await notice.checkCrash()).id, '1762899999', 'outra queda avisa');
+    notice.dismissCrash();
+    // glibren.60: desligado com nada rodando (sem FATAL) = desligamento normal: sem aviso; com FATAL, avisa.
+    payload.crash = { ...CRASH, id: '1762899997', activity: 'none', name: '', lines: ['2026-11-13 23:15:46 notificacao: x'] };
+    assert.equal(await notice.checkCrash(), null, 'desligamento normal: sem aviso');
+    assert.equal(notice.quietShutdown(payload.crash), true);
+    payload.crash = { ...CRASH, id: '1762899996', activity: 'none', name: '', lines: ['(epoch 1762899990) FATAL: SIGSEGV no bg-downloader; o processo vai morrer'] };
+    assert.equal((await notice.checkCrash()).id, '1762899996', 'payload morto por sinal: avisa');
     notice.dismissCrash();
     // Sem queda, sem payload ou resposta estranha: nada.
     payload.crash = null;

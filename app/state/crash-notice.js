@@ -46,6 +46,8 @@ import { loadList, saveList } from './saved.js';
    * Pergunta ao payload (ou a `fetch`) pela queda; uma nova (nao vista) fica pendente e o aviso abre. Devolve a
    * pendente, ou null. Nunca lanca.
    */
+  /** glibren.60: sem nada rodando e sem sinal fatal = desligamento normal (sem aviso). */
+  var quietShutdown = (crash) => crash?.activity === "none" && !(crash.lines ?? []).some((line) => / FATAL: /.test(line));
   async function checkCrash(fetch = source) {
     if (typeof fetch !== "function") return null;
     let crash = null;
@@ -55,6 +57,14 @@ import { loadList, saveList } from './saved.js';
       crash = null;
     }
     if (!crash || crash.id === seenNow || crash.id === crashSeen() || pending?.id === crash.id) return pending;
+    // glibren.60: desligar o console com nada rodando (nem download nem conversao) tambem fica sem a marca de saida limpa
+    // (o sistema mata o payload sem SIGTERM): nao e queda que interessa ao jogador. Avisa so com trabalho interrompido
+    // ou com o payload morto por um sinal fatal (a linha "FATAL" no fim do diario). O last-crash.json segue no diagnostico.
+    if (quietShutdown(crash)) {
+      console.log(`jobeeslair: the console went down at ${crash.lastTime || "?"} with nothing running; no notice (a normal power off)`);
+      seenNow = crash.id;
+      return pending;
+    }
     pending = crash;
     console.log(`jobeeslair: the console went down during ${crash.activity}${crash.name ? ` (${crash.name})` : ""} at ${crash.lastTime || "?"}; telling the player`);
     tell();
@@ -92,4 +102,4 @@ import { loadList, saveList } from './saved.js';
     tell();
   }
 
-export { checkCrash, crashTime, dismissCrash, normalizeCrash, pendingCrash, resetCrashNotice, setCrashSource, usePendingCrash };
+export { checkCrash, crashTime, dismissCrash, normalizeCrash, pendingCrash, quietShutdown, resetCrashNotice, setCrashSource, usePendingCrash };

@@ -55,6 +55,10 @@ import { installLogger } from './services/logger.js';
 import { startMemoryMeter } from './state/memory-meter.js';
 import { startPower } from './state/power.js';
 import { startJobeRemote } from './state/jobe-remote-run.js'; // glibren.44
+import { diagnosticsBody, startAppInfoShare } from './state/diagnostics.js'; // glibren.60: "app" no diagnostico pedido pelo celular
+import { memorySnapshot as memoryNow } from './state/memory-meter.js';
+import { runningTube } from './ui/DiagnosticsRow.jsx';
+import { TITLE_ID as APP_TITLE_ID, VERSION_LABEL as APP_VERSION_LABEL } from './version.js';
 import { startSettingsSync } from './state/settings-apply.js'; // Fase 7: as configuracoes no payload
 import { startPairingWatch } from './state/device-pairing.js'; // pareamento por aparelho
 import { PairCodeNotice } from './ui/PairCodeNotice.jsx';
@@ -246,6 +250,7 @@ import { beginRemoteStore } from './state/remote-store.js';
       });
     }, []);
     (0, useEffect)(() => startJobeRemote(), []); // glibren.44: "Atualizar a Jobe" pela pagina do celular
+    (0, useEffect)(() => startAppInfoShare(() => diagnosticsBody({ snapshot: memoryNow(), jobe: APP_VERSION_LABEL, tube: runningTube(), title: APP_TITLE_ID })), []); // glibren.60
     (0, useEffect)(() => startSettingsSync(), []); // Fase 7: configuracoes no payload (fallback: settings.json local)
     // Pareamento por aparelho: o codigo de 6 digitos na tela enquanto vale (GET /pair do payload a cada 3 s, so no PS5).
     (0, useEffect)(() => startPairingWatch({ platform: Platform.OS }), []);

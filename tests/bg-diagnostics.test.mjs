@@ -24,7 +24,7 @@ import { before as whenBuilt } from 'node:test';
 import { assertBuilt, buildSkip, compileTo } from './payload-build.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
-const { diagnosticsBody, diagnosticsKeyState, diagnosticsMessageKey, sendDiagnostics } = await import(pathToFileURL(path.join(repo, 'app/state/diagnostics.js')).href);
+const { startAppInfoShare, diagnosticsBody, diagnosticsKeyState, diagnosticsMessageKey, sendDiagnostics } = await import(pathToFileURL(path.join(repo, 'app/state/diagnostics.js')).href);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 const freePort = freePortFrom(17); // glibren.44: bloco de portas so deste arquivo (tests/free-port.mjs)
@@ -317,7 +317,7 @@ test('glibren.44: erros claros: 401 chave invalida, 403 sem permissao, 404 sem o
   p.child.kill('SIGTERM');
   // sem rede: o GitHub nao responde (porta fechada)
   const closed = await freePort();
-  const q = await startPayload(`http://127.0.0.1:${closed}`, glibren);
+  const q = await startPayload(`http://127.0.0.1:${closed}`, glibren, { BGDL_DIAG_RETRY_MS: '20' });
   assert.equal((await q.page('/api/diag/key', { method: 'POST', body: { key: GITHUB_KEY }, session: q.session })).status, 200);
   assert.equal((await q.call('POST', '/diag/send', {})).status, 200);
   const end = await q.until();
@@ -325,6 +325,47 @@ test('glibren.44: erros claros: 401 chave invalida, 403 sem permissao, 404 sem o
   assert.equal(end.error, 'network');
   assert.match(readFileSync(path.join(q.base, 'state/bgdl.log'), 'utf8'), /diagnostico: falhou \(network/);
   q.child.kill('SIGTERM');
+});
+
+test('glibren.60: o envio tenta de novo (5xx, 409) e o app-info do POST /diag/app vai no pedido do celular', { skip }, async () => {
+  const gh = await fakeGitHub();
+  const p = await startPayload(`http://127.0.0.1:${gh.port}`, await fakeGlibren(), { BGDL_DIAG_RETRY_MS: '20' });
+  assert.equal((await p.page('/api/diag/key', { method: 'POST', body: { key: GITHUB_KEY }, session: p.session })).status, 200);
+  // o app manda as versoes e a Memoria sem enviar nada
+  const info = await p.call('POST', '/diag/app', diagnosticsBody({ snapshot: null, jobe: '0.5.5-glibren.60', tube: '0.2.3', title: 'PPSA99471' }));
+  assert.equal(info.status, 200, info.text);
+  assert.equal(gh.state.puts.length, 0, 'POST /diag/app nao envia');
+  assert.equal((await p.call('POST', '/diag/app', {})).status, 400, 'corpo vazio recusado');
+  // o primeiro PUT leva 502, o segundo 409, os outros 201
+  const answers = [502, 409];
+  gh.state.mode = answers.shift();
+  const push = gh.state.puts.push.bind(gh.state.puts);
+  gh.state.puts.push = (entry) => { const n = push(entry); gh.state.mode = answers.length ? answers.shift() : 201; return n; };
+  assert.equal((await p.page('/api/diag/send', { method: 'POST', body: {}, session: p.session })).status, 200);
+  const end = await p.until();
+  assert.equal(end.state, 'done', JSON.stringify(end));
+  assert.equal(end.sent, end.total);
+  const sent = JSON.parse(gh.state.puts.filter((put) => put.url.endsWith('/info.json')).at(-1).text);
+  assert.equal(sent.from, 'celular');
+  assert.equal(sent.app?.jobe, '0.5.5-glibren.60', 'o app-info mandado ao abrir vai junto (antes: "app": null)');
+  assert.match(readFileSync(path.join(p.base, 'state/bgdl.log'), 'utf8'), /diagnostico: .* tentativa 1 falhou \(HTTP 502\); tenta de novo/);
+  p.child.kill('SIGTERM');
+});
+
+test('glibren.60: o app manda o app-info ao abrir e de tempos em tempos (sem subir o payload)', async () => {
+  const bodies = [];
+  const link = { info: async (body) => { bodies.push(body); return { status: 200 }; } };
+  const stop = startAppInfoShare(() => diagnosticsBody({ jobe: 'x', tube: '', title: 'PPSA99471' }), { link: () => link, firstMs: 10, everyMs: 30 });
+  await wait(120);
+  stop();
+  const count = bodies.length;
+  assert.ok(count >= 2, `ao abrir e depois (${count})`);
+  assert.equal(bodies[0].versions.jobe, 'x');
+  await wait(80);
+  assert.equal(bodies.length, count, 'parado: nao manda mais');
+  const none = startAppInfoShare(() => ({}), { link: () => ({}), firstMs: 5 });
+  await wait(30);
+  none();
 });
 
 test('glibren.44: "Baixar diagnostico (.zip)": os mesmos arquivos, higienizados, sem precisar da chave', { skip }, async () => {

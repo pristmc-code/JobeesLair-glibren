@@ -1322,7 +1322,9 @@ function createBackgroundDownloads({
     // estado so pergunta a um payload no ar.
     wrapper.diagnostics = {
       status: () => backupCall(false, "GET", "/diag"),
-      send: (body) => backupCall(true, "POST", "/diag/send", body)
+      send: (body) => backupCall(true, "POST", "/diag/send", body),
+      // glibren.60: so grava o app-info.json (versoes + Memoria), sem enviar; nunca sobe o payload.
+      info: (body) => backupCall(false, "POST", "/diag/app", body)
     };
     setDiagnosticsSource(wrapper.diagnostics);
     // glibren.44: "Atualizar a Jobe" pela pagina do celular (state/jobe-remote.js): so com um payload no ar (nunca o sobe).

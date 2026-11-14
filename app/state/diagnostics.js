@@ -79,4 +79,35 @@ function diagnosticsMessageKey(result) {
   return `settings.diag.${known[result?.error] ?? "failed"}`;
 }
 
-export { diagnosticsBody, diagnosticsKeyState, diagnosticsMessageKey, sendDiagnostics, setDiagnosticsSource };
+// glibren.60: as versoes e a Memoria vao ao payload ao abrir (depois de firstMs) e a cada everyMs, sem enviar nada
+// (POST /diag/app): um diagnostico pedido pelo celular com o app fechado leva esse app-info em vez de "app": null.
+//  devolve o corpo (diagnosticsBody). Nunca sobe o payload (link.info so fala com um payload no ar).
+function startAppInfoShare(build, { link = () => source, firstMs = 20e3, everyMs = 10 * 60e3 } = {}) {
+  let stopped = false, timer = null;
+  const share = async () => {
+    const target = link();
+    if (stopped || typeof target?.info !== "function") return false;
+    try {
+      const answer = await target.info(build());
+      return answer?.status === 200;
+    } catch {
+      return false;
+    }
+  };
+  const tick = (ms) => {
+    timer = setTimeout(async () => {
+      await share();
+      if (!stopped) tick(everyMs);
+    }, ms);
+    timer?.unref?.();
+  };
+  tick(firstMs);
+  const stop = () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
+  stop.share = share;
+  return stop;
+}
+
+export { startAppInfoShare, diagnosticsBody, diagnosticsKeyState, diagnosticsMessageKey, sendDiagnostics, setDiagnosticsSource };

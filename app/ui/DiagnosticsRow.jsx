@@ -92,4 +92,4 @@ function DiagnosticsRow({ Row, Callout }) {
   ] });
 }
 
-export { DiagnosticsRow };
+export { DiagnosticsRow, runningTube };

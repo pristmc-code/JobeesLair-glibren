@@ -82,10 +82,10 @@ shown = texts({ type: CrashNotice, props: {} });
 assert.ok(shown.some((line) => line.includes('during the download of Gran Turismo 7')), shown.join('|'));
 assert.ok(!shown.includes(en['crash.suggest']));
 notice.dismissCrash();
-await notice.checkCrash(async () => ({ ...crash, id: '1762899998', activity: 'none', name: '', milestone: '', lastTime: '', lines: [] }));
+await notice.checkCrash(async () => ({ ...crash, id: '1762899998', activity: 'none', name: '', milestone: '', lastTime: '', lines: ['(epoch 1762899990) FATAL: SIGSEGV no bg-downloader; o processo vai morrer'] }));
 shown = texts({ type: CrashNotice, props: {} });
 assert.ok(shown.includes('The console turned off during no background work.'), shown.join('|'));
-assert.ok(!labels({ type: CrashNotice, props: {} }).includes(en['crash.details']), 'nothing to detail');
+assert.ok(labels({ type: CrashNotice, props: {} }).includes(en['crash.details']), 'glibren.60: the FATAL line to detail');
 notice.dismissCrash();
 delete globalThis.__stubFiles;
 
