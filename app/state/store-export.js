@@ -160,6 +160,8 @@ import { createFramePace } from './frame-pace.js';
         sha256: typeof release.sha256 === "string" ? release.sha256 : "",
         parts: release.parts?.length ?? 0,
         source,
+        // .58: o id do link (release.id): o payload devolve no pedido e a Jobe acha a fonte por ele, nao pela posicao
+        ...typeof release.id === "string" && release.id && release.id.length < 96 ? { rid: release.id } : {},
         solo
       };
     });

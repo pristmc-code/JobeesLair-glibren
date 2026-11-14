@@ -188,9 +188,21 @@ async function medirTamanho(navegador, api, t, jogo) {
   const fontes = await pagina.evaluate(() => [...document.querySelectorAll('#fCorpo .fontes button.fonte')].map((b) => b.getAttribute('aria-pressed')));
   conferir(fontes.length === 4 && fontes[0] === 'true' && fontes.slice(1).every((x) => x === 'false'), `${t.nome}: fontes escolhiveis com Automatico primeiro: ${fontes}`);
   await pagina.locator('#fCorpo .fontes button.fonte').nth(3).scrollIntoViewIfNeeded();
+  // .58: a lista vem antes do Baixar (logo abaixo do titulo), com os selos; o Baixar diz a fonte ("Baixar (automatico)")
+  const ordemFicha = await pagina.evaluate(() => { const u = document.querySelector('#fCorpo .fontes'), b = document.getElementById('fBaixar'); return Boolean(u && b && (u.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)); });
+  conferir(ordemFicha, `${t.nome}: a lista de fontes devia vir antes do Baixar`);
+  conferir(await pagina.evaluate(() => document.getElementById('fBaixar').textContent === window.jobeApp.L.baixarAuto), `${t.nome}: o Baixar devia dizer "automatico" de inicio`);
+  const selos = await pagina.evaluate(() => document.querySelectorAll('#fCorpo .fontes button.fonte')[3].textContent);
+  conferir(selos.includes('RAR') && /TorBox/.test(selos), `${t.nome}: o link do navegador sem os selos (formato, via TorBox): ${selos}`);
   await pagina.click('#fCorpo .fontes button.fonte >> nth=3');
   const escolhida = await pagina.evaluate(() => [...document.querySelectorAll('#fCorpo .fontes button.fonte')].map((b) => b.getAttribute('aria-pressed')));
   conferir(escolhida[3] === 'true' && escolhida[0] === 'false', `${t.nome}: o link tocado nao ficou escolhido: ${escolhida}`);
+  // o 2o toque no mesmo nao desfaz a escolha; a marca "escolhida" aparece so nele; o Baixar diz o host
+  await pagina.click('#fCorpo .fontes button.fonte >> nth=3');
+  const marcaVisivel = await pagina.evaluate(() => [...document.querySelectorAll('#fCorpo .fontes button.fonte .marca')].map((m) => getComputedStyle(m).display !== 'none'));
+  conferir(marcaVisivel[3] && marcaVisivel.filter(Boolean).length === 1, `${t.nome}: a marca "escolhida" devia estar so no link tocado: ${marcaVisivel}`);
+  const textoBaixar = await pagina.evaluate(() => document.getElementById('fBaixar').textContent);
+  conferir(/VikingFile/.test(textoBaixar), `${t.nome}: o Baixar devia dizer a fonte escolhida: ${textoBaixar}`);
   await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-fontes.png`) });
   await pagina.evaluate(() => { document.getElementById('fCorpo').scrollTop = 0; });
   await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-ficha.png`) });
@@ -414,6 +426,51 @@ async function medirTamanho(navegador, api, t, jogo) {
     conferir(ps5Cliques.filtroO, `${t.nome}: PS5, O na lista do filtro nao fechou sem mudar`);
     await pagina.click('#fLimpar');
     await espera(300);
+    // 9) .58: a fonte na ficha. Cursor: um clique escolhe; direcional + X escolhe a focada (o clique do cursor parado em
+    // outra fonte e eco); X de novo nao desfaz; O fecha a ficha uma vez so (a loja continua).
+    passo = 'ps5: fontes';
+    await fichaFechada();
+    c = await centro(5);
+    await pagina.mouse.click(c.x, c.y);
+    await pagina.waitForSelector('#fCorpo .fontes button.fonte', { timeout: 5000 });
+    await espera(300);
+    const pressed = () => pagina.evaluate(() => [...document.querySelectorAll('#fCorpo .fontes button.fonte')].map((b) => b.getAttribute('aria-pressed') === 'true'));
+    const centroFonte = (k) => pagina.evaluate((n) => { const b = document.querySelectorAll('#fCorpo .fontes button.fonte')[n]; b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; }, k);
+    let cf = await centroFonte(1);
+    await espera(150);
+    await pagina.mouse.move(cf.x - 6, cf.y - 6); await pagina.mouse.move(cf.x, cf.y);
+    await pagina.mouse.click(cf.x, cf.y);
+    await espera(200);
+    ps5Cliques.fonteCursor = (await pressed()).join() === [false, true, false, false].join();
+    conferir(ps5Cliques.fonteCursor, `${t.nome}: PS5, clique do cursor na fonte 1 nao a escolheu: ${await pressed()}`);
+    // direcional: foco no Automatico, baixo ate a fonte 2, X (13 + clique do cursor parado na fonte 1 = eco)
+    await espera(700);
+    await pagina.evaluate(() => document.querySelectorAll('#fCorpo .fontes button.fonte')[0].focus());
+    await pagina.keyboard.press('ArrowDown'); await pagina.keyboard.press('ArrowDown');
+    const focada = await pagina.evaluate(() => [...document.querySelectorAll('#fCorpo .fontes button.fonte')].indexOf(document.activeElement));
+    await pagina.keyboard.press('Enter'); await pagina.mouse.click(cf.x, cf.y);
+    await espera(400);
+    ps5Cliques.fonteDirecional = focada === 2 && (await pressed()).join() === [false, false, true, false].join();
+    conferir(ps5Cliques.fonteDirecional, `${t.nome}: PS5, direcional + X na fonte 2 (focada ${focada}): ${await pressed()}`);
+    await espera(400);
+    await pagina.keyboard.press('Enter');
+    await espera(400);
+    ps5Cliques.fonteXDuasVezes = (await pressed()).join() === [false, false, true, false].join();
+    conferir(ps5Cliques.fonteXDuasVezes, `${t.nome}: PS5, X de novo na fonte escolhida mudou a escolha: ${await pressed()}`);
+    const baixarPs5 = await pagina.evaluate(() => document.getElementById('fBaixar').textContent);
+    conferir(/Archive|Media|Viking|\./.test(baixarPs5) && baixarPs5 !== (await pagina.evaluate(() => window.jobeApp.L.baixarAuto)), `${t.nome}: PS5, o Baixar nao diz a fonte: ${baixarPs5}`);
+    await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-fontes-ps5.png`) });
+    // O do PS5 = keydown 27 E o voltar do navegador (popstate): a ficha fecha uma vez so, o hash volta a #/loja (antes
+    // da .58 a guarda do historico ia por cima da ficha e esse O deixava a ficha aberta); um 2o O continua na /app.
+    await pagina.keyboard.press('Escape'); await pagina.evaluate(() => history.back());
+    await espera(700);
+    const depoisO = () => pagina.evaluate(() => ({ hash: location.hash, ficha: !document.getElementById('ficha').hidden, secao: window.jobeApp.estado().secao, app: /\/app/.test(location.pathname) }));
+    const o1 = await depoisO();
+    await pagina.keyboard.press('Escape'); await pagina.evaluate(() => history.back());
+    await espera(700);
+    const o2 = await depoisO();
+    ps5Cliques.fonteO = !o1.ficha && o1.secao === 'loja' && o1.hash === '#/loja' && !o2.ficha && o2.app; // o 2o O anda o historico das secoes (aqui, #/config)
+    conferir(ps5Cliques.fonteO, `${t.nome}: PS5, O na ficha devia fechar so a ficha e o 2o O ficar na /app: ${JSON.stringify([o1, o2])}`);
   }
 
   for (const [qual, r] of [['loja', r1], ['rolagem', r2], ['ficha', r3], ['downloads', r4]]) {

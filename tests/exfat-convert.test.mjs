@@ -331,6 +331,48 @@ test('reabrir o app no meio: a conversao e acompanhada de novo pela mesma chave 
   assert.ok(fs.exists('/data/BACKUP/Third/Third.rar'), 'o original fica no BACKUP');
 });
 
+// glibren.58 (Alan Wake 2, PS5 real 13/11, diagnostico 223638): a conversao falhou, "Usar sem converter" comecou a
+// extrair o .7z (ja no BACKUP) e o app fechou no meio. Ao abrir, o item voltava como DOWNLOAD (sem recibo no lugar; o
+// payload recusou baixar por cima). Agora fica "baixado, a extracao parou": Tentar de novo = converter; X nao apaga o BACKUP.
+test('glibren.58: extracao cortada pelo fechamento do app: volta como baixado (falhou, com a conversao), nada baixa de novo; Tentar de novo converte; X nao apaga o BACKUP', async () => {
+  const fs = memoryFs();
+  const conv = converter(fs, (request, n) => n === 0 ? { error: 'source: the archive could not be extracted either: write: Could not stat /data/BACKUP/_temp/c21/PPSA01234.exfat' } : null);
+  const hanging = extractor(fs, () => []);
+  hanging.extract = (options) => { hanging.started.push(options); return { subscribe: () => () => {}, done: new Promise(() => {}), cancel() {} }; };
+  const downloads = engine(fs);
+  const queue = queueWith({ fs, downloads, archives: hanging, conv });
+  const id = queue.enqueue(ps5, release('Test.Game.7z', 4000), '/data');
+  let job = await until(queue, id, settled);
+  assert.equal(job.state, 'failed');
+  const backup = '/data/BACKUP/Test Game/Test.Game.7z';
+  assert.ok(fs.exists(backup));
+  await queue.skipConversion(id); // "Usar sem converter": extrai
+  await until(queue, id, (item) => item.state === 'extracting' && hanging.started.length === 1);
+  assert.equal(downloads.requests.length, 1);
+  // O app fecha no meio da extracao: uma fila nova le o que foi salvo.
+  const downloads2 = engine(fs);
+  const conv2 = converter(fs);
+  const reopened = queueWith({ fs, downloads: downloads2, archives: extractor(fs, () => []), conv: conv2 });
+  job = reopened.snapshot().find((item) => item.id === id);
+  for (let i = 0; i < 20; i++) await tick();
+  job = reopened.snapshot().find((item) => item.id === id);
+  assert.equal(job.state, 'failed', 'baixado, a extracao/conversao parou (nao volta a download)');
+  assert.match(job.error, /extraction stopped when the app closed/);
+  assert.equal(job.convert.kind, 'archive');
+  assert.deepEqual(job.convert.sources, [backup]);
+  assert.equal(downloads2.requests.length, 0, 'nada baixado de novo');
+  assert.equal(conv2.requests.length, 0, 'so converte quando o jogador pede');
+  // X: so o que e da fila; o compactado do BACKUP fica.
+  assert.ok(!reopened.ownedPaths?.(job)?.some?.((path) => path.includes('/BACKUP/')), 'o BACKUP nao e da fila');
+  // "Tentar de novo" = conversao, do arquivo do BACKUP.
+  reopened.retryConversion(id);
+  job = await until(reopened, id, (item) => settled(item) && conv2.requests.length === 1);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.deepEqual(conv2.requests[0].sources ?? [conv2.requests[0].source], [backup]);
+  assert.equal(downloads2.requests.length, 0);
+  assert.ok(fs.exists(backup), 'o original continua no BACKUP');
+});
+
 test('BACKUP nas Configuracoes: lista por jogo com o tamanho; apagar um; nomes invalidos e original em uso recusados', async () => {
   const fs = memoryFs();
   fs.file('/data/BACKUP/A/a.rar', 3000);

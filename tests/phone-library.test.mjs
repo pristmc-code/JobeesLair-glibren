@@ -125,4 +125,42 @@ test('glibren (item 2): pedido da Loja completa vai como o Baixar da ficha; o co
   assert.throws(() => queueStoreRequest({ store: 'PPSA09999' }, { start, getGame, roots }), /not in the store/);
   assert.throws(() => queueStoreRequest({ store: 'x' }, { start, getGame, roots }), /not in the store/);
   assert.throws(() => queueStoreRequest({ store: 'PPSA01001' }, { getGame, roots }), /not ready/);
+  // .58: o id da fonte escolhida (release) vai junto; a fonte e achada por ele em startRemoteDownload.
+  queueStoreRequest({ store: 'PPSA01001', source: 4, release: 'r-akira', autoStarted: false }, { start, getGame, roots });
+  assert.deepEqual([calls[3].source, calls[3].options], [4, { preferDebrid: true, release: 'r-akira' }]);
+  queueStoreRequest({ store: 'PPSA01001', source: -1, release: 'r-akira', autoStarted: true }, { start, getGame, roots });
+  assert.deepEqual([calls[4].source, calls[4].options], [null, { root: '/mnt/ext0', release: 'r-akira' }]);
+});
+
+test('.58: a fonte pelo id (release.id), nao pela posicao; sumiu = sugere outra fonte', async () => {
+  const { pickedIndex, SOURCE_GONE } = await load('app/companion/remote-download.js');
+  const releases = [{ id: 'r-viking' }, { id: 'set-abc' }, { id: 'r-akira' }];
+  // O payload listou o AkiraBox na posicao 0; aqui ele e o 3o: vale o id.
+  assert.equal(pickedIndex(releases, 0, 'r-akira'), 2);
+  assert.equal(pickedIndex(releases, null, 'set-abc'), 1);
+  // Sem id (payload antigo, pagina do celular): a posicao; nenhuma = automatico (null).
+  assert.equal(pickedIndex(releases, 1, null), 1);
+  assert.equal(pickedIndex(releases, null, null), null);
+  // A fonte que nao esta mais aqui: a mensagem sugere escolher outra (a /app mostra traduzida).
+  assert.throws(() => pickedIndex(releases, 0, 'r-sumiu'), (e) => e.message === SOURCE_GONE && /Choose another source/.test(e.message));
+  assert.throws(() => pickedIndex(releases, 7, null), /Choose another source/);
+});
+
+test('.58: loja aberta pelo payload: so a carta (sem links) -> a ficha vem do payload (fetchGame) antes de escolher a fonte', async () => {
+  const calls = [];
+  const start = (game, source, options) => { calls.push({ game, source, options }); return { id: `${game.id}/y` }; };
+  const card = { id: 'CUSA09919', title: 'Outer Wilds', remote: true };
+  const full = { id: 'CUSA09919', title: 'Outer Wilds', remote: true, full: true, releases: [{ id: 'r1' }] };
+  const asked = [];
+  const fetchGame = async (id) => { asked.push(id); return full; };
+  const id = await queueStoreRequest({ store: 'CUSA09919', source: 0, release: 'r1' }, { start, getGame: () => card, fetchGame, roots: ['/data'] });
+  assert.equal(id, 'CUSA09919/y');
+  assert.deepEqual([asked, calls[0].game], [['CUSA09919'], full]);
+  // Com a ficha inteira ja no app, nada e pedido (sincrono).
+  assert.equal(queueStoreRequest({ store: 'CUSA09919' }, { start, getGame: () => full, fetchGame, roots: ['/data'] }), 'CUSA09919/y');
+  assert.equal(asked.length, 1);
+  // O payload sem a ficha: o jogo como estava (startRemoteDownload diz que nao ha fonte).
+  await queueStoreRequest({ store: 'CUSA09919' }, { start, getGame: () => card, fetchGame: async () => null, roots: ['/data'] });
+  assert.equal(calls.at(-1).game, card);
+  await assert.rejects(queueStoreRequest({ store: 'CUSA09919' }, { start, getGame: () => null, fetchGame: async () => null, roots: ['/data'] }), /not in the store/);
 });

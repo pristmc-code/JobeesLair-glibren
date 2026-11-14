@@ -112,6 +112,17 @@ test('Fase 8: a pagina /app segue o padrao de tela e o navegador do PS5', () => 
   assert.match(page, /<div class="fbar"><button type="button" class="btn" id="fVoltar">← JOGOS<\/button>/);
 });
 
+test('glibren.58: a ficha e a grade da /app seguem o "na fila" do payload (pedido cancelado ou recusado volta a Baixar)', () => {
+  const page = readFileSync(embed.APP_PAGE, 'utf8');
+  assert.ok(!page.includes('known.queued || g.queued'), 'o "na fila" antigo nao gruda mais');
+  assert.ok(page.includes('known.queued = Boolean(g.queued)'));
+  assert.match(page, /if \(s === "loja"\) \{ agendar\(\); if \(loja\.revalidar\) revalidarFila\(\); \}/, 'voltar a loja reconsulta');
+  assert.match(page, /else loja\.revalidar = true; \/\/ glibren\.58/, 'acao em Downloads marca a loja para reconsultar');
+  const langs = [...page.matchAll(/"outraFonte":"([^"]+)"/g)];
+  assert.equal(langs.length, 14, 'outraFonte nos 14 idiomas');
+  assert.ok(langs.every(([, t]) => !/\.\.\.|…/.test(t)));
+});
+
 test('Fase 8: /app sai sem sessao e igual ao .h; so GET; Host com nome da 403; "/" continua a pagina do celular', { skip }, async () => {
   const p = await startPayload();
   const page = readFileSync(embed.APP_PAGE, 'utf8');
@@ -473,4 +484,44 @@ test('.56: /app/capa cai no site de patches pelo TitleID (icone da pagina, pelo 
     assert.equal(conta.rede, 0, 'a capa da Sony do catalogo nao foi baixada');
     await p.stop();
   } finally { site.close(); }
+});
+
+// glibren.58: a secao Downloads da /app tambem mostra as conversoes do payload (o /api/status ja as traz): a extracao em
+// andamento com "Extraindo do .7z", %, GB, velocidade, tempo e "limitado pelo processador"; a falha antiga do mesmo item
+// some. As funcoes da pagina rodam aqui com um DOM minimo.
+test('glibren.58: a /app mostra a conversao/extracao do payload na secao Downloads', async () => {
+  const vm = await import('node:vm');
+  const page = readFileSync(path.join(repo, 'app/native/bg_app.html'), 'utf8');
+  const a = page.indexOf('  var CONV_ANDANDO'), b = page.indexOf('  function desenharDownloads()');
+  assert.ok(a > 0 && b > a, 'o bloco das conversoes');
+  assert.ok(page.includes('dl.convs = conversoesVivas(r.data.conversions)') && page.includes('lista.appendChild(cartaoConversao(cv))'));
+  const { textos } = textosGer.montar();
+  for (const [idioma, t] of Object.entries(textos)) for (const k of ['extraindoDe', 'cpu', 'extraidos', 'convertendo', 'naFila', 'falhou']) assert.ok(t.conv?.[k], `${idioma}.conv.${k}`);
+  const el = (tag, cls, text) => ({ tag, cls, text: text ?? '', kids: [], style: {}, appendChild(k) { this.kids.push(k); return k; } });
+  const all = (n) => [n.text, ...n.kids.flatMap(all)].filter(Boolean);
+  const ctx = { el, Date, Object, Array, Number, L: { ...textos['pt-BR'], de: 'de' },
+    fill: (t, v) => t.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? ''), nf: (v, d) => Number(v).toFixed(d),
+    bytes: (x) => `${(x / 2 ** 30).toFixed(1)} GB`, speed: (x) => `${(x / 2 ** 20).toFixed(1)} MB/s`, eta: (s) => `${Math.round(s)} s` };
+  vm.runInNewContext(`${page.slice(a, b)}; this.vivas = conversoesVivas; this.cartao = cartaoConversao;`, ctx);
+  const GB = 2 ** 30;
+  const vivas = ctx.vivas([
+    { id: 'c21', name: 'Alan Wake 2', target: 'PPSA02572.exfat', state: 'failed', error: 'write: x' },
+    { id: 'c30', name: 'Alan Wake 2', target: 'PPSA02572.exfat', state: 'extracting', written: 34 * GB, total: 91 * GB, extractFormat: '7z', extracted: 34 * GB, extractTotal: 91 * GB,
+      extractBytesPerSecond: 15 * 2 ** 20, extractPercent: 37, extractEtaSeconds: 3900, limitedBy: 'cpu' },
+  ]);
+  assert.deepEqual(vivas.map((c) => c.id), ['c30'], 'a falha antiga do mesmo item some');
+  const textos30 = all(ctx.cartao(vivas[0]));
+  for (const t of ['Alan Wake 2', 'Extraindo do .7z', '37%', '34.0 GB de 91.0 GB extraídos', '15.0 MB/s', '3900 s', 'EXFAT']) assert.ok(textos30.includes(t), `${t} em ${textos30.join('|')}`);
+  assert.ok(textos30.some((t) => t.startsWith('Limitado pelo processador')), textos30.join('|'));
+  // Um zip: sem o motivo; um payload antigo (sem os campos): "Descompactando", sem %.
+  const zip = all(ctx.cartao({ id: 'z', name: 'Z', state: 'extracting', extractFormat: 'zip', extracted: GB, extractTotal: 2 * GB, extractPercent: 50, extractEtaSeconds: -1, extractBytesPerSecond: 0, limitedBy: '' }));
+  assert.ok(zip.includes('Extraindo do .zip') && zip.includes('50%') && !zip.some((t) => t.startsWith('Limitado')), zip.join('|'));
+  const antigo = all(ctx.cartao({ id: 'o', name: 'O', state: 'extracting', written: 0, total: 0 }));
+  assert.ok(antigo.includes(textos['pt-BR'].conv.extraindo), antigo.join('|'));
+  // Convertendo: velocidade entre duas leituras.
+  ctx.vivas([{ id: 'k', name: 'K', state: 'converting', written: 10 * GB, total: 40 * GB }]);
+  await new Promise((r) => setTimeout(r, 30));
+  const conv = ctx.vivas([{ id: 'k', name: 'K', state: 'converting', written: 11 * GB, total: 40 * GB }]);
+  assert.ok(conv[0].convBps > 0, 'velocidade da conversao');
+  assert.ok(all(ctx.cartao(conv[0])).includes(textos['pt-BR'].conv.convertendo));
 });

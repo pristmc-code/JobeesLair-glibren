@@ -183,6 +183,8 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       const interrupted = BUSY.includes(job2.state);
       return {
         ...job2,
+        // glibren.58: cortado no meio da extracao (o arquivo ja baixado): visto ao abrir, com o disco (restoreExtraction).
+        ...job2.state === "extracting" && { wasExtracting: true },
         state: interrupted ? "paused" : job2.state,
         error: interrupted ? "Interrupted. Resume to continue." : job2.error,
         ...interrupted && job2.state !== "pausing" && { restore: job2.state === "queued" ? "queued" : "running" }
@@ -2446,6 +2448,19 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       const off = task.subscribe?.((progress) => {
         if (job2.state !== "converting") return;
         const written = progress.written || 0, now = Date.now();
+        // glibren.58: o payload extraindo o compactado antes de converter: o progresso dele (formato, bytes, velocidade,
+        // tempo restante e "limitado pelo processador" no 7z), em vez de "Aguardando para converter".
+        const extract = progress.state === "extracting" ? progress.extract : null;
+        if (extract) {
+          job2.written = extract.done;
+          job2.total = extract.total || null;
+          job2.bytesPerSecond = extract.bytesPerSecond;
+          sample = null;
+          const what = extract.format ? t("downloads.convert.extractingFrom", { format: extract.format }) : t("downloads.convert.extracting");
+          job2.message = extract.cpu ? `${what} \xB7 ${t("downloads.convert.cpuLimited", { format: extract.format || "7z" })}` : what;
+          emit2();
+          return;
+        }
         if (progress.state !== "converting") {
           job2.bytesPerSecond = 0;
           sample = null;
@@ -2457,7 +2472,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         }
         job2.written = written;
         job2.total = progress.total || null;
-        job2.message = t(progress.state === "verifying" ? "downloads.convert.verifying" : progress.state === "converting" ? "downloads.convert.running" : "downloads.convert.queued");
+        job2.message = t(progress.state === "verifying" ? "downloads.convert.verifying" : progress.state === "converting" ? "downloads.convert.running" : progress.state === "extracting" ? "downloads.convert.extracting" : "downloads.convert.queued");
         emit2();
       }) ?? (() => {});
       try {
@@ -3343,6 +3358,50 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
     }) : Promise.resolve()).then(() => checkInstalls(id)).then((found) => refreshLaunches().then(() => found)).finally(() => {
       syncing = null;
     }));
+    // glibren.58 (Alan Wake 2, PS5 real 13/11): um download JA BAIXADO cuja extracao o fechamento do app cortou voltava
+    // como download (restore "running" -> fila -> recoverCompleted). O compactado ja tinha ido para o BACKUP (sem o recibo
+    // no lugar), entao virava download pela rede ("existing destination has no matching completion receipt"). Agora, com
+    // o arquivo inteiro no disco: um jogo de PS5 que vira .exfat fica "baixado, a conversao parou" (Tentar de novo =
+    // converter; Usar sem converter = extrair; o X so apaga o que e da fila, nunca o BACKUP); o resto extrai de novo.
+    function restoreExtraction(job2) {
+      const files = job2.parts?.length ? job2.parts.map((part) => part.destination) : [job2.downloadDestination];
+      const sizes = files.map((path) => {
+        try {
+          return path && fs.exists(path) ? fs.stat(path)?.size ?? null : null;
+        } catch {
+          return null;
+        }
+      });
+      if (!files.length || sizes.some((size) => size === null)) return false;
+      const size = sizes.reduce((sum, item) => sum + item, 0);
+      if (!job2.parts?.length && job2.total && size < job2.total) return false;
+      delete job2.restore;
+      job2.written = job2.total = job2.total || size;
+      job2.bytesPerSecond = 0;
+      const game = job2.role === "game" && !job2.manual && (Boolean(job2.convertPlanned) || Boolean(job2.backupDir) || convertExfat() && platformOf({ titleId: job2.titleId, release: job2.release }) === "ps5");
+      if (game && archives) {
+        delete job2.noConvert;
+        delete job2.output;
+        job2.convert = { kind: "archive", sources: files };
+        job2.state = "failed";
+        job2.error = t("downloads.convert.interrupted");
+        console.log(`[download-queue] ${job2.id}: its extraction was cut when the app closed; downloaded (${size} bytes in ${files.join(", ")}), waiting for "Try again" (conversion)`);
+        return true;
+      }
+      if (!archives) return false;
+      queueExtraction(job2);
+      console.log(`[download-queue] ${job2.id}: its extraction was cut when the app closed; extracting again (the file is already downloaded)`);
+      return true;
+    }
+    for (const job2 of jobs.filter((item) => item.wasExtracting)) {
+      delete job2.wasExtracting;
+      try {
+        if (restoreExtraction(job2)) change();
+      } catch (error2) {
+        console.log(`[download-queue] ${job2.id}: interrupted extraction not checked (${error2.message}); it goes back to the queue`);
+      }
+    }
+    if (jobs.some((job2) => job2.state === "extracting" && job2.phase === "queued")) pumpExtract();
     let running;
     for (const job2 of jobs.filter((item) => item.restore)) {
       const was = job2.restore;

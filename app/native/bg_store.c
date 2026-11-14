@@ -613,6 +613,7 @@ typedef struct {
   char group[16]; // glibren.55: o grupo do link (num conjunto, o das partes); vazio = o kind
   uint64_t size;
   int has_size, source; // source: o indice em game.releases (-1 sem)
+  char rid[96]; // .58: o id do link em game.releases (release.id): estavel entre o catalogo do payload e o do app
   unsigned parts;
   int8_t solo; // -1: nao veio (calculado aqui)
 } StLink;
@@ -660,6 +661,7 @@ static int st_link_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "format")) { if (!lib_text(jp, l->format, sizeof l->format)) return -1; lower_ascii(l->format); return 1; }
   if (!strcmp(key, "label")) return lib_text(jp, l->label, sizeof l->label) ? 1 : -1;
   if (!strcmp(key, "filename")) return lib_text(jp, l->filename, sizeof l->filename) ? 1 : -1;
+  if (!strcmp(key, "rid")) return lib_text(jp, l->rid, sizeof l->rid) ? 1 : -1; // .58
   if (!strcmp(key, "url")) return lib_text(jp, l->url, sizeof l->url) ? 1 : -1;
   if (!strcmp(key, "sha256")) { if (!lib_text(jp, l->sha256, sizeof l->sha256)) return -1; lower_ascii(l->sha256); return 1; }
   if (!strcmp(key, "size")) { double v; int has; if (!st_number(jp, &v, &has)) return -1; l->has_size = has && v > 0; l->size = l->has_size ? (uint64_t)v : 0; return 1; }
@@ -864,15 +866,17 @@ static int catalog_store_entry(const char* id, StGame* out, char* key, size_t ke
 // glibren.55: o grupo de um link (direct|page|torrent|browser|unavailable); um conjunto sem grupo gravado: "set".
 static const char* st_link_group(const StLink* l) { return l->group[0] ? l->group : l->kind; }
 // glibren.55: a referencia de um link de um jogo (16 hex): o id do jogo, a fonte, o host e o rotulo. A /app manda de
-// volta com o indice escolhido; um link de outro jogo (ou que mudou de lugar) nao confere.
+// volta com o indice escolhido; um link de outro jogo nao confere.
+// .58: com o id do link (release.id) a referencia e so dele (jogo + id + host + rotulo), sem a posicao: o catalogo
+// refeito entre abrir a ficha e tocar em Baixar (ou a ordem mudada pela saude dos links) nao a invalida.
 static void st_link_ref(const char* game_id, const StLink* l, int index, char out[17]) {
   Hash h;
   char digest[65], number[24];
   hash_init(&h);
   hash_text0(&h, game_id);
   hash_text0(&h, "store-link");
-  snprintf(number, sizeof number, "%d/%d", index, l->source);
-  hash_text0(&h, number);
+  if (l->rid[0]) { hash_text0(&h, "rid"); hash_text0(&h, l->rid); }
+  else { snprintf(number, sizeof number, "%d/%d", index, l->source); hash_text0(&h, number); }
   hash_text0(&h, l->host);
   hash_text0(&h, l->label);
   if (!hash_finish(&h, digest)) snprintf(digest, sizeof digest, "%016x", (unsigned)index);
@@ -957,10 +961,16 @@ static void store_game(int fd, const char* query) {
     buf_str(&b, ",\"format\":"); buf_json(&b, l->format);
     if (l->has_size) buf_fmt(&b, ",\"size\":%llu", (unsigned long long)l->size); else buf_str(&b, ",\"size\":null");
     buf_str(&b, ",\"label\":"); buf_json(&b, l->label);
-    buf_fmt(&b, ",\"parts\":%u,\"solo\":%s}", l->parts, st_link_solo(l) ? "true" : "false");
+    buf_fmt(&b, ",\"parts\":%u,\"solo\":%s", l->parts, st_link_solo(l) ? "true" : "false");
+    if (l->rid[0]) { buf_str(&b, ",\"rid\":"); buf_json(&b, l->rid); } // .58
+    buf_str(&b, "}");
   }
-  buf_fmt(&b, "],\"download\":\"%s\",\"detailsState\":\"%s\"}", detail == 1 && st_first_solo(d) >= 0 ? "payload" : "app",
-          detail == 1 ? "ok" : detail == 2 ? "missing" : detail == 4 ? "stale" : "none");
+  // .58: o servico de debrid com chave neste console (a /app diz "via TorBox" num link de navegador ou torrent)
+  char dkey[160];
+  const char* debrid = debrid_key("torbox", dkey, sizeof dkey) ? "TorBox" : debrid_key("alldebrid", dkey, sizeof dkey) ? "AllDebrid" : "";
+  memset(dkey, 0, sizeof dkey);
+  buf_fmt(&b, "],\"download\":\"%s\",\"detailsState\":\"%s\",\"debrid\":\"%s\"}", detail == 1 && st_first_solo(d) >= 0 ? "payload" : "app",
+          detail == 1 ? "ok" : detail == 2 ? "missing" : detail == 4 ? "stale" : "none", debrid);
   free(tables); free(d);
   if (b.failed || !b.data) monitor_json(fd, 500, "{\"error\":\"out of memory\"}");
   else monitor_send(fd, 200, "application/json", b.data, b.size);
@@ -998,12 +1008,17 @@ static void store_add(int fd, Request* r) {
   }
   const int have_links = from_catalog == 1 || st_find_detail(id, key, d) == 1;
   // glibren.55: o link escolhido na /app, conferido (o indice nesta ficha e a referencia deste jogo).
+  // .58: o indice e so a dica; vale a referencia (o link pode ter mudado de lugar com o catalogo refeito).
   int picked = -1;
   if (body.has_link && body.link >= 0) {
     char ref[17] = "";
     if (have_links && body.link < d->link_count) st_link_ref(g.id, &d->links[body.link], (int)body.link, ref);
-    if (!ref[0] || strcmp(ref, body.ref)) { free(d); monitor_json(fd, 400, "{\"error\":\"link\"}"); return; }
-    picked = (int)body.link;
+    if (ref[0] && !strcmp(ref, body.ref)) picked = (int)body.link;
+    for (int i = 0; picked < 0 && have_links && body.ref[0] && i < d->link_count; ++i) {
+      st_link_ref(g.id, &d->links[i], i, ref);
+      if (!strcmp(ref, body.ref)) picked = i;
+    }
+    if (picked < 0) { free(d); monitor_json(fd, 400, "{\"error\":\"link\"}"); return; }
   }
   const int chosen = picked >= 0 ? (st_link_solo(&d->links[picked]) ? picked : -1) : have_links ? st_first_solo(d) : -1;
   const StLink* link = chosen >= 0 ? &d->links[chosen] : NULL;
@@ -1078,6 +1093,7 @@ static void store_add(int fd, Request* r) {
       j->auto_started = 1;
       j->auto_convert = plan.convert;
       j->store_source = link->source >= 0 ? link->source + 1 : 0;
+      copy_text(j->store_rid, sizeof j->store_rid, link->rid); // .58
       snprintf(j->lib_via, sizeof j->lib_via, "direct");
       copy_text(j->lib_file, sizeof j->lib_file, name);
       snprintf(j->url, sizeof j->url, "%s", link->url);
@@ -1104,6 +1120,7 @@ static void store_add(int fd, Request* r) {
       j->placeholder = 1;
       j->order = 100000; // depois da fila do app
       if (picked >= 0 && d->links[picked].source >= 0) j->store_source = d->links[picked].source + 1; // glibren.55
+      if (picked >= 0) copy_text(j->store_rid, sizeof j->store_rid, d->links[picked].rid); // .58: o app acha a fonte pelo id
       snprintf(j->lib_via, sizeof j->lib_via, "store");
       snprintf(j->state, sizeof j->state, "waiting-app");
       reason = !away ? "open" : !link ? "needs-app" : !root[0] ? "no-root" : "plan";

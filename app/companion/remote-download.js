@@ -19,11 +19,24 @@ import { MARGIN2 } from '../state/space.js';
   // glibren.55: `preferDebrid` (pedido do celular/da /app com uma fonte escolhida): uma fonte que precisa do navegador
   // ou um torrent que o TorBox/AllDebrid aceita vai por ele, como no automatico: quem pediu nao esta na TV para tocar em
   // baixar na pagina do site.
-  function startRemoteDownload(game, source = null, { debrid = null, root = null, preferDebrid = false } = {}) {
+  // .58: a fonte escolhida que esta Jobe nao lista mais (o texto vai ao celular e a /app): sugere escolher outra.
+  var SOURCE_GONE = "That source is no longer listed for this game. Choose another source on the game's page.";
+  // .58: `release` = o id da fonte escolhida (release.id, vindo do payload): vale ele, nao a posicao `source` (o catalogo
+  // do payload e o daqui podem ter os links em outra ordem). Sem o id, a posicao (payload antigo, pagina do celular).
+  function pickedIndex(releases, source, release) {
+    if (release) {
+      const found = releases.findIndex((item) => item?.id === release);
+      if (found < 0) throw new Error(SOURCE_GONE);
+      return found;
+    }
+    if (source !== null && !(source >= 0 && source < releases.length)) throw new Error(SOURCE_GONE);
+    return source;
+  }
+  function startRemoteDownload(game, source = null, { debrid = null, root = null, preferDebrid = false, release: releaseId = null } = {}) {
     // With what is known of their links: a dead one is never picked or fallen back to (state/links.js).
-    const releases = linkHealth().overlay(game.releases);
+    const releases = linkHealth().overlay(Array.isArray(game?.releases) ? game.releases : []);
     if (!releases.length) throw new Error("This game has no download source.");
-    if (source !== null && !(source >= 0 && source < releases.length)) throw new Error("That source is no longer listed.");
+    source = pickedIndex(releases, source, releaseId);
     const selected = source ?? preferredRelease(releases);
     const picked = releases[selected];
     const { group, host } = describeSource(picked);
@@ -44,4 +57,4 @@ import { MARGIN2 } from '../state/space.js';
     return { id, source: host, root: roots[index], debrid: viaDebrid ? serviceName(release.debrid.service) : null, browser: group === "browser" && !viaDebrid };
   }
 
-export { startRemoteDownload, throughDebrid };
+export { SOURCE_GONE, pickedIndex, startRemoteDownload, throughDebrid };

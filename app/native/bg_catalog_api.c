@@ -1005,6 +1005,7 @@ static int catalog_store_entry(const char* id, StGame* out, char* key, size_t ke
       if (t->rel && t->rel->has_size && t->rel->size > 0) { l->has_size = 1; l->size = (uint64_t)t->rel->size; }
       l->parts = t->rel ? 0 : (unsigned)t->nparts;
       l->source = order[i];
+      { const char* rid = t->rel ? ct_s(t->rel->id) : ct_s(t->id); if (strlen(rid) < sizeof l->rid) copy_text(l->rid, sizeof l->rid, rid); } // .58
       l->solo = (int8_t)(solo && l->url[0] ? 1 : 0);
     }
     free(order);

@@ -365,8 +365,10 @@ import { t as t2Static } from '../i18n/core.js';
     const [within, setWithin] = (0, useState)(null);
     const active = ["queued", "extracting", "converting", "verifying"].includes(item.state);
     const tone = item.state === "failed" ? RED : item.state === "done" ? GREEN : colors.accentHi;
-    const text = t2(CONVERSION_TEXT[item.state] ?? "downloads.convert.queued");
-    const note = item.state === "failed" ? conversionError(item) : t2("downloads.payloadConv.hint");
+    // glibren.58: na extracao (payload 1.37.3+), "Extraindo do .7z", o % real, GB, velocidade, tempo e o motivo.
+    const extract = item.state === "extracting" ? item.extract : null;
+    const text = extract?.format ? t2("downloads.convert.extractingFrom", { format: extract.format }) : t2(CONVERSION_TEXT[item.state] ?? "downloads.convert.queued");
+    const note = item.state === "failed" ? conversionError(item) : extract?.cpu ? t2("downloads.convert.cpuLimited", { format: extract.format || "7z" }) : t2("downloads.payloadConv.hint");
     const focusOf = (name) => ({
       onFocus: () => setWithin(name),
       onBlur: () => setWithin((current) => current === name ? null : current)

@@ -252,7 +252,9 @@ test('extraction: one cut off by closing the app queues again when it opens, fro
   const reopened = queueWith({ fs, downloads: downloads2, archives: archives2 });
   const job = await settle(reopened, a);
   assert.equal(job.state, 'downloaded', job.error);
-  assert.equal(downloads2.requests[0].recoverCompleted, true, 'the finished archive is taken from its receipt');
+  // glibren.58: the whole archive is on the drive, so it extracts again straight away (before, it went back to the
+  // download queue to be taken from its receipt, and an archive already moved to BACKUP was downloaded again).
+  assert.equal(downloads2.requests.length, 0, 'nothing downloaded again');
   assert.equal(archives2.log.started.length, 1);
 });
 

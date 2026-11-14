@@ -99,7 +99,10 @@ import { formatFromName } from './link-formats.js';
    * (source >= 0, com a Jobee'sLair fechada) e o disco padrao dele, para a fila achar a parcial e acompanhar o job; sem
    * fonte (o marcador), a Jobe escolhe como na ficha. -> o id do job na fila.
    */
-  function queueStoreRequest(request, { start, getGame, roots } = {}) {
+  // .58: com a loja aberta pelo catalogo do payload (Fase 4), getGame(id) pode ser so a carta (sem os links): a ficha
+  // vem do payload (fetchGame) antes de escolher a fonte.
+  var hasReleases = (game) => Boolean(game) && Array.isArray(game.releases) && !(game.remote && !game.full);
+  function queueStoreRequest(request, { start, getGame, fetchGame, roots } = {}) {
     if (typeof start !== "function") throw new Error("The download queue is not ready.");
     const id = CODE.test(String(request?.store || "")) ? String(request.store).toUpperCase() : "";
     let game = null;
@@ -107,11 +110,22 @@ import { formatFromName } from './link-formats.js';
       game = id && typeof getGame === "function" ? getGame(id) : null;
     } catch {
     }
-    if (!game) throw new Error("This game is not in the store on this console. Open it in Jobee'sLair.");
-    const source = Number.isInteger(request.source) && request.source >= 0 ? request.source : null;
-    // glibren.55: uma fonte escolhida na /app (marcador com `source`) vai pelo TorBox quando ele aceita (preferDebrid).
-    const options = request.autoStarted && source !== null ? { root: libraryRoot(roots) } : source !== null ? { preferDebrid: true } : {};
-    return start(game, source, options).id;
+    const go = (found) => {
+      if (!found) throw new Error("This game is not in the store on this console. Open it in Jobee'sLair.");
+      const source = Number.isInteger(request.source) && request.source >= 0 ? request.source : null;
+      // .58: a fonte escolhida e achada pelo id dela (release.id), nao pela posicao: o catalogo do payload e o do app podem
+      // listar os links em outra ordem (ou um a mais). Sem id (payload antigo), a posicao.
+      const release = typeof request.release === "string" && request.release ? request.release : null;
+      const chosen = source !== null || release !== null;
+      // glibren.55: uma fonte escolhida na /app (marcador com `source`) vai pelo TorBox quando ele aceita (preferDebrid).
+      const options = request.autoStarted && chosen ? { root: libraryRoot(roots) } : chosen ? { preferDebrid: true } : {};
+      if (release) options.release = release;
+      return start(found, source, options).id;
+    };
+    if (!hasReleases(game) && id && typeof fetchGame === "function") {
+      return Promise.resolve().then(() => fetchGame(id)).catch(() => null).then((full) => go(hasReleases(full) ? full : game));
+    }
+    return go(game);
   }
 
 export { libraryFile, libraryGame, libraryRoot, queueLibraryRequest, queueStoreRequest };

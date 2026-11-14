@@ -132,3 +132,26 @@ test('glibren.55: "Recomecar do zero" na pagina do celular e na /app (14 idiomas
   assert.ok(app.includes('acaoJob(j.id, "restart")') && app.includes('dl.confirmar = "r:" + j.id'), '/app: dois toques');
   assert.ok(app.includes('!(recomeca && j.restartAdvised)'), '/app: no lugar de Retomar');
 });
+
+// glibren.58: PS5 real (Alan Wake 2, .exfat.7z de 91,7 GB extraido pelo payload, 14/11/2026): o bloco Convertendo so
+// dizia "Descompactando" com a barra listrada, o nome saia cortado ("Alan Wa...") pelo selo ao lado e a falha antiga do
+// mesmo item continuava na lista. Agora: % real, "Extraindo do .7z", GB de GB, velocidade, tempo e o motivo (CPU).
+test('glibren.58: a pagina do celular mostra o progresso da extracao e esconde a falha antiga do mesmo item', async () => {
+  const vm = await import('node:vm');
+  const page = readFileSync(path.join(repo, 'app/native/bg_monitor.html'), 'utf8');
+  for (const piece of ['extractingFrom: "Extraindo do .{f}"', 'extractingFrom: "Extracting from the .{f}"', 'Limitado pelo processador', 'Limited by the processor',
+    'ex.extractPercent', 'ex.extractEtaSeconds', 'ex.extractBytesPerSecond', 'ex.limitedBy === "cpu"', '"width", `${ex.extractPercent}%`, "important"',
+    '.job.conv .top{flex-direction:column', '.job.conv .name{display:block;overflow:visible;-webkit-line-clamp:unset', 'liveConversions(DEMO ? demoConv']) assert.ok(page.includes(piece), piece);
+  const source = /const liveConversions = \(list\) => \{[\s\S]*?\n\};/.exec(page)?.[0];
+  assert.ok(source, 'liveConversions na pagina');
+  const live = vm.runInNewContext(`${source}; liveConversions`);
+  const list = [
+    { id: 'c21', name: 'Alan Wake 2', target: 'PPSA02572.exfat', state: 'failed', error: 'write: x' },
+    { id: 'c30', name: 'Alan Wake 2', target: 'PPSA02572.exfat', state: 'extracting' },
+    { id: 'c5', name: 'Outro', target: 'PPSA01111.exfat', state: 'failed', error: 'space: x' },
+    { id: 'c6', name: 'Cancelado', target: 'PPSA03333.exfat', state: 'cancelled' },
+  ];
+  assert.deepEqual(live(list).map((c) => c.id), ['c30', 'c5'], 'a falha antiga do mesmo item some; a de outro fica');
+  assert.deepEqual(live(list.filter((c) => c.id !== 'c30')).map((c) => c.id), ['c21', 'c5'], 'sem a nova, a falha aparece');
+  assert.deepEqual(live([{ id: 'a', name: 'X', target: '', state: 'failed' }, { id: 'b', name: 'X', target: '', state: 'queued' }]).map((c) => c.id), ['b'], 'pelo nome, sem destino');
+});

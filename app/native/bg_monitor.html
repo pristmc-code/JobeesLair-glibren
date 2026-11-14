@@ -529,14 +529,21 @@ let section = "all";
 try { const saved = localStorage.getItem("jobe.section"); if (SECTIONS.includes(saved)) section = saved; } catch {}
 const sectionOfJob = (j) => ["downloading", "connecting", "verifying"].includes(j.state) ? "downloading" : j.state === "extracting" ? "extracting" : j.state === "completed" ? "done" : j.state === "cancelled" ? "cancelled" : "queue";
 const sectionOfConv = (c) => c.state === "done" ? "done" : "converting";
+// glibren.58: a falha antiga de um item (mesmo destino "target" ou mesmo nome) some quando uma conversao nova dele
+// esta em andamento (na fila, extraindo, convertendo ou conferindo).
+const liveConversions = (list) => {
+  const busy = list.filter((c) => ["queued", "extracting", "converting", "verifying"].includes(c.state));
+  return list.filter((c) => c.state !== "cancelled" && !(c.state === "failed" && busy.some((b) => b.id !== c.id && ((b.target && b.target === c.target) || (b.name && b.name === c.name)))));
+};
+window.liveConversions = liveConversions;
 const shows = (sec) => section === "all" ? sec !== "cancelled" && sec !== "backup" : section === sec;
 function sectionCounts() {
   const n = Object.fromEntries(SECTIONS.map((k) => [k, 0]));
   for (const j of jobs) ++n[sectionOfJob(j)];
-  for (const c of (DEMO ? window.demoConversions || [] : lastStatus?.conversions || []).filter((c) => c.state !== "cancelled")) ++n[sectionOfConv(c)];
+  for (const c of liveConversions(DEMO ? window.demoConversions || [] : lastStatus?.conversions || [])) ++n[sectionOfConv(c)];
   n.cancelled = (lastStatus?.cancelledRecent || []).length;
   n.backup = window.backupCount || 0;
-  n.all = jobs.length + (DEMO ? window.demoConversions || [] : lastStatus?.conversions || []).filter((c) => c.state !== "cancelled").length;
+  n.all = jobs.length + liveConversions(DEMO ? window.demoConversions || [] : lastStatus?.conversions || []).length;
   return n;
 }
 function setSection(next) {
@@ -954,6 +961,13 @@ pinOnOpen();
 <style>
 .convlist{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
 .job.conv .tag{background:var(--panel2)}
+/* glibren.58: no bloco Convertendo o selo (longo: "Extraindo do .7z 37%") ia ao lado e espremia o nome ("Alan Wa..."):
+   agora o nome ocupa a linha inteira, quebra se precisar, e o selo vai embaixo */
+.job.conv .top{flex-direction:column;align-items:flex-start;gap:6px}
+.job.conv .name{display:block;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere}
+.job.conv .tag{margin-inline-start:0;white-space:normal;text-align:start}
+.job.conv.extracting.pct .bar>i{background:var(--ice)}
+.job.conv .why{font-size:13.5px;color:var(--warn)}
 .job.conv.done .tag{color:var(--good)}
 /* glibren.12: o BACKUP agora e um botao colorido de largura cheia no topo da aba Downloads (antes, discreto no rodape) */
 .backup-row{display:flex;min-width:0}
@@ -993,6 +1007,8 @@ pinOnOpen();
   const C = {
     pt: { converting: "Convertendo para EXFAT", verifying: "Conferindo o EXFAT", queued: "Na fila para EXFAT", waiting: "Pausa entre conversões: começa em {t}", done: "Pronto (EXFAT)", failed: "Conversão falhou",
       extracting: "Descompactando para converter",
+      extractingFrom: "Extraindo do .{f}", extractingAny: "Extraindo o compactado", extractedOf: "{d} de {t} extraídos", extractedSoFar: "{d} extraídos",
+      timeLeft: "faltam {t}", cpu: "Limitado pelo processador: descompactar .{f} pesa na CPU do PS5, não no disco.",
       errors: { space: "Falta espaço no disco para o .exfat.", "not-direct": "Não deu para converter direto do arquivo compactado: o payload descompacta em BACKUP/_temp e converte.",
         "not-a-game": "Não é o jogo (atualização ou DLC): fica como veio.", source: "Não deu para ler os arquivos do jogo.", write: "Não deu para gravar o .exfat.", verify: "O .exfat gravado não conferiu." },
       openApp: "Tente de novo em Pasta BACKUP > Converter agora, ou veja o motivo em Ver diário do payload.",
@@ -1008,6 +1024,8 @@ pinOnOpen();
       convertNo: { ps4: "Jogo de PS4: não vira .exfat.", converted: "Já convertido.", nothing: "Nada aqui que dê para converter." } },
     en: { converting: "Converting to EXFAT", verifying: "Checking the EXFAT", queued: "Queued for EXFAT", waiting: "Pause between conversions: starts in {t}", done: "Ready (EXFAT)", failed: "Conversion failed",
       extracting: "Extracting to convert",
+      extractingFrom: "Extracting from the .{f}", extractingAny: "Extracting the archive", extractedOf: "{d} of {t} extracted", extractedSoFar: "{d} extracted",
+      timeLeft: "{t} left", cpu: "Limited by the processor: unpacking a .{f} weighs on the PS5's CPU, not on the drive.",
       errors: { space: "Not enough space on the drive for the .exfat.", "not-direct": "It could not be converted straight from the archive: the payload extracts it in BACKUP/_temp and converts it.",
         "not-a-game": "Not the game (an update or DLC): it stays as it came.", source: "The game's files could not be read.", write: "The .exfat could not be written.", verify: "The written .exfat did not check out." },
       openApp: "Try again in BACKUP folder > Convert now, or see why in View the payload log.",
@@ -1029,7 +1047,9 @@ pinOnOpen();
   // glibren.25: a resposta do POST /api/backup/convert: {state:"queued", position} (0 = convertendo agora) ou {already}.
   const convAnswer = (d) => d.already === "converted" ? fill(C.convDone, { f: String(d.path || "").slice(String(d.path || "").lastIndexOf("/") + 1) }) : d.already ? (["extracting", "converting", "verifying"].includes(d.already) ? C.convRunning : C.convAlready)
     : d.position ? fill(C.convQueuedAt, { n: d.position }) : d.state === "queued" ? C.convRunning : C.convertAsked;
-  const demoConv = [{ id: "c1", name: "Astro Bot", state: "converting", written: 18.2 * GB, total: 41.7 * GB, error: "" }, { id: "c2", name: "Stellar Blade", state: "done", written: 33.4 * GB, total: 33.4 * GB, error: "" }];
+  const demoConv = [{ id: "c1", name: "Astro Bot", state: "converting", written: 18.2 * GB, total: 41.7 * GB, error: "" }, { id: "c2", name: "Stellar Blade", state: "done", written: 33.4 * GB, total: 33.4 * GB, error: "" },
+    { id: "c3", name: "Alan Wake 2 Deluxe Edition", state: "extracting", target: "PPSA02572.exfat", written: 34.1 * GB, total: 91.7 * GB, error: "", extractFormat: "7z", extracted: 34.1 * GB, extractTotal: 91.7 * GB, extractBytesPerSecond: 15.2 * MB, extractPercent: 37, extractEtaSeconds: 3790, limitedBy: "cpu" },
+    { id: "c4", name: "Alan Wake 2 Deluxe Edition", state: "failed", target: "PPSA02572.exfat", written: 0, total: 0, error: "write: Could not stat /mnt/ext0/BACKUP/_temp/c21/PPSA02572.exfat" }];
   window.demoConversions = demoConv;
   let demoBackup = [
     { root: "/mnt/usb0", name: "Stellar Blade", bytes: 31.9 * GB, files: 12, platform: "ps5", code: "PPSA13198", format: "rar", parts: 12, fileNames: ["Stellar.Blade.PPSA13198.part01.rar", "Stellar.Blade.PPSA13198.part02.rar", "Stellar.Blade.PPSA13198.part03.rar", "Stellar.Blade.PPSA13198.part04.rar", "Stellar.Blade.PPSA13198.part05.rar", "Stellar.Blade.PPSA13198.part06.rar", "Stellar.Blade.PPSA13198.part07.rar", "Stellar.Blade.PPSA13198.part08.rar", "Stellar.Blade.PPSA13198.part09.rar", "Stellar.Blade.PPSA13198.part10.rar"], moreFiles: 2, converted: "PPSA13198.exfat" },
@@ -1059,13 +1079,23 @@ pinOnOpen();
     for (const c of items) {
       const pct = c.total ? Math.min(100, c.written / c.total * 100) : 0;
       const el = document.createElement("article"); el.className = `job conv ${c.state}`;
-      const label = C[c.state] || c.state;
+      // glibren.58: a extracao (payload 1.37.3+) traz o progresso: barra com % real, GB, velocidade, tempo e motivo.
+      const ex = c.state === "extracting" && typeof c.extractPercent === "number" ? c : null;
+      const label = ex ? (ex.extractFormat ? fill(C.extractingFrom, { f: ex.extractFormat }) : C.extractingAny) : C[c.state] || c.state;
       el.innerHTML = `<div class="top"><div class="name"></div><span class="tag"></span></div><div class="bar"><i style="width:${c.state === "done" ? 100 : pct}%"></i></div><div class="nums"></div>`;
       el.querySelector(".name").textContent = c.name;
       const waiting = c.state === "queued" && first && wait > 0;
       if (c.state === "queued") first = false;
-      el.querySelector(".tag").textContent = c.state === "converting" ? `${label} ${nf(pct, 0)}%` : waiting ? fill(C.waiting, { t: `${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, "0")}` }) : label;
+      el.querySelector(".tag").textContent = c.state === "converting" ? `${label} ${nf(pct, 0)}%` : ex && ex.extractPercent >= 0 ? `${label} ${nf(ex.extractPercent, 0)}%` : waiting ? fill(C.waiting, { t: `${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, "0")}` }) : label;
       el.querySelector(".nums").textContent = c.total ? `${size(c.written || 0)} ${L.of} ${size(c.total)}` : "";
+      if (ex) {
+        if (ex.extractPercent >= 0) { el.classList.add("pct"); el.querySelector(".bar>i").style.setProperty("width", `${ex.extractPercent}%`, "important"); }
+        const parts = [ex.extractTotal ? fill(C.extractedOf, { d: size(ex.extracted || 0), t: size(ex.extractTotal) }) : fill(C.extractedSoFar, { d: size(ex.extracted || 0) })];
+        if (ex.extractBytesPerSecond > 0) parts.push(speed(ex.extractBytesPerSecond));
+        if (ex.extractEtaSeconds > 0) parts.push(fill(C.timeLeft, { t: eta(ex.extractEtaSeconds) }));
+        el.querySelector(".nums").textContent = parts.join(" · ");
+        if (ex.limitedBy === "cpu") { const w = document.createElement("div"); w.className = "why"; w.textContent = fill(C.cpu, { f: ex.extractFormat || "7z" }); el.append(w); }
+      }
       el.querySelector(".top").after(originRow({ format: "exfat" })); // glibren.12: o formato que sai da conversao
       if (c.state === "failed") { const e = document.createElement("div"); e.className = "err"; e.textContent = `${why(c.error)} ${C.openApp}`; el.append(e); }
       list.append(el);
@@ -1201,7 +1231,7 @@ pinOnOpen();
   // A pagina chama a cada atualizacao (refresh) com o que o /api/status trouxe.
   let ticks = 0;
   window.convHook = (data, sectionOnly) => {
-    renderConversions((DEMO ? demoConv : (data?.conversions || [])).filter((c) => c.state !== "cancelled" && shows(sectionOfConv(c))), DEMO ? 0 : Number(data?.convertWaitSeconds) || 0);
+    renderConversions(liveConversions(DEMO ? demoConv : (data?.conversions || [])).filter((c) => shows(sectionOfConv(c))), DEMO ? 0 : Number(data?.convertWaitSeconds) || 0);
     panel.hidden = section !== "backup";
     row.hidden = section === "backup";
     if (!sectionOnly && ticks++ % 15 === 0) loadBackup(); // o BACKUP muda pouco: a cada ~30 s (e ao abrir a secao)

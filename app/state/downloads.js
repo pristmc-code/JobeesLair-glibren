@@ -7,6 +7,7 @@
 
 import { t } from '../i18n/core.js';
 import { getGame } from './catalog.js';
+import { remoteCatalog, remoteCatalogOn } from './catalog-remote.js';
 import { DATA_DIR } from './data-dir.js';
 import { createDownloadQueue } from './download-queue.js';
 import { createSourceResolver } from './download-sources.js';
@@ -96,7 +97,7 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
       convertOptions,
       // glibren: um jogo pedido na Biblioteca TorBox do celular entra nesta fila, pelo TorBox, no disco padrao.
       // glibren (item 2): um da Loja completa do celular ("store") vai como o Baixar da ficha do jogo.
-      onLibraryRequest: (request) => request?.store ? queueStoreRequest(request, { start: startRemoteDownload, getGame, roots: storageRoots() }) : queueLibraryRequest(request, { queue: downloadQueue(), roots: storageRoots(), getGame })
+      onLibraryRequest: (request) => request?.store ? queueStoreRequest(request, { start: startRemoteDownload, getGame, fetchGame: (id) => remoteCatalogOn() ? remoteCatalog()?.game(id) : null, roots: storageRoots() }) : queueLibraryRequest(request, { queue: downloadQueue(), roots: storageRoots(), getGame })
     }),
     // glibren: quantos downloads rodam ao mesmo tempo (Configuracoes).
     concurrency: simultaneousDownloads,

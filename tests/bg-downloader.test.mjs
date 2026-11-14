@@ -1315,6 +1315,45 @@ test('glibren.8: app fechado: o celular pausa e retoma um da fila entregue; um p
   await stop(child);
 });
 
+// glibren.58 (relato real 14/11): download PAUSADO na Jobe, Jobe fechada, retomado na /app -> "Aguardando a Jobe" e
+// nunca voltava. O app pausa com park (o job fica no payload, com a parcial), mas a fila dele manda o item SEM "job"
+// quando nao entrega o pedido (TorBox com link velho, por exemplo): o payload trocava o job de verdade por um marcador
+// "waiting-app". Agora o job do mesmo item fica, e retomado pelo celular//app com a Jobe fechada o payload baixa sozinho.
+test('glibren.58: pausado na Jobe e item da fila sem job: o job pausado fica (sem marcador) e, com a Jobe fechada, retomar na /app baixa sozinho', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  small('p58.bin', 8 * MiB);
+  srv.rate = 2 * MiB;
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort), BGDL_APP_SILENCE_MS: '800' });
+  await up(base);
+  await pageUp();
+  const session = await unlocked(base);
+  const item = queued(base, 'p58.bin', { rangeBytes: MiB });
+  const { data } = await call(base, 'POST', '/jobs', { ...item.job, key: item.key });
+  await call(base, 'POST', `/jobs/${data.id}/follow`);
+  await until(base, data.id, ['downloading'], (job) => job.written >= 2 * MiB);
+  assert.equal((await call(base, 'POST', `/jobs/${data.id}/park`)).status, 200);
+  const parked = await until(base, data.id, ['paused']);
+  // A fila do app manda o pausado sem o pedido (so chave, nome, total e o progresso).
+  const answer = await call(base, 'POST', '/queue', { items: [{ key: item.key, name: item.name, total: item.total, paused: true, written: parked.written }] });
+  assert.equal(answer.status, 200);
+  assert.deepEqual([answer.data.created, answer.data.waiting, answer.data.removed], [0, 0, 0], 'nenhum marcador novo, nada removido');
+  const jobs = (await call(base, 'GET', '/jobs')).data.jobs;
+  assert.deepEqual(jobs.map((job) => [job.id, job.state, job.placeholder]), [[data.id, 'paused', false]], 'so o job de verdade, pausado');
+  // A Jobe fecha (fica calada); o celular//app retoma: o payload continua da parcial sozinho, sem "waiting-app".
+  srv.rate = 0;
+  await wait(1200);
+  assert.equal((await page(`/api/jobs/${data.id}/resume`, { method: 'POST', session })).status, 200);
+  const status = await statusUntil((s) => s.jobs.some((job) => job.id === data.id && ['completed', 'waiting-app', 'failed'].includes(job.state)));
+  assert.equal(status.jobs.find((job) => job.id === data.id).state, 'completed', 'baixado pelo payload, sem esperar a Jobe');
+  assert.equal(sha(readFileSync(item.job.destination)), sha(files['p58.bin']));
+  // A Jobe abre ainda com o item pausado (sem pedido): nenhum marcador "waiting-app" aparece no lugar do concluido.
+  const again = await call(base, 'POST', '/queue', { items: [{ key: item.key, name: item.name, total: item.total, paused: true, written: parked.written }] });
+  assert.deepEqual([again.data.created, again.data.waiting], [0, 0]);
+  assert.deepEqual((await call(base, 'GET', '/jobs')).data.jobs.map((job) => [job.id, job.state, job.by]), [[data.id, 'completed', 'remote']]);
+  await stop(child);
+});
+
 test('glibren.8: um da fila entregue pausado no celular com o app aberto fica pausado ate o app confirmar; pausados sobrevivem a reinicio', { skip }, async () => {
   monitorPort = await freePort();
   const base = workspace();

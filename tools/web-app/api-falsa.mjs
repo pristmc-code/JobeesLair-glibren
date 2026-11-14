@@ -140,13 +140,13 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
         { kind: g.solo === false ? 'browser' : 'direct', host: HOSTS[g.rel % HOSTS.length], format: g.formats[0], size: Math.round(g.sizeGb * 2 ** 30), label: '', parts: 0, solo: g.solo !== false },
         { kind: 'set', group: 'direct', host: HOSTS[(g.rel + 1) % HOSTS.length], format: 'rar', size: Math.round(g.sizeGb * 2 ** 30), label: '', parts: 4, solo: false },
         { kind: 'browser', host: 'VikingFile', format: 'rar', size: null, label: 'USA 5.xx Base - Vikingfile part 1', parts: 0, solo: false },
-      ].map((l, i) => ({ i, ref: refFalsa(g.id, i), group: l.group || l.kind, ...l }));
+      ].map((l, i) => ({ i, ref: refFalsa(g.id, i), rid: `r${i}-${g.id}`, group: l.group || l.kind, ...l }));
       const { rel, ...jogo } = g;
       return json(res, 200, { ok: true, game: { ...jogo, direct: g.solo !== false, features: [], providers: [] },
         details: { summary: `${g.title}: um resumo de exemplo da API falsa.`,
           about: ['Texto longo de exemplo para conferir a quebra de linha na ficha, sem cortar nada com reticências. '.repeat(4), 'Segundo parágrafo da descrição.'],
           shots: [`/capa/${(g.rel + 1) % lista.length}.svg`, `/capa/${(g.rel + 2) % lista.length}.svg`, `/capa/${(g.rel + 3) % lista.length}.svg`], hero: '' },
-        links, download: g.solo === false ? 'app' : 'payload', detailsState: 'ok' });
+        links, download: g.solo === false ? 'app' : 'payload', detailsState: 'ok', debrid: 'TorBox' });
     }
     if (p === '/api/store/add' && req.method === 'POST') {
       contadores.add++;

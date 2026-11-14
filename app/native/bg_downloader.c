@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.2"
+#define BG_VERSION "1.37.3"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -900,6 +900,7 @@ typedef struct {
   // 0 = a Jobe escolhe). Gravados em jobs.json ("library": "store", "source").
   char lib_store[16];
   int store_source;
+  char store_rid[96]; // .58: o id da fonte escolhida (release.id; "" = so o indice): gravado em jobs.json ("release")
   int64_t auto_retry_at; // so na memoria
   // glibren.12: de onde vem e o que e, para os selos da pagina do celular: `host` o site do download direto (so o
   // dominio, "mediafire.com"; vazio = o do url), `format` a extensao ("exfat", "rar"; vazio = a do nome), `parts` as
@@ -1142,7 +1143,7 @@ static void job_json_as(Buf* b, const Job* j, int for_disk) {
     buf_fmt(b, ",\"autoStarted\":%s,\"autoAdopted\":%s,\"autoConvert\":%s", j->auto_started ? "true" : "false",
             j->auto_adopted ? "true" : "false", j->auto_convert ? "true" : "false");
     buf_str(b, ",\"autoNote\":"); buf_json(b, j->auto_note);
-    if (j->lib_store[0]) { buf_str(b, ",\"store\":"); buf_json(b, j->lib_store); buf_fmt(b, ",\"source\":%d", j->store_source - 1); } // glibren (item 2)
+    if (j->lib_store[0]) { buf_str(b, ",\"store\":"); buf_json(b, j->lib_store); buf_fmt(b, ",\"source\":%d", j->store_source - 1); if (j->store_rid[0]) { buf_str(b, ",\"release\":"); buf_json(b, j->store_rid); } } // glibren (item 2); .58 release
     buf_str(b, "}");
   }
   buf_str(b, "}");
@@ -1283,6 +1284,7 @@ static int library_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "autoNote")) return lib_text(jp, j->auto_note, sizeof j->auto_note) ? 1 : -1;
   if (!strcmp(key, "store")) return lib_text(jp, j->lib_store, sizeof j->lib_store) ? 1 : -1; // glibren (item 2)
   if (!strcmp(key, "source")) { int64_t v; if (!jp_int64(jp, &v)) return -1; j->store_source = v >= 0 && v < 100000 ? (int)v + 1 : 0; return 1; }
+  if (!strcmp(key, "release")) return lib_text(jp, j->store_rid, sizeof j->store_rid) ? 1 : -1; // .58
   return 0;
 }
 
@@ -3786,6 +3788,18 @@ static Job* find_placeholder_locked(const char* key) {
   for (int i = 0; i < g_job_count; ++i) if (g_jobs[i]->placeholder && !strcmp(g_jobs[i]->key, key)) return g_jobs[i];
   return NULL;
 }
+// glibren.58: um job de verdade (com link/fonte) do mesmo item da fila, entregue ao payload (ahead: o pausado no app vira
+// "park"), ainda nao terminado. Um item sem "job" (o app nao manda o pedido de um TorBox com link velho, por exemplo)
+// (nem cancelado; um terminado com a Jobe fechada tambem, para o app ver que acabou) fica com ele em vez de virar um
+// marcador "waiting-app": antes o job pausado saia da lista e o marcador no lugar dele,
+// retomado na /app com a Jobe fechada, so mostrava "Aguardando a Jobe" (o payload sabe renovar o link TorBox sozinho).
+static Job* find_ahead_key_locked(const char* key) {
+  for (int i = 0; i < g_job_count; ++i) {
+    Job* j = g_jobs[i];
+    if (!j->placeholder && j->ahead && !j->requested && j->key[0] && !strcmp(j->key, key) && strcmp(j->state, "cancelled")) return j;
+  }
+  return NULL;
+}
 static void handle_queue(int fd, Request* r) {
   QueueBody body = {calloc(MAX_JOBS, sizeof(QueueItem)), 0};
   if (!body.items) { respond_error(fd, 500, "out of memory"); return; }
@@ -3822,7 +3836,8 @@ static void handle_queue(int fd, Request* r) {
   int seen[MAX_JOBS] = {0}, created = 0, waiting = 0;
   for (int i = 0; i < body.count; ++i) {
     QueueItem* q = &body.items[i];
-    Job* j = q->has_job ? find_destination_locked(q->job->destination) : find_placeholder_locked(q->key);
+    Job* j = q->has_job ? find_destination_locked(q->job->destination) : find_ahead_key_locked(q->key);
+    if (!j && !q->has_job) j = find_placeholder_locked(q->key);
     if (!j && g_job_count < MAX_JOBS) {
       if (q->has_job) {
         j = q->job;

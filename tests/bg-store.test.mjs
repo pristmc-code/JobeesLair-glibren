@@ -432,6 +432,31 @@ test('Baixar: sem PIN nao; Jobe aberta vira marcador para ela; repetido "ja esta
   assert.ok(retry.data.ok && !retry.data.already, JSON.stringify(retry.data));
 });
 
+// glibren.58 (relato real 13/11, Outer Wilds, diagnostico 2026-11-13_234037): pedido da loja -> a Jobe recusou ("a
+// fonte nao existe mais") -> pedido de novo -> cancelado em Downloads: a ficha e a lista tem de voltar a "Baixar".
+test('glibren.58: pedido recusado e cancelado em Downloads some de todo lugar: ficha, lista, GET /jobs; Baixar vale de novo', { skip }, async () => {
+  const base = workspace();
+  storeFiles(base);
+  start(base, { BGDL_APP_SILENCE_MS: '600000' });
+  await up(base);
+  const session = await unlocked(base);
+  const queuedNow = async () => [(await page('/api/store/game?id=PPSA01001')).data.game.queued, (await page('/api/store?q=jogo%20direto')).data.games[0].queued];
+  const add = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01001' } });
+  assert.deepEqual(await queuedNow(), [true, true]);
+  assert.equal((await call(base, 'POST', `/jobs/${add.data.id}/refuse`, { error: 'That source is no longer listed.' })).status, 200);
+  assert.deepEqual(await queuedNow(), [false, false], 'recusado: nao esta mais na fila');
+  const shown = (await page('/api/status')).data.jobs.find((j) => j.id === add.data.id);
+  assert.deepEqual([shown?.state, shown?.store], ['failed', true], 'Downloads mostra a falha do pedido da loja (a /app sugere outra fonte)');
+  const again = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01001' } });
+  assert.ok(again.data.ok && !again.data.already && again.data.id !== add.data.id);
+  assert.deepEqual(await queuedNow(), [true, true]);
+  assert.equal((await page(`/api/jobs/${again.data.id}/cancel`, { method: 'POST', session })).status, 200);
+  assert.deepEqual(await queuedNow(), [false, false], 'cancelado em Downloads: a ficha e a lista voltam a Baixar');
+  assert.ok(!(await call(base, 'GET', '/jobs')).data.jobs.some((j) => j.library?.store === 'PPSA01001' && !['failed', 'cancelled'].includes(j.state)), 'nenhum pedido vivo do jogo');
+  const third = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01001' } });
+  assert.ok(third.data.ok && !third.data.already, JSON.stringify(third.data));
+});
+
 test('Baixar com a Jobe fechada: o payload baixa o primeiro link solo sozinho (destino do app), sem solo vira marcador; arquivo ja no disco', { skip }, async () => {
   const base = workspace();
   storeFiles(base);
@@ -477,8 +502,9 @@ test('Baixar com o link escolhido: chega a rota, vira a fonte do pedido; link de
   assert.deepEqual(g.links.map((l) => [l.i, l.group]), [[0, 'browser'], [1, 'direct'], [2, 'direct']]);
   assert.ok(g.links.every((l) => /^[0-9a-f]{16}$/.test(l.ref)) && new Set(g.links.map((l) => l.ref)).size === 3);
   const other = (await page('/api/store/game?id=PPSA01002')).data;
-  // Um link de outro jogo (a ref dele com o indice dele), uma ref inventada, um indice fora: 400 "link".
-  for (const body of [{ id: 'PPSA01001', link: 0, ref: other.links[0].ref }, { id: 'PPSA01001', link: 1, ref: '0123456789abcdef' }, { id: 'PPSA01001', link: 9, ref: g.links[0].ref }, { id: 'PPSA01001', link: 0 }]) {
+  // Um link de outro jogo (a ref dele com o indice dele), uma ref inventada, um indice fora sem ref valida, sem ref:
+  // 400 "link" (.58: a ref vale mais que o indice; ver o teste .58).
+  for (const body of [{ id: 'PPSA01001', link: 0, ref: other.links[0].ref }, { id: 'PPSA01001', link: 1, ref: '0123456789abcdef' }, { id: 'PPSA01001', link: 9, ref: 'fedcba9876543210' }, { id: 'PPSA01001', link: 0 }]) {
     const refused = await page('/api/store/add', { method: 'POST', session, body });
     assert.deepEqual([refused.status, refused.data.error], [400, 'link'], JSON.stringify(body));
   }
@@ -506,6 +532,46 @@ test('Baixar com o link escolhido: chega a rota, vira a fonte do pedido; link de
   const auto = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01002' } });
   assert.deepEqual([auto.data.via, auto.data.picked, auto.data.browser], ['app', -1, true]);
   assert.equal((await call(base, 'GET', '/jobs')).data.jobs.find((j) => j.id === auto.data.id).library.source, -1);
+});
+
+// .58: bug do PS5 real (jobeeslair.log 23:37:19 "Outer Wilds: phone request not queued (That source is no longer
+// listed.)"): a fonte escolhida na /app ia ao app so pela POSICAO, e a lista do payload nao era a do app. Agora cada link
+// leva o id dele (rid = release.id); a ref e do id (nao da posicao); o pedido leva o id ("release") ate a Jobe; e a ref
+// vale mesmo com o catalogo refeito em outra ordem entre abrir a ficha e tocar em Baixar.
+test('.58: fonte escolhida pelo id (rid): ref sem a posicao, catalogo reordenado aceito, "release" no pedido e no jobs.json', { skip }, async () => {
+  const base = workspace();
+  const links = [
+    { kind: 'browser', host: 'Vikingfile', format: 'rar', size: 100, label: 'Viking', filename: 'x.rar', url: 'https://vikingfile.com/x', parts: 0, solo: false, source: 0, rid: 'r-viking' },
+    { kind: 'browser', host: 'AkiraBox', format: 'rar', size: 100, label: 'Akira', filename: 'a.rar', url: 'https://akirabox.com/a', parts: 0, solo: false, source: 2, rid: 'r-akira' },
+    { kind: 'direct', host: 'Archive.org', format: 'rar', size: 10, label: 'Partes', filename: 'set', url: 'https://archive.org/p1.rar', parts: 3, solo: false, source: 1, rid: 'set-abc' }];
+  storeFiles(base, { links });
+  let child = start(base, { BGDL_APP_SILENCE_MS: '400' });
+  await up(base);
+  const session = await unlocked(base);
+  const g = (await page('/api/store/game?id=PPSA01001')).data;
+  assert.deepEqual(g.links.map((l) => l.rid), ['r-viking', 'r-akira', 'set-abc'], 'o id de cada link vai para a /app');
+  assert.equal(typeof g.debrid, 'string', 'a /app sabe se ha TorBox/AllDebrid ("" sem chave)');
+  // O catalogo refeito com outra ordem (o AkiraBox agora em 0): a ref do AkiraBox (pega no indice 1) continua valendo.
+  storeFiles(base, { links: [links[1], links[2], links[0]] });
+  await wait(1100); // o mtime do arquivo muda (o payload rele a ficha)
+  const again = (await page('/api/store/game?id=PPSA01001')).data;
+  assert.deepEqual(again.links.map((l) => l.rid), ['r-akira', 'set-abc', 'r-viking']);
+  assert.equal(again.links[0].ref, g.links[1].ref, 'a ref e do link (id), nao da posicao');
+  await wait(700);
+  const add = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01001', link: 1, ref: g.links[1].ref } });
+  assert.deepEqual([add.status, add.data.via, add.data.picked], [200, 'app', 0], JSON.stringify(add.data));
+  let job = (await call(base, 'GET', '/jobs')).data.jobs.find((j) => j.id === add.data.id);
+  assert.deepEqual([job.library.store, job.library.source, job.library.release], ['PPSA01001', 2, 'r-akira'], 'a Jobe recebe a fonte pelo id');
+  // Uma ref que nao e de nenhum link deste jogo continua recusada.
+  const bad = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01002', link: 0, ref: g.links[0].ref } });
+  assert.deepEqual([bad.status, bad.data.error], [400, 'link']);
+  // O id sobrevive a reiniciar o payload (jobs.json).
+  child.kill('SIGKILL');
+  await new Promise((resolve) => child.once('exit', resolve));
+  child = start(base, { BGDL_APP_SILENCE_MS: '400' });
+  await up(base);
+  job = (await call(base, 'GET', '/jobs')).data.jobs.find((j) => j.id === add.data.id);
+  assert.deepEqual([job?.library?.source, job?.library?.release], [2, 'r-akira']);
 });
 
 test('o pedido da loja sobrevive a reiniciar o payload (jobs.json) e o auto_loop do TorBox nao o pega', { skip }, async () => {

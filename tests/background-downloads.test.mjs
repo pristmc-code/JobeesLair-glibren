@@ -457,6 +457,19 @@ test('glibren.8: retomar, pausar e cancelar no celular um item da fila do app ch
   await wrapper.flushQueue();
 });
 
+test('glibren.58: pausado na Jobe, retomado no celular//app com ela fechada e terminado pelo payload: ao abrir, a fila retoma o item (sem pedido) pela chave', async () => {
+  const payload = fakePayload();
+  const remote = [];
+  const wrapper = make(payload, fakeEngine(), { queueDelayMs: 0, heartbeatMs: 10, onRemote: (destination, action, key) => remote.push([destination, action, key]) });
+  payload.jobs.push({ id: 'b9', key: 'j9', ahead: true, followed: false, state: 'completed', by: 'remote', destination: '/mnt/ext0/downloads/images/Z.exfat' });
+  wrapper.syncQueue([{ key: 'j9', name: 'Z', total: 1, paused: true }]); // sem request: o TorBox de link velho
+  await wrapper.flushQueue();
+  await wait(40);
+  assert.deepEqual(remote, [['', 'resume', 'j9']]);
+  wrapper.syncQueue([]);
+  await wrapper.flushQueue();
+});
+
 test('glibren.8: ao retomar no app um job pausado no payload (park), ele e acompanhado e retomado ali mesmo', async () => {
   const payload = fakePayload();
   payload.jobs.push({ id: 'b9', key: 'j1', ahead: true, followed: false, state: 'paused', by: '', destination: DEST, written: 70 });

@@ -79,6 +79,36 @@ assert.ok(backup.some((text) => /12%/.test(text)), backup.join('|'));
 const { DownloadsBadge } = await load('app/ui/DownloadsBadge.jsx');
 texts({ type: DownloadsBadge, props: {} });
 
+// 2b) glibren.58: o payload extraindo um .7z (Alan Wake 2, 91,7 GB, PS5 real 14/11/2026): o cartao diz "Extracting from
+// the .7z", o % real, GB extraidos de quantos, a velocidade, o tempo restante e "limitado pelo processador"; a falha
+// antiga do mesmo item (mesmo destino) nao aparece mais na tela.
+{
+  const awOut = '/mnt/ext0/homebrew/PPSA02572.exfat';
+  const extracting = { ...full('c30', 'auto-aw2', 'Alan Wake 2 Deluxe Edition', 'extracting', 34.1 * GB, 91.7 * GB, awOut), target: 'PPSA02572.exfat',
+    extractFormat: '7z', extracted: 34.1 * GB, extractTotal: 91.7 * GB, archiveRead: 30 * GB, archiveBytes: 80 * GB, extractBytesPerSecond: 15e6, extractPercent: 37, extractEtaSeconds: 3840, limitedBy: 'cpu' };
+  const oldFailure = { ...full('c21', 'backup-aw2', 'Alan Wake 2 Deluxe Edition', 'failed', 0, 0, awOut), target: 'PPSA02572.exfat', error: 'write: Could not stat /mnt/ext0/BACKUP/_temp/c21/PPSA02572.exfat' };
+  const listed = noteConversions([extracting, oldFailure]);
+  const item = listed.find((entry) => entry.id === 'c30');
+  assert.deepEqual(item.extract, { format: '7z', done: 34.1 * GB, total: 91.7 * GB, percent: 37, bytesPerSecond: 15e6, etaSeconds: 3840, cpu: true });
+  assert.equal(item.written, 34.1 * GB, 'the meter follows the extracted bytes');
+  assert.equal(item.bytesPerSecond, 15e6, 'the payload\'s speed');
+  const { outsideQueue } = await load('app/state/payload-conversions.js');
+  assert.deepEqual(outsideQueue(listed, []).map((entry) => entry.id), ['c30'], 'the old failure of the same item is gone while the new one runs');
+  const { ConversionCard } = await load('app/downloads/DownloadCard.jsx');
+  const card = texts({ type: ConversionCard, props: { item, game: horizon, autoFocus: false, onCancel() {}, onForget() {} } });
+  const joined = card.join('|');
+  assert.ok(card.some((text) => text.startsWith(en['downloads.convert.extractingFrom'].replace('{format}', '7z'))), joined);
+  assert.ok(card.includes(en['downloads.convert.cpuLimited'].replace('{format}', '7z')), joined);
+  assert.ok(card.includes('37%'), joined);
+  assert.ok(card.some((text) => /34\.1 GB .* 91\.7 GB .*14\.3 MB\/s/.test(text)), `GB extracted of the total and the speed: ${joined}`);
+  // Um payload antigo (sem os campos novos) continua como antes.
+  const legacy = noteConversions([{ ...full('c31', 'k', 'Old', 'extracting', 0, 0, awOut) }]).find((entry) => entry.id === 'c31');
+  assert.equal(legacy.extract, null);
+  const old = texts({ type: ConversionCard, props: { item: legacy, game: horizon, autoFocus: false, onCancel() {}, onForget() {} } });
+  assert.ok(old.some((text) => text.startsWith(en['downloads.convert.extracting'])), old.join('|'));
+  noteConversions([]);
+}
+
 // 3) O error boundary: sem erro, a tela; com erro, o aviso (Voltar sai) no lugar dela.
 const { ScreenGuard } = await load('app/ui/ScreenGuard.jsx');
 const child = { type: 'Text', props: { children: 'the screen' } };

@@ -97,12 +97,10 @@ static void rar_try(Conv* c, const char* elf, const char* work, const char* pass
       line[have] = 0;
       have = 0;
       if (line[0] == 'p' && line[1] == ' ') {
-        pthread_mutex_lock(&g_conv_lock);
-        c->written = strtoull(line + 2, NULL, 10);
-        pthread_mutex_unlock(&g_conv_lock);
+        conv_extract_tick(c, strtoull(line + 2, NULL, 10), 0, 0); // glibren.58: velocidade e tempo restante tambem
       } else if (line[0] == 'd' && line[1] == ' ') {
         pthread_mutex_lock(&g_conv_lock);
-        c->total = strtoull(line + 2, NULL, 10);
+        c->total = c->ext_total = strtoull(line + 2, NULL, 10);
         pthread_mutex_unlock(&g_conv_lock);
       } else if (!strcmp(line, "ok")) {
         res->ok = 1;

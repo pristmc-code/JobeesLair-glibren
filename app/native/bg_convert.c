@@ -66,6 +66,15 @@ typedef struct {
   // glibren.41 (J4): o conv_loop ainda usa esta conversao (do inicio do conv_run ao fim do ciclo: aviso, varredura do
   // ShadowMount, marcos, extracao). Enquanto 1, ninguem a libera da memoria (esquecer, abrir vaga).
   int in_use;
+  // glibren.58: o progresso da extracao de um compactado (conv_extract_in_place), so na memoria (nao vai ao
+  // conversions.json; uma extracao parada recomeca do zero). GET /convert e /api/status levam os campos "extract*".
+  char ext_format[12];          // "7z", "zip", "rar", "tar", "tar.gz", "tar.xz", "tar.bz2", "tar.zst" ("" = outro)
+  uint64_t unpacked;            // arc_plan: soma dos tamanhos descompactados das entradas (0 = alguma sem tamanho)
+  uint64_t ext_done, ext_total; // bytes descompactados gravados / total descompactado (0 = nao se sabe)
+  uint64_t arc_read, arc_bytes; // bytes lidos do compactado / tamanho do compactado (os volumes somados)
+  double ext_bps, arc_bps;      // media movel (bytes por segundo) do descompactado e do lido do compactado
+  uint64_t ext_last_done, arc_last_read;
+  int64_t ext_last_ms;
 } Conv;
 
 static pthread_mutex_t g_conv_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -154,6 +163,110 @@ static int conv_wait_seconds_locked(void) {
 
 static int conv_terminal(const char* state) { return !strcmp(state, "done") || !strcmp(state, "failed") || !strcmp(state, "cancelled"); }
 
+// ---- glibren.58: progresso da extracao ----
+// O formato pelo nome do primeiro volume (o que a tela mostra: "Extraindo do .7z").
+static void conv_archive_format(const char* path, char* out, size_t cap) {
+  static const struct { const char* ext; const char* format; } kinds[] = {
+    {".tar.gz", "tar.gz"}, {".tgz", "tar.gz"}, {".tar.xz", "tar.xz"}, {".txz", "tar.xz"}, {".tar.bz2", "tar.bz2"},
+    {".tar.zst", "tar.zst"}, {".tar", "tar"}, {".7z", "7z"}, {".zip", "zip"}, {".rar", "rar"}, {".xz", "xz"}, {".lzma", "lzma"}};
+  char name[300];
+  copy_text(name, sizeof name, base_name(path));
+  size_t n = strlen(name);
+  // volumes: nome.7z.001, nome.zip.001 -> pelo que vem antes do numero; nome.r00 -> rar
+  if (n > 4 && name[n - 4] == '.' && isdigit((unsigned char)name[n - 1]) && isdigit((unsigned char)name[n - 2])) {
+    if (name[n - 3] == 'r' || name[n - 3] == 'R') { copy_text(out, cap, "rar"); return; }
+    if (isdigit((unsigned char)name[n - 3])) { name[n - 4] = 0; n -= 4; }
+  }
+  for (size_t i = 0; i < sizeof kinds / sizeof *kinds; ++i) {
+    const size_t e = strlen(kinds[i].ext);
+    if (n > e && !strcasecmp(name + n - e, kinds[i].ext)) { copy_text(out, cap, kinds[i].format); return; }
+  }
+  out[0] = 0;
+}
+// LZMA/LZMA2 (7z, xz): a descompressao e o gargalo, nao o disco (Alan Wake 2, 91,7 GB em .7z: ~15 MB/s no PS5).
+static int conv_cpu_bound_format(const char* format) {
+  return !strcmp(format, "7z") || !strcmp(format, "tar.xz") || !strcmp(format, "xz") || !strcmp(format, "lzma");
+}
+// Um passo da extracao: `done` bytes descompactados gravados; `total` (0 = mantem) o total descompactado; `read` (0 =
+// mantem) os bytes lidos do compactado. A velocidade e uma media movel recalculada a cada 1 s. Tambem poe written/total
+// (como o rar-extract ja fazia), para os clientes antigos verem a barra andar.
+static void conv_extract_tick(Conv* c, uint64_t done, uint64_t total, uint64_t read) {
+  const int64_t now = mono_ms();
+  pthread_mutex_lock(&g_conv_lock);
+  c->ext_done = done;
+  if (total) c->ext_total = total;
+  if (c->ext_total && done > c->ext_total) c->ext_total = done; // um cabecalho que mentiu o tamanho
+  if (read) c->arc_read = c->arc_bytes && read > c->arc_bytes ? c->arc_bytes : read;
+  if (!c->ext_last_ms) {
+    c->ext_last_ms = now;
+    c->ext_last_done = done;
+    c->arc_last_read = c->arc_read;
+  } else if (now - c->ext_last_ms >= 1000) {
+    const double secs = (double)(now - c->ext_last_ms) / 1000.0;
+    const double rate = done >= c->ext_last_done ? (double)(done - c->ext_last_done) / secs : 0;
+    const double arate = c->arc_read >= c->arc_last_read ? (double)(c->arc_read - c->arc_last_read) / secs : 0;
+    c->ext_bps = c->ext_bps > 0 ? c->ext_bps * 0.7 + rate * 0.3 : rate;
+    c->arc_bps = c->arc_bps > 0 ? c->arc_bps * 0.7 + arate * 0.3 : arate;
+    c->ext_last_ms = now;
+    c->ext_last_done = done;
+    c->arc_last_read = c->arc_read;
+  }
+  c->written = done;
+  c->total = c->ext_total;
+  pthread_mutex_unlock(&g_conv_lock);
+}
+// Comeco de uma extracao: zera o progresso, o formato e o tamanho do compactado (os volumes somados).
+static void conv_extract_begin(Conv* c) {
+  uint64_t bytes = 0;
+  struct stat st;
+  if (c->nsources) {
+    for (int i = 0; i < c->nsources; ++i) if (!stat(c->sources[i], &st)) bytes += (uint64_t)st.st_size;
+  } else if (!stat(c->source, &st)) {
+    bytes = (uint64_t)st.st_size;
+  }
+  pthread_mutex_lock(&g_conv_lock);
+  conv_archive_format(c->source, c->ext_format, sizeof c->ext_format);
+  c->ext_done = c->arc_read = 0;
+  c->ext_total = c->unpacked;
+  c->arc_bytes = bytes;
+  c->ext_bps = c->arc_bps = 0;
+  c->ext_last_done = c->arc_last_read = 0;
+  c->ext_last_ms = 0;
+  c->written = 0;
+  c->total = c->ext_total;
+  pthread_mutex_unlock(&g_conv_lock);
+}
+// Os campos da extracao no JSON (aditivos; com o estado "extracting" valem, nos outros vem zerados):
+//   extractFormat  "7z" | "zip" | "rar" | "tar" | "tar.gz" | "tar.xz" | "tar.bz2" | "tar.zst" | "xz" | "lzma" | ""
+//   extracted      bytes descompactados ja gravados
+//   extractTotal   total descompactado (soma dos tamanhos das entradas nos cabecalhos; 0 = nao se sabe)
+//   archiveRead    bytes lidos do compactado (archive_filter_bytes; 0 no RAR, que roda noutro processo)
+//   archiveBytes   tamanho do compactado (os volumes somados)
+//   extractBytesPerSecond  media movel dos bytes descompactados por segundo
+//   extractPercent 0-100 (extracted/extractTotal; sem o total, archiveRead/archiveBytes); -1 = nao se sabe
+//   extractEtaSeconds  o tempo restante pela mesma base do percentual; -1 = nao se sabe
+//   limitedBy      "cpu" quando o formato e LZMA (7z, xz): o processador e o gargalo, nao o disco; "" nos outros
+//   target         o nome do arquivo de destino (homebrew/<codigo>.exfat, sem a pasta), para a tela juntar a falha
+//                  antiga do mesmo item com a conversao nova
+static void conv_extract_json(Buf* b, const Conv* c) {
+  const int on = !strcmp(c->state, "extracting");
+  int percent = -1;
+  long long eta = -1;
+  if (on && c->ext_total) {
+    percent = (int)(c->ext_done >= c->ext_total ? 100 : c->ext_done * 100 / c->ext_total);
+    if (c->ext_bps >= 1) eta = (long long)((double)(c->ext_total - (c->ext_done < c->ext_total ? c->ext_done : c->ext_total)) / c->ext_bps + 0.5);
+  } else if (on && c->arc_bytes && c->arc_read) {
+    percent = (int)(c->arc_read >= c->arc_bytes ? 100 : c->arc_read * 100 / c->arc_bytes);
+    if (c->arc_bps >= 1) eta = (long long)((double)(c->arc_bytes - c->arc_read) / c->arc_bps + 0.5);
+  }
+  buf_str(b, ",\"extractFormat\":"); buf_json(b, on ? c->ext_format : "");
+  buf_fmt(b, ",\"extracted\":%llu,\"extractTotal\":%llu,\"archiveRead\":%llu,\"archiveBytes\":%llu,\"extractBytesPerSecond\":%llu,\"extractPercent\":%d,\"extractEtaSeconds\":%lld",
+          (unsigned long long)(on ? c->ext_done : 0), (unsigned long long)(on ? c->ext_total : 0), (unsigned long long)(on ? c->arc_read : 0),
+          (unsigned long long)(on ? c->arc_bytes : 0), (unsigned long long)(on && c->ext_bps > 0 ? c->ext_bps + 0.5 : 0), percent, eta);
+  buf_str(b, ",\"limitedBy\":"); buf_json(b, on && conv_cpu_bound_format(c->ext_format) ? "cpu" : "");
+  buf_str(b, ",\"target\":"); buf_json(b, base_name(c->output));
+}
+
 static void conv_json(Buf* b, const Conv* c, int for_phone) {
   buf_str(b, "{\"id\":"); buf_json(b, c->id);
   buf_str(b, ",\"key\":"); buf_json(b, for_phone ? "" : c->key);
@@ -174,6 +287,7 @@ static void conv_json(Buf* b, const Conv* c, int for_phone) {
     buf_str(b, "]");
     buf_fmt(b, ",\"imageBytes\":%llu,\"created\":%lld,\"updated\":%lld", (unsigned long long)c->image_bytes, (long long)c->created, (long long)c->updated);
   }
+  conv_extract_json(b, c); // glibren.58
   buf_fmt(b, ",\"written\":%llu,\"total\":%llu}", (unsigned long long)c->written, (unsigned long long)c->total);
 }
 
@@ -550,8 +664,10 @@ static int arc_backport_name(const char* path) {
 }
 
 // Passada 1: as entradas do jogo (relativas a pasta dele), na ordem do arquivo. 0 = ok; senao err ("not-direct: ...").
-static int arc_plan(const Conv* c, exw_entry** out, size_t* count, char* err, size_t cap) {
+static int arc_plan(Conv* c, exw_entry** out, size_t* count, char* err, size_t cap) {
   ArcList l = {0};
+  uint64_t unpacked = 0; // glibren.58: o total descompactado (para o progresso de uma extracao depois)
+  int all_sized = 1;
   struct archive* a = arc_open(c, err, cap);
   if (!a) return -1;
   struct archive_entry* entry;
@@ -579,6 +695,7 @@ static int arc_plan(const Conv* c, exw_entry** out, size_t* count, char* err, si
     item->sized = item->is_dir || archive_entry_size_is_set(entry);
     item->size = item->is_dir ? 0 : (uint64_t)archive_entry_size(entry);
     item->ordinal = mine;
+    if (!item->is_dir) { if (item->sized) unpacked += item->size; else all_sized = 0; }
     ++l.count;
     // So os cabecalhos: os dados sao pulados pela proxima chamada.
   }
@@ -587,6 +704,9 @@ static int arc_plan(const Conv* c, exw_entry** out, size_t* count, char* err, si
     rc = -1;
   }
   archive_read_free(a);
+  pthread_mutex_lock(&g_conv_lock);
+  c->unpacked = header == ARCHIVE_EOF && all_sized ? unpacked : 0;
+  pthread_mutex_unlock(&g_conv_lock);
   // A pasta do jogo: a de nome mais curto com eboot.bin e sce_sys/param.json, fora de pastas de backport; duas
   // diferentes (dois jogos) nao vao direto.
   char game[1024] = "";
@@ -817,6 +937,7 @@ end:
     pthread_mutex_lock(&g_conv_lock);
     copy_utf8(c->error, sizeof c->error, "");
     pthread_mutex_unlock(&g_conv_lock);
+    conv_extract_begin(c); // glibren.58: o formato e os tamanhos ja valem no GET /convert assim que o estado muda
     conv_set_state(c, "extracting");
     return;
   }
@@ -1643,7 +1764,7 @@ static int auto_find_image(const char* dir, int depth, char* image, size_t cap, 
   return found;
 }
 // Extrai o compactado de `c` em `work` (libarchive, sem sair da pasta: nada de "..", caminho absoluto ou link perigoso).
-static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) {
+static int auto_extract(Conv* c, const char* work, char* err, size_t cap) {
   struct archive* a = arc_open(c, err, cap);
   if (!a) return 0;
   struct archive* out = archive_write_disk_new();
@@ -1660,6 +1781,7 @@ static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) 
   char* block = malloc(ARC_BLOCK);
   if (!block) { archive_read_free(a); archive_write_free(out); snprintf(err, cap, "out of memory"); return 0; }
   uint32_t skipped = 0;
+  uint64_t extracted = 0; // glibren.58: o progresso (conv_extract_tick, a cada bloco)
   // R2-3: ARCHIVE_WARN (nome fora do locale, por exemplo) segue, como no arc_plan.
   while ((r = archive_read_next_header(a, &e)) == ARCHIVE_OK || r == ARCHIVE_WARN) {
     if (c->cancel || g_stop) { rc = 0; snprintf(err, cap, "stopped"); break; }
@@ -1698,6 +1820,11 @@ static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) 
     if (w != ARCHIVE_OK && w != ARCHIVE_WARN) { rc = 0; snprintf(err, cap, "write: %s", archive_error_string(out) ? archive_error_string(out) : "extract"); break; }
     for (la_ssize_t got; (got = archive_read_data(a, block, ARC_BLOCK)) != 0;) {
       if (got < 0 || archive_write_data(out, block, (size_t)got) != got) { rc = 0; snprintf(err, cap, "source: %s", archive_error_string(a) ? archive_error_string(a) : "read"); break; }
+      extracted += (uint64_t)got;
+      const la_int64_t read = archive_filter_bytes(a, -1);
+      conv_extract_tick(c, extracted, 0, read > 0 ? (uint64_t)read : 0);
+      if (g_conv_delay_ms) sleep_ms(g_conv_delay_ms); // testes: da tempo de ler o progresso
+      if (c->cancel || g_stop) { rc = 0; snprintf(err, cap, "stopped"); break; }
     }
     if (!rc) break;
     archive_write_finish_entry(out);
@@ -1738,7 +1865,8 @@ static void conv_extract_in_place(Conv* c) {
   c->running = 1;
   c->written = c->total = 0;
   pthread_mutex_unlock(&g_conv_lock);
-  conv_mark(c, "extraindo %s em %s", base_name(c->source), work);
+  conv_extract_begin(c); // glibren.58: formato, tamanho do compactado e total descompactado (arc_plan)
+  conv_mark(c, "extraindo %s em %s (%s, %.2f GB descompactados)", base_name(c->source), work, c->ext_format[0] ? c->ext_format : "?", conv_gb(c->ext_total));
   // glibren.20b: RAR vai ao rar-extract (abre os cifrados); sem ele (ELF ou carregador ausentes), a libarchive.
   int extracted;
   if (rar_name(c->source)) {

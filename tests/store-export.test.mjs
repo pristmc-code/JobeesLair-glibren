@@ -57,6 +57,8 @@ test('a ficha: links na ordem da Jobe, url so nos solo, indice de cada link', ()
   assert.equal(entry.links.length, game.releases.length);
   assert.deepEqual(new Set(entry.links.map((link) => link.source)).size, game.releases.length);
   for (const link of entry.links) assert.equal('url' in link, link.solo, `${link.host}: url so num link solo`);
+  // .58: o id de cada link (release.id) vai junto: a fonte escolhida na /app e achada por ele, nao pela posicao.
+  for (const link of entry.links) assert.equal(link.rid, game.releases[link.source].id, `${link.host}: rid = release.id`);
 });
 
 test('exportStore grava indice, fichas (chave antes dos jogos) e o solo; a segunda vez nao regrava', async () => {

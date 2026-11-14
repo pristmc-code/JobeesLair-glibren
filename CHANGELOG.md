@@ -6,6 +6,33 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.58** (fork): fixes from the real PS5 (downloads and the web /app). Download payload 1.37.3 (`BG_API` stays 37).
+  - A download paused in Jobee'sLair, with the app then closed, resumes from `/app` (or the phone page) on the
+    payload alone. The app's queue sent the paused item without its request when it would not hand it over (a TorBox
+    link older than 2.5 h) and the payload swapped its real, parked job for a "waiting for Jobe" marker that never
+    started. Now the payload keeps the job of the same queue item, renews the TorBox link itself and downloads it; when
+    the app opens again it takes the finished download as done.
+  - `/app`: choosing the source is clear. "Choose the source" sits right under the title, each source an option with
+    its host, label and tags (kind, format, size, parts, works with Jobe closed or open, needs the PS5 browser, via
+    TorBox); the chosen one is highlighted and Download says "Download from <host>". Touch, the PS5 cursor and D-pad+X
+    work; O closes the game page again in the PS5 browser.
+  - "That source is no longer listed" (Outer Wilds): the source went to the app only by its position in the list.
+    Each link now carries the release id (payload catalogue and store-games.json), the request is matched by that id
+    and the app finds the source by it; a source that really disappeared says to pick another one.
+  - `/app`: a game whose request was cancelled or refused no longer stays "In the queue" (the page kept the old mark).
+    The payload's answer wins on the game page, and going back to the store after acting in Downloads checks the
+    pages already loaded again. A store request that failed (source gone, TorBox could not fetch it) suggests picking
+    another source on the game's page.
+  - A download already finished whose extraction was cut when the app closed no longer comes back as a download (its
+    archive had already moved to BACKUP, so it was downloaded again over the network and refused). With the whole file
+    on the drive, a PS5 game now shows "downloaded, the extraction stopped": Try again converts it, "Extract without
+    converting" extracts it; anything else extracts again by itself. Deleting the card (X) never touches BACKUP.
+  - Extraction progress everywhere (TV Downloads, phone page, `/app`): "Extracting from the .7z", GB extracted of the
+    total, %, speed, time left and "limited by the processor" (7z/xz/lzma decompress on one core). The payload reports
+    new fields in `GET /convert` and `/api/status` (`extracted`, `extractTotal`, `extractPercent`,
+    `extractBytesPerSecond`, `extractEtaSeconds`, `extractFormat`, `limitedBy`, `target`); `written`/`total` also
+    follow the extraction for older pages. On the phone page the game's name in Converting wraps instead of being cut,
+    and the old failed card of the same game goes away while its new conversion runs.
 - **glibren.57** (fork): minimal opening. Download payload unchanged (1.37.2, `BG_API` 37).
   - New "Minimal opening" switch (Settings > Appearance), on by default, also for people updating (a settings file
     without the key counts as on). The app opens with only the JL logo and a spinning ring until the store is ready,

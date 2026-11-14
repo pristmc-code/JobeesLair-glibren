@@ -8,7 +8,7 @@
 import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
@@ -78,9 +78,9 @@ with tarfile.open(out, 'w', format=form, encoding='utf-8') as t:
 `;
 
 let run = 0;
-function start(base, api, monitor) {
+function start(base, api, monitor, extra = {}) {
   const child = spawn(binary, [], { env: { ...process.env, LANG: 'C', LC_ALL: 'C', BGDL_DIR: path.join(base, 'state'), BGDL_PORT: String(api), BGDL_MONITOR_PORT: String(monitor),
-    BGDL_SMP_BASE: 'http://127.0.0.1:9/api/v1', BGDL_BACKUP_ROOTS: path.join(base, 'disk'), BGDL_NOTIFY_FILE: path.join(base, 'notify.txt') }, stdio: ['ignore', 'pipe', 'ignore'] });
+    BGDL_SMP_BASE: 'http://127.0.0.1:9/api/v1', BGDL_BACKUP_ROOTS: path.join(base, 'disk'), BGDL_NOTIFY_FILE: path.join(base, 'notify.txt'), ...extra }, stdio: ['ignore', 'pipe', 'ignore'] });
   children.add(child);
   child.on('exit', () => children.delete(child));
   return child;
@@ -211,3 +211,95 @@ test('.exfat dentro de .7z: a conversao extrai e publica a imagem em homebrew/<c
     await stop(child);
   }
 });
+
+// glibren.58: PS5 real (Alan Wake 2, .exfat.7z de 91,7 GB, 14/11/2026): a extracao levava 1h43 a ~15 MB/s e as telas so
+// mostravam "Descompactando" com a barra listrada. Agora GET /convert e /api/status trazem o progresso da extracao:
+// formato, bytes extraidos de quantos (o total descompactado dos cabecalhos), lidos do compactado, velocidade, tempo
+// restante e o motivo "cpu" (LZMA). BGDL_CONVERT_DELAY_MS segura cada bloco de 1 MiB para dar tempo de ler.
+const MKZIP = String.raw`
+import sys, zipfile
+out, name, src = sys.argv[1], sys.argv[2], sys.argv[3]
+with zipfile.ZipFile(out, 'w', zipfile.ZIP_STORED) as z:
+    z.write(src, name)
+`;
+async function followExtraction(base, api, monitor, id) {
+  const seen = [], phone = [];
+  let done;
+  for (const end = Date.now() + 90000; Date.now() < end && !done; await wait(100)) {
+    const item = (await call(base, api, 'GET', '/convert')).data.conversions.find((c) => c.id === id);
+    if (item?.state === 'extracting') {
+      seen.push(item);
+      const status = await fetch(`http://127.0.0.1:${monitor}/api/status`).then((r) => r.json()).catch(() => null);
+      const mine = status?.conversions?.find((c) => c.id === id);
+      if (mine?.state === 'extracting') phone.push(mine);
+    }
+    if (item && ['done', 'failed'].includes(item.state)) done = item;
+  }
+  return { seen, phone, done };
+}
+for (const kind of ['7z', 'zip']) {
+  const tool = kind === '7z' ? sevenZip : python;
+  test(`glibren.58: extraindo um .${kind}, GET /convert e /api/status trazem o progresso (formato, bytes, total, velocidade, tempo, motivo)`, { skip: skip || (!tool && `sem ${kind}`) }, async () => {
+    const base = path.join(dir, `run${++run}`);
+    mkdirSync(path.join(base, 'state'), { recursive: true });
+    mkdirSync(path.join(base, 'disk/downloads'), { recursive: true });
+    const backup = path.join(base, 'disk/BACKUP/Alan Wake 2');
+    const inner = path.join(base, 'monta');
+    mkdirSync(backup, { recursive: true });
+    mkdirSync(inner, { recursive: true });
+    const bytes = randomBytes(12 * 1024 * 1024);
+    writeFileSync(path.join(inner, 'PPSA02572.exfat'), bytes);
+    const archive = path.join(backup, `PPSA02572-game.exfat.${kind}`);
+    const made = kind === '7z'
+      ? spawnSync(sevenZip, ['a', '-mx=1', archive, 'PPSA02572.exfat'], { cwd: inner, encoding: 'utf8' })
+      : spawnSync('python3', ['-I', '-c', MKZIP, archive, 'PPSA02572.exfat', path.join(inner, 'PPSA02572.exfat')], { encoding: 'utf8' });
+    assert.equal(made.status, 0, made.stderr);
+    rmSync(inner, { recursive: true, force: true });
+    const archiveBytes = statSync(archive).size;
+    const api = await freePort();
+    const monitor = await freePort();
+    const child = start(base, api, monitor, { BGDL_CONVERT_DELAY_MS: '250' });
+    try {
+      await up(base, api);
+      const output = path.join(base, 'disk/homebrew/PPSA02572.exfat');
+      const { status, data } = await call(base, api, 'POST', '/convert', { key: `x-prog-${kind}`, name: 'Alan Wake 2', label: 'PPSA02572', root: path.join(base, 'disk'), output, kind: 'archive', source: archive, sources: [archive] });
+      assert.equal(status, 201, JSON.stringify(data));
+      const { seen, phone, done } = await followExtraction(base, api, monitor, data.id);
+      assert.ok(done, 'a conversao terminou');
+      assert.equal(done.state, 'done', done.error);
+      assert.ok(seen.length >= 3, `viu a extracao andando (${seen.length} leituras)`);
+      const total = bytes.length;
+      for (const item of seen) {
+        assert.equal(item.extractFormat, kind);
+        assert.equal(item.limitedBy, kind === '7z' ? 'cpu' : '', '7z (LZMA) e limitado pelo processador; zip nao');
+        assert.equal(item.extractTotal, total, 'o total descompactado vem dos cabecalhos');
+        assert.equal(item.archiveBytes, archiveBytes, 'o tamanho do compactado');
+        assert.ok(item.extracted >= 0 && item.extracted <= total);
+        assert.equal(item.written, item.extracted, 'written/total acompanham (clientes antigos)');
+        assert.equal(item.total, total);
+        assert.ok(item.extractPercent >= 0 && item.extractPercent <= 100, `percentual ${item.extractPercent}`);
+        assert.equal(item.extractPercent, Math.floor(item.extracted * 100 / total));
+        assert.equal(item.target, 'PPSA02572.exfat');
+      }
+      const late = seen.filter((item) => item.extractBytesPerSecond > 0);
+      assert.ok(late.length, 'a velocidade aparece depois de 1 s');
+      assert.ok(late.every((item) => item.extractEtaSeconds >= 0), 'com velocidade, o tempo restante');
+      assert.ok(seen.some((item) => item.extracted > 0 && item.extracted < total), 'um ponto no meio');
+      assert.ok(seen.at(-1).archiveRead > 0, 'bytes lidos do compactado');
+      assert.ok(phone.length, '/api/status (pagina do celular) tambem');
+      for (const item of phone) {
+        assert.equal(item.extractFormat, kind);
+        assert.equal(item.extractTotal, total);
+        assert.equal(item.limitedBy, kind === '7z' ? 'cpu' : '');
+        assert.equal(item.target, 'PPSA02572.exfat');
+        assert.ok(!('source' in item), 'sem caminhos no celular');
+      }
+      assert.equal(done.extractFormat, '', 'fora da extracao os campos vem zerados');
+      assert.equal(done.extractPercent, -1);
+      assert.equal(done.limitedBy, '');
+      assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), new RegExp(`extraindo .*\\(${kind}, 0\\.01 GB descompactados\\)`));
+    } finally {
+      await stop(child);
+    }
+  });
+}

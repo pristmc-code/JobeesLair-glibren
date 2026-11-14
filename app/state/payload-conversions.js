@@ -19,6 +19,25 @@ import { redrawEvery, usePower } from './power.js';
   var source = null; // { list(): Promise<array|null>, cancel(id), forget(id) }
   var latest = [];
   var samples = /* @__PURE__ */ new Map(); // id -> { written, at, bps }
+  /**
+   * glibren.58: o progresso da extracao de um compactado que o payload (1.37.3+) da no GET /convert com o estado
+   * "extracting": { format ("7z", "zip", ...), done, total (0 = nao se sabe), percent (-1 = nao se sabe),
+   * bytesPerSecond, etaSeconds (-1 = nao se sabe), cpu (o processador e o gargalo: LZMA) }. null fora da extracao ou
+   * com um payload antigo (sem os campos).
+   */
+  function extractionOf(item) {
+    if (!item || item.state !== "extracting" || typeof item.extractPercent !== "number") return null;
+    const num = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+    return {
+      format: String(item.extractFormat || ""),
+      done: Math.max(0, num(item.extracted)),
+      total: Math.max(0, num(item.extractTotal)),
+      percent: num(item.extractPercent, -1),
+      bytesPerSecond: Math.max(0, num(item.extractBytesPerSecond)),
+      etaSeconds: num(item.extractEtaSeconds, -1),
+      cpu: item.limitedBy === "cpu"
+    };
+  }
   var listeners = /* @__PURE__ */ new Set();
   function setConversionSource(next) {
     source = next ?? null;
@@ -27,8 +46,9 @@ import { redrawEvery, usePower } from './power.js';
   function noteConversions(list, now = Date.now()) {
     const seen = /* @__PURE__ */ new Set();
     latest = (Array.isArray(list) ? list : []).filter((item) => item && typeof item.id === "string" && item.id).map((item) => {
-      const written = Number(item.written) || 0, total = Number(item.total) || 0;
       const state = String(item.state || "");
+      const extract = extractionOf(item); // glibren.58
+      const written = extract ? extract.done : Number(item.written) || 0, total = extract ? extract.total : Number(item.total) || 0;
       const before = samples.get(item.id);
       let bps = state === "converting" ? before?.bps || 0 : 0;
       let sample = before && written >= before.written ? before : { written, at: now, bps: 0 };
@@ -50,7 +70,9 @@ import { redrawEvery, usePower } from './power.js';
         written,
         total,
         updated: Number(item.updated) || 0,
-        bytesPerSecond: bps
+        bytesPerSecond: extract ? extract.bytesPerSecond : bps,
+        target: String(item.target || ""),
+        extract
       };
     });
     for (const id of [...samples.keys()]) if (!seen.has(id)) samples.delete(id);
@@ -145,8 +167,12 @@ import { redrawEvery, usePower } from './power.js';
     const ids = new Set(jobs.map((job) => job.id));
     const paths = new Set(jobs.flatMap((job) => [job.convert?.output, job.artifact?.destination]).filter(Boolean));
     const nowSeconds = now / 1e3;
+    // glibren.58: a falha antiga de um item some quando uma conversao nova dele (mesmo .exfat, destino ou nome) anda.
+    const busy = list.filter(conversionActive);
+    const superseded = (item) => item.state === "failed" && busy.some((other) => other.id !== item.id &&
+      (other.output && other.output === item.output || other.target && other.target === item.target || other.name && other.name === item.name));
     return list.filter((item) => {
-      if (item.state === "cancelled" || ids.has(item.key) || item.output && paths.has(item.output)) return false;
+      if (item.state === "cancelled" || ids.has(item.key) || item.output && paths.has(item.output) || superseded(item)) return false;
       if (conversionActive(item)) return true;
       if (!item.updated || nowSeconds - item.updated > RECENT_SECONDS) return false;
       if (item.state === "done") {
@@ -241,4 +267,4 @@ import { redrawEvery, usePower } from './power.js';
     return { state: "idle" };
   }
 
-export { conversionWaitSeconds, noteConversionWait, useConversionWait, waitClock, backupStatus, convertAllBackup, convertBackup, deleteBackup, noteBackup, payloadLog, refreshBackup, setBackupSource, useBackup, cancelPayloadConversion, conversionActive, forgetPayloadConversion, noteConversions, outsideQueue, payloadConversions, refreshConversions, setConversionSource, usePayloadConversions };
+export { extractionOf, conversionWaitSeconds, noteConversionWait, useConversionWait, waitClock, backupStatus, convertAllBackup, convertBackup, deleteBackup, noteBackup, payloadLog, refreshBackup, setBackupSource, useBackup, cancelPayloadConversion, conversionActive, forgetPayloadConversion, noteConversions, outsideQueue, payloadConversions, refreshConversions, setConversionSource, usePayloadConversions };

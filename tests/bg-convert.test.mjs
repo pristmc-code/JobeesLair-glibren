@@ -173,7 +173,7 @@ test('pasta: progresso, imagem conferida e renomeada, pasta de trabalho apagada,
   // A pagina do celular ve o nome, o estado e o progresso, sem chave nem caminhos.
   const phone = await page('/api/status');
   const shown = phone.data.conversions.find((item) => item.id === data.id);
-  assert.deepEqual(Object.keys(shown).sort(), ['error', 'id', 'key', 'name', 'state', 'total', 'written']);
+  assert.deepEqual(Object.keys(shown).sort(), ['archiveBytes', 'archiveRead', 'error', 'extractBytesPerSecond', 'extractEtaSeconds', 'extractFormat', 'extractPercent', 'extractTotal', 'extracted', 'id', 'key', 'limitedBy', 'name', 'state', 'target', 'total', 'written']); // glibren.58: os da extracao (aditivos, sem caminhos)
   assert.equal(shown.key, '');
   for (const secret of [base, 'PPSA01234/rel']) assert.ok(!phone.text.includes(secret), `a pagina nao ve ${secret}`);
   // A mesma chave de novo (o app reabriu): acompanha a que existe.

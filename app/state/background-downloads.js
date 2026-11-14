@@ -53,7 +53,7 @@
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
 import { originOf } from './link-formats.js';
-import { noteConversionWait, setBackupSource, setConversionSource } from './payload-conversions.js';
+import { extractionOf, noteConversionWait, setBackupSource, setConversionSource } from './payload-conversions.js';
 import { setCrashSource } from './crash-notice.js';
 import { setOrbitSource } from './orbit-feed.js';
 import { setLibraryPayload } from './torbox-library-payload.js';
@@ -97,7 +97,7 @@ import { setConsoleFirmware } from './device.js';
   // glibren.49 (Fase 2): a versao do bg-downloader.elf embutido neste app (BG_VERSION em app/native/bg_downloader.c; o
   // tests/bg-self-update.test.mjs confere que sao iguais). Vai em <stateDir>/app.json junto com PAYLOAD_API: o payload
   // so usa um baixado MAIS NOVO que este e compativel com esta API (contrato em app/native/bg_self.c).
-  var BG_EMBEDDED_VERSION = "1.37.2";
+  var BG_EMBEDDED_VERSION = "1.37.3";
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -1022,8 +1022,10 @@ function createBackgroundDownloads({
             continue;
           }
           const paused = job.state === "paused";
+          // glibren.58: retomado no celular//app com a Jobe fechada, o payload pode ter terminado sozinho: o app retoma o
+          // item (acha o job concluido pelo destino e o da como baixado) em vez de deixa-lo pausado.
           const action = job.state === "cancelled" ? "cancel" : paused && !item.paused ? "pause" :
-            !paused && item.paused && ["queued", "waiting-app", "connecting", "downloading", "verifying"].includes(job.state) ? "resume" : null;
+            !paused && item.paused && ["queued", "waiting-app", "connecting", "downloading", "verifying", "completed"].includes(job.state) ? "resume" : null;
           if (!action || phoneAsked.get(key) === action) continue;
           phoneAsked.set(key, action);
           log(`${item.name || key}: ${action} asked on the phone`);
@@ -1203,7 +1205,8 @@ function createBackgroundDownloads({
             await start();
             continue;
           }
-          tell({ state: item.state, written: Number(item.written) || 0, total: Number(item.total) || null });
+          // glibren.58: na extracao, o progresso dela (payload 1.37.3+: formato, bytes, velocidade, tempo, motivo).
+          tell({ state: item.state, written: Number(item.written) || 0, total: Number(item.total) || null, extract: extractionOf(item) });
           if (item.state === "done") return item;
           if (item.state === "failed") throw new Error(item.error || "write: the conversion failed");
           if (item.state === "cancelled") throw Object.assign(new Error("Conversion cancelled."), { name: "AbortError" });
