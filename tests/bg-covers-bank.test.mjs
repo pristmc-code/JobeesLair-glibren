@@ -192,6 +192,10 @@ test('capas: enviar confere tipo pelos bytes, id, catalogo e tamanho; /app/capa 
   assert.equal(tv.status, 200);
   assert.equal(tv.headers['x-capa-fonte'], 'banco');
   assert.equal(tv.headers['content-type'], 'image/webp');
+  assert.equal((await p.req(`/app/capa?u=${encodeURIComponent(SONY(5))}`)).headers['x-capa-fonte'], 'cache', 'TV: o cache do proxy');
+  const semNada = await p.req(`/app/capa?u=${encodeURIComponent(SONY(3))}`);
+  assert.equal(semNada.status, 404, 'TV: sem nada no disco, 404 na hora (nunca a rede)');
+  assert.equal((await p.req('/api/capas/lista?max=1', { session: token })).data.itens[0].id, 'PPSA10003', 'e vira pedida');
   assert.equal((await p.req(`/app/capa?u=${encodeURIComponent('https://outro.site/x.png')}`)).status, 404, 'URL fora do catalogo');
   assert.equal((await p.req('/app/capa?u=http%3A%2F%2F127.0.0.1%2Fx')).status, 404, 'so https');
 
@@ -213,6 +217,7 @@ test('capas: enviar confere tipo pelos bytes, id, catalogo e tamanho; /app/capa 
   assert.equal((await q.req('/api/capas/estado', { session: token })).data.enviadas, 0);
   assert.deepEqual(readdirSync(path.join(p.base, 'banco')), []);
   assert.equal((await q.req('/app/capa?id=PPSA10004')).headers['x-capa-fonte'], 'local', 'sem o banco, o icon0 de novo');
+  assert.equal((await q.req(`/app/capa?u=${encodeURIComponent(SONY(4))}`)).headers['x-capa-fonte'], 'local', 'TV: o icon0 do jogo instalado');
   await q.stop();
 });
 

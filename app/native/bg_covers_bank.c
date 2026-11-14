@@ -35,8 +35,11 @@
 //   POST /api/capas/apagar          esvazia o banco -> {ok, apagadas}
 // Rota livre (como /app/capa, so o Host conferido):
 //   GET  /app/capa?u=<url>          a TV (Image.setRouter no PS5, app/state/picture-route.js) pede pela URL da capa do
-//                                   catalogo: o payload acha o jogo pela URL (sem a parte depois do "?") e segue como
-//                                   /app/capa?id= (banco, icon0, cache, rede sem a Sony). URL fora do catalogo = 404.
+//                                   catalogo: o payload acha o jogo pela URL (sem a parte depois do "?") e serve SO o
+//                                   que esta no disco (banco, icon0 do jogo instalado, cache do proxy): a pagina do
+//                                   celular atende so MONITOR_CLIENTS (4) conexoes ao mesmo tempo e a TV pede muitas
+//                                   capas de uma vez; a rede (ate 15 s cada) ocuparia as vagas do celular. Sem nada:
+//                                   404 e o jogo vira "pedida". URL fora do catalogo = 404.
 
 #define BANK_IMG_MAX (512u * 1024) // o read_request de bg_downloader.c usa o mesmo numero para /api/capas/enviar
 #define BANK_MAX_BYTES (192ull * 1024 * 1024)
@@ -514,15 +517,33 @@ static void bank_apagar(int fd) {
   monitor_json(fd, 200, out);
 }
 
+// A capa para a TV, so do disco: o banco, o icon0 do jogo instalado e o cache do proxy (nunca a rede).
+static void bank_tv(int fd, const char* id) {
+  if (bank_send(fd, id)) return;
+  char appmeta[512], cache[600], path[700];
+  pthread_mutex_lock(&g_capa_lock);
+  capa_setup_locked();
+  copy_text(appmeta, sizeof appmeta, g_appmeta_dir);
+  copy_text(cache, sizeof cache, g_capa_dir);
+  pthread_mutex_unlock(&g_capa_lock);
+  snprintf(path, sizeof path, "%.500s/%s/icon0.png", appmeta, id);
+  if (capa_send_file(fd, path, "image/png", "local")) return;
+  for (size_t i = 0; i < sizeof CAPA_TYPES / sizeof CAPA_TYPES[0]; ++i) {
+    snprintf(path, sizeof path, "%.600s/%s%s", cache, id, CAPA_TYPES[i].ext);
+    if (capa_send_file(fd, path, CAPA_TYPES[i].type, "cache")) return;
+  }
+  bank_ask(id);
+  monitor_json(fd, 404, "{\"error\":\"sem-capa\"}");
+}
+
 // Pagina do celular. 1 = tratou.
 static int bank_monitor_route(int fd, Request* r, const char* query) {
   if (!strcmp(r->path, "/app/capa") && query && !strstr(query, "id=") && strstr(query, "u=")) {
     if (strcmp(r->method, "GET")) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return 1; }
-    char url[1024], id[10], as_id[20];
+    char url[1024], id[10];
     bank_param(query, "u", url, sizeof url);
     if (strncmp(url, "https://", 8) || !bank_id_of_url(url, id)) { monitor_json(fd, 404, "{\"error\":\"sem-capa\"}"); return 1; }
-    snprintf(as_id, sizeof as_id, "id=%s", id);
-    capa_route(fd, as_id);
+    bank_tv(fd, id);
     return 1;
   }
   if (strncmp(r->path, "/api/capas/", 11)) return 0;
