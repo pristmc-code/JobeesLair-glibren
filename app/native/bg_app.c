@@ -8,7 +8,8 @@
 // monitor_allowed (pareamento por aparelho, bg_pair.c; o PIN antigo na transicao).
 //
 //   GET  /app, /app/, /app/index.html   a pagina (text/html; a CSP de monitor_send: scripts e estilos so inline,
-//                                       dados so deste payload, imagens data: e https:)
+//                                       dados so deste payload, imagens data:, https: e deste payload: .56)
+//   GET  /app/capa?id=, /api/app/capas   .56: o proxy de capas do navegador do PS5 (bg_capa.c)
 //   GET  /api/app/telacheia            {ok, glibren, item, estado, ocupado}: o glibren (porta 8765 no mesmo PS5) esta no
 //                                       ar e tem o item "web-browser-fullscreen" (0.9.20+)? Livre (nao traz dado).
 //   POST /api/app/telacheia {volta}    (monitor_strong: aparelho pareado ou o proprio PS5; o PIN antigo nao) pede ao

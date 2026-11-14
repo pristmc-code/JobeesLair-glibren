@@ -1500,7 +1500,7 @@ test('biblioteca TorBox: capa na lista, ficha do jogo com fotos e videos (so htt
   await pageUp();
   // A pagina: imagens https e o player do YouTube sem cookies; o resto continua so daqui.
   const html = await page('/');
-  assert.match(html.csp, /img-src data: https:;/);
+  assert.match(html.csp, /img-src 'self' data: https:;/); // .56: + 'self' (o proxy de capas /app/capa)
   assert.match(html.csp, /frame-src https:\/\/www\.youtube-nocookie\.com https:\/\/www\.youtube\.com/);
   assert.match(html.csp, /default-src 'none'.*script-src 'unsafe-inline'.*connect-src 'self'/);
   assert.equal(html.referrer, 'no-referrer');

@@ -97,7 +97,7 @@ import { setConsoleFirmware } from './device.js';
   // glibren.49 (Fase 2): a versao do bg-downloader.elf embutido neste app (BG_VERSION em app/native/bg_downloader.c; o
   // tests/bg-self-update.test.mjs confere que sao iguais). Vai em <stateDir>/app.json junto com PAYLOAD_API: o payload
   // so usa um baixado MAIS NOVO que este e compativel com esta API (contrato em app/native/bg_self.c).
-  var BG_EMBEDDED_VERSION = "1.37.1";
+  var BG_EMBEDDED_VERSION = "1.37.2";
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -284,6 +284,7 @@ function createBackgroundDownloads({
     embeddedVersion = BG_EMBEDDED_VERSION,
     startTries = 1,
     selfUpdate = false,
+    selfUpdateReportMs = 30e3,
     // glibren: poe na fila um pedido da Biblioteca TorBox feito no celular ({ id, hash, file, whole, code, platform,
     // title, size }; lanca o motivo quando nao da), ou null; e de quanto em quanto os pedidos sao vistos (0 = so quando
     // adoptRequests() e chamado).
@@ -377,8 +378,23 @@ function createBackgroundDownloads({
     // fica ate a proxima vez que o app precisar do payload sem nada rodando.
     // glibren.49: e nao foi posto de lado ("Voltar ao payload embutido": replace) nem e um baixado de API maior que nao
     // declarou compatibilidade com este app (minAppApi maior que o PAYLOAD_API daqui).
+    // glibren.56 (PS5 real, diagnostico 13/11 22:36): a .55 trouxe o payload 1.37.1 com a MESMA api (37) e o 1.37.0 ficou
+    // no ar (a correcao do .7z nunca chegou): so a api decidia. E o 1.37.1 baixado pela auto-atualizacao tambem nao
+    // servia: o payload so passa a vez para um baixado mais novo que o embutido do app (1.37.1). Agora uma VERSAO menor
+    // que a do embutido tambem troca, mas so com ele ocioso (nada baixando nem convertendo) e uma vez por abertura;
+    // ocupado, fica para a proxima vez que o app precisar do payload.
+    const versionParts = (v) => String(v ?? "").split(/[.-]/).slice(0, 3).map((x) => parseInt(x, 10) || 0);
+    const olderThanEmbedded = (state) => {
+      if (typeof state?.version !== "string" || !embeddedVersion) return false;
+      const a = versionParts(state.version), b = versionParts(embeddedVersion);
+      for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i];
+      return false;
+    };
+    const payloadIdle = (state) => !(state.running > 0) && !state.quiet && !(state.converting > 0);
+    let versionSwapTried = false;
+    const staleVersion = (state) => !versionSwapTried && olderThanEmbedded(state) && payloadIdle(state);
     const upToDate = (state) => Number.isInteger(state?.api) && state.api >= payloadApi && state.replace !== true &&
-      !(state.api > payloadApi && Number.isInteger(state.minAppApi) && state.minAppApi > payloadApi);
+      !(state.api > payloadApi && Number.isInteger(state.minAppApi) && state.minAppApi > payloadApi) && !staleVersion(state);
     let staleSaid = null;
     // glibren.20b: o rar-extract.elf do app (UnRAR num programa separado) vai para a pasta do payload: com ele o payload
     // descompacta RAR cifrado (os do DLPSGAME), que a libarchive dele nao abre. Uma vez por abertura, so quando mudou.
@@ -440,6 +456,12 @@ function createBackgroundDownloads({
       selfAsked = true;
       call(token, "POST", "/self-update", { action: "check" }).then((answer) => {
         if (answer.status === 200) log(`payload ${answer.data?.version ?? "?"} (${answer.data?.source ?? "?"}) looks for a newer version of itself`);
+        // glibren.56: o resultado da procura vai para o diario (antes so a linha acima, sem saber o que deu)
+        setTimeout(() => {
+          call(token, "GET", "/self-update").then((got) => {
+            log(got.status === 200 ? `payload self-update: ${JSON.stringify(got.data ?? null).slice(0, 400)}` : `payload self-update: status ${got.status}`);
+          }, () => {});
+        }, selfUpdateReportMs);
       }, () => {});
     }
     async function ensurePayloadNow() {
@@ -453,15 +475,26 @@ function createBackgroundDownloads({
       let token = readToken();
       let state = token ? await health(token) : null;
       if (state && upToDate(state)) return token;
+      let byVersion = false;
+      try {
+        return await replacePayload(state, token, (v) => { byVersion = v; });
+      } finally {
+        if (byVersion) versionSwapTried = true; // uma vez por abertura: se o novo nao assumiu, segue o que esta no ar
+      }
+    }
+    async function replacePayload(state, token, setByVersion) {
+      let byVersion = false;
       if (state) {
         if (platform !== "ps5" || !payloads) return token;
         // glibren.22: trocado mesmo baixando ou convertendo. Esperar ele ficar ocioso deixava o antigo no ar para sempre
         // com uma fila longa (ou uma conversao que nunca acabava), e o app novo sem o que ele traz. O antigo grava os
         // checkpoints e a fila ao sair; o novo continua os downloads de onde pararam e poe as conversoes de volta na fila.
         // glibren.49: o motivo da troca (antigo, posto de lado ou um baixado incompativel com este app).
-        const what = state.replace === true ? "set aside (back to the built-in payload)" : Number.isInteger(state.api) && state.api > payloadApi ? `not meant for this app (api ${state.api}, minAppApi ${state.minAppApi})` : `an older one (api ${state.api ?? "none"})`;
+        byVersion = staleVersion(state) && Number.isInteger(state.api) && state.api >= payloadApi && state.replace !== true;
+        const what = byVersion ? `an older version (${state.version}, this app brings ${embeddedVersion})` : state.replace === true ? "set aside (back to the built-in payload)" : Number.isInteger(state.api) && state.api > payloadApi ? `not meant for this app (api ${state.api}, minAppApi ${state.minAppApi})` : `an older one (api ${state.api ?? "none"})`;
         if (state.running > 0 || state.quiet) log(`payload ${state.pid} is ${what} and busy; it saves where it was and this app's payload carries on`);
         else log(`payload ${state.pid} is ${what}; sending this app's payload in its place`);
+        setByVersion(byVersion);
       }
       if (platform !== "ps5" || !payloads) return "";
       // glibren.49: ate startTries subidas quando ninguem responde (um baixado que cai na subida: o payload conta as

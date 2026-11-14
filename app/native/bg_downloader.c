@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.1"
+#define BG_VERSION "1.37.2"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -5231,7 +5231,7 @@ static void monitor_send(int fd, int status, const char* type, const void* body,
                    "Referrer-Policy: no-referrer\r\n%sConnection: close\r\n\r\n",
                    status, reason, type, size,
                    html ? "Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; "
-                          "img-src data: https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com\r\n" : "");
+                          "img-src 'self' data: https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com\r\n" : "");
   if (send_all(fd, head, (size_t)n) && size) send_all(fd, body, size);
 }
 static void monitor_json(int fd, int status, const char* body) { monitor_send(fd, status, "application/json", body, strlen(body)); }
@@ -7129,6 +7129,7 @@ static void auto_after_download(Job* j) {
 #include "bg_self.c"  // glibren.49: a atualizacao propria do payload, assinada (Fase 2)
 #include "bg_settings.c" // Fase 7: as configuracoes da Jobe no payload (uma fonte so)
 #include "bg_app.c"   // Fase 8: a Jobe web completa (/app), esqueleto; convive com a pagina do celular
+#include "bg_capa.c"  // .56: o proxy de capas da /app (navegador do PS5: jogo instalado, cache, rede e DoH)
 // glibren.49: o /health diz se o payload no ar foi posto de lado ("Voltar ao payload embutido"): o app sobe o embutido.
 static void self_health(int* replace) {
   self_init();
@@ -7150,6 +7151,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (self_monitor_route(fd, r)) return; // glibren.49: /api/payload (versao do payload, atualizar, voltar ao embutido)
   if (settings_monitor_route(fd, r)) return; // Fase 7: /api/settings (monitor_allowed)
   if (teste_monitor_route(fd, r)) return; // glibren.47: /teste e /api/teste (testes da Fase 0)
+  if (capa_monitor_route(fd, r, query)) return; // .56: /app/capa e /api/app/capas (bg_capa.c)
   if (app_monitor_route(fd, r)) return;   // Fase 8: /app (a Jobe web completa; so usa as rotas de sempre)
   if (conv_monitor_route(fd, r)) return; // glibren.12: BACKUP (listar / apagar com o PIN)
   if (!strcmp(r->method, "GET") && (!strcmp(r->path, "/") || !strcmp(r->path, "/index.html"))) {

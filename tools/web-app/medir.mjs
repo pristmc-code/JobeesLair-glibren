@@ -240,7 +240,10 @@ async function medirTamanho(navegador, api, t, jogo) {
   conferir(api.config.values.backgroundDownloads === !antesValor && api.config.rev > antesCfg, `${t.nome}: o liga/desliga nao gravou em /api/settings`);
   await pagina.fill('#cfg_speedLimit', '5000'); await pagina.press('#cfg_speedLimit', 'Tab');
   conferir(await pagina.evaluate(() => document.getElementById('cfgCorpo').textContent.indexOf(window.jobeApp.L.cfg.invalido) >= 0), `${t.nome}: 5000 MB/s devia ser recusado na pagina`);
-  await pagina.selectOption('#cfg_simultaneousDownloads', '3');
+  // glibren.56: a escolha propria (botao + lista), nao <select>
+  await pagina.click('#cfg_simultaneousDownloads');
+  await pagina.waitForSelector('#escLista:not([hidden]) .op', { timeout: 3000 });
+  await pagina.locator('#escLista .op').filter({ hasText: /^\s*3\s*$/ }).click();
   await pagina.waitForFunction(() => true, null, { timeout: 300 }).catch(() => {});
   await espera(300);
   conferir(api.config.values.simultaneousDownloads === 3, `${t.nome}: o select nao gravou`);
@@ -316,6 +319,103 @@ async function medirTamanho(navegador, api, t, jogo) {
     conferir(anelVisivel, `${t.nome}: foco sem anel visivel`);
   }
 
+  // ---- glibren.56: navegador do PS5 (bug real: clicar num jogo "dava uma mexidinha e nao fazia nada"; filtros sumiam) ----
+  // X = keydown 13 seguido do clique do cursor (eco); clique direto; rolagem e clique; linha trocada entre o mousedown e
+  // o mouseup; filtros pelo cursor, pelo direcional + X e O fechando sem mudar.
+  let ps5Cliques = null;
+  if (checar && t.ps5) {
+    passo = 'ps5: cliques';
+    const fichaFechada = async () => {
+      if (!(await pagina.evaluate(() => document.getElementById('ficha').hidden))) { await pagina.evaluate(() => window.jobeVoltar()); await pagina.waitForFunction(() => document.getElementById('ficha').hidden, null, { timeout: 5000 }); }
+      await espera(250);
+    };
+    const centro = (i) => pagina.evaluate((k) => { const c = document.querySelector(`.card[data-i="${k}"]`); if (!c) return null; const r = c.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; }, i);
+    const fichaAberta = async () => { await pagina.waitForFunction(() => !document.getElementById('ficha').hidden && window.jobeApp.estado().ficha, null, { timeout: 4000 }).catch(() => {}); await espera(150); return pagina.evaluate(() => (document.getElementById('ficha').hidden ? null : window.jobeApp.estado().ficha)); };
+    const idDe = (i) => pagina.evaluate((k) => window.jobeApp.idDe(k), i);
+    ps5Cliques = {};
+    // 1) cursor sobre o cartao 2 (foco em outro), X: keydown 13 e o clique do cursor logo depois -> abre o 2
+    await fichaFechada();
+    await pagina.evaluate(() => { document.getElementById('grade').scrollTop = 0; window.jobeApp.focarCartao(0); });
+    await espera(200);
+    let c = await centro(2);
+    await pagina.mouse.move(c.x - 5, c.y - 5); await pagina.mouse.move(c.x, c.y);
+    await pagina.keyboard.press('Enter'); await pagina.mouse.click(c.x, c.y);
+    ps5Cliques.cursorX = (await fichaAberta()) === (await idDe(2));
+    conferir(ps5Cliques.cursorX, `${t.nome}: PS5, cursor no cartao 2 + X (13 e o clique) nao abriu o cartao 2`);
+    // 2) cursor parado no cartao 3, direcional para o cartao 1, X (13 + clique do cursor no 3 = eco) -> abre o 1
+    await fichaFechada();
+    c = await centro(3);
+    await pagina.mouse.move(c.x - 5, c.y - 5); await pagina.mouse.move(c.x, c.y);
+    await pagina.evaluate(() => window.jobeApp.focarCartao(0));
+    await pagina.keyboard.press('ArrowRight');
+    await pagina.keyboard.press('Enter'); await pagina.mouse.click(c.x, c.y);
+    ps5Cliques.direcionalX = (await fichaAberta()) === (await idDe(1));
+    conferir(ps5Cliques.direcionalX, `${t.nome}: PS5, direcional + X com o cursor parado em outro cartao nao abriu o focado`);
+    // 3) clique direto do cursor
+    await fichaFechada();
+    c = await centro(4);
+    await pagina.mouse.click(c.x, c.y);
+    ps5Cliques.clique = (await fichaAberta()) === (await idDe(4));
+    conferir(ps5Cliques.clique, `${t.nome}: PS5, clique do cursor no cartao 4 nao abriu`);
+    // 4) rolagem e clique
+    await fichaFechada();
+    await pagina.evaluate(() => { document.getElementById('grade').scrollTop = 3000; });
+    await espera(600);
+    const iRol = await pagina.evaluate(() => { const g = document.getElementById('grade').getBoundingClientRect(); const c2 = [...document.querySelectorAll('.card:not(.vazio)')].find((e) => { const r = e.getBoundingClientRect(); return r.top > g.top + 4 && r.bottom < g.bottom - 4; }); return c2 ? +c2.getAttribute('data-i') : -1; });
+    c = await centro(iRol);
+    await pagina.mouse.click(c.x, c.y);
+    ps5Cliques.rolagem = iRol > 0 && (await fichaAberta()) === (await idDe(iRol));
+    conferir(ps5Cliques.rolagem, `${t.nome}: PS5, rolagem e clique no cartao ${iRol} nao abriu`);
+    // 5) a linha trocada entre o mousedown e o mouseup (a pagina dela chegou no meio do clique)
+    await fichaFechada();
+    c = await centro(iRol);
+    await pagina.mouse.move(c.x, c.y); await pagina.mouse.down();
+    await pagina.evaluate((k) => { const lin = document.querySelector(`.card[data-i="${k}"]`).parentNode; lin.replaceWith(lin.cloneNode(true)); }, iRol);
+    await pagina.mouse.up();
+    ps5Cliques.linhaTrocada = (await fichaAberta()) === (await idDe(iRol));
+    conferir(ps5Cliques.linhaTrocada, `${t.nome}: PS5, linha trocada no meio do clique: nao abriu`);
+    await fichaFechada();
+    await pagina.evaluate(() => { document.getElementById('grade').scrollTop = 0; });
+    // 6) filtros: cursor
+    passo = 'ps5: filtros';
+    if (await pagina.evaluate(() => document.getElementById('filtros').hidden)) await pagina.click('#bFiltros');
+    await pagina.click('#fPlat');
+    await pagina.waitForSelector('#escLista:not([hidden]) .op', { timeout: 3000 });
+    await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-filtros.png`) });
+    const rf = await pagina.evaluate(REGRAS);
+    conferir(!rf.largo.length && !rf.reticencias, `${t.nome} filtros: rola de lado ou reticencias`);
+    await pagina.locator('#escLista .op').filter({ hasText: /^PS4/ }).click();
+    await espera(300);
+    ps5Cliques.filtroCursor = (await pagina.evaluate(() => window.jobeApp.filtros().platform)) === 'ps4';
+    conferir(ps5Cliques.filtroCursor, `${t.nome}: PS5, filtro Plataforma pelo cursor nao mudou`);
+    // 7) filtros: X (sem clique do cursor: vale o foco), direcional na lista e X
+    passo = 'ps5: filtros pelo X';
+    await espera(400); // um X logo depois (350 ms) de um clique do cursor e o mesmo aperto: ignorado
+    await pagina.focus('#fGenero');
+    await pagina.keyboard.press('Enter');
+    await pagina.waitForSelector('#escLista:not([hidden]) .op', { timeout: 3000 });
+    const segundo = await pagina.evaluate(() => document.querySelectorAll('#escLista .op')[1].textContent);
+    await pagina.keyboard.press('ArrowDown');
+    await pagina.keyboard.press('Enter');
+    await espera(300);
+    const gen = await pagina.evaluate(() => window.jobeApp.filtros().genre);
+    ps5Cliques.filtroControle = Boolean(gen) && segundo.indexOf(gen) >= 0;
+    conferir(ps5Cliques.filtroControle, `${t.nome}: PS5, filtro Genero pelo direcional + X nao mudou (${gen} / ${segundo})`);
+    // 8) O fecha sem mudar e o foco volta ao botao
+    passo = 'ps5: filtros, O fecha';
+    const ordem = await pagina.evaluate(() => window.jobeApp.filtros().sort);
+    await pagina.focus('#fOrdem');
+    await pagina.keyboard.press('Enter');
+    await pagina.waitForSelector('#escLista:not([hidden]) .op', { timeout: 3000 });
+    await pagina.keyboard.press('ArrowDown');
+    await pagina.keyboard.press('Escape');
+    await espera(400);
+    ps5Cliques.filtroO = await pagina.evaluate((o) => document.getElementById('escLista').hidden && window.jobeApp.filtros().sort === o && document.activeElement.id === 'fOrdem', ordem);
+    conferir(ps5Cliques.filtroO, `${t.nome}: PS5, O na lista do filtro nao fechou sem mudar`);
+    await pagina.click('#fLimpar');
+    await espera(300);
+  }
+
   for (const [qual, r] of [['loja', r1], ['rolagem', r2], ['ficha', r3], ['downloads', r4]]) {
     conferir(!r.largo.length, `${t.nome} ${qual}: rola de lado: ${r.largo.join(', ')}`);
     conferir(!r.reticencias, `${t.nome} ${qual}: ${r.reticencias} elemento(s) com reticencias`);
@@ -330,7 +430,7 @@ async function medirTamanho(navegador, api, t, jogo) {
   conferir(capasNaMontagem < 120, `${t.nome}: capas demais na montagem (${capasNaMontagem})`);
   conferir(!errosJs.length, `${t.nome}: erros de JS: ${errosJs.join(' | ')}`);
   await contexto.close();
-  return { tamanho: t.nome, ps5: Boolean(t.ps5), tela, montagem, capasNaMontagem, rolagem, controle, errosJs,
+  return { tamanho: t.nome, ps5: Boolean(t.ps5), tela, montagem, capasNaMontagem, rolagem, controle, ps5Cliques, errosJs,
     prints: ['loja', 'ficha', 'parear', 'downloads', 'config'].map((q) => path.join(saida, `app-${t.nome}-${q}.png`)) };
 }
 

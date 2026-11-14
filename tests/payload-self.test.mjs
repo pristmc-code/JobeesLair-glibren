@@ -21,7 +21,7 @@ function setup({ health = () => ({ api: PAYLOAD_API }), files = {}, startTries =
       const path = url.replace(/^http:\/\/127\.0\.0\.1:\d+/, '');
       s.calls.push({ method, path, body: body ? JSON.parse(body) : undefined });
       if (!s.up) throw new Error('no payload');
-      if (path === '/health') return respond(200, { ok: true, version: '1.33.0', pid: 7, running: 0, ...health(s) });
+      if (path === '/health') return respond(200, { ok: true, version: BG_EMBEDDED_VERSION, pid: 7, running: 0, ...health(s) });
       if (path === '/self-update') return respond(200, { ok: true, version: '1.33.0', source: 'embedded', embedded: '1.33.0', phase: 'checking', bad: [] });
       return respond(200, { ok: true });
     }
@@ -43,9 +43,9 @@ function setup({ health = () => ({ api: PAYLOAD_API }), files = {}, startTries =
   return { s, bg };
 }
 
-test('o contrato: PAYLOAD_API 37 e a versao do embutido 1.37.1 (= BG_VERSION; o bg-self-update.test confere com o C)', () => {
+test('o contrato: PAYLOAD_API 37 e a versao do embutido 1.37.2 (= BG_VERSION; o bg-self-update.test confere com o C)', () => {
   assert.equal(PAYLOAD_API, 37);
-  assert.equal(BG_EMBEDDED_VERSION, '1.37.1');
+  assert.equal(BG_EMBEDDED_VERSION, '1.37.2');
 });
 
 test('antes de subir: app.json com a PAYLOAD_API e o embutido, e a copia do ELF embutido (embedded.elf), uma vez', async () => {
@@ -62,7 +62,9 @@ test('payload posto de lado (replace) ou de API maior sem compatibilidade declar
     ['replace', { api: PAYLOAD_API, replace: true }, 1],
     ['api maior e minAppApi maior', { api: PAYLOAD_API + 2, minAppApi: PAYLOAD_API + 1 }, 1],
     ['api maior e compativel', { api: PAYLOAD_API + 2, minAppApi: PAYLOAD_API }, 0],
-    ['api menor', { api: PAYLOAD_API - 1 }, 1]
+    ['api menor', { api: PAYLOAD_API - 1 }, 1],
+    ['glibren.56: versao menor que a embutida, ocioso', { api: PAYLOAD_API, version: '1.0.0' }, 1],
+    ['glibren.56: versao menor, baixando', { api: PAYLOAD_API, version: '1.0.0', running: 1 }, 0]
   ]) {
     const { s, bg } = setup({ health: () => h });
     await up(bg);

@@ -6,6 +6,25 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.56** (fork): fixes from the real PS5 (Jobe .55). Download payload 1.37.2 (`BG_API` stays 37).
+  - Full Jobe on the web (/app) in the PS5 browser: the X button arrives as a key press (13) and as a cursor click.
+    The key press came first, took the focus (none: "move down", the small jump the owner saw) and the real click
+    was then thrown away as an echo, so clicking a game did nothing. Now whoever moved last decides: after the cursor
+    moved, the cursor click opens what is under it (the key press only waits for it, 250 ms, then acts on the focus);
+    after the D-pad, X acts on the focused item and the cursor click that comes with it is the echo. Cursor movement
+    is measured by position, not only `movementX`. Grid clicks go through one listener, so a row redrawn between
+    press and release still opens its game.
+  - Filters and the choices in Settings are a button plus a list of their own instead of the native `<select>`, whose
+    popup does not open in the PS5 browser: D-pad, X, O (closes without changing), cursor, touch and mouse.
+  - Covers in the PS5 browser: `GET /app/capa?id=` in the payload (installed game's icon0.png, disk cache, the
+    catalogue's non-Sony alternatives, then prosperopatches.com (PS5) / orbispatches.com (PS4) by Title ID, as glibren
+    does for its icons; downloaded by the payload, never by the browser). Nothing from Sony is ever fetched (the
+    console's DNS blocks it on purpose). Counts per source in the page measurements and the diagnostics.
+  - Diagnostics: the page measurements file is checked with `stat()` (`access()` used the real uid and failed with
+    EACCES on the PS5) and `info.json` is uploaded first.
+  - The payload running on the console is replaced by this app's when its VERSION is older (same API), only while it
+    is idle and once per opening; .55 kept payload 1.37.0 running. The result of the payload's self-update check is
+    written to the log.
 - **glibren.55** (fork): fixes from the real PS5 (Jobe .53/.54). Download payload 1.37.1 (`BG_API` stays 37).
   - YouTube format: after picking VP9 in the quality list (R2), going back to H.264 did not stick. An H.264 hardware
     decode error in the middle of a video ("video decode failed (h264, sceVideodec2)") made the player jump to the next

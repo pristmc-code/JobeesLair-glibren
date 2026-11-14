@@ -12,12 +12,14 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { freePortFrom } from './free-port.mjs';
+import { compileTo } from './payload-build.mjs';
 
 const repo = process.env.JL_REPO || fileURLToPath(new URL('..', import.meta.url));
 const embed = await import(pathToFileURL(path.join(repo, 'tools/bg-monitor/embed.mjs')).href);
@@ -28,7 +30,7 @@ const freePort = freePortFrom(13); // Fase 8: bloco de portas so deste arquivo (
 const dir = mkdtempSync(path.join(os.tmpdir(), 'jl-app-'));
 const binary = path.join(dir, 'bgdl');
 const compiler = process.platform === 'win32' ? null : ['cc', 'gcc', 'clang'].find((name) => spawnSync(name, ['--version']).status === 0);
-const built = compiler && spawnSync(compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-o', binary, path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread'], { encoding: 'utf8' });
+const built = compiler && compileTo(binary, compiler, ['-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', path.join(repo, 'app/native/bg_downloader.c'), '-lcurl', '-lcrypto', '-larchive', '-lpthread']);
 const missing = Boolean(built && built.status !== 0 && /curl\/curl\.h|openssl\/evp\.h|archive\.h|cannot find -l/.test(built.stderr));
 const skip = !compiler ? 'no C compiler' : missing ? 'no libcurl/OpenSSL/libarchive headers' : built.status !== 0 ? `did not compile: ${built.stderr.slice(0, 400)}` : false;
 const children = new Set();
@@ -38,13 +40,14 @@ after(() => {
 });
 
 let run = 0;
-async function startPayload({ glibren } = {}) {
+async function startPayload({ glibren, env = {} } = {}) {
   const base = path.join(dir, `run${++run}`);
   for (const sub of ['state', 'tube', 'apps', 'diag']) mkdirSync(path.join(base, sub), { recursive: true });
   const api = await freePort(), monitor = await freePort();
   const child = spawn(binary, [], { env: { ...process.env, BGDL_DIR: path.join(base, 'state'), BGDL_PORT: String(api), BGDL_MONITOR_PORT: String(monitor), BGDL_ORBIT_DIR: path.join(base, 'orbit'),
     BGDL_LIBRARY: path.join(base, 'lista.json'), BGDL_KEYFILE: path.join(base, 'debrid.json'), BGDL_NOTIFY_FILE: path.join(base, 'notify.txt'), BGDL_DIAG_DIR: path.join(base, 'diag'),
-    BGDL_TUBE_DIR: path.join(base, 'tube'), BGDL_APP_LOGS_ROOT: path.join(base, 'apps'), BGDL_STORE_DIR: path.join(base, 'store'), BGDL_GLIBREN_PORT: String(glibren || 9), BGDL_GITHUB_BASE: 'http://127.0.0.1:9', BGDL_GLIBREN_BASE: 'http://127.0.0.1:9' },
+    BGDL_TUBE_DIR: path.join(base, 'tube'), BGDL_APP_LOGS_ROOT: path.join(base, 'apps'), BGDL_STORE_DIR: path.join(base, 'store'), BGDL_GLIBREN_PORT: String(glibren || 9), BGDL_GITHUB_BASE: 'http://127.0.0.1:9', BGDL_GLIBREN_BASE: 'http://127.0.0.1:9',
+    BGDL_APPMETA_DIR: path.join(base, 'appmeta'), BGDL_CAPA_DOH: 'off', BGDL_CAPA_PATCHES: 'off', ...env },
     stdio: ['ignore', 'pipe', 'ignore'] });
   children.add(child);
   child.on('exit', () => children.delete(child));
@@ -67,7 +70,13 @@ async function startPayload({ glibren } = {}) {
     if (performance.now() > end) throw new Error('payload did not start');
   }
   const stop = async () => { const gone = new Promise((resolve) => child.once('exit', resolve)); child.kill('SIGTERM'); await gone; };
-  return { raw, local, stop, base };
+  // .56: o corpo em bytes (as capas)
+  const rawBin = (route) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: monitor, path: route }, (res) => {
+      const partes = []; res.on('data', (c) => partes.push(c)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(partes) }));
+    }).on('error', reject);
+  });
+  return { raw, rawBin, local, stop, base, monitor };
 }
 
 test('bg_app.c compila junto com o payload, sem avisos (-Wall -Wextra -Werror)', { skip: !compiler || missing ? 'no compiler or headers' : false }, () => {
@@ -252,4 +261,216 @@ test('Fase 8: tela cheia no PS5 pelo glibren (GET/POST /api/app/telacheia): moni
     assert.match(texto, /abriria o navegador em http:\/\/127\.0\.0\.1:\d+\/app$/m, 'uma "volta" que nao e hash da /app e descartada');
     await p.stop();
   } finally { glr.close(); }
+});
+
+// ---- .56: o proxy de capas da /app (app/native/bg_capa.c) ----
+// Um PNG de 1x1 (o icon0.png falso do jogo instalado) e um JPEG minimo (so o comeco importa para o payload).
+const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 7), Buffer.from([0xff, 0xd9])]);
+function storeIndex(games) {
+  return JSON.stringify({ version: 1, key: 'kc', builtAt: 'x', console: 'ps5', readyFirmware: '13.60', facets: {},
+    games: games.map((g, i) => ({ code: g.id, platform: 'ps5', s: g.title.toLowerCase(), formats: [], solo: null, rank: [i, i, i, i, i], ...g })) });
+}
+// Um certificado para 127.0.0.1 e capas.invalid (o nome que so o DoH falso resolve); null sem o openssl.
+function certificado() {
+  const pasta = path.join(dir, 'cert');
+  mkdirSync(pasta, { recursive: true });
+  const r = spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-subj', '/CN=capas-teste', '-addext', 'subjectAltName=DNS:capas.invalid,IP:127.0.0.1',
+    '-keyout', path.join(pasta, 'key.pem'), '-out', path.join(pasta, 'cert.pem')], { encoding: 'utf8' });
+  if (r.status !== 0) return null;
+  return { key: readFileSync(path.join(pasta, 'key.pem')), cert: readFileSync(path.join(pasta, 'cert.pem')), file: path.join(pasta, 'cert.pem') };
+}
+const tls = compiler ? certificado() : null;
+async function servidorHttps(handler) {
+  const server = https.createServer({ key: tls.key, cert: tls.cert }, handler);
+  const port = await freePort();
+  await new Promise((r) => server.listen(port, '127.0.0.1', r));
+  return { server, port };
+}
+// Uma resposta DNS (wire format, RFC 8484) que diz 127.0.0.1 para qualquer pergunta A e nada para as outras.
+function respostaDns(q) {
+  let i = 12;
+  while (q[i]) i += q[i] + 1;
+  const fimPergunta = i + 5, tipo = q.readUInt16BE(i + 1);
+  const cab = Buffer.from(q.subarray(0, 12));
+  cab.writeUInt16BE(0x8180, 2); cab.writeUInt16BE(1, 4); cab.writeUInt16BE(tipo === 1 ? 1 : 0, 6); cab.writeUInt16BE(0, 8); cab.writeUInt16BE(0, 10);
+  const partes = [cab, q.subarray(12, fimPergunta)];
+  if (tipo === 1) partes.push(Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 1]));
+  return Buffer.concat(partes);
+}
+
+test('.56: /app/capa serve o icon0.png do jogo instalado, sem sessao; id ruim 400; sem capa 404; Host com nome 403', { skip }, async () => {
+  const p = await startPayload();
+  mkdirSync(path.join(p.base, 'appmeta/PPSA01001'), { recursive: true });
+  writeFileSync(path.join(p.base, 'appmeta/PPSA01001/icon0.png'), PNG_1PX);
+  mkdirSync(path.join(p.base, 'store'), { recursive: true });
+  writeFileSync(path.join(p.base, 'store/store-index.json'), storeIndex([{ id: 'PPSA01001', title: 'Instalado', cover: 'https://127.0.0.1:1/a.png' }, { id: 'PPSA01002', title: 'Sem Nada', cover: 'https://127.0.0.1:1/b.webp' }]));
+  const local = await p.rawBin('/app/capa?id=PPSA01001');
+  assert.equal(local.status, 200);
+  assert.equal(local.headers['content-type'], 'image/png');
+  assert.equal(local.headers['x-capa-fonte'], 'local');
+  assert.match(local.headers['cache-control'], /max-age=86400/);
+  assert.ok(local.body.equals(PNG_1PX), 'o icon0.png inteiro');
+  assert.equal((await p.raw('/app/capa?id=../../etc')).status, 400);
+  assert.equal((await p.raw('/app/capa?id=ppsa01001')).status, 400, 'so o codigo em maiusculas');
+  assert.equal((await p.raw('/app/capa')).status, 400);
+  const nada = await p.raw('/app/capa?id=PPSA01002');
+  assert.equal(nada.status, 404, nada.text);
+  assert.equal(JSON.parse(nada.text).error, 'sem-capa');
+  assert.equal((await p.raw('/app/capa?id=PPSA01002')).status, 404, 'a segunda vez nem tenta a rede (10 min)');
+  assert.equal((await p.raw('/app/capa?id=PPSA01001', { host: 'capas.exemplo.com' })).status, 403, 'J6: Host com nome');
+  assert.equal((await p.raw('/app/capa?id=PPSA01001', { method: 'POST' })).status, 404, 'so GET');
+  const conta = JSON.parse((await p.raw('/api/app/capas')).text);
+  assert.equal(conta.local, 1); assert.equal(conta.falhou, 1); assert.equal(conta.semCapa, 1);
+  assert.match((await p.raw('/app')).headers['content-security-policy'], /img-src 'self' data: https:;/, 'a CSP deixa a /app mostrar /app/capa');
+  await p.stop();
+});
+
+test('.56: /app/capa baixa a capa do catalogo pelo payload (HTTPS verificado), guarda no cache em disco e recusa o que nao e imagem', { skip: skip || (!tls && 'sem openssl') }, async () => {
+  const pedidos = [];
+  const site = await servidorHttps((req, res) => {
+    pedidos.push(req.url);
+    if (req.url === '/d.jpg') { res.writeHead(200, { 'Content-Type': 'image/jpeg' }); return res.end(JPEG); }
+    if (req.url === '/e.png') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<html>pagina de erro</html>'); }
+    res.writeHead(404); res.end();
+  });
+  try {
+    const p = await startPayload({ env: { BGDL_CAINFO: tls.file } });
+    mkdirSync(path.join(p.base, 'store'), { recursive: true });
+    writeFileSync(path.join(p.base, 'store/store-index.json'), storeIndex([
+      { id: 'PPSA02001', title: 'Baixa', cover: `https://127.0.0.1:${site.port}/d.jpg` },
+      { id: 'PPSA02002', title: 'Html', cover: `https://127.0.0.1:${site.port}/e.png` }]));
+    const rede = await p.rawBin('/app/capa?id=PPSA02001');
+    assert.equal(rede.status, 200, rede.body.toString());
+    assert.equal(rede.headers['content-type'], 'image/jpeg');
+    assert.equal(rede.headers['x-capa-fonte'], 'rede');
+    assert.ok(rede.body.equals(JPEG));
+    assert.ok(existsSync(path.join(p.base, 'state/capas/PPSA02001.jpg')), 'no cache em disco');
+    const cache = await p.rawBin('/app/capa?id=PPSA02001');
+    assert.equal(cache.headers['x-capa-fonte'], 'cache');
+    assert.equal(pedidos.filter((u) => u === '/d.jpg').length, 1, 'do cache: o site nao e chamado de novo');
+    assert.equal((await p.raw('/app/capa?id=PPSA02002')).status, 404, 'HTML no lugar da imagem nao serve');
+    assert.ok(!existsSync(path.join(p.base, 'state/capas/PPSA02002.png')));
+    await p.stop();
+  } finally { site.server.close(); }
+});
+
+test('.56: /app/capa com um nome que o DNS do sistema nao resolve (como o 0.0.0.0 do DNS que bloqueia): tenta de novo pelo DoH', { skip: skip || (!tls && 'sem openssl') }, async () => {
+  const site = await servidorHttps((req, res) => { res.writeHead(200, { 'Content-Type': 'image/png' }); res.end(PNG_1PX); });
+  let perguntas = 0;
+  const doh = await servidorHttps((req, res) => {
+    const partes = [];
+    req.on('data', (c) => partes.push(c));
+    req.on('end', () => {
+      perguntas++;
+      const q = req.method === 'GET' ? Buffer.from(new URL(req.url, 'https://x').searchParams.get('dns') || '', 'base64url') : Buffer.concat(partes);
+      res.writeHead(200, { 'Content-Type': 'application/dns-message' });
+      res.end(respostaDns(q));
+    });
+  });
+  try {
+    const p = await startPayload({ env: { BGDL_CAINFO: tls.file, BGDL_CAPA_DOH: `https://127.0.0.1:${doh.port}/dns-query` } });
+    mkdirSync(path.join(p.base, 'store'), { recursive: true });
+    writeFileSync(path.join(p.base, 'store/store-index.json'), storeIndex([{ id: 'PPSA03001', title: 'Bloqueado', cover: `https://capas.invalid:${site.port}/c.png` }]));
+    const r = await p.rawBin('/app/capa?id=PPSA03001');
+    assert.equal(r.status, 200, r.body.toString());
+    assert.equal(r.headers['x-capa-fonte'], 'doh');
+    assert.ok(perguntas > 0, 'perguntou ao DoH');
+    const log = readFileSync(path.join(p.base, 'state/bgdl.log'), 'utf8');
+    assert.match(log, /capa: PPSA03001: capas\.invalid falhou \(curl 6 /, 'o motivo da falha no diario');
+    assert.match(log, /capa: PPSA03001: capas\.invalid pelo DoH/);
+    assert.equal(JSON.parse((await p.raw('/api/app/capas')).text).doh, 1);
+    await p.stop();
+  } finally { site.server.close(); doh.server.close(); }
+});
+
+test('.56: no Chromium com o UA do PS5 a capa que falha vai para /app/capa (icon0 local abre; sem nada, o nome no lugar) e as contagens vao nas medidas; no celular nada vai ao proxy', { skip: skip || (pwRunner ? false : 'sem Playwright (nem neste Node nem no do Windows)'), timeout: 180000 }, async () => {
+  const p = await startPayload();
+  mkdirSync(path.join(p.base, 'appmeta/PPSA04001'), { recursive: true });
+  writeFileSync(path.join(p.base, 'appmeta/PPSA04001/icon0.png'), PNG_1PX);
+  mkdirSync(path.join(p.base, 'store'), { recursive: true });
+  writeFileSync(path.join(p.base, 'store/store-index.json'), storeIndex([
+    { id: 'PPSA04001', title: 'Instalado Local', cover: 'https://127.0.0.1:1/a.png' },
+    { id: 'PPSA04002', title: 'Sem Capa Nenhuma', cover: 'https://127.0.0.1:1/b.webp' },
+    { id: 'PPSA04003', title: 'Capa Boa', cover: 'https://capas-boa.example/ok.png' }])); // o capas-pw.mjs responde esta no Chromium
+  const script = pwRunner.playwright ? wslPath(path.join(repo, 'tools/web-app/capas-pw.mjs')) : path.join(repo, 'tools/web-app/capas-pw.mjs');
+  const argv = [script, `--url=http://127.0.0.1:${p.monitor}/app`];
+  if (pwRunner.playwright) argv.push(`--playwright=${pwRunner.playwright}`);
+  const r = spawnSync(pwRunner.node, argv, { encoding: 'utf8', timeout: 150000, cwd: pwRunner.playwright ? '/mnt/c' : repo });
+  const line = (r.stdout || '').split('\n').find((l) => l.startsWith('JSON '));
+  assert.ok(line, `sem resultado: ${(r.stderr || r.stdout || '').slice(-1500)}`);
+  const { ps5, celular } = JSON.parse(line.slice(5));
+  assert.deepEqual(ps5.proxy.sort(), ['/app/capa?id=PPSA04001', '/app/capa?id=PPSA04002'], 'PS5: as duas que falharam foram ao proxy');
+  assert.deepEqual(ps5.ok.sort(), ['Capa Boa', 'Instalado Local'], 'PS5: a direta e a do icon0 local abriram');
+  assert.deepEqual(ps5.nome, ['Sem Capa Nenhuma'], 'PS5: sem nada, o nome do jogo no lugar');
+  assert.equal(ps5.capas.ok, 1); assert.equal(ps5.capas.erro, 2); assert.equal(ps5.capas.proxyOk, 1); assert.equal(ps5.capas.proxyErro, 1); assert.equal(ps5.capas.nome, 1);
+  assert.deepEqual(ps5.capas.hosts['127.0.0.1 .png'], { ok: 0, erro: 1 });
+  assert.deepEqual(ps5.capas.hosts['127.0.0.1 .webp'], { ok: 0, erro: 1 });
+  assert.match(ps5.tela, /capas: 1 abriram, 2 falharam, 0 demoraram mais de 8 s; proxy do payload: 1 abriram, 1 falharam/);
+  assert.match(ps5.tela, /capas por host: .*127\.0\.0\.1 \.png 0 ok\/1 erro/);
+  assert.deepEqual(celular.proxy, [], 'celular: nada vai ao proxy');
+  assert.deepEqual(celular.ok, ['Capa Boa']);
+  assert.match(celular.tela, /fora do PS5: sem proxy/);
+  await p.stop();
+});
+
+test('.56: REGRA FIXA: o proxy nunca baixa nem resolve por DoH um host da Sony (image.api.playstation.com e afins)', { skip: skip || (!tls && 'sem openssl') }, async () => {
+  let perguntas = 0;
+  const doh = await servidorHttps((req, res) => {
+    req.resume();
+    req.on('end', () => { perguntas++; res.writeHead(200, { 'Content-Type': 'application/dns-message' }); res.end(); });
+  });
+  try {
+    const p = await startPayload({ env: { BGDL_CAINFO: tls.file, BGDL_CAPA_DOH: `https://127.0.0.1:${doh.port}/dns-query` } });
+    mkdirSync(path.join(p.base, 'store'), { recursive: true });
+    writeFileSync(path.join(p.base, 'store/store-index.json'), storeIndex([
+      { id: 'PPSA05001', title: 'Sony 1', cover: 'https://image.api.playstation.com/vulcan/ap/rnd/x.png?w=440' },
+      { id: 'PPSA05002', title: 'Sony 2', cover: 'https://IMAGE.API.PlayStation.COM./y.png' },
+      { id: 'PPSA05003', title: 'Sony 3', cover: 'https://gmedia.playstation.net/z.jpg' },
+      { id: 'PPSA05004', title: 'Sony 4', cover: 'https://www.sony.com/w.jpg' }]));
+    for (const id of ['PPSA05001', 'PPSA05002', 'PPSA05003', 'PPSA05004']) {
+      const r = await p.raw(`/app/capa?id=${id}`);
+      assert.equal(r.status, 404, `${id}: ${r.text}`);
+    }
+    assert.equal(perguntas, 0, 'nenhuma pergunta ao DoH');
+    const log = readFileSync(path.join(p.base, 'state/bgdl.log'), 'utf8');
+    assert.doesNotMatch(log, /playstation|sony\.com/i, 'nem tentou baixar');
+    assert.match(log, /capa: PPSA05001: sem endereco de capa no catalogo/);
+    await p.stop();
+  } finally { doh.server.close(); }
+});
+
+// .56 (pedido do dono): sem capa do catalogo que abra, a do site de patches pelo TitleID (prosperopatches PS5,
+// orbispatches PS4, como o glibren faz com os icones), baixada pelo payload; um icone da Sony achado na pagina e recusado.
+test('.56: /app/capa cai no site de patches pelo TitleID (icone da pagina, pelo payload; nunca a Sony) e conta em patches', { skip }, async () => {
+  const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([20, 0, 0, 0]), Buffer.from('WEBPVP8 '), Buffer.alloc(12)]);
+  const pedidos = [];
+  const site = http.createServer((req, res) => {
+    pedidos.push(req.url);
+    const base = `http://127.0.0.1:${site.address().port}`;
+    if (req.url === '/PPSA06001') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<html><meta property="og:title" content="PPSA06001: Jogo"><div class="game-icon lazy" style="background-image: url(&quot;${base}/i.webp&quot;)"></div></html>`); }
+    if (req.url === '/CUSA06002') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<div class="game-icon" style="background-image:url(https://image.api.playstation.com/x.png)"></div>'); }
+    if (req.url === '/i.webp') { res.writeHead(200, { 'Content-Type': 'image/webp' }); return res.end(WEBP); }
+    res.writeHead(404); res.end();
+  });
+  await new Promise((r) => site.listen(0, '127.0.0.1', r));
+  try {
+    const p = await startPayload({ env: { BGDL_CAPA_PATCHES: `http://127.0.0.1:${site.address().port}/` } });
+    mkdirSync(path.join(p.base, 'store'), { recursive: true });
+    writeFileSync(path.join(p.base, 'store/store-index.json'), storeIndex([
+      { id: 'PPSA06001', title: 'Capa da Sony', cover: 'https://image.api.playstation.com/a.png' },
+      { id: 'CUSA06002', title: 'Icone da Sony', cover: 'https://image.api.playstation.com/b.png' }]));
+    const r = await p.rawBin('/app/capa?id=PPSA06001');
+    assert.equal(r.status, 200, r.body.toString());
+    assert.equal(r.headers['content-type'], 'image/webp');
+    assert.equal(r.headers['x-capa-fonte'], 'rede');
+    assert.ok(r.body.equals(WEBP));
+    assert.ok(existsSync(path.join(p.base, 'state/capas/PPSA06001.webp')), 'no cache em disco');
+    assert.equal((await p.raw('/app/capa?id=CUSA06002')).status, 404, 'icone da Sony na pagina: recusado');
+    assert.ok(pedidos.includes('/CUSA06002') && !pedidos.some((u) => /playstation/.test(u)));
+    const conta = JSON.parse((await p.raw('/api/app/capas')).text);
+    assert.equal(conta.patches, 1);
+    assert.equal(conta.rede, 0, 'a capa da Sony do catalogo nao foi baixada');
+    await p.stop();
+  } finally { site.close(); }
 });

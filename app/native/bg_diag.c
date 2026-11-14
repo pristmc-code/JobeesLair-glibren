@@ -349,6 +349,8 @@ static void diag_missing(DiagSet* s, const char* name) {
   snprintf(s->missing + n, sizeof s->missing - n, "%s%s", n ? "," : "", name);
 }
 // Junta o texto ja limpo (fica com `text`).
+// Existe? Pelo uid efetivo (stat), nunca access() (ver diag_collect).
+static int diag_exists(const char* path) { struct stat st; return !stat(path, &st) && S_ISREG(st.st_mode); }
 static void diag_put_file(DiagSet* s, const char* name, char* text, size_t size, int cut, const DiagSecrets* known) {
   if (s->count >= DIAG_MAX_FILES) { free(text); return; }
   size_t clean_size = 0;
@@ -510,10 +512,15 @@ static void diag_collect(DiagSet* s, const char* folder, const char* from) {
   snprintf(path, sizeof path, "%.500s/config.json", g_dir);
   diag_add_path(s, "config.json", path, &known);
   // glibren.47: os resultados da pagina /teste (POST /api/teste/enviar) e o teste-estado.json, so quando existem
+  // .56: com stat, nao access(). No PS5 o payload roda com o uid EFETIVO elevado e o REAL de outro usuario; access()
+  // confere pelo real e a pasta do diagnostico e 0700: dava EACCES, e as medidas da /app e da /teste nunca iam junto
+  // (rodadas 2026-11-13_211406/211434: o diario dizia "gravados", o info.json nem as listava). Pedido pelo teste sem o
+  // arquivo: entra em "missing", para a falta aparecer.
   snprintf(path, sizeof path, "%.500s/teste-resultados.txt", g_diag_dir);
-  if (!access(path, F_OK)) diag_add_path(s, "teste-resultados.txt", path, &known);
+  if (diag_exists(path)) diag_add_path(s, "teste-resultados.txt", path, &known);
+  else if (!strcmp(from, "teste")) { diag_missing(s, "teste-resultados.txt"); logf_("diagnostico: teste-resultados.txt nao achado (%s)", strerror(errno)); }
   snprintf(path, sizeof path, "%.500s/teste-estado.json", g_dir);
-  if (!access(path, F_OK)) diag_add_path(s, "teste-estado.json", path, &known);
+  if (diag_exists(path)) diag_add_path(s, "teste-estado.json", path, &known);
   diag_add_glibren(s, &known);
   // info.json: versoes, a Memoria do app, de onde veio o pedido e o que foi junto
   Buf b = {0};
@@ -536,6 +543,13 @@ static void diag_collect(DiagSet* s, const char* folder, const char* from) {
   if (!b.failed && b.data) diag_put_file(s, "info.json", b.data, b.size, 0, &known);
   else free(b.data);
   memset(&known, 0, sizeof known);
+  // .56: o info.json vai PRIMEIRO. Ele lista os arquivos da rodada: uma pasta baixada no meio do envio (a 211434 veio
+  // sem ele porque foi lida antes do ultimo PUT) mostra o que ainda falta chegar.
+  if (s->count > 1 && !strcmp(s->file[s->count - 1].name, "info.json")) {
+    const DiagFile info = s->file[s->count - 1];
+    memmove(&s->file[1], &s->file[0], sizeof s->file[0] * (size_t)(s->count - 1));
+    s->file[0] = info;
+  }
 }
 
 // ---- O envio -----------------------------------------------------------------------------------------------
@@ -682,9 +696,15 @@ static int diag_start(const char* from, char* error, size_t cap) {
   return 200;
 }
 static void diag_reply_start(int fd, int app, const char* from) {
-  char error[16] = "", body[96];
+  char error[16] = "", body[96], folder[24] = "";
   const int status = diag_start(from, error, sizeof error);
-  if (status == 200) snprintf(body, sizeof body, "{\"ok\":true,\"state\":\"running\"}");
+  // .56: a pasta da rodada vai na resposta (a /app mostra "enviado para a pasta ...")
+  if (status == 200) {
+    pthread_mutex_lock(&g_diag_lock);
+    copy_text(folder, sizeof folder, g_diag.folder);
+    pthread_mutex_unlock(&g_diag_lock);
+    snprintf(body, sizeof body, "{\"ok\":true,\"state\":\"running\",\"folder\":\"%s\"}", folder);
+  }
   else snprintf(body, sizeof body, "{\"error\":\"%s\"}", error);
   if (app) respond(fd, status, body); else monitor_json(fd, status, body);
 }

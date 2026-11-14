@@ -87,8 +87,15 @@ main{flex:1 1 auto;min-height:0;min-width:0;display:flex;flex-direction:column}
 #bFiltros{display:flex;align-items:center;justify-content:center;gap:.4rem}
 #bFiltros b{background:var(--ac2);border-radius:1rem;padding:0 .45rem;font-size:.8rem;min-width:1.4rem}
 #filtros{display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:.5rem;padding:.2rem .6rem .6rem;flex:0 0 auto;max-height:45vh;overflow-y:auto}
-#filtros label{display:flex;flex-direction:column;gap:.2rem;font-size:.75rem;color:var(--tx2);min-width:0}
-#filtros select{background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);padding:.4rem .5rem;min-height:2.4rem;width:100%;min-width:0;color:var(--tx);font-size:.9rem}
+#filtros label,#filtros .fl{display:flex;flex-direction:column;gap:.2rem;font-size:.75rem;color:var(--tx2);min-width:0}
+/* glibren.56: escolhas proprias no lugar do <select> (o popup nativo nao abre no navegador do PS5) */
+.esc{display:flex;align-items:center;justify-content:space-between;gap:.4rem;text-align:start;background:var(--bg2);border:1px solid var(--linha);border-radius:var(--r);padding:.4rem .5rem;min-height:2.4rem;width:100%;min-width:0;color:var(--tx);font-size:.9rem}
+.esc::after{content:"BE";flex:0 0 auto;color:var(--tx2)}
+.esc[aria-expanded="true"]{border-color:var(--ac)}
+#escLista{position:fixed;z-index:45;background:var(--bg3);border:1px solid var(--linha);border-radius:var(--r);padding:.3rem;display:flex;flex-direction:column;gap:.2rem;overflow-y:auto;box-shadow:0 .4rem 1.4rem rgba(0,0,0,.55)}
+#escLista .op{display:block;width:100%;flex:0 0 auto;text-align:start;background:transparent;border:1px solid transparent;border-radius:var(--r);padding:.45rem .6rem;min-height:2.4rem;color:var(--tx);font-size:.9rem}
+#escLista .op[aria-selected="true"]{background:var(--ac2);border-color:var(--ac)}
+#escLista .op:hover{border-color:var(--linha)}
 #filtros .so{flex-direction:row;align-items:center;gap:.5rem;font-size:.85rem;color:var(--tx)}
 #filtros .so input{width:20px;height:20px;flex:0 0 auto}
 html.ps5 #filtros .so input{width:24px;height:24px}
@@ -105,6 +112,8 @@ html.toque .card:focus{border-color:transparent;box-shadow:none}
 .capa img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
 .capa .ini{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:var(--tx2)}
 .capa.ok .ini{display:none}
+/* .56: capa que nao abriu nem pelo payload: o nome do jogo no lugar da imagem quebrada */
+.capa.sem .ini{font-size:.8rem;font-weight:600;line-height:1.25;padding:.5rem;text-align:center;overflow:hidden;overflow-wrap:anywhere}
 .card .t{padding:.4rem .5rem 0;font-weight:600;font-size:.88rem;line-height:1.25;overflow-wrap:anywhere}
 .card .m{display:flex;flex-wrap:wrap;padding:.3rem .5rem .4rem;font-size:.72rem;color:var(--tx2)}
 .m>span{margin:0 .3rem .2rem 0}
@@ -176,6 +185,7 @@ html.toque .card:focus{border-color:transparent;box-shadow:none}
 .cfgL .det{grid-column:1/-1;font-size:.8rem;color:var(--tx2);margin:0}
 .cfgL .est{grid-column:1/-1;font-size:.8rem;min-height:0;margin:0}
 .cfgL .est.ok{color:#9be3bd}.cfgL .est.ruim{color:#ffb4b4}
+.cfgL .esc{background:var(--bg)}
 .cfgL select,.cfgL input{background:var(--bg);border:1px solid var(--linha);border-radius:var(--r);padding:.4rem .5rem;min-height:2.4rem;width:100%;min-width:0;color:var(--tx)}
 .cfgL .btn{width:100%}
 .cfgL .btn[aria-pressed="true"]{background:var(--ac2);border-color:var(--ac)}
@@ -233,11 +243,11 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
         <div class="fila"><button type="button" class="btn" id="bFiltros" aria-expanded="false"><span data-t="filtros">Filtros</span><b id="nFiltros" hidden>0</b></button><button type="button" class="btn" id="bTela" hidden data-t="telaCheia">Tela cheia</button></div>
       </div>
       <div id="filtros" hidden>
-        <label><span data-t="ordem">Ordem</span><select id="fOrdem"></select></label>
-        <label><span data-t="plataforma">Plataforma</span><select id="fPlat"></select></label>
-        <label><span data-t="formato">Formato</span><select id="fFormato"></select></label>
-        <label><span data-t="genero">Gênero</span><select id="fGenero"></select></label>
-        <label><span data-t="tamanho">Tamanho</span><select id="fTam"></select></label>
+        <div class="fl"><span id="fOrdemR" data-t="ordem">Ordem</span><button type="button" class="esc" id="fOrdem" aria-haspopup="listbox" aria-labelledby="fOrdemR fOrdem"></button></div>
+        <div class="fl"><span id="fPlatR" data-t="plataforma">Plataforma</span><button type="button" class="esc" id="fPlat" aria-haspopup="listbox" aria-labelledby="fPlatR fPlat"></button></div>
+        <div class="fl"><span id="fFormatoR" data-t="formato">Formato</span><button type="button" class="esc" id="fFormato" aria-haspopup="listbox" aria-labelledby="fFormatoR fFormato"></button></div>
+        <div class="fl"><span id="fGeneroR" data-t="genero">Gênero</span><button type="button" class="esc" id="fGenero" aria-haspopup="listbox" aria-labelledby="fGeneroR fGenero"></button></div>
+        <div class="fl"><span id="fTamR" data-t="tamanho">Tamanho</span><button type="button" class="esc" id="fTam" aria-haspopup="listbox" aria-labelledby="fTamR fTam"></button></div>
         <label class="so"><input type="checkbox" id="fSolo"><span data-t="solo">Só os que baixam com a Jobe fechada</span></label>
         <button type="button" class="btn" id="fLimpar" data-t="limpar">Limpar filtros</button>
       </div>
@@ -267,6 +277,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     <div id="fCorpo" class="rolar"></div>
   </aside>
 </div>
+<div id="escLista" class="rolar" role="listbox" hidden></div>
 <div class="modal" id="acesso" role="dialog" aria-modal="true" aria-labelledby="parTit" hidden>
   <form class="caixa" id="parForm">
     <h2 id="parTit" data-t="parTit">Parear este aparelho</h2>
@@ -529,26 +540,25 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   }
   function ativos() { return [loja.platform, loja.format, loja.genre, loja.size, loja.solo].filter(Boolean).length; }
   function contaDe(k, v) { var l = loja.facets && loja.facets[k] ? loja.facets[k] : []; for (var i = 0; i < l.length; i++) if (l[i].value === v) return l[i].count; return 0; }
-  function opcao(sel, v, rot, escolhido) { var o = el("option", "", rot); o.value = v; o.selected = v === escolhido; sel.appendChild(o); }
+  // glibren.56: os filtros sao "escolhas" (botao + lista propria, ver escolha()), nao <select>.
   function desenharFiltros() {
     var n = ativos(); $("nFiltros").hidden = !n; $("nFiltros").textContent = String(n);
-    var s = $("fOrdem"); s.textContent = ""; ["relevance", "newest", "rating", "size", "title"].forEach(function (k) { opcao(s, k, L.ordens[k], loja.sort); });
-    s = $("fPlat"); s.textContent = ""; opcao(s, "", L.ps5ps4, loja.platform);
-    ["ps5", "ps4"].forEach(function (p) { opcao(s, p, p.toUpperCase() + " (" + contaDe("platform", p) + ")", loja.platform); });
-    s = $("fFormato"); s.textContent = ""; opcao(s, "", L.todoFormato, loja.format);
-    (loja.facets && loja.facets.format ? loja.facets.format : []).forEach(function (o) { opcao(s, o.value, (o.value === "ready" ? fill(L.pronto, { v: loja.ready }) : String(o.value).toUpperCase()) + " (" + o.count + ")", loja.format); });
-    s = $("fGenero"); s.textContent = ""; opcao(s, "", L.todoGenero, loja.genre);
-    (loja.facets && loja.facets.genre ? loja.facets.genre : []).forEach(function (o) { if (o.count || o.value === loja.genre) opcao(s, o.value, (o.name || o.value) + " (" + o.count + ")", loja.genre); });
-    s = $("fTam"); s.textContent = ""; opcao(s, "", L.todoTam, loja.size);
-    [["small", L.pequeno], ["medium", L.medio], ["large", L.grande]].forEach(function (x) { opcao(s, x[0], x[1] + " (" + contaDe("size", x[0]) + ")", loja.size); });
+    escolha($("fOrdem"), ["relevance", "newest", "rating", "size", "title"].map(function (k) { return { v: k, t: L.ordens[k] }; }), loja.sort, function (v) { mudar({ sort: v }); });
+    var o = [{ v: "", t: L.ps5ps4 }];
+    ["ps5", "ps4"].forEach(function (p) { o.push({ v: p, t: p.toUpperCase() + " (" + contaDe("platform", p) + ")" }); });
+    escolha($("fPlat"), o, loja.platform, function (v) { mudar({ platform: v }); });
+    o = [{ v: "", t: L.todoFormato }];
+    (loja.facets && loja.facets.format ? loja.facets.format : []).forEach(function (x) { o.push({ v: x.value, t: (x.value === "ready" ? fill(L.pronto, { v: loja.ready }) : String(x.value).toUpperCase()) + " (" + x.count + ")" }); });
+    escolha($("fFormato"), o, loja.format, function (v) { mudar({ format: v }); });
+    o = [{ v: "", t: L.todoGenero }];
+    (loja.facets && loja.facets.genre ? loja.facets.genre : []).forEach(function (x) { if (x.count || x.value === loja.genre) o.push({ v: x.value, t: (x.name || x.value) + " (" + x.count + ")" }); });
+    escolha($("fGenero"), o, loja.genre, function (v) { mudar({ genre: v }); });
+    o = [{ v: "", t: L.todoTam }];
+    [["small", L.pequeno], ["medium", L.medio], ["large", L.grande]].forEach(function (x) { o.push({ v: x[0], t: x[1] + " (" + contaDe("size", x[0]) + ")" }); });
+    escolha($("fTam"), o, loja.size, function (v) { mudar({ size: v }); });
     $("fSolo").checked = loja.solo;
   }
   function mudar(c) { for (var k in c) loja[k] = c[k]; desenharFiltros(); recomecar(); }
-  $("fOrdem").onchange = function (e) { mudar({ sort: e.target.value }); };
-  $("fPlat").onchange = function (e) { mudar({ platform: e.target.value }); };
-  $("fFormato").onchange = function (e) { mudar({ format: e.target.value }); };
-  $("fGenero").onchange = function (e) { mudar({ genre: e.target.value }); };
-  $("fTam").onchange = function (e) { mudar({ size: e.target.value }); };
   $("fSolo").onchange = function (e) { mudar({ solo: e.target.checked }); };
   $("fLimpar").onclick = function () { $("busca").value = ""; mudar({ q: "", platform: "", format: "", genre: "", size: "", solo: false }); };
   $("bFiltros").onclick = function () { var f = $("filtros"); f.hidden = !f.hidden; $("bFiltros").setAttribute("aria-expanded", String(!f.hidden)); layout(); };
@@ -675,16 +685,80 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   }
   // `adiar`: a capa so e pedida quando a rolagem para (pedirCapas); rolando rapido (controle segurado, dedo jogando a
   // lista) nenhuma imagem e baixada nem decodificada no caminho. A ficha pede na hora.
+  // .56: no navegador do PS5 (html.ps5) a capa que falha ou demora CAPA_DEMORA ms vai para o proxy do payload
+  // (/app/capa?id=: o icon0.png do jogo instalado, o cache, ou a capa e as alternativas do catalogo baixadas pelo payload,
+  // com DoH quando o DNS bloqueia); host que so falhou (CAPA_RUIM vezes, nenhuma abriu) ja vai direto para o proxy. Nada
+  // serviu: o nome do jogo no lugar. No celular e no PC continua direto. Tudo conta em capasMed (vai nas medidas).
+  var CAPA_DEMORA = 8000, CAPA_RUIM = 4, PROXY_JUNTOS = 2;
+  var capasMed = { ok: 0, erro: 0, demora: 0, proxyOk: 0, proxyErro: 0, pulou: 0, nome: 0, hosts: {} };
+  function capaChave(u) {
+    var m = /^https:\/\/([^\/?#:]+)(?::\d+)?([^?#]*)/i.exec(u || ""); if (!m) return "outro";
+    var e = /\.([a-z0-9]{2,5})$/i.exec(m[2]);
+    return m[1].toLowerCase() + " ." + (e ? e[1].toLowerCase() : "sem");
+  }
+  function contarCapa(u, abriu) {
+    var k = capaChave(u), h = capasMed.hosts[k] || (capasMed.hosts[k] = { ok: 0, erro: 0 });
+    if (abriu) { h.ok++; capasMed.ok++; } else { h.erro++; capasMed.erro++; }
+  }
+  function hostRuim(u) {
+    var host = capaChave(u).split(" ")[0], ok = 0, erro = 0;
+    Object.keys(capasMed.hosts).forEach(function (k) { if (k.split(" ")[0] === host) { ok += capasMed.hosts[k].ok; erro += capasMed.hosts[k].erro; } });
+    return ok === 0 && erro >= CAPA_RUIM;
+  }
+  function noPs5() { return root.classList.contains("ps5"); }
+  function idCapa(g) { return g && /^[A-Z]{4}[0-9]{5}$/.test(String(g.id || "")) ? g.id : ""; }
+  var proxyFila = [], proxyAtivos = 0;
+  function proxima() {
+    while (proxyAtivos < PROXY_JUNTOS && proxyFila.length) {
+      var img = proxyFila.shift();
+      if (!img.isConnected) continue; // a linha saiu da tela (lista virtual): nao pede
+      proxyAtivos++; img._ativo = true;
+      img.src = "/app/capa?id=" + encodeURIComponent(idCapa(img._g));
+    }
+  }
+  function soltarProxy(img) { if (img._ativo) { img._ativo = false; proxyAtivos--; } proxima(); }
+  function semCapa(img) {
+    var box = img._box; img.remove(); capasMed.nome++;
+    box.classList.add("sem"); box.firstChild.textContent = img._g.title || "?";
+  }
+  function pedirProxy(img) {
+    clearTimeout(img._t);
+    if (img._proxy || !idCapa(img._g)) { semCapa(img); return; }
+    img._proxy = true; img._fim = false;
+    proxyFila.push(img); proxima();
+  }
+  function carregarCapa(img) {
+    if (noPs5() && idCapa(img._g) && hostRuim(img._u)) { capasMed.pulou++; pedirProxy(img); return; }
+    img.src = img._u;
+    if (noPs5()) img._t = setTimeout(function () { if (!img._fim && !img._proxy && img.isConnected) { capasMed.demora++; pedirProxy(img); } }, CAPA_DEMORA);
+  }
   function capa(g, w, adiar) {
     var box = el("div", "capa"); box.appendChild(el("span", "ini", iniciais(g ? g.title : "")));
     if (g && g.cover && okURL(g.cover)) {
       var img = el("img"); img.alt = ""; img.decoding = "async"; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
-      img.onload = function () { box.classList.add("ok"); };
-      img.onerror = function () { img.remove(); };
-      if (adiar) img.setAttribute("data-src", sized(g.cover, w)); else img.src = sized(g.cover, w);
+      img._g = g; img._box = box; img._u = sized(g.cover, w);
+      img.onload = function () {
+        img._fim = true; clearTimeout(img._t); box.classList.add("ok");
+        if (img._proxy) { capasMed.proxyOk++; soltarProxy(img); } else contarCapa(img._u, true);
+      };
+      img.onerror = function () {
+        img._fim = true; clearTimeout(img._t);
+        if (img._proxy) { capasMed.proxyErro++; soltarProxy(img); semCapa(img); return; }
+        contarCapa(img._u, false);
+        if (noPs5()) pedirProxy(img); else img.remove();
+      };
+      if (adiar) img.setAttribute("data-src", img._u); else carregarCapa(img);
       box.appendChild(img);
     }
     return box;
+  }
+  // As medidas das capas (vao no texto de "Medidas desta tela" e no diagnostico).
+  function textoCapas() {
+    var m = capasMed, linhas = ["capas: " + m.ok + " abriram, " + m.erro + " falharam, " + m.demora + " demoraram mais de " + (CAPA_DEMORA / 1000) + " s; proxy do payload: " +
+      m.proxyOk + " abriram, " + m.proxyErro + " falharam, " + m.pulou + " direto pelo proxy (host que so falha); com o nome no lugar: " + m.nome + (noPs5() ? "" : " (fora do PS5: sem proxy)")];
+    var ks = Object.keys(m.hosts).sort(function (a, b) { return (m.hosts[b].ok + m.hosts[b].erro) - (m.hosts[a].ok + m.hosts[a].erro); });
+    if (ks.length) linhas.push("capas por host: " + ks.slice(0, 14).map(function (k) { return k + " " + m.hosts[k].ok + " ok/" + m.hosts[k].erro + " erro"; }).join("; "));
+    return linhas.join("\n");
   }
   // Rolagem devagar (ate ~1,5 tela por segundo: lendo a lista) pede as capas no caminho, no maximo a cada 200 ms; mais
   // rapido que isso, so quando parar (140 ms sem rolar).
@@ -702,7 +776,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     for (var k = 0; k < imgs.length; k++) {
       var r = imgs[k].parentNode.getBoundingClientRect();
       if (r.bottom < q.top - q.height * 0.5 || r.top > q.bottom + q.height * 0.5) continue; // so a tela e meia tela de folga
-      imgs[k].src = imgs[k].getAttribute("data-src"); imgs[k].removeAttribute("data-src");
+      imgs[k].removeAttribute("data-src"); carregarCapa(imgs[k]);
     }
   }
   function tag(cls, texto, titulo) { var t = el("span", "tag " + cls, texto); if (titulo) t.title = titulo; return t; }
@@ -722,9 +796,30 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     var tx = el("div", "txt"), m = el("div", "m");
     tx.appendChild(el("div", "t", g.title)); tx.appendChild(m); metas(g, m);
     b.appendChild(tx);
-    b.onclick = function () { abrirJogo(g.id, i); };
     return b;
   }
+  // glibren.56: o clique na grade e tratado aqui (um so ouvinte), nao em cada cartao: a grade virtual troca a linha
+  // quando a pagina dela chega, e um clique cujo mousedown caiu no cartao velho chegava na linha (sem cartao) e nao
+  // abria nada. Sem cartao no alvo, vale o cartao debaixo do ponto do clique.
+  espaco.addEventListener("click", function (e) {
+    var c = e.target && e.target.closest ? e.target.closest(".card") : null;
+    if (!c && e.isTrusted && document.elementFromPoint) { var p = document.elementFromPoint(e.clientX, e.clientY); c = p && p.closest ? p.closest(".card") : null; }
+    if (!c || !espaco.contains(c)) return;
+    var i = +c.getAttribute("data-i"), g = loja.items[i];
+    if (g) abrirJogo(g.id, i);
+  });
+  // A linha trocada entre o mousedown e o mouseup (o cartao velho saiu do DOM): o navegador nao gera o click. O cartao
+  // com o mesmo indice debaixo do ponto onde o botao foi solto vale como o clique.
+  var apertado = null;
+  espaco.addEventListener("pointerdown", function (e) { var c = e.target && e.target.closest ? e.target.closest(".card") : null; apertado = c ? { c: c, i: c.getAttribute("data-i") } : null; });
+  addEventListener("pointerup", function (e) {
+    var a = apertado; apertado = null;
+    if (!a || !e.isTrusted || document.body.contains(a.c) || !document.elementFromPoint) return;
+    var p = document.elementFromPoint(e.clientX, e.clientY), c = p && p.closest ? p.closest(".card") : null;
+    if (!c || c.getAttribute("data-i") !== a.i) return;
+    var g = loja.items[+a.i];
+    if (g) abrirJogo(g.id, +a.i);
+  });
   grade.addEventListener("scroll", agendar, { passive: true });
   if (window.ResizeObserver) new ResizeObserver(function () { medidas(false); }).observe(grade);
   addEventListener("resize", function () { medidas(false); });
@@ -931,10 +1026,14 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       pintar();
       ctl.onclick = function () { salvarConfig(it, cfg.valores[it.k] !== true, est, pintar); };
     } else if (it.t === "sel") {
-      ctl = el("select");
-      if (v === undefined) { var o0 = el("option", "", "–"); o0.value = ""; ctl.appendChild(o0); }
-      it.v.forEach(function (x) { var o = el("option", "", rotuloValor(it, x)); o.value = String(x); o.selected = String(v) === String(x); ctl.appendChild(o); });
-      ctl.onchange = function () { if (ctl.value === "") return; salvarConfig(it, typeof it.v[0] === "number" ? Number(ctl.value) : ctl.value, est); };
+      ctl = el("button", "esc"); ctl.type = "button"; ctl.setAttribute("aria-haspopup", "listbox");
+      var pintarSel = function () {
+        var ops = [], atual = cfg.valores[it.k];
+        if (atual === undefined) ops.push({ v: "", t: "–" });
+        it.v.forEach(function (x) { ops.push({ v: x, t: rotuloValor(it, x) }); });
+        escolha(ctl, ops, atual === undefined ? "" : atual, function (x) { if (x === "") return; escolha(ctl, ops, x, ctl._mudou); salvarConfig(it, x, est, pintarSel); });
+      };
+      pintarSel();
     } else {
       ctl = el("input"); ctl.type = "number"; ctl.inputMode = "numeric"; ctl.min = String(it.min); ctl.max = String(it.max); ctl.step = "1";
       ctl.value = v === undefined ? "" : String(v);
@@ -1055,28 +1154,95 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     if (focoId) { var f = lista.querySelector('[data-acao="' + focoId + '"]'); if (f) f.focus(); }
   }
 
+  // ---- glibren.56: escolha (no lugar do <select>) ----
+  // O popup do <select> nativo nao abre no navegador do PS5: com o direcional e X os filtros "sumiam" e com o cursor o
+  // clique nao fazia nada. A escolha e um botao com o valor atual que abre uma lista de botoes (#escLista): anda com o
+  // direcional, escolhe com X, cursor, toque ou mouse; O/Esc ou tocar fora fecha sem mudar e o foco volta ao botao.
+  // opcoes = [{v, t}]; mudou(v) so quando o valor muda.
+  var ESC = { b: null };
+  function escolha(b, opcoes, valor, mudou) {
+    b._opcoes = opcoes; b._valor = valor; b._mudou = mudou;
+    var atual = null; opcoes.forEach(function (o) { if (String(o.v) === String(valor)) atual = o; });
+    b.textContent = ""; b.appendChild(el("span", "", atual ? atual.t : "–"));
+    b.setAttribute("aria-expanded", String(ESC.b === b));
+    if (!b._ligada) { b._ligada = true; b.addEventListener("click", function () { if (ESC.b === b) fecharEscolha(true); else abrirEscolha(b); }); }
+  }
+  function abrirEscolha(b) {
+    fecharEscolha(false);
+    var lista = $("escLista"), focar = null;
+    lista.textContent = ""; ESC.b = b; b.setAttribute("aria-expanded", "true");
+    b._opcoes.forEach(function (o) {
+      var op = el("button", "op", o.t), sel = String(o.v) === String(b._valor);
+      op.type = "button"; op.setAttribute("role", "option"); op.setAttribute("aria-selected", String(sel));
+      if (sel) focar = op;
+      op.onclick = function () { var novo = String(o.v) !== String(b._valor); fecharEscolha(true); if (novo) b._mudou(o.v); };
+      lista.appendChild(op);
+    });
+    lista.hidden = false;
+    posicionarEscolha();
+    focar = focar || lista.firstChild;
+    if (focar) { try { focar.focus({ preventScroll: true }); } catch (e) { focar.focus(); } garantirVisivel(focar); }
+  }
+  function posicionarEscolha() {
+    var b = ESC.b, lista = $("escLista"); if (!b) return;
+    var r = b.getBoundingClientRect(), m = 8, larg = Math.min(innerWidth - 2 * m, Math.max(r.width, 224));
+    var baixo = innerHeight - r.bottom - m, cima = r.top - m, emCima = baixo < 180 && cima > baixo;
+    lista.style.left = Math.max(m, Math.min(r.left, innerWidth - m - larg)) + "px";
+    lista.style.width = larg + "px";
+    lista.style.maxHeight = Math.max(120, (emCima ? cima : baixo) - 4) + "px";
+    if (emCima) { lista.style.top = "auto"; lista.style.bottom = (innerHeight - r.top + 4) + "px"; } else { lista.style.bottom = "auto"; lista.style.top = (r.bottom + 4) + "px"; }
+  }
+  function fecharEscolha(focarBotao) {
+    var b = ESC.b; if (!b) return false;
+    ESC.b = null; $("escLista").hidden = true; $("escLista").textContent = ""; b.setAttribute("aria-expanded", "false");
+    if (focarBotao) { try { b.focus({ preventScroll: true }); } catch (e) { b.focus(); } }
+    return true;
+  }
+  document.addEventListener("pointerdown", function (e) { if (ESC.b && !$("escLista").contains(e.target) && !ESC.b.contains(e.target)) fecharEscolha(false); }, true);
+  document.addEventListener("scroll", function (e) { if (ESC.b && e.target !== $("escLista")) posicionarEscolha(); }, true);
+  addEventListener("resize", function () { if (ESC.b) posicionarEscolha(); });
+
   // ---- Controle (Gamepad API), teclado, toque e mouse ----
   // Foco visivel sempre que a navegacao e por controle/teclado (html.kb); toque/mouse tiram o anel (html.toque).
   // Setas e direcional andam pela grade por indice (a grade e virtual: o cartao de destino e desenhado antes de focar);
   // fora dela, o vizinho mais proximo na direcao. X/Enter = abrir; O/Esc/Backspace = voltar; L1/R1 = secao anterior/
   // proxima; triangulo = filtros; quadrado = busca. O navegador do PS5 tem cursor proprio: um clique "de verdade" que
   // chega logo depois do X do controle e o eco do cursor e e ignorado (como o controller.ts da Orbit).
+  var GP = { ativo: false, antes: [], prox: {}, cliqueEm: 0, alvo: null, clicou: false, navegando: false, rodaAte: 0, quadro: 0, porTeclas: false, cursorEm: 0, px: -1, py: -1, origem: "" };
   function modoKb() { root.classList.add("kb"); root.classList.remove("toque"); GP.navegando = true; }
-  // Navegador do PS5 (ideia do controller.ts da Orbit, reescrita): enquanto o controle "e dono" do foco (navegando e o
-  // cursor nao se mexeu), o clique nativo do cursor e o X: nunca o alvo debaixo do cursor. Ele e descartado quando a
-  // pagina ja tratou o X (eco que chega ate 600 ms depois, mesmo depois de soltar) e vira o X do item focado quando o
-  // navegador so entrega o X como clique do cursor. Mexer o cursor de verdade (ou tocar) devolve o controle ao ponteiro.
+  // Navegador do PS5 (ideia do controller.ts da Orbit, reescrita). O X chega como keydown 13 E como clique do cursor
+  // (no que esta debaixo dele). glibren.56 (bug do PS5 real: clicar num jogo "dava uma mexidinha e nao fazia nada"): o
+  // keydown 13 vinha antes, ligava o modo controle e ativava o foco (nenhum: mover para baixo = a "mexidinha"); o clique
+  // de verdade era descartado como eco. Agora quem manda e o ultimo que se mexeu:
+  //   - cursor (mexeu depois do ultimo direcional): o clique do cursor vale para o botao/cartao debaixo dele (e nao arma
+  //     o filtro de eco: o proximo clique do cursor passa); o keydown 13
+  //     so espera esse clique e, se ele nao vier em 250 ms, vale para o item focado;
+  //   - direcional (controle dono do foco): o X vale para o item focado e o clique do cursor que vem junto (ate 600 ms,
+  //     fora do item ou 2o clique nele) e eco descartado; um clique fora de qualquer botao vira o X do item focado.
+  // O cursor mexido e medido pela posicao (clientX/Y), nao so por movementX (que pode vir 0).
+  function dentroDe(a, t) { return Boolean(a && t && (a === t || (a.contains && a.contains(t)))); }
+  function acionavel(t) { while (t && t !== document.body && t !== document) { if (t.matches && t.matches(FOCAVEIS)) return t; t = t.parentNode; } return null; }
   function guardaCursor(e) {
-    if (!root.classList.contains("ps5") || !GP.navegando || !e.isTrusted) return;
+    if (!root.classList.contains("ps5") || !e.isTrusted) return;
     if (e.pointerType && e.pointerType !== "mouse") return;
-    e.preventDefault(); e.stopImmediatePropagation();
-    if (e.type !== "click") return;
     var agora = performance.now();
-    if (agora - GP.cliqueEm < 600) return; // eco do X que a pagina ja tratou
-    ativar(); GP.cliqueEm = agora;
+    if (agora - GP.cliqueEm < 600 && GP.alvo && !GP.doCursor && GP.cursorEm < GP.cliqueEm && (GP.clicou || !dentroDe(GP.alvo, e.target))) { e.preventDefault(); e.stopImmediatePropagation(); return; } // eco
+    if (GP.navegando && !acionavel(e.target)) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (e.type === "click") ativar();
+      return;
+    }
+    if (e.type === "click") { GP.navegando = false; GP.doCursor = true; GP.origem = "cursor"; GP.cliqueEm = agora; GP.alvo = acionavel(e.target) || e.target; GP.clicou = true; }
   }
   ["pointerdown", "mousedown", "mouseup", "click"].forEach(function (t) { addEventListener(t, guardaCursor, true); });
-  addEventListener("pointermove", function (e) { if (e.isTrusted && (Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0)) > 2) GP.navegando = false; }, true);
+  function cursorMexeu(e) {
+    if (!e.isTrusted) return;
+    var dx = Math.abs(e.clientX - GP.px), dy = Math.abs(e.clientY - GP.py);
+    GP.px = e.clientX; GP.py = e.clientY;
+    if (dx + dy > 2 || Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0) > 2) { GP.navegando = false; GP.cursorEm = performance.now(); }
+  }
+  addEventListener("pointermove", cursorMexeu, true);
+  addEventListener("mousemove", cursorMexeu, true);
   addEventListener("pointerdown", function () { root.classList.remove("kb"); root.classList.add("toque"); GP.navegando = false; }, true);
   // A roda que o navegador do PS5 gera do analogico direito chega junto com a rolagem que a pagina ja fez: descartada.
   addEventListener("wheel", function (e) { if (performance.now() < GP.rodaAte) e.preventDefault(); }, { capture: true, passive: false });
@@ -1088,7 +1254,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     return !$("ficha").hidden ? $("fCorpo") : secao === "downloads" ? $("dLista") : secao === "loja" ? grade : secao === "config" ? $("secConfig") : $("secBreve");
   }
   var FOCAVEIS = 'button:not([disabled]), a[href], input:not([type="hidden"]):not([hidden]), select';
-  function escopo() { if (!$("acesso").hidden) return $("acesso"); if (!$("ficha").hidden && getComputedStyle($("ficha")).position === "fixed") return $("ficha"); return document; }
+  function escopo() { if (ESC.b) return $("escLista"); if (!$("acesso").hidden) return $("acesso"); if (!$("ficha").hidden && getComputedStyle($("ficha")).position === "fixed") return $("ficha"); return document; }
   function visivel(c) {
     var r = c.getBoundingClientRect();
     if (!r.width || !r.height) return null;
@@ -1146,6 +1312,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     }
   }
   function voltar() {
+    if (ESC.b) { fecharEscolha(true); return true; }
     if (!$("acesso").hidden) { if (Auth.passo === "codigo" && !$("parForm").hidden) $("parNao").click(); else fecharJanela(); return true; }
     if (!$("ficha").hidden) { fecharFicha(false); return true; }
     if (!$("filtros").hidden) { $("bFiltros").click(); $("bFiltros").focus(); return true; }
@@ -1180,7 +1347,12 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       return;
     }
     if (ps5 && !campo && !sel) {
-      if (k === 13) { e.preventDefault(); modoKb(); if (performance.now() - GP.cliqueEm > 350) ativar(); return; } // X: um so, mesmo com a Gamepad API
+      if (k === 13) { // X: um so, mesmo com a Gamepad API e com o clique do cursor (ver guardaCursor)
+        e.preventDefault();
+        if (performance.now() - GP.cliqueEm <= 350 && GP.origem !== "tecla") return; // o mesmo aperto ja veio como clique ou pela Gamepad API
+        if (!GP.navegando && GP.cursorEm) { var t0 = performance.now(); setTimeout(function () { if (GP.cliqueEm < t0) { modoKb(); ativar(); GP.origem = "tecla"; } }, 250); return; }
+        modoKb(); ativar(); GP.origem = "tecla"; return;
+      }
       if (k === 112 && secao === "loja") { e.preventDefault(); modoKb(); $("bFiltros").click(); $("bFiltros").focus(); return; }
       if (k === 113 && secao === "loja") { e.preventDefault(); modoKb(); $("busca").focus(); return; }
       if (k === 116 || k === 117) { e.preventDefault(); modoKb(); trocarSecao(k === 116 ? -1 : 1); return; } // sem recarregar (F5)
@@ -1196,19 +1368,12 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     setTimeout(function () { if (location.hash === hashVisto && !(history.state && history.state.jobeGuarda)) { try { history.pushState({ jobeGuarda: 1 }, "", location.href); } catch (x) {} } }, 0);
   });
   function guardaHistorico() { if (root.classList.contains("ps5") && !(history.state && history.state.jobeGuarda)) { try { history.pushState({ jobeGuarda: 1 }, "", location.href); } catch (x) {} } }
-  // Eco do cursor: nos 350 ms depois do X, um clique "de verdade" (isTrusted) e descartado quando cai fora do elemento
-  // focado (o cursor estava em outro lugar) ou quando a pagina ja clicou nele (seria o 2o clique). So passa o clique
-  // nativo no proprio campo/select focado, que a pagina nao sabe abrir sozinha no navegador do PS5.
-  var GP = { ativo: false, antes: [], prox: {}, cliqueEm: 0, alvo: null, clicou: false, navegando: false, rodaAte: 0, quadro: 0, porTeclas: false };
-  document.addEventListener("click", function (e) {
-    if (!e.isTrusted || performance.now() - GP.cliqueEm >= 350 || !GP.alvo) return;
-    var dentro = GP.alvo === e.target || (GP.alvo.contains && GP.alvo.contains(e.target));
-    if (!dentro || GP.clicou) { e.preventDefault(); e.stopPropagation(); }
-  }, true);
+  // O eco do cursor depois do X e tratado na guardaCursor (antes havia aqui um 2o filtro de 350 ms, que descartava o
+  // proprio clique do cursor que a guardaCursor deixou passar).
   function ativar() {
     var a = document.activeElement;
     if (!a || a === document.body) { mover("baixo"); return; }
-    GP.cliqueEm = performance.now(); GP.alvo = a; GP.clicou = false;
+    GP.cliqueEm = performance.now(); GP.alvo = a; GP.clicou = false; GP.doCursor = false;
     if (a.tagName === "INPUT" && a.type !== "checkbox") { a.blur(); a.focus(); return; } // o PS5 abre o teclado dele
     if (a.tagName === "SELECT") { try { if (a.showPicker) { a.showPicker(); return; } } catch (e) {} a.focus(); return; }
     GP.clicou = true;
@@ -1237,7 +1402,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       // analogico direito: rola o painel (~0,9 px por ms no maximo, como a Orbit)
       var dt = GP.quadro ? Math.min(50, Math.max(0, t - GP.quadro)) : 16, vy = ax.length > 3 ? ax[3] : 0;
       if (Math.abs(vy) > 0.25) { var pn = painelAtual(); if (pn) { pn.scrollTop += vy * dt * 0.9; GP.rodaAte = t + 100; } }
-      if (apertou(0) && performance.now() - GP.cliqueEm > 350) { modoKb(); ativar(); }
+      if (apertou(0) && performance.now() - GP.cliqueEm > 350) { modoKb(); ativar(); GP.origem = "pad"; }
       if (apertou(1)) { modoKb(); voltar(); }
       if (apertou(4)) { modoKb(); trocarSecao(-1); }
       if (apertou(5)) { modoKb(); trocarSecao(1); }
@@ -1332,7 +1497,8 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       "documento (clientWidth x clientHeight): " + root.clientWidth + "x" + root.clientHeight + ", tela " + screen.width + "x" + screen.height + ", disponivel " + screen.availWidth + "x" + screen.availHeight + ", dpr " + (window.devicePixelRatio || 1),
       "fonte-base: " + getComputedStyle(root).fontSize + "; grade: " + (st.lista ? "lista" : (st.cols || "?") + " colunas") + ", " + Math.round(grade.clientWidth) + "x" + Math.round(grade.clientHeight) + " px",
       "tela cheia: " + (tela.suporte || (root.classList.contains("ps5") ? "sem gancho do payload (patch do ShellUI)" : "sem API")) + "; " + tela.resultado + "; agora " +
-        (emTelaCheia() || (root.classList.contains("ps5") && innerWidth >= 1900 && innerHeight >= 1060) ? "em tela cheia" : "com moldura")].join("\n");
+        (emTelaCheia() || (root.classList.contains("ps5") && innerWidth >= 1900 && innerHeight >= 1060) ? "em tela cheia" : "com moldura"),
+      textoCapas()].join("\n");
   }
   var telaT = 0;
   function anotarTela() {
@@ -1345,7 +1511,12 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   $("medidasEnviar").onclick = function () {
     Auth.com(function enviar() {
       $("medidasOut").textContent = L.medidasEnviando;
-      api("POST", "/api/teste/enviar", { texto: anotarTela() }).then(function (r) {
+      // .56: o que o proxy de capas do payload fez (GET /api/app/capas) vai junto, numa linha
+      api("GET", "/api/app/capas").then(function (c) {
+        var d = c.status === 200 && c.data ? c.data : null, texto = anotarTela();
+        if (d) texto += "\ncapas no payload: " + d.local + " do jogo instalado, " + d.cache + " do cache, " + d.rede + " baixadas, " + d.doh + " pelo DoH, " + (d.patches || 0) + " dos sites de patches, " + d.falhou + " sem nenhuma que abrisse, " + d.semCapa + " sem endereco ou recusadas de novo";
+        return api("POST", "/api/teste/enviar", { texto: texto });
+      }).then(function (r) {
         if (r.status === 401) { Auth.esquecer(); Auth.pedir(enviar); return; }
         if (r.status === 200) { $("medidasOut").textContent = fill(L.medidasEnviado, { f: r.data.folder || "-" }); return; }
         $("medidasOut").textContent = r.data.error === "no-key" ? L.medidasSemChave : r.status === 409 ? L.medidasOcupado : fill(L.medidasFalhou, { e: r.data.error || r.status });
@@ -1356,8 +1527,11 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   // ---- Para os testes e a medicao (tools/web-app/medir.mjs) ----
   window.jobeApp = { t0: T0, montadoMs: null, montagemMs: null,
     cartoes: function () { return espaco.querySelectorAll(".card").length; },
+    idDe: function (i) { var g = loja.items[i]; return g ? g.id : null; }, // glibren.56 (testes do PS5)
+    filtros: function () { return { sort: loja.sort, platform: loja.platform, format: loja.format, genre: loja.genre, size: loja.size }; },
     estado: function () { return { count: loja.count, total: loja.total, cols: V.cols, lista: V.lista, secao: secao, ficha: fx.id, linhas: nLinhas(), altura: espaco.offsetHeight }; },
-    focarCartao: focarCartao, tela: textoTela, L: L, idioma: IDIOMA };
+    focarCartao: focarCartao, tela: textoTela, L: L, idioma: IDIOMA,
+    capas: function () { return JSON.parse(JSON.stringify(capasMed)); } };
 
   desenharFiltros();
   if (!location.hash) { try { history.replaceState(null, "", "#/loja"); } catch (e) {} }

@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { createBackgroundDownloads, PAYLOAD_API } = await import('../app/state/background-downloads.js');
+const { createBackgroundDownloads, PAYLOAD_API, BG_EMBEDDED_VERSION } = await import('../app/state/background-downloads.js');
 
 const TOKEN = 'a'.repeat(64);
 const MiB = 1024 * 1024;
@@ -26,7 +26,7 @@ function fakePayload({ up = true, pid = 7 } = {}) {
       state.calls.push({ method, path, body: body ? JSON.parse(body) : undefined, token: headers['X-Jobe-Token'] });
       if (!state.up) throw new Error('Couldn\'t connect to server');
       if (headers['X-Jobe-Token'] !== TOKEN) return respond(401, { error: 'token' });
-      if (method === 'GET' && path === '/health') return respond(200, { ok: true, version: '1.0.0', ...state.api === null ? {} : { api: state.api ?? PAYLOAD_API }, running: state.running ?? 0, pid: state.pid });
+      if (method === 'GET' && path === '/health') return respond(200, { ok: true, version: state.version ?? BG_EMBEDDED_VERSION, ...state.api === null ? {} : { api: state.api ?? PAYLOAD_API }, running: state.running ?? 0, pid: state.pid });
       if (method === 'GET' && path === '/jobs') return respond(200, { jobs: state.jobs.map((job) => ({ ...job })) });
       if (method === 'POST' && path === '/secret') { state.secrets.push(JSON.parse(body)); return respond(200, { ok: true }); }
       if (method === 'POST' && path === '/config') { state.configs.push(JSON.parse(body)); return respond(200, { ok: true }); }
@@ -282,7 +282,7 @@ test('pagina do celular: a configuracao vai junto com o numero de downloads, e o
   const payload = fakePayload();
   payload.http.request = ((request) => async (url, options = {}) => {
     const answer = await request(url, options);
-    if (url.endsWith('/health') && answer.status === 200) return { ...answer, json: async () => ({ ok: true, version: '1.0.0', api: PAYLOAD_API, pid: payload.pid, ip: '192.168.0.20' }) };
+    if (url.endsWith('/health') && answer.status === 200) return { ...answer, json: async () => ({ ok: true, version: BG_EMBEDDED_VERSION, api: PAYLOAD_API, pid: payload.pid, ip: '192.168.0.20' }) };
     return answer;
   })(payload.http.request);
   const seen = [];
@@ -738,6 +738,41 @@ test('glibren.22: payload antigo baixando e trocado mesmo assim (ele grava onde 
   assert.ok(lines.some((line) => /payload 5 is an older one \(api 12\) and busy; it saves where it was/.test(line)), lines.join('\n'));
   await wrapper.startAtLaunch();
   assert.equal(payload.sent, 1, 'atual: nao manda de novo');
+});
+
+// glibren.56 (PS5 real): a .55 trouxe o payload 1.37.1 com a mesma api e o 1.37.0 ficou no ar.
+test('glibren.56: payload de VERSAO menor que a embutida (mesma api) e ocioso e trocado, uma vez; ocupado ou mais novo fica', async () => {
+  const payload = fakePayload({ pid: 5 });
+  Object.assign(payload, { version: '1.37.0' });
+  const payloads = { send: () => { payload.sent = (payload.sent || 0) + 1; Object.assign(payload, { pid: 9, version: '1.37.1' }); return { ok: true }; } };
+  const lines = [];
+  const wrapper = make(payload, fakeEngine(), { payloads, monitor: () => ({ monitor: true }), log: (line) => lines.push(line), embeddedVersion: '1.37.1' });
+  assert.equal(await wrapper.startAtLaunch(), TOKEN);
+  assert.equal(payload.sent, 1, 'o embutido foi uma vez');
+  assert.equal(payload.pid, 9);
+  assert.ok(lines.some((line) => /payload 5 is an older version \(1\.37\.0, this app brings 1\.37\.1\); sending/.test(line)), lines.join('\n'));
+  await wrapper.startAtLaunch();
+  assert.equal(payload.sent, 1, 'atual: nao manda de novo');
+  const ocupado = fakePayload({ pid: 6 });
+  Object.assign(ocupado, { version: '1.37.0', running: 1 });
+  const w2 = make(ocupado, fakeEngine(), { payloads: { send: () => { ocupado.sent = 1; return { ok: true }; } }, monitor: () => ({ monitor: true }), embeddedVersion: '1.37.1' });
+  assert.equal(await w2.startAtLaunch(), TOKEN);
+  assert.equal(ocupado.sent, undefined, 'baixando: fica para a proxima');
+  const novo = fakePayload({ pid: 7 });
+  Object.assign(novo, { version: '1.37.2' });
+  const w3 = make(novo, fakeEngine(), { payloads: { send: () => { novo.sent = 1; return { ok: true }; } }, monitor: () => ({ monitor: true }), embeddedVersion: '1.37.1' });
+  assert.equal(await w3.startAtLaunch(), TOKEN);
+  assert.equal(novo.sent, undefined, 'mais novo que o embutido (um baixado): fica');
+});
+
+test('glibren.56: o embutido nao assume a tempo: segue o antigo e nao manda de novo na mesma abertura', async () => {
+  const payload = fakePayload({ pid: 5 });
+  Object.assign(payload, { version: '1.37.0' });
+  const payloads = { send: () => { payload.sent = (payload.sent || 0) + 1; return { ok: true }; } };
+  const wrapper = make(payload, fakeEngine(), { payloads, monitor: () => ({ monitor: true }), embeddedVersion: '1.37.1' });
+  assert.equal(await wrapper.startAtLaunch(), TOKEN);
+  await wrapper.startAtLaunch();
+  assert.equal(payload.sent, 1);
 });
 
 test('glibren.13: o ELF novo nao sobe a tempo: o app segue com o antigo que ainda responde', async () => {
