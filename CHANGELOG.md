@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.64** (fork): covers in the glibren full-screen store (`/app`) on the PS5 go straight to the payload.
+  Download payload 1.37.8.
+  - Sony cover addresses were tried directly first; the console's DNS blocks Sony and the request could hang up to
+    8 s before falling back to the payload, so covers already in the phone's cover bank never showed if the list was
+    scrolled meanwhile, and vanished when scrolling back. On the PS5 they now come from the payload at once.
 - **glibren.63** (fork): covers no longer vanish when scrolling back in the glibren full-screen store (`/app`).
   Download payload 1.37.7.
   - The store's virtual list rebuilds rows that come back into view; each cover started over (Sony address first,

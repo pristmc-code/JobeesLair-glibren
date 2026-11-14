@@ -729,6 +729,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   // glibren.63: a lista virtual recria a linha que volta a tela; a capa ja vista vai direto pelo endereco que abriu
   // (capaBoa, sai do cache do navegador) e o pedido ao proxy que saiu da tela ou passou de PROXY_MAX ms solta a vaga
   // (antes as 2 vagas podiam ficar presas e as capas sumiam ao voltar ao topo).
+  var SONY_CAPA = /^https:\/\/(?:image\.api\.playstation\.com|[a-z0-9-]+\.playstation\.(?:com|net))\//i;
   var CAPA_DEMORA = 8000, CAPA_RUIM = 4, PROXY_JUNTOS = 6, PROXY_MAX = 15000, capaBoa = {};
   var capasMed = { ok: 0, erro: 0, demora: 0, proxyOk: 0, proxyErro: 0, pulou: 0, nome: 0, hosts: {} };
   function capaChave(u) {
@@ -774,7 +775,10 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   function carregarCapa(img) {
     var boa = capaBoa[img._u];
     if (boa) { img._proxy = boa !== img._u; img.src = boa; return; }
-    if (noPs5() && idCapa(img._g) && hostRuim(img._u)) { capasMed.pulou++; pedirProxy(img); return; }
+    // glibren.64: no PS5 o DNS do console bloqueia a Sony e o pedido direto pode ficar pendurado (sem erro) ate
+    // CAPA_DEMORA; quem rolava nesse meio tempo nunca via a capa, mesmo com ela no banco do payload. Capa da Sony vai
+    // direto ao proxy (banco, icon0, cache).
+    if (noPs5() && idCapa(img._g) && (SONY_CAPA.test(img._u) || hostRuim(img._u))) { capasMed.pulou++; pedirProxy(img); return; }
     img.src = img._u;
     if (noPs5()) img._t = setTimeout(function () { if (!img._fim && !img._proxy && img.isConnected) { capasMed.demora++; pedirProxy(img); } }, CAPA_DEMORA);
   }
