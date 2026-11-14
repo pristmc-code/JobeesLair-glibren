@@ -369,6 +369,25 @@ static void diag_add_path(DiagSet* s, const char* name, const char* path, const 
   int cut = 0;
   char* text = diag_tail(path, DIAG_TAIL, &size, &cut);
   if (!text) { diag_missing(s, name); return; }
+  // glibren.60: as linhas do jobeeslair.log so tem a hora (o motor JS do console nao monta datas): a data da ultima
+  // gravacao vai numa linha no comeco, para ler o diagnostico sem adivinhar o dia.
+  struct stat st;
+  if (!strncmp(name, "jobeeslair", 10) && !stat(path, &st)) {
+    char head[160], when[32] = "?";
+    struct tm tm;
+    const time_t mtime = st.st_mtime;
+    if (localtime_r(&mtime, &tm)) strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", &tm);
+    const int n = snprintf(head, sizeof head, "# %s: ultima gravacao em %s (relogio do console); as linhas abaixo so tem a hora\n", name, when);
+    char* joined = n > 0 ? malloc(size + (size_t)n + 1) : NULL;
+    if (joined) {
+      memcpy(joined, head, (size_t)n);
+      memcpy(joined + n, text, size);
+      joined[size + (size_t)n] = 0;
+      free(text);
+      text = joined;
+      size += (size_t)n;
+    }
+  }
   diag_put_file(s, name, text, size, cut, known);
 }
 

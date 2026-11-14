@@ -3216,6 +3216,27 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       }
       return result;
     }
+    function followRenamed(job2, game, log2) {
+      const target = typeof game?.path === "string" ? game.path : "";
+      if (!target || !Array.isArray(job2.payload)) return false;
+      const statOf = (path) => {
+        try {
+          return fs.stat(path);
+        } catch {
+          return null;
+        }
+      };
+      const now = statOf(target);
+      if (!now || job2.payload.some((entry) => entry.path === target)) return false;
+      const gone = job2.payload.filter((entry) => !statOf(entry.path));
+      const match = gone.length === 1 && gone[0].size === now.size ? gone[0] : null;
+      if (!match) return false;
+      log2(`${baseName(match.path)} was renamed to ${baseName(target)} (same size); following it`);
+      if (job2.artifact?.destination === match.path) job2.artifact.destination = target;
+      match.path = target;
+      save();
+      return true;
+    }
     async function markInstalled(candidates2) {
       let found = false;
       let learned = false;
@@ -3228,6 +3249,9 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         const log2 = (message) => console.log(`[download-queue] install check ${job2.id}: ${message}`);
         const { version: version3 } = await shadowMountInfo().catch(() => ({ version: "" }));
         log2(`ShadowMount ${version3 || "?"}: ${game.source_type || "game"} ${game.title_id} at ${game.path}, installed ${game.installed}, managed ${game.managed}, source available ${game.source_available ?? "not reported"}, runtime mounted ${game.mounted} (mounted only while it runs)`);
+        // glibren.60: renomeado pelo glibren (ou a mao): o arquivo checado sumiu, mas o ShadowMount registra o jogo num
+        // arquivo do mesmo tamanho: o job passa a apontar para ele (antes: "is gone" a cada checagem, 274x no log).
+        followRenamed(job2, game, log2);
         // Files that changed after their check (a drive swapped, a copy cut short) never count as installed.
         const changed = changedPayload(job2);
         if (changed) {

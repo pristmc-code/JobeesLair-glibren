@@ -625,8 +625,10 @@ import { memorySample } from './memory-meter.js';
     pace.hurry();
   }
   // One part: up to `budget` steps, noting each phase's time. -> true when the build is over.
+  var buildBegunAt = 0; // glibren.60: o relogio na primeira parte (o tempo de ponta a ponta, entre quadros)
   function runPart(steps, budget) {
     const begun = Date.now();
+    buildBegunAt || (buildBegunAt = begun);
     let over = false;
     for (let done = 0; done < budget; done++) {
       const at = Date.now();
@@ -695,7 +697,11 @@ import { memorySample } from './memory-meter.js';
   function built() {
     localBuilt = true;
     stats.frames = pace.slowest();
-    console.log(`[catalog] built: ${entries.length} games in ${stats.steps} part(s)${CATALOG_PACED ? `, the slowest frame ${pace.slowest()} ms` : ""}; work ${stats.total} ms, the longest part ${stats.longest} ms, the slowest step ${stats.slowest.ms} ms in ${stats.slowest.phase || "-"} (${Object.entries(stats.phases).map(([name, ms]) => `${name} ${ms}`).join(", ")})`);
+    // glibren.60: no console o relogio fica parado dentro de um quadro: partes e fases davam "0 ms" (parecia medida). Sem
+    // tempo medido, o log diz isso; e sempre vai o tempo de ponta a ponta (com as esperas entre os quadros).
+    const span = buildBegunAt ? Date.now() - buildBegunAt : 0;
+    const work = stats.total > 0 ? `work ${stats.total} ms, the longest part ${stats.longest} ms, the slowest step ${stats.slowest.ms} ms in ${stats.slowest.phase || "-"} (${Object.entries(stats.phases).map(([name, ms]) => `${name} ${ms}`).join(", ")})` : "work per part not measurable here (the clock stands still inside a frame)";
+    console.log(`[catalog] built: ${entries.length} games in ${stats.steps} part(s)${CATALOG_PACED ? `, the slowest frame ${pace.slowest()} ms` : ""}; ${work}; ${span} ms from the first part to the end`);
     const late = ready;
     remoteActive = false;
     if (!late) release(CATALOG_PACED);

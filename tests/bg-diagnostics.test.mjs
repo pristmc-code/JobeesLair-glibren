@@ -349,6 +349,8 @@ test('glibren.60: o envio tenta de novo (5xx, 409) e o app-info do POST /diag/ap
   assert.equal(sent.from, 'celular');
   assert.equal(sent.app?.jobe, '0.5.5-glibren.60', 'o app-info mandado ao abrir vai junto (antes: "app": null)');
   assert.match(readFileSync(path.join(p.base, 'state/bgdl.log'), 'utf8'), /diagnostico: .* tentativa 1 falhou \(HTTP 502\); tenta de novo/);
+  const appLog = gh.state.puts.filter((put) => put.url.endsWith('/jobeeslair.1.log')).at(-1).text;
+  assert.match(appLog, /^# jobeeslair\.1\.log: ultima gravacao em \d{4}-\d\d-\d\d \d\d:\d\d:\d\d /, 'o log do app leva a data');
   p.child.kill('SIGTERM');
 });
 

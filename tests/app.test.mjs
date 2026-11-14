@@ -530,6 +530,30 @@ test('a title at rest (runtime not mounted) counts as installed', async () => {
   assert.equal(job.error, '');
 });
 
+test('glibren.60: an image renamed by glibren (same size, where ShadowMount has the title) is followed, not "is gone"', async () => {
+  const state = { images: [], games: {} };
+  const { fs, queue, id } = await downloadedImage(state);
+  const renamed = '/data/homebrew/Game Name [PPSA01234].exfat';
+  fs.rename('/data/homebrew/Game.exfat', renamed);
+  state.games.PPSA01234 = atRest(renamed);
+  assert.equal(await queue.syncInstalls(id), true);
+  const job = queue.snapshot()[0];
+  assert.equal(job.state, 'installed', job.error);
+  assert.equal(job.error, '');
+});
+
+test('glibren.60: a gone image is not followed to a file of another size', async () => {
+  const state = { images: [], games: {} };
+  const { fs, queue, id } = await downloadedImage(state);
+  fs.remove('/data/homebrew/Game.exfat');
+  fs.writeFile('/data/homebrew/Other [PPSA01234].exfat', 'x');
+  state.games.PPSA01234 = atRest('/data/homebrew/Other [PPSA01234].exfat');
+  await queue.syncInstalls(id);
+  const job = queue.snapshot()[0];
+  assert.notEqual(job.state, 'installed');
+  assert.match(job.error, /Game\.exfat is gone/);
+});
+
 test('files ShadowMount cannot reach need attention, and a later check moves it on', async () => {
   const state = { images: [], games: {} };
   const { queue, id } = await downloadedImage(state);
