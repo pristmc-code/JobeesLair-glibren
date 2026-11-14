@@ -194,18 +194,16 @@ test('glibren.60 7z multinucleo: jogo em pasta (varios arquivos, pasta e arquivo
   // Dois jogos no .7z: nao da direto, o payload extrai em BACKUP/_temp e converte a pasta do primeiro. A imagem montada
   // pelo caminho multinucleo tem de ser igual, byte a byte, a montada com a extracao pela libarchive (BGDL_7Z_OFF=1).
   const monta = path.join(dir, `monta${++run}`);
-  const inner = path.join(monta, 'Jogo');
-  mkdirSync(path.join(inner, 'sce_sys'), { recursive: true });
-  mkdirSync(path.join(inner, 'data/vazia'), { recursive: true });
-  writeFileSync(path.join(inner, 'sce_sys/param.json'), '{"titleId":"PPSA01234","contentVersion":"01.000.000"}');
-  writeFileSync(path.join(inner, 'eboot.bin'), compressible(3 * 1024 * 1024, 11));
-  writeFileSync(path.join(inner, 'data/big.bin'), compressible(9 * 1024 * 1024, 12));
-  writeFileSync(path.join(inner, 'data/zero.bin'), '');
-  writeFileSync(path.join(inner, 'data/café 日本.bin'), 'unicode ok');
-  const inner2 = path.join(monta, 'Jogo2');
-  mkdirSync(path.join(inner2, 'sce_sys'), { recursive: true });
-  writeFileSync(path.join(inner2, 'sce_sys/param.json'), '{"titleId":"PPSA01235","contentVersion":"01.000.000"}');
-  writeFileSync(path.join(inner2, 'eboot.bin'), 'E');
+  for (const [folder, code, seed] of [['Jogo', 'PPSA01234', 11], ['Jogo2', 'PPSA01235', 21]]) { // dois jogos iguais por dentro
+    const inner = path.join(monta, folder);
+    mkdirSync(path.join(inner, 'sce_sys'), { recursive: true });
+    mkdirSync(path.join(inner, 'data/vazia'), { recursive: true });
+    writeFileSync(path.join(inner, 'sce_sys/param.json'), `{"titleId":"${code}","contentVersion":"01.000.000"}`);
+    writeFileSync(path.join(inner, 'eboot.bin'), compressible(3 * 1024 * 1024, seed));
+    writeFileSync(path.join(inner, 'data/big.bin'), compressible(9 * 1024 * 1024, seed + 1));
+    writeFileSync(path.join(inner, 'data/zero.bin'), '');
+    writeFileSync(path.join(inner, 'data/café 日本.bin'), 'unicode ok');
+  }
   const packed = path.join(monta, 'jogo.7z');
   const made = spawnSync(sevenZip, ['a', '-m0=lzma2', '-mx=1', '-mmt=4', packed, 'Jogo', 'Jogo2'], { cwd: monta, encoding: 'utf8' });
   assert.equal(made.status, 0, made.stderr);
@@ -238,8 +236,11 @@ test('glibren.60 7z multinucleo: jogo em pasta (varios arquivos, pasta e arquivo
   // A imagem em si muda (datas das pastas); os arquivos de dentro tem de ser os mesmos (root + exFAT no kernel).
   if (images[0] && images[1]) {
     const flat = (img) => Object.entries(img).map(([name, v]) => `${name}:${v.dir ? 'dir' : sha(v.bytes)}`).sort();
-    assert.deepEqual(flat(images[0]), flat(images[1]), 'os mesmos arquivos pelos dois caminhos');
-    assert.equal(images[0]['data/café 日本.bin'].bytes.toString(), 'unicode ok');
+    // A libarchive no locale "C" do payload perde o nome nao-ASCII do .7z (UTF-16 sem conversao); o caminho novo
+    // converte o UTF-16 para UTF-8 sozinho e mantem o arquivo. Fora ele, os mesmos arquivos byte a byte.
+    const ascii = (list) => list.filter((line) => !line.startsWith('data/café'));
+    assert.deepEqual(ascii(flat(images[0])), ascii(flat(images[1])), 'os mesmos arquivos pelos dois caminhos');
+    assert.equal(images[0]['data/café 日本.bin']?.bytes.toString(), 'unicode ok', Object.keys(images[0]).join(' | '));
     assert.equal(images[0]['data/zero.bin'].bytes.length, 0);
     assert.ok(images[0]['data/vazia']?.dir, 'a pasta vazia');
   }
