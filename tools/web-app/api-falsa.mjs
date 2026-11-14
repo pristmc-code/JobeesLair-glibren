@@ -62,7 +62,8 @@ const tamanhoDe = (g) => (g.sizeGb <= 10 ? 'small' : g.sizeGb <= 50 ? 'medium' :
 export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = true } = {}) {
   const lista = jogosFalsos(jogos);
   if (!capas) for (const g of lista) g.cover = '';
-  const contadores = { store: 0, capas: 0, fichas: 0, status: 0, add: 0 };
+  const contadores = { store: 0, capas: 0, fichas: 0, status: 0, add: 0, ultimoAdd: null };
+  const refFalsa = (id, i) => `ref${String(id).toLowerCase()}${i}`.padEnd(16, '0').slice(0, 16);
   const jobs = [
     { id: 'j1', name: lista[0].title, state: 'downloading', via: 'TorBox', format: 'exfat', platform: 'ps5', code: lista[0].code, written: 31.6 * 2 ** 30, total: 48.2 * 2 ** 30, bytesPerSecond: 38.5 * 2 ** 20 },
     { id: 'j2', name: lista[11].title, state: 'paused', host: '1fichier.com', format: 'rar', platform: 'ps5', code: lista[11].code, written: 4.2 * 2 ** 30, total: 97.4 * 2 ** 30, bytesPerSecond: 0 },
@@ -134,10 +135,12 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
       contadores.fichas++;
       const g = lista.find((x) => x.id === q.get('id'));
       if (!g) return json(res, 404, { error: 'not-found' });
+      // glibren.55: cada link com i, ref (conferida no add) e group; o 3o precisa do navegador do PS5.
       const links = [
         { kind: g.solo === false ? 'browser' : 'direct', host: HOSTS[g.rel % HOSTS.length], format: g.formats[0], size: Math.round(g.sizeGb * 2 ** 30), label: '', parts: 0, solo: g.solo !== false },
-        { kind: 'set', host: HOSTS[(g.rel + 1) % HOSTS.length], format: 'rar', size: Math.round(g.sizeGb * 2 ** 30), label: '', parts: 4, solo: false },
-      ];
+        { kind: 'set', group: 'direct', host: HOSTS[(g.rel + 1) % HOSTS.length], format: 'rar', size: Math.round(g.sizeGb * 2 ** 30), label: '', parts: 4, solo: false },
+        { kind: 'browser', host: 'VikingFile', format: 'rar', size: null, label: 'USA 5.xx Base - Vikingfile part 1', parts: 0, solo: false },
+      ].map((l, i) => ({ i, ref: refFalsa(g.id, i), group: l.group || l.kind, ...l }));
       const { rel, ...jogo } = g;
       return json(res, 200, { ok: true, game: { ...jogo, direct: g.solo !== false, features: [], providers: [] },
         details: { summary: `${g.title}: um resumo de exemplo da API falsa.`,
@@ -150,7 +153,10 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
       if (!sessaoOk(req)) return json(res, 401, { error: 'pin' });
       const g = lista.find((x) => x.id === body.id);
       if (!g) return json(res, 404, { error: 'not-found' });
+      contadores.ultimoAdd = body;
+      if (body.link !== undefined && (body.ref !== refFalsa(g.id, body.link) || body.link < 0 || body.link > 2)) return json(res, 400, { error: 'link' });
       if (g.queued) return json(res, 200, { ok: true, already: true, id: 'j9' });
+      if (body.link === 2) { g.queued = true; return json(res, 200, { ok: true, id: 'j9', via: 'app', appOpen: false, reason: 'needs-app', picked: 2, browser: true }); }
       g.queued = true;
       return json(res, 200, g.solo === false ? { ok: true, id: 'j9', via: 'app', appOpen: false, reason: 'needs-app' } : { ok: true, id: 'j9', via: 'payload' });
     }

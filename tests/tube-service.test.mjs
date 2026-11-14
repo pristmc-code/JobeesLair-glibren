@@ -110,7 +110,9 @@ test('playableChoices/defaultChoice: the HLS link of each choice, no AV1 nor DAS
   assert.equal(defaultChoice(list, 720), 2);
   // glibren-tube-quality: Settings > Videos can raise the default to 1440p or 4K (state/tube-settings.js tubeQuality).
   assert.equal(defaultChoice(list, 1440), 1, 'no playable 1440p here: still the 1080p');
-  assert.equal(defaultChoice(list, 2160), 0, '4K chosen: the 2160p VP9');
+  // glibren.55: automatic prefers H.264 (up to 1080p); 4K with VP9 chosen in R2 (tubeCodec).
+  assert.equal(defaultChoice(list, 2160), 1, '4K, automatic: still the 1080p H.264');
+  assert.equal(defaultChoice(list, 2160, 'vp9'), 0, '4K with VP9: the 2160p VP9');
   assert.equal(defaultChoice([{ height: 1440, hls: true }, { height: 1200, hls: true }]), 1, 'none up to 1080p: the smallest');
   assert.equal(defaultChoice([{ height: 1080, hls: false, label: 'a' }, { height: 1080, hls: true, label: 'b' }]), 1, 'HLS before a file at the same height');
   assert.equal(defaultChoice([]), -1);

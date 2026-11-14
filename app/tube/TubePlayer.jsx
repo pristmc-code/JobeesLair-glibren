@@ -3,14 +3,17 @@
 // tube-service.elf monta em 127.0.0.1 para a qualidade escolhida; sem cabecalhos (o token nao vai ao YouTube; /media
 // nao pede token).
 //   - Qualidade: a melhor ate 1080p (state/tube-service.js defaultChoice); R2 abre a lista; trocar reabre na mesma
-//     posicao (startTime).
+//     posicao (startTime). glibren.55: o formato fica guardado (tube-settings.js tubeCodec): a linha "Automatico"
+//     (prefere o H.264) ou o formato da qualidade escolhida (H.264/VP9) vale para os proximos videos; as de VP9 tem um
+//     aviso (pode engasgar; VP9 HDR vai pelo processador), e decodificado pelo processador o player avisa.
 //   - Legendas: a do idioma do app (WebVTT do servico, prop `subtitles`, faixa 1000); Triangulo liga/desliga (fica
 //     guardado, state/tube-settings.js); o texto e desenhado pelo app (onSubtitle).
 //   - SponsorBlock (Configuracoes > Videos, ligado por padrao): ao entrar num trecho, pula para o fim dele.
 //   - X pausa/continua; Esquerda/Direita ou L1/R1 voltam/avancam 10 s; Circulo fecha (com a lista de qualidades aberta,
 //     fecha so a lista).
-//   - Erro do player: resolve de novo com links novos (fresh) e reabre na posicao; de novo, tenta a qualidade abaixo;
-//     sem mais nenhuma, diz o erro. glibren.42 (A11): os links sao renovados de novo depois de um tempo tocando
+//   - Erro do player: resolve de novo com links novos (fresh) e reabre na posicao; de novo, tenta a qualidade abaixo
+//     do mesmo formato (glibren.55: tube-service.js fallbackChoice; antes ia para a proxima da lista, o VP9 da mesma
+//     altura, e o H.264 "voltava sozinho" para o VP9), avisando qual; sem mais nenhuma, diz o erro. glibren.42 (A11): os links sao renovados de novo depois de um tempo tocando
 //     (FRESH_AFTER_MS), ate FRESH_MAX vezes por video (antes, uma vez so: um video longo ou pausado por horas parava).
 //   - glibren.42: video que pede login (authentication_required) manda entrar em Configuracoes > Videos; conta vencida
 //     ou sem acesso dizem isso; o que abriu pela conta mostra "pela sua conta" na barra. glibren.44: com um servico
@@ -25,8 +28,8 @@ import { useEffect, useRef, useState } from 'react';
 import { getLocale } from '../i18n/core.js';
 import { useT } from '../i18n/index.js';
 import { useImmersive } from '../state/nav.jsx';
-import { clockText, defaultChoice, sponsorSkipTo, tubeService } from '../state/tube-service.js';
-import { setTubeSubtitles, tubeDownloadCap, tubeQuality, tubeSponsorBlock, useTubeSubtitles } from '../state/tube-settings.js';
+import { choiceNote, clockText, codecFamily, defaultChoice, fallbackChoice, sponsorSkipTo, tubeService } from '../state/tube-service.js';
+import { setTubeCodec, setTubeSubtitles, tubeCodec, tubeDownloadCap, tubeQuality, tubeSponsorBlock, useTubeCodec, useTubeSubtitles } from '../state/tube-settings.js';
 import { setVideoCap } from '../state/speed-limit.js';
 import { holdMedia } from '../state/activity.js';
 import { ButtonHints } from '../ui/ButtonHints.jsx';
@@ -103,11 +106,17 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     ] });
   }
 
-  function QualityRow({ choice, current, autoFocus, onPress }) {
-    return jsxs(View, { focusKey: `tube:quality:${choice.label}`, autoFocus, onPress, style: (state) => [{ position: "relative", flexDirection: "row", alignItems: "center", gap: 18, borderRadius: radius.sm, paddingHorizontal: 18, paddingVertical: 16 }, state.focused ? { backgroundColor: colors.surface2 } : null], children: [
+  // glibren.55: o aviso de cada qualidade (tube-service.js choiceNote) e a linha "Automatico".
+  var NOTE_TEXT = { vp9: "tube.noteVp9", vp9only: "tube.noteVp9Only", cpu: "tube.noteCpu" };
+  var ROW_TEXT_W = 500;
+  function QualityRow({ label, note, current, autoFocus, onPress, focusKey }) {
+    return jsxs(View, { focusKey, autoFocus, onPress, style: (state) => [{ position: "relative", flexDirection: "row", alignItems: "center", gap: 18, borderRadius: radius.sm, paddingHorizontal: 18, paddingVertical: 16 }, state.focused ? { backgroundColor: colors.surface2 } : null], children: [
       jsx(FocusRing, {}),
       jsx(Icon, { name: current ? "check" : "play", size: 18, color: current ? colors.accentHi : colors.muted }),
-      jsx(Text, { style: text(23, colors.fg, { fontWeight: current ? 700 : 500 }), children: choice.label })
+      jsxs(View, { style: { gap: 4 }, children: [
+        jsx(Text, { style: text(23, colors.fg, { fontWeight: current ? 700 : 500, width: ROW_TEXT_W }), children: label }),
+        note ? jsx(Text, { style: text(19, colors.warn ?? "#fbbf24", { width: ROW_TEXT_W }), children: note }) : null
+      ] })
     ] });
   }
 
@@ -138,13 +147,14 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
     const [paused, setPaused] = useState(false);
     const [position, setPosition] = useState(0);
     const [bar, setBar] = useState(true);
-    const [menu, setMenu] = useState(false);
+    const [menu, setMenu] = useState(() => Boolean(start?.menu));
     const [subtitle, setSubtitle] = useState("");
     const [notice, setNotice] = useState("");
     // glibren-tube-quality: quem decodifica o video aberto ("sceVideodec2" = o do PS5, "ffmpeg" = software), do onStatus.
     const [decoder, setDecoder] = useState("");
     const video = useRef(null);
-    const live = useRef({ position: 0, segments: [], skipUntil: 0, tries: 0, freshCount: 0, freshAt: 0, alive: true, abort: null, upgraded: false });
+    const live = useRef({ position: 0, segments: [], skipUntil: 0, tries: 0, freshCount: 0, freshAt: 0, alive: true, abort: null, upgraded: false, tried: /* @__PURE__ */ new Set(), cpuSaid: "" });
+    const codecPref = useTubeCodec();
     const barTimer = useRef(null);
     const noticeTimer = useRef(null);
     const showBar = () => {
@@ -174,9 +184,15 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         });
         if (!state.alive || signal.aborted) return;
         const same = keepLabel ? next.choices.findIndex((entry) => entry.label === keepLabel) : -1;
+        const picked = same >= 0 ? same : defaultChoice(next.choices, tubeQuality(), tubeCodec());
         setInfo(next);
-        setChoice(same >= 0 ? same : defaultChoice(next.choices, tubeQuality()));
+        setChoice(picked);
         setPhase("opening");
+        // glibren.55: o formato guardado que este video nao tem, ou o automatico sem H.264: diz o que vai tocar.
+        const pickedChoice = next.choices[picked];
+        const wanted = tubeCodec();
+        if (!keepLabel && pickedChoice && wanted !== "auto" && codecFamily(pickedChoice.codec) !== wanted) say(t2("tube.codecMissing", { codec: wanted === "vp9" ? "VP9" : "H.264", label: pickedChoice.label }));
+        else if (!keepLabel && pickedChoice && wanted === "auto" && choiceNote(next.choices, picked) === "vp9only") say(t2("tube.onlyVp9", { label: pickedChoice.label }));
       } catch (error) {
         if (!state.alive || signal.aborted) return;
         setProblem(String(error?.code ?? error?.message ?? String(error)));
@@ -218,15 +234,32 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
       setTubeSubtitles(!subsOn);
       say(t2(subsOn ? "tube.subtitlesOff" : "tube.subtitlesOn"));
     };
-    const chooseQuality = (index) => {
-      setMenu(false);
-      if (index === choice) return;
-      setStartAt(live.current.position);
-      live.current.tries = 0;
+    // glibren.55: uma escolha do jogador grava o formato (H.264/VP9; "auto" pela linha Automatico) e zera as tentativas
+    // (os erros de antes nao contam contra ela: a primeira falha dela ainda pede links novos).
+    const switchTo = (index) => {
+      const state = live.current;
+      state.tries = 0;
+      state.tried.clear();
+      state.freshCount = 0;
+      state.freshAt = 0;
+      state.cpuSaid = "";
+      if (index === choice || index < 0) return;
+      setStartAt(state.position);
       setDecoder("");
       setChoice(index);
       setPhase("opening");
       showBar();
+    };
+    const chooseQuality = (index) => {
+      setMenu(false);
+      const family = codecFamily(info?.choices[index]?.codec);
+      if (family === "h264" || family === "vp9") setTubeCodec(family);
+      switchTo(index);
+    };
+    const chooseAuto = () => {
+      setMenu(false);
+      setTubeCodec("auto");
+      if (info?.choices.length) switchTo(defaultChoice(info.choices, tubeQuality(), "auto"));
     };
     // O primeiro quadro: sai do "carregando" (o onLoad ou o primeiro onProgress, o que vier antes).
     const opened = () => setPhase((last) => last === "opening" ? "playing" : last);
@@ -260,11 +293,16 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         void load(true, info?.choices[choice]?.label ?? "");
         return;
       }
-      // 2) a qualidade abaixo (ou acima, quando esta era a ultima), uma vez cada.
+      // 2) glibren.55: a qualidade abaixo do mesmo formato, depois as outras (tube-service.js fallbackChoice), uma vez
+      // cada, dizendo qual; o formato guardado (tubeCodec) nao muda: o proximo video abre no escolhido.
       state.tries += 1;
-      const count = info?.choices.length ?? 0;
-      if (state.tries < count) {
-        setChoice((index) => index + 1 < count ? index + 1 : 0);
+      const list = info?.choices ?? [];
+      if (list[choice]) state.tried.add(list[choice].label);
+      const next = fallbackChoice(list, choice, state.tried);
+      if (next >= 0) {
+        say(t2("tube.fellBack", { label: list[next].label }));
+        setDecoder("");
+        setChoice(next);
         setPhase("opening");
         return;
       }
@@ -316,7 +354,13 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         onError,
         onSubtitle: setSubtitle,
         onStatus: (status) => {
-          if (status?.decoder) setDecoder(status.decoder);
+          if (!status?.decoder) return;
+          setDecoder(status.decoder);
+          // glibren.55: decodificado pelo processador (FFmpeg): avisa uma vez por qualidade aberta.
+          if (status.decoder === "ffmpeg" && live.current.cpuSaid !== current.label) {
+            live.current.cpuSaid = current.label;
+            say(t2("tube.cpuDecoding"));
+          }
         }
       }, current.url) : null,
       // A superficie que recebe o X (pausar) e mantem o foco no player.
@@ -342,7 +386,13 @@ import { FocusScope, Image, Text, Video, View, useControllerEvents } from '@ps5-
         ] }),
         jsx(ButtonHints, { hints: HINTS })
       ] }) : null,
-      menu && info ? jsx(SideSheet, { title: t2("tube.quality"), subtitle: title, onClose: () => setMenu(false), hints: QUALITY_HINTS, width: 620, children: jsx(View, { style: { gap: 4, padding: 9 }, children: info.choices.map((entry, index) => jsx(QualityRow, { choice: entry, current: index === choice, autoFocus: index === choice, onPress: () => chooseQuality(index) }, entry.label)) }) }) : null
+      menu && info ? jsx(SideSheet, { title: t2("tube.quality"), subtitle: title, onClose: () => setMenu(false), hints: QUALITY_HINTS, width: 620, children: jsxs(View, { style: { gap: 4, padding: 9 }, children: [
+        jsx(QualityRow, { focusKey: "tube:quality:auto", label: t2("tube.formatAuto"), note: "", current: codecPref === "auto", autoFocus: false, onPress: chooseAuto }, "auto"),
+        ...info.choices.map((entry, index) => {
+          const note = choiceNote(info.choices, index);
+          return jsx(QualityRow, { focusKey: `tube:quality:${entry.label}`, label: entry.label, note: note ? t2(NOTE_TEXT[note]) : "", current: index === choice, autoFocus: index === choice, onPress: () => chooseQuality(index) }, entry.label);
+        })
+      ] }) }) : null
     ] }) });
   }
 

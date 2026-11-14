@@ -48,15 +48,20 @@ export function pagina() {
 
 export const CELULAR = path.join(repo, 'app/native/bg_monitor.html');
 
-/** A pagina do celular com o texto do link para a /app ("link.botao" e "link.texto") refeito nos 14 idiomas. */
+/** A pagina do celular com o texto do link para a /app ("link.botao" e "link.texto") refeito nos 14 idiomas.
+ *  glibren.55: e os textos de "Recomecar do zero" ("recomecar.*"), em RECOMECAR. */
 export function paginaCelular() {
   const { textos } = montar();
   const link = {};
-  for (const [idioma, t] of Object.entries(textos)) if (t.link) link[idioma] = { botao: t.link.botao, texto: t.link.texto };
+  const recomecar = {};
+  for (const [idioma, t] of Object.entries(textos)) {
+    if (t.link) link[idioma] = { botao: t.link.botao, texto: t.link.texto };
+    if (t.recomecar) recomecar[idioma] = t.recomecar;
+  }
   const html = readFileSync(CELULAR, 'utf8');
   const a = html.indexOf('/*APPLINK-INICIO*/'), b = html.indexOf('/*APPLINK-FIM*/');
   if (a < 0 || b < a) throw new Error('bg_monitor.html sem /*APPLINK-INICIO*/ ... /*APPLINK-FIM*/');
-  return html.slice(0, a) + `/*APPLINK-INICIO*/\nvar APPLINK = ${JSON.stringify(link)};\n` + html.slice(b);
+  return html.slice(0, a) + `/*APPLINK-INICIO*/\nvar APPLINK = ${JSON.stringify(link)};\nvar RECOMECAR = ${JSON.stringify(recomecar)};\n` + html.slice(b);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

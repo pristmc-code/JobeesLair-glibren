@@ -109,7 +109,8 @@ import { formatFromName } from './link-formats.js';
     }
     if (!game) throw new Error("This game is not in the store on this console. Open it in Jobee'sLair.");
     const source = Number.isInteger(request.source) && request.source >= 0 ? request.source : null;
-    const options = request.autoStarted && source !== null ? { root: libraryRoot(roots) } : {};
+    // glibren.55: uma fonte escolhida na /app (marcador com `source`) vai pelo TorBox quando ele aceita (preferDebrid).
+    const options = request.autoStarted && source !== null ? { root: libraryRoot(roots) } : source !== null ? { preferDebrid: true } : {};
     return start(game, source, options).id;
   }
 

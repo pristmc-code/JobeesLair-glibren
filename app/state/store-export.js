@@ -149,6 +149,8 @@ import { createFramePace } from './frame-pace.js';
       }
       return {
         kind: release.parts ? "set" : kind,
+        // glibren.55: o grupo tambem num conjunto de partes (a /app avisa quando precisa do navegador do PS5)
+        group: kind,
         host: text(host || release.provider, 60),
         format: text(release.format, 16),
         size: Number.isSafeInteger(release.sizeBytes) ? release.sizeBytes : null,

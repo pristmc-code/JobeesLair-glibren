@@ -13,7 +13,7 @@ import '../assets/JetBrainsMono-Regular.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { memo, useEffect, useState } from 'react';
 import { SpeedChart } from './SpeedChart.jsx';
-import { STALE_PARTIAL, busyServer, cause, explainError, finalError } from './errors.js';
+import { RESTART_FROM_ZERO, busyServer, cause, explainError, finalError } from './errors.js';
 import { formatSpeed, formatTimeLeft } from './format.js';
 import { WAITING, clearAction, formatOf, partOf, shownState, stateLabel } from './labels.js';
 import { fractionOf, shapeOf, useProgress } from './useQueue.js';
@@ -104,7 +104,10 @@ import { t as t2Static } from '../i18n/core.js';
     // glibren.16: a conversion to .exfat under way stops here (the download stays, with "Convert again" and "Use without
     // converting"; the original stays in BACKUP). The X beside it still cancels the whole download.
     if (state === "converting") return { icon: "x", label: "downloads.action.cancelConvert", onPress: () => run("cancelConversion") };
-    if (["paused", "failed"].includes(state) && STALE_PARTIAL.test(cause(error2))) return { icon: "download", label: "downloads.action.restart", onPress: () => run("restart") };
+    // glibren.55: "Restart from zero" (it was "Restart", only for a stale checkpoint) also when the server's file changed or
+    // the whole file came with another SHA-256: Retry would meet the same error. It deletes what was downloaded, so the
+    // first press arms it (ArmedPrimary) and the second restarts.
+    if (["paused", "failed"].includes(state) && RESTART_FROM_ZERO.test(cause(error2))) return { icon: "download", label: "download.restart.label", armedLabel: "downloads.action.restartConfirm", onPress: () => run("restart") };
     if (state === "paused") return { icon: "play", label: "downloads.action.resume", onPress: () => run("resume") };
     // 0.5.4: a refusal Retry would only meet again (an archive the console can't unpack): the game page,
     // whose button then opens the list of sources.
@@ -152,6 +155,38 @@ import { t as t2Static } from '../i18n/core.js';
         }
         setArmed(!armed);
         if (armed) run(action);
+      }
+    });
+  }
+  // glibren.55: a main action that deletes something (Restart from zero): the first press arms it, its label asking for a
+  // second press (three seconds, as the cancel X); the second press runs it. Leaving the button disarms it.
+  function ArmedPrimary({ main, autoFocus, focusKey, focus }) {
+    const t2 = useT();
+    const [armed, setArmed] = (0, useState)(false);
+    (0, useEffect)(() => {
+      if (!armed) return void 0;
+      const timer = setTimeout(() => setArmed(false), ARM_MS);
+      return () => clearTimeout(timer);
+    }, [armed]);
+    return jsx(Button2, {
+      variant: "primary",
+      icon: armed ? "delete" : main.icon,
+      label: t2(armed ? main.armedLabel : main.label),
+      style: { minWidth: 230 },
+      autoFocus,
+      focusKey,
+      onFocus: focus.onFocus,
+      onBlur: () => {
+        setArmed(false);
+        focus.onBlur();
+      },
+      onPress: () => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        main.onPress();
       }
     });
   }
@@ -297,10 +332,10 @@ import { t as t2Static } from '../i18n/core.js';
         /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, children: [
           /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", gap: 12 }, children: [
             // 0.5.4: at least 230 wide, wider for a longer label ("Choose another source"), never cut.
-            main ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", icon: main.icon, label: t2(main.label), style: { minWidth: 230 }, autoFocus, focusKey: primaryKey(job2.id), ...focusOf("main"), onPress: main.onPress }) : null,
+            main?.armedLabel ? jsx(ArmedPrimary, { main, autoFocus, focusKey: primaryKey(job2.id), focus: focusOf("main") }) : main ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "primary", icon: main.icon, label: t2(main.label), style: { minWidth: 230 }, autoFocus, focusKey: primaryKey(job2.id), ...focusOf("main"), onPress: main.onPress }) : null,
             /* @__PURE__ */ (0, jsx)(Button2, { variant: main ? "secondary" : "primary", icon: "chevronRight", label: t2("downloads.action.gamePage"), style: { width: 210 }, autoFocus: main ? false : autoFocus, focusKey: main ? `downloads-page:${job2.id}` : primaryKey(job2.id), ...focusOf("page"), onPress: openGame }),
             // glibren.12: the game as it came (folder published, archive extracted or package installed), original kept.
-            state === "failed" && job2.convert ? jsx(Button2, { variant: "secondary", icon: "folder", label: t2("downloads.action.useWithoutConverting"), focusKey: `downloads-plain:${job2.id}`, ...focusOf("plain"), onPress: () => run(job2, "skipConversion") }) : null,
+            state === "failed" && job2.convert ? jsx(Button2, { variant: "secondary", icon: "folder", label: t2(job2.convert.kind === "archive" ? "downloads.action.extractWithoutConverting" : "downloads.action.useWithoutConverting"), focusKey: `downloads-plain:${job2.id}`, ...focusOf("plain"), onPress: () => run(job2, "skipConversion") }) : null,
             background ? /* @__PURE__ */ (0, jsx)(Button2, { variant: "secondary", size: "icon", icon: "download", focusKey: `downloads-takeover:${job2.id}`, ...focusOf("takeover"), onPress: () => void takeOverDownload(job2.downloadDestination) }) : null,
             /* @__PURE__ */ (0, jsx)(CancelButton, { id: job2.id, action: clearAction(state), run: (name) => run(job2, name), ...focusOf("cancel") })
           ] }),

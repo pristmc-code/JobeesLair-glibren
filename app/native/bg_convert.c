@@ -1620,6 +1620,28 @@ static int auto_find_game(const char* dir, int depth, char* game, size_t cap, ch
   closedir(d);
   return found;
 }
+// glibren.55: a maior imagem pronta (.exfat ou .ffpfs) do que foi extraido, ate 4 niveis: 1 achou.
+static int auto_find_image(const char* dir, int depth, char* image, size_t cap, uint64_t* best) {
+  if (depth > 4) return 0;
+  DIR* d = opendir(dir);
+  if (!d) return 0;
+  int found = 0;
+  for (struct dirent* it; (it = readdir(d));) {
+    if (it->d_name[0] == '.') continue;
+    char path[1200];
+    struct stat st;
+    snprintf(path, sizeof path, "%s/%s", dir, it->d_name);
+    if (lstat(path, &st)) continue;
+    if (S_ISDIR(st.st_mode)) found |= auto_find_image(path, depth + 1, image, cap, best);
+    else if (S_ISREG(st.st_mode) && (arc_ends(it->d_name, ".exfat") || arc_ends(it->d_name, ".ffpfs")) && (uint64_t)st.st_size > *best) {
+      *best = (uint64_t)st.st_size;
+      copy_text(image, cap, path);
+      found = 1;
+    }
+  }
+  closedir(d);
+  return found;
+}
 // Extrai o compactado de `c` em `work` (libarchive, sem sair da pasta: nada de "..", caminho absoluto ou link perigoso).
 static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) {
   struct archive* a = arc_open(c, err, cap);
@@ -1628,7 +1650,11 @@ static int auto_extract(const Conv* c, const char* work, char* err, size_t cap) 
   if (!out) { archive_read_free(a); snprintf(err, cap, "out of memory"); return 0; }
   // O caminho ja vem limpo (arc_clean_path) e absoluto dentro de work. SECURE_NOABSOLUTEPATHS nao entra porque o
   // proprio caminho de destino e absoluto (work/...); a defesa contra links e o filtro de tipo abaixo (R2-2).
-  archive_write_disk_set_options(out, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_SECURE_NODOTDOT | ARCHIVE_EXTRACT_SECURE_SYMLINKS);
+  // glibren.55: SECURE_SYMLINKS saiu. Ele faz lstat de cada pedaco do caminho desde a raiz ("/mnt", "/mnt/ext0", ...), e
+  // no PS5 real isso falhava num disco USB: "write: Could not stat /mnt/ext0/BACKUP/_temp/c21/PPSA02572.exfat" (Alan
+  // Wake 2, .exfat dentro de .7z, 13/11/2026). Nenhum link simbolico entra em work: o filtro abaixo pula todos, os
+  // hardlinks so apontam para arquivos que esta extracao gravou, e work e criada vazia agora (conv_extract_in_place).
+  archive_write_disk_set_options(out, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_SECURE_NODOTDOT);
   struct archive_entry* e;
   int rc = 1, r;
   char* block = malloc(ARC_BLOCK);
@@ -1759,6 +1785,40 @@ static void conv_extract_in_place(Conv* c) {
       if (moved) logk_("conversao %s: .pkg de PS4 extraido para %s (instalar pela Jobee'sLair)", c->id, to);
       snprintf(message, sizeof message, "not-a-game: a PS4 package, %s %.500s (install it in Jobee'sLair)", moved ? "moved to" : "could not be moved to", ps4);
       conv_fail_extract(c, work, message);
+      return;
+    }
+    // glibren.55: uma imagem pronta (.exfat/.ffpfs dentro do compactado, como o Alan Wake 2 em .exfat.7z): nada a
+    // converter, so publicar no destino (homebrew/<codigo>.<ext>) como a conversao faria.
+    char image[1200] = "";
+    uint64_t image_bytes = 0;
+    if (!pkg[0] && auto_find_image(work, 0, image, sizeof image, &image_bytes)) {
+      char output[sizeof c->output], parent[sizeof c->output];
+      copy_text(output, sizeof output, c->output);
+      const char* ext = arc_ends(image, ".ffpfs") ? ".ffpfs" : ".exfat";
+      char* dot = strrchr(output, '.');
+      if (dot && strchr(dot, '/') == NULL && (size_t)(dot - output) + strlen(ext) < sizeof output) strcpy(dot, ext);
+      copy_text(parent, sizeof parent, output);
+      char* slash = strrchr(parent, '/');
+      if (slash) { *slash = 0; mkdir_p(parent); }
+      struct stat st;
+      if (!lstat(output, &st) || rename(image, output)) {
+        snprintf(message, sizeof message, "write: the image was not moved to %.500s (%s)", output, errno ? strerror(errno) : "exists");
+        conv_fail_extract(c, work, message);
+        return;
+      }
+      sync_parent(output);
+      conv_remove_tree(work, 0);
+      pthread_mutex_lock(&g_conv_lock);
+      copy_text(c->output, sizeof c->output, output);
+      c->image_bytes = image_bytes;
+      c->written = c->total = image_bytes;
+      pthread_mutex_unlock(&g_conv_lock);
+      logk_("conversao %s: imagem pronta dentro do compactado, publicada em %s (%llu bytes)", c->id, output, (unsigned long long)image_bytes);
+      conv_finish(c, "done", "");
+      snprintf(message, sizeof message, "%s: pronto (%s)", c->name, ext + 1);
+      notify(message);
+      conv_ask_scan(c);
+      conv_mark(c, "fim: imagem extraida e publicada");
       return;
     }
     if (!pkg[0]) {

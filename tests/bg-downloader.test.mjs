@@ -8,7 +8,7 @@ import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, openSync, ftruncateSync, closeSync, readSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, openSync, ftruncateSync, closeSync, readSync, utimesSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
@@ -57,7 +57,7 @@ const files = { 'a.bin': randomBytes(40 * MiB), 'b.bin': randomBytes(2 * MiB) };
 const BIG = 4 * 1024 ** 3 + 40 * MiB;
 const block = randomBytes(MiB);
 const bigSlice = (start, end) => { const out = Buffer.alloc(end - start); for (let p = start; p < end;) { const off = p % MiB, n = Math.min(MiB - off, end - p); block.copy(out, p - start, off, off + n); p += n; } return out; };
-const srv = { rate: 0, tokens: new Set(), served: {}, requestdl: 0 };
+const srv = { rate: 0, tokens: new Set(), served: {}, requestdl: 0, etagPerToken: false, etagSalt: '', busy: 0, busyFile: '', hits: [] };
 let port, api;
 if (!skip) {
   port = await freePort();
@@ -112,9 +112,19 @@ if (!skip) {
     if (parts[0] === 't' && !srv.tokens.has(parts[1])) { res.writeHead(403); return res.end('expired'); }
     const size = name === 'big.bin' ? BIG : files[name]?.length;
     if (size === undefined) { res.writeHead(404); return res.end(); }
-    const etag = `"e-${name}-${size}"`;
+    // glibren.55: `etagPerToken`: cada link do TorBox (/t/<token>/) com o seu ETag, como os nos da CDN do TorBox de
+    // verdade para o MESMO arquivo; `etagSalt`: o arquivo de um link direto (/f/) "mudou" no servidor.
+    const etag = srv.etagPerToken && parts[0] === 't' ? `"e-${parts[1]}-${name}"` : `"e-${name}-${size}${parts[0] === 'f' && srv.etagSalt ? srv.etagSalt : ''}"`;
     let start = 0, end = size - 1, partial = false;
     const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
+    // glibren.55: `busy`: as proximas N faixas (nao a sonda de 1 byte) levam 429 com Retry-After: 1; `hits` anota a
+    // hora (performance.now) de cada pedido de faixa e se levou 429.
+    if (srv.busyFile === name && range && range[2] && Number(range[2]) > Number(range[1])) {
+      const busy = srv.busy > 0;
+      if (busy) srv.busy--;
+      srv.hits.push({ at: performance.now(), busy });
+      if (busy) { res.writeHead(429, { 'Retry-After': '1', 'Content-Type': 'text/plain' }); return res.end('slow down'); }
+    }
     if (range && (!req.headers['if-range'] || req.headers['if-range'] === etag)) { start = Number(range[1]); end = Math.min(range[2] ? Number(range[2]) : size - 1, size - 1); partial = true; }
     res.writeHead(partial ? 206 : 200, { 'Content-Type': 'application/octet-stream', 'Content-Length': end - start + 1, ETag: etag, ...(partial ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}) });
     for (let p = start; p <= end && !res.destroyed;) {
@@ -2198,6 +2208,191 @@ test('glibren.43: POST /switch espera o foco sair do app antigo (kern.msgbuf); s
     await launchedAfter(5);
     assert.deepEqual(launches(), ['PPSA99991', 'PPSA99991', 'PPSA99991', 'PPSA99991', 'PPSA99991']);
   } finally {
+    await stop(child);
+  }
+});
+
+
+// ---- glibren.55: parcial orfa, ETag do TorBox, 429 e "Recomecar do zero" ----------------------------------------------
+
+// Um checkpoint .resume no formato do motor (P5RDL001, 96 bytes de cabecalho + o mapa das faixas), com uma identidade
+// que nao e a deste job: a parcial de outro download (outro job, o disco voltou com outro numero, outro link).
+function foreignCheckpoint(total, rangeBytes, done) {
+  const count = Math.ceil(total / rangeBytes);
+  const out = Buffer.alloc(96 + count);
+  out.write('P5RDL001', 0, 'latin1');
+  out.writeBigUInt64LE(BigInt(total), 8);
+  out.writeBigUInt64LE(BigInt(rangeBytes), 16);
+  out.writeUInt32LE(count, 24);
+  out.write('f'.repeat(64), 28, 'latin1');
+  for (const i of done) out[96 + i] = 1;
+  return out;
+}
+const aged = (file) => { const old = new Date(Date.now() - 120000); utimesSync(file, old, old); };
+
+test('glibren.55: parcial orfa de outro job no mesmo destino: adotada quando e o mesmo arquivo; recomecada do zero quando nao confere ou sem checkpoint (nunca trava)', { skip }, async () => {
+  const base = workspace();
+  const child = start(base);
+  try {
+    await up(base);
+    const data = files['a.bin'];
+    const root = path.join(base, 'disk');
+    // 1) mesmo arquivo: a primeira faixa (16 MiB) pronta num checkpoint de outra identidade e com faixas de outro
+    //    tamanho que as do job (8 MiB): adotada, segue com as do checkpoint e so baixa o resto.
+    const adopt = path.join(root, 'downloads/adopt.bin');
+    writeFileSync(`${adopt}.part`, data.subarray(0, 16 * MiB));
+    writeFileSync(`${adopt}.resume`, foreignCheckpoint(data.length, 16 * MiB, [0]));
+    const before = srv.served['a.bin'] || 0;
+    const first = (await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: adopt, storageRoot: root, rangeBytes: 8 * MiB, connections: 2, sha256: sha(data) })).data;
+    let job = await until(base, first.id, ['completed', 'failed', 'paused']);
+    assert.equal(job.state, 'completed', job.error);
+    assert.equal(sha(readFileSync(adopt)), sha(data));
+    assert.equal(job.rangeBytes, 16 * MiB, 'as faixas do checkpoint adotado');
+    const fetched = srv.served['a.bin'] - before;
+    assert.ok(fetched >= data.length - 16 * MiB && fetched < data.length - 16 * MiB + 2 * MiB, `so o que faltava (+ a sonda e a amostra de 64 KiB): ${fetched}`);
+    assert.match(job.notice, /adopted the partial/);
+    let log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+    assert.match(log, new RegExp(`job ${first.id}: parcial de outro download adotada`));
+    // 2) o checkpoint diz pronta, mas os bytes sao outros (outro arquivo no mesmo nome): recomeca do zero sozinho.
+    const other = path.join(root, 'downloads/other.bin');
+    writeFileSync(`${other}.part`, randomBytes(16 * MiB));
+    writeFileSync(`${other}.resume`, foreignCheckpoint(data.length, 16 * MiB, [0]));
+    aged(`${other}.part`);
+    const second = (await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: other, storageRoot: root, rangeBytes: 16 * MiB, connections: 2, sha256: sha(data) })).data;
+    job = await until(base, second.id, ['completed', 'failed', 'paused']);
+    assert.equal(job.state, 'completed', job.error);
+    assert.equal(sha(readFileSync(other)), sha(data));
+    assert.match(job.notice, /orphan partial file was deleted/);
+    // 3) .part sem checkpoint nenhum (o b135 no PS5): recomeca do zero sozinho, com o aviso no diario.
+    const bare = path.join(root, 'downloads/bare.bin');
+    writeFileSync(`${bare}.part`, randomBytes(3 * MiB));
+    aged(`${bare}.part`);
+    const third = (await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: bare, storageRoot: root, rangeBytes: 16 * MiB, connections: 2, sha256: sha(data) })).data;
+    job = await until(base, third.id, ['completed', 'failed', 'paused']);
+    assert.equal(job.state, 'completed', job.error);
+    assert.equal(sha(readFileSync(bare)), sha(data));
+    log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+    assert.match(log, new RegExp(`job ${second.id}: parcial orfa apagada \\(o fim da ultima faixa nao confere`));
+    assert.match(log, new RegExp(`job ${third.id}: parcial orfa apagada \\(sem checkpoint deste arquivo`));
+    assert.doesNotMatch(log, /no matching durable checkpoint/);
+    // 4) uma .part mexida agora (outro download escrevendo nela) nao e apagada: o job espera e tenta de novo.
+    const live = path.join(root, 'downloads/live.bin');
+    writeFileSync(`${live}.part`, randomBytes(MiB));
+    const fourth = (await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: live, storageRoot: root, rangeBytes: 16 * MiB, connections: 2 })).data;
+    job = await until(base, fourth.id, ['queued'], (item) => /still writing this partial/.test(item.error));
+    assert.equal(statSync(`${live}.part`).size, MiB, 'a parcial de quem escreve fica');
+  } finally {
+    await stop(child);
+  }
+});
+
+test('glibren.55: link do TorBox renovado vai a outro no (outro ETag, mesmo tamanho): retoma a mesma parcial', { skip }, async () => {
+  const base = workspace();
+  writeFileSync(path.join(base, 'debrid.json'), JSON.stringify({ torbox: { key: KEY } }));
+  srv.tokens.add('node1');
+  srv.etagPerToken = true;
+  srv.rate = 3 * MiB;
+  const child = start(base, { BGDL_KEYFILE: path.join(base, 'debrid.json') });
+  try {
+    await up(base);
+    const dest = path.join(base, 'disk/downloads/tb-etag.bin');
+    const before = srv.served['a.bin'] || 0;
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/t/node1/a.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 16 * MiB, connections: 2, sha256: sha(files['a.bin']), source: { provider: 'torbox', kind: 'webdl', id: 2283576, fileId: 'a' } });
+    await until(base, data.id, ['downloading'], (job) => job.written > 18 * MiB);
+    srv.tokens.clear(); // o link vence: 403, requestdl, link novo (outro token = outro ETag)
+    srv.rate = 0;
+    const job = await until(base, data.id, ['completed', 'failed', 'needs-app']);
+    assert.equal(job.state, 'completed', job.error);
+    assert.ok(job.renewals >= 1);
+    assert.equal(sha(readFileSync(dest)), sha(files['a.bin']));
+    assert.ok(srv.served['a.bin'] - before < files['a.bin'].length + 2 * 16 * MiB, 'a parcial foi aproveitada');
+    assert.doesNotMatch(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /changed the resource/);
+  } finally {
+    srv.etagPerToken = false;
+    srv.rate = 0;
+    await stop(child);
+  }
+});
+
+test('glibren.55: link direto comum com outro ETag no meio continua falhando; "Recomecar do zero" (API local e celular) apaga a parcial e baixa do byte 0', { skip }, async () => {
+  monitorPort = await freePort();
+  const base = workspace();
+  srv.rate = 2 * MiB;
+  const child = start(base, { BGDL_MONITOR_PORT: String(monitorPort) });
+  try {
+    await up(base);
+    await pageUp();
+    assert.equal((await call(base, 'POST', '/config', pinConfig())).status, 200);
+    const session = (await page('/api/unlock', { method: 'POST', body: { pin: PIN } })).data.session;
+    const dest = path.join(base, 'disk/downloads/direct.bin');
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 8 * MiB, connections: 2, sha256: sha(files['a.bin']) });
+    await until(base, data.id, ['downloading'], (job) => job.written > 9 * MiB);
+    srv.etagSalt = '-v2'; // o arquivo mudou no servidor
+    let job = await until(base, data.id, ['completed', 'failed']);
+    assert.equal(job.state, 'failed');
+    assert.match(job.error, /server changed the resource/);
+    assert.ok(existsSync(`${dest}.part`), 'a parcial fica ate o jogador escolher');
+    // A pagina oferece "Recomecar do zero" (Retomar so repetiria o erro).
+    const shown = (await page('/api/status')).data.jobs.find((item) => item.id === data.id);
+    assert.equal(shown.canRestart, true);
+    assert.equal(shown.restartAdvised, true);
+    // Sem sessao, nada muda; com ela, recomeca. Um job baixando nao recomeca (409).
+    assert.equal((await page(`/api/jobs/${data.id}/restart`, { method: 'POST' })).status, 401);
+    srv.rate = 2 * MiB;
+    const served = srv.served['a.bin'] || 0;
+    assert.equal((await page(`/api/jobs/${data.id}/restart`, { method: 'POST', session })).status, 200);
+    job = await until(base, data.id, ['downloading'], (item) => item.written > 0);
+    assert.equal(job.by, 'remote');
+    assert.match(job.notice, /restarted from zero/);
+    assert.equal((await page(`/api/jobs/${data.id}/restart`, { method: 'POST', session })).status, 409, 'baixando nao recomeca');
+    assert.equal((await call(base, 'POST', `/jobs/${data.id}/restart`)).status, 409);
+    srv.rate = 0;
+    job = await until(base, data.id, ['completed', 'failed']);
+    assert.equal(job.state, 'completed', job.error);
+    assert.equal(sha(readFileSync(dest)), sha(files['a.bin']));
+    assert.ok(srv.served['a.bin'] - served >= files['a.bin'].length, 'baixado de novo do byte 0');
+    // A API local do app tambem recomeca (um que falhou de novo): apaga .part e .resume na hora.
+    const again = path.join(base, 'disk/downloads/direct2.bin');
+    const second = (await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: again, storageRoot: path.join(base, 'disk'), rangeBytes: 8 * MiB, connections: 2, sha256: '0'.repeat(64) })).data;
+    job = await until(base, second.id, ['completed', 'failed']);
+    assert.equal(job.state, 'failed');
+    const restarted = await call(base, 'POST', `/jobs/${second.id}/restart`);
+    assert.equal(restarted.status, 200);
+    assert.equal(restarted.data.job.written, 0);
+    const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8');
+    assert.match(log, new RegExp(`celular: job ${data.id} restart`));
+    assert.match(log, new RegExp(`job ${second.id}: recomecar do zero \\(app\\)`));
+    await until(base, second.id, ['completed', 'failed']);
+  } finally {
+    srv.etagSalt = '';
+    srv.rate = 0;
+    await stop(child);
+  }
+});
+
+test('glibren.55: um 429 segura o job inteiro pelo Retry-After (nenhuma faixa nova antes) e o download termina', { skip }, async () => {
+  const base = workspace();
+  const child = start(base);
+  try {
+    await up(base);
+    srv.hits = [];
+    srv.busyFile = 'a.bin';
+    srv.busy = 2;
+    const dest = path.join(base, 'disk/downloads/busy.bin');
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${port}/f/a.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: 4 * MiB, connections: 4, sha256: sha(files['a.bin']) });
+    const job = await until(base, data.id, ['completed', 'failed']);
+    assert.equal(job.state, 'completed', job.error);
+    assert.equal(sha(readFileSync(dest)), sha(files['a.bin']));
+    const firstBusy = srv.hits.findIndex((hit) => hit.busy);
+    assert.ok(firstBusy >= 0, 'o servidor mandou esperar');
+    // Os pedidos que ja estavam no ar na hora do 429 chegaram ate uns ms depois dele; nenhum outro antes de ~1 s.
+    const at = srv.hits[firstBusy].at;
+    const early = srv.hits.slice(firstBusy + 1).filter((hit) => hit.at - at > 200 && hit.at - at < 900);
+    assert.deepEqual(early, [], 'nenhuma faixa nova durante o Retry-After');
+    assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /servidor pediu para esperar \(HTTP 429, Retry-After\)/);
+  } finally {
+    srv.busy = 0;
+    srv.busyFile = '';
     await stop(child);
   }
 });

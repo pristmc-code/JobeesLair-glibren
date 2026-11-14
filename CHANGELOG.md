@@ -6,6 +6,34 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.55** (fork): fixes from the real PS5 (Jobe .53/.54). Download payload 1.37.1 (`BG_API` stays 37).
+  - YouTube format: after picking VP9 in the quality list (R2), going back to H.264 did not stick. An H.264 hardware
+    decode error in the middle of a video ("video decode failed (h264, sceVideodec2)") made the player jump to the next
+    quality in the list, the VP9 of the same height, and VP9 stuttered. The format is now a saved setting (`tubeCodec`:
+    automatic, H.264 or VP9); automatic prefers H.264; on an error the player steps down in the same format and says
+    which quality it opened; VP9 rows carry a warning, VP9 HDR above 1080p is hidden, a video decoded by the processor
+    says so. ps5-react: a decode error once pictures are flowing resets the hardware decoder and resumes at the next
+    keyframe (up to 3 times a minute) instead of ending the video.
+  - Full Jobe on the web (/app): every source on the game page can be picked (touch, controller, keyboard), the picked
+    one is highlighted and "Download" sends it (`POST /api/store/add {id, link, ref}`; the payload checks the link
+    belongs to the game, 400 `link` otherwise). "Automatic (recommended)" stays the default and is the TV's choice.
+    Sources that need the PS5 browser are marked, and the answer says so (`browser`): open Jobe on the TV to finish.
+    A source picked on the phone goes through TorBox/AllDebrid when the service takes it.
+  - Browser capture: a server that ignores the one-byte Range (AkiraBox, Stray) no longer fails with "response exceeds
+    maxBytes" or "failed validation": the link is checked by its headers (HEAD), a 206 without Content-Length counts.
+  - Downloads (Alan Wake 2, 100 GB from TorBox): a partial file of another job at the same destination is adopted when
+    it is the same file (size and a content sample) or restarted from zero by itself, never stuck; a renewed TorBox or
+    AllDebrid link (another CDN node, another ETag) resumes by the service's item, file and size; HTTP 429 holds the
+    whole job for Retry-After; "Restart from zero" button with confirmation on the TV, the phone page and /app
+    (`POST /jobs/<id>/restart`, `POST /api/jobs/<id>/restart`), offered instead of "Retry" when the file changed on the
+    server or the checkpoint does not match.
+  - Archives holding a ready image (Alan Wake 2 as `.exfat.7z`): the payload's extraction failed on the PS5 with
+    "write: Could not stat .../BACKUP/_temp/<id>/PPSA02572.exfat" (libarchive's SECURE_SYMLINKS lstat of every path
+    piece; dropped: no symlink is ever written there). The image inside is now just moved to `homebrew/<code>.exfat`
+    (or `.ffpfs`), with no re-conversion. "Use without converting" on an archive reads "Extract without converting".
+  - Texts in the 14 languages.
+- Tests: `tube-format`, `capture-validate`, new cases in `bg-store`, `bg-downloader`, `phone-library`, `bg-app-page`
+  (Playwright: picking a source on the game page), render of the R2 list and of the download card.
 - **glibren.54** (fork): the TV store asks the download payload for its pages (Phase 4 of the Orbit model). On the PS5,
   when the payload's catalog is up (`BG_API` 37), Jobe no longer builds the whole catalog in its own memory: the store
   grid and Search come page by page (48 games at a time, a few pages kept), the filter counts, the Discover rows

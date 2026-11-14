@@ -117,3 +117,18 @@ test('glibren.13: velocidades em MB/s (nunca Mbps) e a velocidade maxima livre (
   assert.equal(speed(512 * 1024), '512 KB/s');
   assert.equal(speed(0), '–');
 });
+
+test('glibren.55: "Recomecar do zero" na pagina do celular e na /app (14 idiomas, com confirmacao, no lugar de Retomar quando o erro pede)', () => {
+  const page = readFileSync(embed.PAGE, 'utf8');
+  const RECOMECAR = new Function(`${/var RECOMECAR = [^\n]+/.exec(page)[0]}; return RECOMECAR;`)();
+  const langs = ['ar', 'bn', 'de', 'en', 'es', 'fr', 'hi', 'id', 'it', 'ja', 'pt-BR', 'ru', 'ur', 'zh-Hans'];
+  assert.deepEqual(Object.keys(RECOMECAR).sort(), langs);
+  for (const lang of langs) for (const key of ['botao', 'armado', 'pergunta', 'sim', 'dica']) assert.ok(RECOMECAR[lang][key] && !/\.\.\.|\u2026/.test(RECOMECAR[lang][key]), `${lang} ${key}`);
+  assert.equal(RECOMECAR['pt-BR'].botao, 'Recomeçar do zero');
+  // Confirma antes (a linha de confirmacao), so depois chama a rota; Retomar some quando o payload diz restartAdvised.
+  assert.ok(page.includes('confirming = `restart:${j.id}`') && page.includes('act(j.id, "restart")'));
+  assert.ok(page.includes('const toggle = restart && j.restartAdvised ? ""'));
+  const app = readFileSync(path.join(repo, 'app/native/bg_app.html'), 'utf8');
+  assert.ok(app.includes('acaoJob(j.id, "restart")') && app.includes('dl.confirmar = "r:" + j.id'), '/app: dois toques');
+  assert.ok(app.includes('!(recomeca && j.restartAdvised)'), '/app: no lugar de Retomar');
+});

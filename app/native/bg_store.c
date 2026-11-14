@@ -24,9 +24,15 @@
 //            cover, sizeGb, formats, ready, stars, ratingCount, year, solo, queued}], facets:{<filtro>:[{value, name, count}]}}
 //        (valores separados por virgula; sort: relevance|newest|rating|size|title). 404 {"error":"no-store"} sem o
 //        arquivo, 500 {"error":"bad-store"} quando nada se aproveita dele. Sem sessao (como /api/library): nada de link.
-//   GET  /api/store/game?id= -> {ok, game:{...}, details?:{summary, about, shots, hero}, links:[{kind, host, format, size,
-//        label, parts, solo}] (sem URL), download:"payload"|"app"}
-//   POST /api/store/add {id} (sessao do PIN) -> {ok, id, via:"payload"} (o payload comeca a baixar sozinho: Jobe fechada,
+//   GET  /api/store/game?id= -> {ok, game:{...}, details?:{summary, about, shots, hero}, links:[{i, kind, group, host,
+//        format, size, label, parts, solo, ref}] (sem URL), download:"payload"|"app"}
+//        glibren.55: `i` (a posicao na lista, na ordem da ficha da TV), `group` (direct|page|torrent|browser|unavailable,
+//        tambem num conjunto de partes: "browser" = precisa do navegador do PS5 na TV) e `ref` (o link deste jogo).
+//   POST /api/store/add {id, link?, ref?} (sessao do PIN) -> {ok, id, via:"payload"} (o payload comeca a baixar sozinho: Jobe fechada,
+//        glibren.55: `link` + `ref` = o link escolhido na /app (sem eles, o automatico: o 1o solo, senao a Jobe escolhe
+//        como a ficha da TV); um `ref` que nao e deste jogo/link da 400 {"error":"link"}. A resposta diz `picked` (o link
+//        escolhido, -1 no automatico) e `browser` (o link vai precisar do navegador do PS5 na TV, se o TorBox nao o pegar).
+//        Um link escolhido que o payload nao baixa sozinho vai ao marcador com a fonte dele (`source`): a Jobe usa ela.
 //        disco padrao conhecido e um link solo) | {ok, id, via:"app", appOpen, reason} (marcador "waiting-app": a Jobe poe
 //        na fila dela quando abrir, ou ja, se aberta) | {ok, already, id}. 409 {"error":"exists"} (o arquivo ja esta no
 //        disco) ou {"error":"full"}.
@@ -604,6 +610,7 @@ static void store_list(int fd, const char* query) {
 // ---- A ficha e os links (store-games.json, lido do disco quando pedido) ----
 typedef struct {
   char kind[16], host[64], format[16], label[160], filename[256], url[2048], sha256[72];
+  char group[16]; // glibren.55: o grupo do link (num conjunto, o das partes); vazio = o kind
   uint64_t size;
   int has_size, source; // source: o indice em game.releases (-1 sem)
   unsigned parts;
@@ -648,6 +655,7 @@ static int st_shot_item(JP* j, void* ctx) {
 static int st_link_field(JP* jp, const char* key, void* ctx) {
   StLink* l = ctx;
   if (!strcmp(key, "kind")) return lib_text(jp, l->kind, sizeof l->kind) ? 1 : -1;
+  if (!strcmp(key, "group")) return lib_text(jp, l->group, sizeof l->group) ? 1 : -1;
   if (!strcmp(key, "host")) return lib_text(jp, l->host, sizeof l->host) ? 1 : -1;
   if (!strcmp(key, "format")) { if (!lib_text(jp, l->format, sizeof l->format)) return -1; lower_ascii(l->format); return 1; }
   if (!strcmp(key, "label")) return lib_text(jp, l->label, sizeof l->label) ? 1 : -1;
@@ -853,6 +861,24 @@ static int st_find_detail(const char* id, const char* key, StDetail* d) {
 }
 // Fase 3 (bg_catalog_api.c): o jogo e a ficha a partir do catalogo do payload. 1 achou, 0 nao, -1 sem catalogo.
 static int catalog_store_entry(const char* id, StGame* out, char* key, size_t key_cap, StIndex* tables, StDetail* d);
+// glibren.55: o grupo de um link (direct|page|torrent|browser|unavailable); um conjunto sem grupo gravado: "set".
+static const char* st_link_group(const StLink* l) { return l->group[0] ? l->group : l->kind; }
+// glibren.55: a referencia de um link de um jogo (16 hex): o id do jogo, a fonte, o host e o rotulo. A /app manda de
+// volta com o indice escolhido; um link de outro jogo (ou que mudou de lugar) nao confere.
+static void st_link_ref(const char* game_id, const StLink* l, int index, char out[17]) {
+  Hash h;
+  char digest[65], number[24];
+  hash_init(&h);
+  hash_text0(&h, game_id);
+  hash_text0(&h, "store-link");
+  snprintf(number, sizeof number, "%d/%d", index, l->source);
+  hash_text0(&h, number);
+  hash_text0(&h, l->host);
+  hash_text0(&h, l->label);
+  if (!hash_finish(&h, digest)) snprintf(digest, sizeof digest, "%016x", (unsigned)index);
+  memcpy(out, digest, 16);
+  out[16] = 0;
+}
 static int st_first_solo(const StDetail* d) {
   for (int i = 0; i < d->link_count; ++i) if (st_link_solo(&d->links[i])) return i;
   return -1;
@@ -922,8 +948,11 @@ static void store_game(int fd, const char* query) {
   buf_str(&b, ",\"links\":[");
   for (int i = 0; detail == 1 && i < d->link_count; ++i) {
     const StLink* l = &d->links[i];
+    char ref[17];
+    st_link_ref(g.id, l, i, ref);
     if (i) buf_str(&b, ",");
-    buf_str(&b, "{\"kind\":"); buf_json(&b, l->kind);
+    buf_fmt(&b, "{\"i\":%d,\"ref\":\"%s\",\"group\":", i, ref); buf_json(&b, st_link_group(l));
+    buf_str(&b, ",\"kind\":"); buf_json(&b, l->kind);
     buf_str(&b, ",\"host\":"); buf_json(&b, l->host);
     buf_str(&b, ",\"format\":"); buf_json(&b, l->format);
     if (l->has_size) buf_fmt(&b, ",\"size\":%llu", (unsigned long long)l->size); else buf_str(&b, ",\"size\":null");
@@ -938,17 +967,23 @@ static void store_game(int fd, const char* query) {
   free(b.data);
 }
 
-// POST /api/store/add {id}
+// POST /api/store/add {id, link?, ref?}
+typedef struct { char id[32], ref[24]; int64_t link; int has_link; } StAddBody;
 static int st_add_field(JP* jp, const char* key, void* ctx) {
-  char* id = ctx;
-  if (!strcmp(key, "id")) return lib_text(jp, id, 32) ? 1 : -1;
+  StAddBody* a = ctx;
+  if (!strcmp(key, "id")) return lib_text(jp, a->id, sizeof a->id) ? 1 : -1;
+  if (!strcmp(key, "ref")) return lib_text(jp, a->ref, sizeof a->ref) ? 1 : -1;
+  if (!strcmp(key, "link")) { if (!jp_int64(jp, &a->link)) return -1; a->has_link = 1; return 1; }
   return 0;
 }
 static void store_add(int fd, Request* r) {
   if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
-  char id[32] = "";
+  StAddBody body;
+  memset(&body, 0, sizeof body);
+  body.link = -1;
   JP jp = {r->body, r->body + r->content_length, 0};
-  if (!r->body || !jp_object(&jp, st_add_field, id) || !id[0]) { monitor_json(fd, 400, "{\"error\":\"id\"}"); return; }
+  if (!r->body || !jp_object(&jp, st_add_field, &body) || !body.id[0]) { monitor_json(fd, 400, "{\"error\":\"id\"}"); return; }
+  const char* id = body.id;
   StDetail* d = calloc(1, sizeof *d);
   if (!d) { monitor_json(fd, 500, "{\"error\":\"out of memory\"}"); return; }
   StGame g;
@@ -961,8 +996,20 @@ static void store_add(int fd, Request* r) {
     else st_store_error(fd, found);
     return;
   }
-  const int chosen = (from_catalog == 1 || st_find_detail(id, key, d) == 1) ? st_first_solo(d) : -1;
+  const int have_links = from_catalog == 1 || st_find_detail(id, key, d) == 1;
+  // glibren.55: o link escolhido na /app, conferido (o indice nesta ficha e a referencia deste jogo).
+  int picked = -1;
+  if (body.has_link && body.link >= 0) {
+    char ref[17] = "";
+    if (have_links && body.link < d->link_count) st_link_ref(g.id, &d->links[body.link], (int)body.link, ref);
+    if (!ref[0] || strcmp(ref, body.ref)) { free(d); monitor_json(fd, 400, "{\"error\":\"link\"}"); return; }
+    picked = (int)body.link;
+  }
+  const int chosen = picked >= 0 ? (st_link_solo(&d->links[picked]) ? picked : -1) : have_links ? st_first_solo(d) : -1;
   const StLink* link = chosen >= 0 ? &d->links[chosen] : NULL;
+  // O link que a Jobe vai usar no marcador: o escolhido; no automatico, o 1o da ordem da TV (ela pode passar pelo TorBox).
+  const StLink* shown = picked >= 0 ? &d->links[picked] : have_links && d->link_count ? &d->links[0] : NULL;
+  const int browser = !link && shown && (!strcmp(st_link_group(shown), "browser") || !strcmp(st_link_group(shown), "set"));
   // O destino (as regras do app) antes de travar a fila: so quando o payload pode baixar sozinho.
   char root[1024], name[256] = "";
   int convert = 0;
@@ -988,7 +1035,7 @@ static void store_add(int fd, Request* r) {
       if (slash) { *slash = 0; mkdir_p(parent); }
     }
   }
-  char answer[200], job_id[24] = "";
+  char answer[260], job_id[24] = "";
   const char* platform = g.platform == 1 ? "ps5" : g.platform == 2 ? "ps4" : "";
   pthread_mutex_lock(&g_lock);
   Job* same = st_request_locked(g.id);
@@ -1056,6 +1103,7 @@ static void store_add(int fd, Request* r) {
       // Marcador: a Jobe poe na fila dela (aberta agora, ou quando abrir) com a fonte que ela escolher.
       j->placeholder = 1;
       j->order = 100000; // depois da fila do app
+      if (picked >= 0 && d->links[picked].source >= 0) j->store_source = d->links[picked].source + 1; // glibren.55
       snprintf(j->lib_via, sizeof j->lib_via, "store");
       snprintf(j->state, sizeof j->state, "waiting-app");
       reason = !away ? "open" : !link ? "needs-app" : !root[0] ? "no-root" : "plan";
@@ -1065,8 +1113,8 @@ static void store_add(int fd, Request* r) {
     save_jobs_locked();
     pthread_cond_broadcast(&g_wake_downloader);
     copy_text(job_id, sizeof job_id, j->id);
-    if (via_payload) snprintf(answer, sizeof answer, "{\"ok\":true,\"id\":\"%s\",\"via\":\"payload\"}", job_id);
-    else snprintf(answer, sizeof answer, "{\"ok\":true,\"id\":\"%s\",\"via\":\"app\",\"appOpen\":%s,\"reason\":\"%s\"}", job_id, away ? "false" : "true", reason);
+    if (via_payload) snprintf(answer, sizeof answer, "{\"ok\":true,\"id\":\"%s\",\"via\":\"payload\",\"picked\":%d,\"browser\":false}", job_id, picked);
+    else snprintf(answer, sizeof answer, "{\"ok\":true,\"id\":\"%s\",\"via\":\"app\",\"appOpen\":%s,\"reason\":\"%s\",\"picked\":%d,\"browser\":%s}", job_id, away ? "false" : "true", reason, picked, browser ? "true" : "false");
   }
   const int created = !same;
   pthread_mutex_unlock(&g_lock);

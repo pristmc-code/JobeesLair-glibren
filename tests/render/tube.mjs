@@ -136,6 +136,20 @@ assert.equal(videos[0].source, m('v0.m3u8'), 'the master HLS of the chosen quali
 assert.deepEqual(videos[0].subtitles, [info.caption], 'WebVTT from the service');
 assert.equal(videos[0].subtitleTrack, -1, 'subtitles off by default');
 assert.ok(!player.includes('Loading the video…') && images.length === 0, 'playing: no loading cover');
+// glibren.55: o R2 com o formato: a linha Automatico (prefere H.264) e o aviso das VP9 (quebra linha, sem reticencias).
+const formats = { ...info, choices: [
+  { label: '1440p 60 fps VP9 / OPUS', height: 1440, codec: 'vp9', family: 'vp9', hdr: false, url: m('v0.m3u8'), hls: true },
+  { label: '1080p 60 fps H264 / AAC', height: 1080, codec: 'h264', family: 'h264', hdr: false, url: m('v1.m3u8'), hls: true },
+  { label: '1080p 60 fps VP9 / OPUS', height: 1080, codec: 'vp9', family: 'vp9', hdr: false, url: m('v2.m3u8'), hls: true },
+  { label: '1080p 60 fps VP9 / OPUS HDR10', height: 1080, codec: 'vp9', family: 'vp9', hdr: true, url: m('v3.m3u8'), hls: true }
+] };
+const menuShown = screen('Player (R2: quality and format)', { type: TubePlayer, props: { item: items[0], service: fake, onClose() {}, start: { info: formats, choice: 1, phase: 'playing', menu: true } } });
+for (const label of ['Quality', 'Automatic (prefers H.264, the smoothest on the PS5)', '1440p 60 fps VP9 / OPUS', 'Only VP9 at this resolution: may stutter.',
+  '1080p 60 fps H264 / AAC', '1080p 60 fps VP9 / OPUS', 'VP9: may stutter on the PS5. H.264 is the most stable.', 'May stutter: decoded by the processor (VP9 HDR).']) {
+  assert.ok(menuShown.includes(label), `${label}: ${menuShown.join('|')}`);
+}
+assert.ok(!menuShown.some((line) => line.includes('…')), 'no ellipsis');
+assert.ok(pressable.has('tube:quality:auto') && pressable.has('tube:quality:1080p 60 fps VP9 / OPUS'));
 const broken = screen('Player (failed)', { type: TubePlayer, props: { item: items[0], service: fake, onClose() {}, start: { info: null, choice: -1, phase: 'failed', problem: 'unsupported_media' } } });
 assert.ok(broken.includes('This video didn\'t play (unsupported_media).'), broken.join('|'));
 assert.equal(videos.length, 0);

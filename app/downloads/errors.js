@@ -5,6 +5,10 @@ import { t } from '../i18n/core.js';
 
   // 0.5.6: a finished file the engine can't vouch for any more ("no matching completion receipt") too.
   var STALE_PARTIAL = /partial file|checkpoint|completion receipt/i;
+  // glibren.55: the errors Retry would only repeat, since the saved part no longer serves (the server's file changed, a
+  // checkpoint that does not match, the whole file arrived with another SHA-256): the card offers "Restart from zero"
+  // (with a second press to confirm) in place of Retry. The payload's /api/status says the same ("restartAdvised").
+  var RESTART_FROM_ZERO = /partial file|checkpoint|completion receipt|changed the resource|file changed since this partial|SHA-256 mismatch/i;
   var TASK = /^\w+\.\w+ \/.*?: /;
   var cause = (message) => message.replace(TASK, "");
   // A set's volume to download again: cut short, or (0.5.0 Pre Release 3) a copy of another part, which a
@@ -20,7 +24,10 @@ import { t } from '../i18n/core.js';
     [/no space left|ENOSPC/i, "noSpace", "freeThenResume"],
     [/partial files were deleted/i, "partialDeleted", "restart"],
     [STALE_PARTIAL, "staleProgress", "restart"],
-    [/file changed since this partial/i, "fileChanged", "restart"],
+    [/file changed since this partial/i, "fileChanged", "restartFromZero"],
+    // glibren.55: the server answered for another file (ETag, Last-Modified or size): it changed, it did not arrive
+    // damaged (that was the title before, with no button of that name on the card).
+    [/changed the resource/i, "fileChanged", "restartFromZero"],
     [/needs more memory to extract/i, "archiveTooLarge", "otherSource"],
     // The engine's heap had no room for the extraction; a fresh launch frees it.
     [/not enough memory to extract/i, "noMemory", "reopenApp"],
@@ -80,4 +87,4 @@ import { t } from '../i18n/core.js';
     return null;
   }
 
-export { INCOMPLETE_PART, STALE_PARTIAL, busyServer, cause, explainError, finalError };
+export { INCOMPLETE_PART, RESTART_FROM_ZERO, STALE_PARTIAL, busyServer, cause, explainError, finalError };

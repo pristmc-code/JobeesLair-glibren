@@ -183,6 +183,16 @@ async function medirTamanho(navegador, api, t, jogo) {
   await pagina.waitForTimeout(400);
   const r3 = await pagina.evaluate(REGRAS);
   const fichaPrimeiro = await pagina.evaluate(() => { const f = document.querySelector('#ficha .fbar').firstElementChild; return f.textContent.trim(); });
+  // glibren.55: as fontes sao botoes, "Automatico" escolhido de inicio; escolhido o link do navegador (o 3o), ele fica
+  // destacado, mostra o aviso e vai no Baixar (link + ref).
+  const fontes = await pagina.evaluate(() => [...document.querySelectorAll('#fCorpo .fontes button.fonte')].map((b) => b.getAttribute('aria-pressed')));
+  conferir(fontes.length === 4 && fontes[0] === 'true' && fontes.slice(1).every((x) => x === 'false'), `${t.nome}: fontes escolhiveis com Automatico primeiro: ${fontes}`);
+  await pagina.locator('#fCorpo .fontes button.fonte').nth(3).scrollIntoViewIfNeeded();
+  await pagina.click('#fCorpo .fontes button.fonte >> nth=3');
+  const escolhida = await pagina.evaluate(() => [...document.querySelectorAll('#fCorpo .fontes button.fonte')].map((b) => b.getAttribute('aria-pressed')));
+  conferir(escolhida[3] === 'true' && escolhida[0] === 'false', `${t.nome}: o link tocado nao ficou escolhido: ${escolhida}`);
+  await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-fontes.png`) });
+  await pagina.evaluate(() => { document.getElementById('fCorpo').scrollTop = 0; });
   await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-ficha.png`) });
   // Baixar sem credencial abre o pareamento: nome -> "Pedir codigo" -> codigo da TV (um errado antes) -> entra na fila
   passo = 'pareamento';
@@ -203,6 +213,7 @@ async function medirTamanho(navegador, api, t, jogo) {
   conferir(/^[0-9a-f]{64}$/.test(guardado || ''), `${t.nome}: o token do aparelho nao foi guardado em jobe.session`);
   passo = "await pagina.waitForFunction(() => document.getElementById('fBaixar').";
   await pagina.waitForFunction(() => document.getElementById('fBaixar').disabled && document.getElementById('fBaixar').textContent === window.jobeApp.L.naFila, null, { timeout: 5000 });
+  conferir(api.contadores.ultimoAdd?.link === 2 && typeof api.contadores.ultimoAdd?.ref === 'string', `${t.nome}: o Baixar nao mandou o link escolhido: ${JSON.stringify(api.contadores.ultimoAdd)}`);
   passo = "await pagina.click('#fVoltar');";
   await pagina.click('#fVoltar');
   passo = "await pagina.waitForFunction(() => document.getElementById('ficha').hi";

@@ -78,6 +78,40 @@ import { loadList, saveList } from './saved.js';
     return value;
   }
 
+  // glibren.55: "tubeCodec", o formato que o player abre: "auto" (padrao: prefere o H.264), "h264" ou "vp9". Escolhido
+  // no R2 do player (a linha Automatico ou uma qualidade) e guardado aqui: vale para os proximos videos. Um erro do
+  // player que desce para outra qualidade nao mexe nele (TubePlayer.jsx).
+  var CODEC_CHOICES = ["auto", "h264", "vp9"];
+  var codec = null;
+  var codecListeners = /* @__PURE__ */ new Set();
+  function tubeCodec() {
+    if (codec === null) {
+      const saved = loadList(SETTINGS, "settings").tubeCodec;
+      codec = CODEC_CHOICES.includes(saved) ? saved : "auto";
+    }
+    return codec;
+  }
+  function setTubeCodec(value) {
+    if (!CODEC_CHOICES.includes(value)) return;
+    codec = value;
+    saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), tubeCodec: value });
+    for (const listener of [...codecListeners]) listener(value);
+  }
+  function useTubeCodec() {
+    const [value, setValue] = useState(tubeCodec);
+    useEffect(() => {
+      codecListeners.add(setValue);
+      return () => {
+        codecListeners.delete(setValue);
+      };
+    }, []);
+    return value;
+  }
+  /** Para os testes: esquece o valor lido (o proximo tubeCodec() le o settings.json de novo). */
+  function forgetTubeCodec() {
+    codec = null;
+  }
+
   // glibren-video-cap: "tubeDownloadCap", o limite dos downloads (MB/s) enquanto um video toca no app; 0 = nao mexer.
   // Qualquer valor inteiro de 0 a CAP_MAX, escolhido com − / + em Configuracoes > Videos; padrao 5 (folga para o 4K,
   // que usa uns 3 a 5 MB/s).
@@ -113,4 +147,4 @@ import { loadList, saveList } from './saved.js';
     return value;
   }
 
-export { CAP_MAX as TUBE_DOWNLOAD_CAP_MAX, stepTubeDownloadCap, setTubeDownloadCap, tubeDownloadCap, useTubeDownloadCap, QUALITY_CHOICES as TUBE_QUALITY_CHOICES, setTubeQuality, tubeQuality, useTubeQuality, setTubeAutoUpdate, tubeAutoUpdate, useTubeAutoUpdate, setTubeSponsorBlock, setTubeSubtitles, tubeSponsorBlock, tubeSubtitles, useTubeSponsorBlock, useTubeSubtitles };
+export { CODEC_CHOICES as TUBE_CODEC_CHOICES, forgetTubeCodec, setTubeCodec, tubeCodec, useTubeCodec, CAP_MAX as TUBE_DOWNLOAD_CAP_MAX, stepTubeDownloadCap, setTubeDownloadCap, tubeDownloadCap, useTubeDownloadCap, QUALITY_CHOICES as TUBE_QUALITY_CHOICES, setTubeQuality, tubeQuality, useTubeQuality, setTubeAutoUpdate, tubeAutoUpdate, useTubeAutoUpdate, setTubeSponsorBlock, setTubeSubtitles, tubeSponsorBlock, tubeSubtitles, useTubeSponsorBlock, useTubeSubtitles };

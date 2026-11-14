@@ -119,6 +119,9 @@ test('glibren (item 2): pedido da Loja completa vai como o Baixar da ficha; o co
   // Comecado pelo payload com a Jobe fechada: a fonte dele e o disco padrao (o mesmo destino: a fila acha a parcial).
   queueStoreRequest({ store: 'PPSA01001', source: 3, autoStarted: true }, { start, getGame, roots });
   assert.deepEqual([calls[1].source, calls[1].options], [3, { root: '/mnt/ext0' }]);
+  // glibren.55: a fonte escolhida na /app (marcador com source): ela mesma, pelo TorBox quando ele aceita (preferDebrid).
+  queueStoreRequest({ store: 'PPSA01001', source: 2, autoStarted: false }, { start, getGame, roots });
+  assert.deepEqual([calls[2].source, calls[2].options], [2, { preferDebrid: true }]);
   assert.throws(() => queueStoreRequest({ store: 'PPSA09999' }, { start, getGame, roots }), /not in the store/);
   assert.throws(() => queueStoreRequest({ store: 'x' }, { start, getGame, roots }), /not in the store/);
   assert.throws(() => queueStoreRequest({ store: 'PPSA01001' }, { getGame, roots }), /not ready/);

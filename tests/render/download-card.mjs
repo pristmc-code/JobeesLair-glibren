@@ -77,6 +77,16 @@ assert.ok(zero.includes('Waiting for TorBox to prepare the file'), `0% through T
 const plain = card(job({ id: 'p4', state: 'downloading', release: { id: 'r', provider: 'Vikingfile', format: 'exfat' } }));
 assert.ok(!plain.some((line) => /prepar/.test(line)), 'a direct download says nothing about TorBox');
 
+// glibren.55: o recurso mudou no servidor (b136/b139 no PS5): o cartao diz que o arquivo mudou, cita o botao que existe
+// ("Restart from zero") e o oferece no lugar de "Retry", que so repetiria o erro.
+const changed = card(job({ id: 'c1', state: 'failed', error: 'Downloads.enqueue /mnt/ext0/x.pkg: server changed the resource (ETag, Last-Modified or size differ)' }));
+assert.ok(changed.includes('Restart from zero') && !changed.includes('Retry'), changed.join('|'));
+assert.ok(changed.some((line) => line.includes(en['errors.fileChanged']) && line.includes('Press Restart from zero')), changed.join('|'));
+const orphan = card(job({ id: 'c2', state: 'failed', error: 'partial file has no matching durable checkpoint; remove .part/.resume or choose another destination' }));
+assert.ok(orphan.includes('Restart from zero') && !orphan.includes('Retry'), orphan.join('|'));
+const busyAgain = card(job({ id: 'c3', state: 'failed', error: 'HTTP 404 Not Found' }));
+assert.ok(!busyAgain.includes('Restart from zero'), 'other errors keep their own button');
+
 // 3) textos longos quebram em vez de cortar.
 const long = card(job({ id: 'l1', state: 'failed', error: `${LONG} ${LONG}` }));
 assert.ok(long.some((line) => line.includes(LONG)), 'the whole text');

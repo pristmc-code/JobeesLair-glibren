@@ -116,6 +116,11 @@ constexpr std::size_t kInputSlots = 4, kInputSlotBytes = 8u << 20;
 // order, and one is being decoded. A 4K keyframe holds the decoder up to about 60 ms.
 constexpr int kFrameSlots = 16;
 constexpr int kErrorsAfterFlush = 32;
+// glibren.55: a decode error once pictures are flowing (seen on a PS5 with YouTube H.264 1080p60, HLS by byte ranges:
+// "video decode failed (h264, sceVideodec2)" a minute or two into the video) no longer ends the video: the decoder is
+// reset and the stream resumes at the next keyframe, as after a seek. More than this many in a minute still fail, so
+// the app can pick another quality.
+constexpr int kRecoveriesPerMinute = 3;
 constexpr std::int64_t kNoPts = AV_NOPTS_VALUE;
 
 std::size_t align16k(std::size_t value) { return (value + 0x3FFF) & ~std::size_t(0x3FFF); }
@@ -341,6 +346,10 @@ private:
   std::vector<std::int64_t> pending_pts_;   // timestamps of shown AUs not yet output
   std::deque<video::Frame> ready_;          // decoded, held a little so they leave in display order
   bool draining_ = false, ended_ = false;
+  bool broken_ = false, need_key_ = false;  // glibren.55: a decode error mid-stream; skipping to the next keyframe
+  int recoveries_ = 0, skipped_ = 0;
+  std::chrono::steady_clock::time_point recovery_window_{};
+  bool recover();
   int outputs_since_flush_ = 0, errors_since_flush_ = 0;
   std::uint64_t decodes_ = 0;
 };
@@ -494,7 +503,10 @@ bool Videodec2::submit(const std::uint8_t* au, std::size_t size, std::int64_t pt
       async_log::write("[PS5-REACT] video: sceVideodec2Decode=0x%08x (decode %llu, %zu bytes)", static_cast<unsigned>(rc),
                        static_cast<unsigned long long>(decodes_), bytes);
     // Starting mid-stream, the first pictures may reference what was never decoded.
-    return outputs_since_flush_ == 0 && ++errors_since_flush_ <= kErrorsAfterFlush;
+    if (outputs_since_flush_ == 0) return ++errors_since_flush_ <= kErrorsAfterFlush;
+    // glibren.55: mid-stream, send() resets the decoder and waits for a keyframe (recover()).
+    broken_ = true;
+    return true;
   }
   // A hidden VP9 frame (alt-ref) comes out of the call that decodes it: kept for reference, never shown.
   if (out.valid && out.picture_count && shown) {
@@ -562,8 +574,36 @@ void Videodec2::drain() {
   }
 }
 
+// glibren.55: after a decode error mid-stream: the decoder reset (as flush() after a seek) and the packets up to the
+// next keyframe skipped. False when that happened too often in the last minute (the player then reports the error).
+bool Videodec2::recover() {
+  broken_ = false;
+  const auto now = std::chrono::steady_clock::now();
+  if (recoveries_ == 0 || now - recovery_window_ > std::chrono::minutes(1)) {
+    recovery_window_ = now;
+    recoveries_ = 0;
+  }
+  if (++recoveries_ > kRecoveriesPerMinute) {
+    async_log::write("[PS5-REACT] video: %s decode errors keep coming (%d in a minute); giving up", slot_->name, recoveries_);
+    return false;
+  }
+  async_log::write("[PS5-REACT] video: %s decode error mid-stream; reset, resuming at the next keyframe (%d)", slot_->name,
+                   recoveries_);
+  flush();
+  need_key_ = true;
+  skipped_ = 0;
+  return true;
+}
+
 bool Videodec2::send(const AVPacket* packet) {
   const bool vp9 = slot_->codec == kVp9;
+  if (packet && need_key_) {
+    // A stream that marks no keyframes is not skipped for more than ~10 s: the decoder then gets every packet again
+    // (with kErrorsAfterFlush errors allowed until a picture comes out).
+    if (!(packet->flags & AV_PKT_FLAG_KEY) && ++skipped_ < 600) return true;
+    need_key_ = false;
+    skipped_ = 0;
+  }
   if (!packet) {
     if (filter_) {
       av_bsf_send_packet(filter_, nullptr);
@@ -577,7 +617,10 @@ bool Videodec2::send(const AVPacket* packet) {
     return true;
   }
   const std::int64_t pts = packet->pts != kNoPts ? packet->pts : packet->dts;
-  if (!filter_) return submit(packet->data, packet->size, pts, true);
+  if (!filter_) {
+    if (!submit(packet->data, packet->size, pts, true)) return false;
+    return !broken_ || recover();
+  }
   AVPacket* copy = av_packet_clone(packet);
   if (!copy) return false;
   copy->pts = pts;
@@ -589,7 +632,7 @@ bool Videodec2::send(const AVPacket* packet) {
     av_packet_unref(filtered_);
     if (!ok) return false;
   }
-  return true;
+  return !broken_ || recover();
 }
 
 bool Videodec2::receive(video::Frame& frame, bool& ended) {
@@ -610,6 +653,7 @@ void Videodec2::flush() {
   ready_.clear();
   pending_pts_.clear();
   draining_ = ended_ = false;
+  broken_ = need_key_ = false;
   build_filter();
   restart();
 }

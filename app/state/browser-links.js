@@ -84,11 +84,21 @@ import { webURL } from './download-sources.js';
       return false;
     }
   }
+  // glibren.55: um servidor que ignora o Range (AkiraBox no PS5 real, Stray, 13/11/2026) manda o arquivo inteiro e o
+  // GET estoura o maxBytes ("Http.request: response exceeds maxBytes"): o link e lido de novo so pelos cabecalhos (HEAD).
   async function rangeProbe(http, url, signal) {
+    try {
+      return await probeWith(http, url, signal, "GET");
+    } catch (error) {
+      if (!/exceeds maxBytes/i.test(String(error?.message ?? error))) throw error;
+      return probeWith(http, url, signal, "HEAD");
+    }
+  }
+  async function probeWith(http, url, signal, method) {
     for (let redirects = 0; redirects <= 5; redirects++) {
       const response = await http.request(url, {
-        method: "GET",
-        headers: { Range: "bytes=0-0" },
+        method,
+        ...method === "GET" ? { headers: { Range: "bytes=0-0" } } : {},
         signal,
         maxBytes: 8192,
         followRedirects: false
@@ -139,11 +149,15 @@ import { webURL } from './download-sources.js';
     const response = await rangeProbe(http, link, signal);
     const ranged = response.status === 206;
     const range = /^bytes 0-0\/(\d+)$/i.exec(response.headers?.["content-range"] || "");
-    const length = Number(response.headers?.["content-length"]);
-    const bytes = Number(range?.[1]) || length;
-    if (!response.ok || !Number.isInteger(length) || length <= 0 || ranged && length !== 1 ||
+    const declared = response.headers?.["content-length"];
+    const length = declared === undefined || declared === null || declared === "" ? NaN : Number(declared);
+    const bytes = ranged ? Number(range?.[1]) : length;
+    // glibren.55: so os cabecalhos decidem: um 206 vale com "bytes 0-0/<total>" (e, se disser o tamanho, 1 byte; sem
+    // Content-Length, em pedacos, tambem); um 200 (o servidor ignorou o Range, ou o HEAD) vale com o tamanho do arquivo.
+    // Antes um 206 sem Content-Length ou um corpo que nao vinha como texto falhavam com "failed validation or expired".
+    if (!response.ok || ranged && (!range || Number.isFinite(length) && length !== 1) ||
         /html|json|xml|text\//i.test(response.headers?.["content-type"] || "") ||
-        ranged && (await response.text()).length !== 1 || !Number.isSafeInteger(bytes) || bytes <= 0)
+        !Number.isSafeInteger(bytes) || bytes <= 0)
       throw new Error("Captured file failed validation or expired. Reopen the page and retry.");
     // Bound to the game when its own name, or the one the server declares, carries the title id:
     // that outweighs the catalog's size, which is rounded on FileKeeper, the whole vault's on

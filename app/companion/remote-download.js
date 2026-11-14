@@ -16,7 +16,10 @@ import { MARGIN2 } from '../state/space.js';
 
   // Whether `release` can go through the debrid service set up now (only one the app cannot fetch on its own).
   var throughDebrid = (release) => ["browser", "torrent"].includes(describeSource(release).group) && debridSupports(release);
-  function startRemoteDownload(game, source = null, { debrid = null, root = null } = {}) {
+  // glibren.55: `preferDebrid` (pedido do celular/da /app com uma fonte escolhida): uma fonte que precisa do navegador
+  // ou um torrent que o TorBox/AllDebrid aceita vai por ele, como no automatico: quem pediu nao esta na TV para tocar em
+  // baixar na pagina do site.
+  function startRemoteDownload(game, source = null, { debrid = null, root = null, preferDebrid = false } = {}) {
     // With what is known of their links: a dead one is never picked or fallen back to (state/links.js).
     const releases = linkHealth().overlay(game.releases);
     if (!releases.length) throw new Error("This game has no download source.");
@@ -25,7 +28,7 @@ import { MARGIN2 } from '../state/space.js';
     const picked = releases[selected];
     const { group, host } = describeSource(picked);
     if (group === "unavailable") throw new Error(picked.unavailableReason || "Its sources are unavailable.");
-    const viaDebrid = debrid ?? (source === null && throughDebrid(picked));
+    const viaDebrid = debrid ?? ((source === null || preferDebrid) && throughDebrid(picked));
     if (viaDebrid && !throughDebrid(picked)) throw new Error("No debrid service set up on the console takes this source.");
     if (group === "torrent" && !viaDebrid) throw new Error("A torrent needs TorBox or AllDebrid: add a key under Settings.");
     const release = viaDebrid ? debridSource(picked) : picked;

@@ -15,6 +15,8 @@
 //     POST /jobs                   cria (corpo JSON, ver parse_job_body); 409 {id} se o destino ja tem job ativo
 //     POST /jobs/<id>/pause|resume|cancel|release|forget|park
 //                                  (glibren.8: park = a pausa do app; o job fica, pausado, na fila entregue)
+//     POST /jobs/<id>/restart      glibren.55: "Recomecar do zero": apaga .part/.resume de um job parado e o recomeca do
+//                                  byte 0 (409 se esta baixando); o app nao usa (a TV apaga pela fila dela)
 //     POST /jobs/<id>/connections  glibren.8: {connections: 1..64 | 0 = as do app}, o mesmo do celular (abaixo)
 //   Pagina do celular (porta 34201, sem token; as acoes exigem a sessao do PIN em X-Session):
 //     GET  /api/status             {jobs:[{..., connectionsActive, connections (alvo), connectionsSet}], limit, maxLimit,
@@ -23,7 +25,8 @@
 //     GET  /api/session            glibren.19: 200 {ok} se a sessao (X-Session) vale, 401 se nao. A sessao vale 30 dias
 //                                  (BGDL_SESSION_SECONDS) renovados a cada uso, e fica em <dir>/sessions.json so como
 //                                  SHA-256 (sobrevive a reiniciar o payload); trocar ou remover o PIN derruba todas.
-//     POST /api/jobs/<id>/pause|resume|cancel
+//     POST /api/jobs/<id>/pause|resume|cancel|restart  (glibren.55: restart = "Recomecar do zero", com a sessao;
+//                                  /api/status diz canRestart/restartAdvised e o aviso "notice")
 //     POST /api/jobs/<id>/connections  glibren.8: {connections: 1..64 | 0/null = as do app} -> {ok, connections, connectionsSet}
 //     POST /api/config             glibren.8: {concurrency: 1..4} -> {ok, limit, limitSet}; o app adota o numero
 //                                  glibren.13: e/ou {speedLimit: MB/s, 0 = sem limite} -> {..., speedLimit, speedLimitSet}
@@ -105,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.0"
+#define BG_VERSION "1.37.1"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -908,6 +911,9 @@ typedef struct {
   char platform[4], code[16], file[129];
   char error[600];
   int awaiting_app, renewals;
+  // glibren.55: um aviso do ultimo inicio (parcial de outro download adotada, ou parcial orfa apagada e recomecada do
+  // zero, ou recomecado do zero pelo botao). So na memoria; vai no GET /jobs e no /api/status ("notice").
+  char notice[200];
   // glibren.42 (J8): o link temporario deste job nao foi gravado no jobs.json (AllDebrid, ou link direto assinado); o
   // url lido de volta e so a origem ("https://host/"). Ao comecar, o job vira needs-app e o app pede um link novo.
   int link_hidden;
@@ -1070,6 +1076,15 @@ static int link_temporary(const Job* j) {
   return !strcmp(j->provider, "alldebrid") || j->link_hidden || url_has_secret(j->url);
 }
 
+// glibren.55: um erro que "Tentar de novo" so repetiria: a parcial nao serve mais (o recurso mudou, o checkpoint nao
+// confere, o arquivo chegou danificado). A saida e "Recomecar do zero" (os mesmos casos de app/downloads/errors.js).
+static int restart_advised(const char* error) {
+  static const char* marks[] = {"changed the resource", "file changed since this partial", "no matching durable checkpoint",
+                                "partial file is shorter", "SHA-256 mismatch", "existing partial files require"};
+  for (size_t i = 0; i < sizeof marks / sizeof *marks; ++i) if (strstr(error, marks[i])) return 1;
+  return 0;
+}
+
 static void job_json_as(Buf* b, const Job* j, int for_disk) {
   const int hide = for_disk && !strcmp(j->provider, "torbox");
   const int drop = for_disk && !hide && link_temporary(j); // glibren.42 (J8)
@@ -1110,6 +1125,7 @@ static void job_json_as(Buf* b, const Job* j, int for_disk) {
           (long long)(hide && j->link_at ? 1 : j->link_at), (long long)j->created, (long long)j->updated, j->awaiting_app ? "true" : "false", j->renewals);
   buf_fmt(b, ",\"written\":%llu,\"total\":%llu,\"bytesPerSecond\":%.0f,\"connectionsActive\":%u,\"retries\":%u,\"owner\":\"payload\"",
           (unsigned long long)j->written, (unsigned long long)j->total, j->bytes_per_second, j->active_connections, j->retries);
+  if (!for_disk && j->notice[0]) { buf_str(b, ",\"notice\":"); buf_json(b, j->notice); } // glibren.55
   if (j->requested) {
     buf_str(b, ",\"library\":{\"id\":"); buf_json(b, j->lib_id);
     buf_str(b, ",\"hash\":"); buf_json(b, j->lib_hash);
@@ -1712,6 +1728,8 @@ struct Engine {
   unsigned rate_next; // glibren.13: de qual conexao rate_resume comeca (cada vez uma, para todas andarem)
   char fail[600];
   int needs_renew;
+  int owned; // glibren.55: a parcial aberta e deste job (checkpoint gravado por open_partial); so entao o fim grava checkpoint
+  int64_t hold_until; // glibren.55: depois de um 429 (com o Retry-After), nenhuma faixa nova ate esta hora (mono_ms)
 };
 
 static volatile unsigned g_epoch; // muda a cada volta do repouso / troca de IP
@@ -2213,6 +2231,20 @@ static int64_t tb_cooldown_left(void) {
 
 enum { RENEW_OK, RENEW_NEEDS_APP, RENEW_RETRY, RENEW_FAILED };
 
+// glibren.55: o Retry-After (em segundos) de uma resposta do TorBox, para a espera depois de um 429.
+static size_t on_retry_after(char* data, size_t size, size_t count, void* opaque) {
+  const size_t length = size * count;
+  unsigned* out = opaque;
+  if (length > 12 && length < 64 && !strncasecmp(data, "retry-after:", 12)) {
+    char value[64];
+    memcpy(value, data + 12, length - 12);
+    value[length - 12] = 0;
+    uint64_t seconds;
+    if (decimal(trim_value(value), &seconds)) *out = (unsigned)(seconds > 3600 ? 3600 : seconds);
+  }
+  return length;
+}
+
 // Pede ao TorBox um link novo para o mesmo arquivo (requestdl). A chave vai so na query desse pedido (e assim
 // que a API do TorBox a aceita); a URL montada nunca vai para o diario nem para mensagens de erro.
 static int renew_link(Job* j, char* why, size_t cap) {
@@ -2244,11 +2276,14 @@ static int renew_link(Job* j, char* why, size_t cap) {
   CURL* curl = curl_easy_init();
   if (!curl) { memset(url, 0, sizeof url); snprintf(why, cap, "out of memory"); return RENEW_RETRY; }
   Body body = {0};
+  unsigned retry_after = 0;
   configure_transport(curl, url);
   memset(url, 0, sizeof url);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, on_small_body);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, on_retry_after); // glibren.55
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &retry_after);
   CURLcode result = curl_easy_perform(curl);
   long status = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
@@ -2264,7 +2299,8 @@ static int renew_link(Job* j, char* why, size_t cap) {
     return RENEW_RETRY;
   }
   logf_("job %s: requestdl -> HTTP %ld %s", j->id, status, answer.success ? "ok" : answer.code);
-  if (status == 429) tb_slow_down(g_tb_rate_wait_ms, "renovacao de link"); // glibren.43
+  // glibren.43: o ritmo unico; glibren.55: com o Retry-After do TorBox, quando ele diz quanto esperar.
+  if (status == 429) tb_slow_down(retry_after ? (int64_t)retry_after * 1000 : g_tb_rate_wait_ms, "renovacao de link");
   if (status == 429 || status >= 500 || !parsed) { snprintf(why, cap, "TorBox isn't answering right now (HTTP %ld)", status); return RENEW_RETRY; }
   // O link novo tem de ser https (como o app exige); http so quando a propria API de teste e http (Linux).
   int scheme_ok = !strncmp(answer.data, "https://", 8) || (!strncmp(g_torbox_base, "http://", 7) && !strncmp(answer.data, "http://", 7));
@@ -2294,7 +2330,11 @@ static void compute_identity(Engine* e) {
   Hash h;
   hash_init(&h);
   char validator[700], total[32];
-  if (e->etag[0]) snprintf(validator, sizeof validator, "etag:%s", e->etag);
+  // glibren.55: TorBox/AllDebrid: cada link novo (requestdl) vai a outro no da CDN, com outro ETag e outro Last-Modified
+  // para o MESMO arquivo. A identidade e a do arquivo no servico (item e arquivo) e o tamanho; o conteudo e conferido por
+  // amostra (sample_check) ao retomar.
+  if (debrid_source(e->job)) snprintf(validator, sizeof validator, "debrid:%s:%s:%s:%s", e->job->provider, e->job->kind, e->job->item_id, e->job->file_id);
+  else if (e->etag[0]) snprintf(validator, sizeof validator, "etag:%s", e->etag);
   else if (e->last_modified[0]) snprintf(validator, sizeof validator, "modified:%s", e->last_modified);
   else snprintf(validator, sizeof validator, "size");
   snprintf(total, sizeof total, "%llu", (unsigned long long)e->total);
@@ -2440,7 +2480,10 @@ static int probe_source(Engine* e) {
       e->known = c->length_known; e->total = c->content_length; e->ranged = 0;
     } else if (result == CURLE_OK && c->status == 206 && c->content_range && c->cr_begin == 0 && c->cr_end == 0 && c->got == 1) {
       e->known = 1; e->total = c->cr_total; e->ranged = 1;
-      if (c->etag[0] && strncmp(c->etag, "W/", 2)) snprintf(e->etag, sizeof e->etag, "%s", c->etag);
+      // glibren.55: debrid: nenhum validador do link (ETag/Last-Modified mudam a cada no da CDN): vale o tamanho total,
+      // e cada faixa confere o Content-Range com ele. Link direto comum segue com a checagem forte.
+      if (debrid_source(e->job)) e->etag[0] = e->last_modified[0] = 0;
+      else if (c->etag[0] && strncmp(c->etag, "W/", 2)) snprintf(e->etag, sizeof e->etag, "%s", c->etag);
       else snprintf(e->last_modified, sizeof e->last_modified, "%s", c->last_modified);
     } else if (result == CURLE_OK && c->status == 200 && c->length_known && c->content_length == 0) {
       e->known = 1; e->total = 0; e->ranged = 0;
@@ -2461,7 +2504,9 @@ static int probe_source(Engine* e) {
 }
 
 // Sem ETag forte: antes de continuar, rebaixa o fim da ultima faixa completa e compara com a parcial.
-static int check_sample(Engine* e) {
+// glibren.55: 1 = confere, 0 = o servidor mandou outros bytes, -1 = nao deu para reler (rede, 429/5xx depois de algumas
+// tentativas com o Retry-After, ou mandaram parar). Nao marca falha: quem chama decide.
+static int sample_check(Engine* e) {
   uint32_t last = e->count;
   while (last && !e->completed[last - 1]) --last;
   if (!last) return 1;
@@ -2472,20 +2517,48 @@ static int check_sample(Engine* e) {
   Conn* c = &e->conns[0];
   char* sample = malloc(length);
   char* local = malloc(length);
-  if (!sample || !local) { free(sample); free(local); engine_fail(e, "out of memory"); return 0; }
-  c->probe = 1; c->probe_from = end - length; c->probe_length = length; c->sample = sample; c->sample_len = 0;
-  conn_configure(c);
-  CURLcode result = perform_probe(e, c);
-  int fetched = result == CURLE_OK && c->status == 206 && c->content_range && c->cr_begin == end - length &&
-                c->cr_end == end - 1 && c->cr_total == e->total && c->sample_len == length &&
-                (!e->last_modified[0] || !strcmp(c->last_modified, e->last_modified));
-  c->sample = NULL; c->probe_length = 1;
-  int same = fetched && pread(e->fd, local, length, (off_t)(end - length)) == (ssize_t)length && !memcmp(local, sample, length);
+  if (!sample || !local) { free(sample); free(local); engine_fail(e, "out of memory"); return -1; }
+  int answer = -1;
+  for (unsigned attempt = 1;; ++attempt) {
+    c->probe = 1; c->probe_from = end - length; c->probe_length = length; c->sample = sample; c->sample_len = 0;
+    conn_configure(c);
+    CURLcode result = perform_probe(e, c);
+    int fetched = result == CURLE_OK && c->status == 206 && c->content_range && c->cr_begin == end - length &&
+                  c->cr_end == end - 1 && c->cr_total == e->total && c->sample_len == length &&
+                  (!e->last_modified[0] || !strcmp(c->last_modified, e->last_modified));
+    c->sample = NULL; c->probe_length = 1;
+    if (fetched) {
+      answer = pread(e->fd, local, length, (off_t)(end - length)) == (ssize_t)length && !memcmp(local, sample, length);
+      break;
+    }
+    if (stopping(e) || attempt >= 4 || !(congested(c, result) || (result == CURLE_WRITE_ERROR && (c->status == 429 || c->status >= 500)))) break;
+    char text[400];
+    logf_("job %s: releitura do fim da parcial tentativa %u falhou: %s", e->job->id, attempt, describe(c, result, text, sizeof text));
+    const int64_t until = mono_ms() + retry_delay_ms(c, attempt);
+    while (mono_ms() < until && !stopping(e)) sleep_ms(100);
+  }
   free(sample); free(local);
-  if (stopping(e)) return 0;
-  if (!fetched) { engine_fail(e, "could not re-read the partial file's tail from the server"); return 0; }
-  if (!same) { engine_fail(e, "the server's file changed since this partial download; restart from zero"); return 0; }
-  return 1;
+  return stopping(e) ? -1 : answer;
+}
+
+// glibren.55: outro download escreve agora nesta parcial? Um job deste payload baixando para o mesmo destino, ou a .part
+// mexida nos ultimos ORPHAN_QUIET_S segundos (o motor do app grava a cada faixa). Nesses casos a parcial nao e orfa.
+#define ORPHAN_QUIET_S 20
+static int partial_busy(const Job* j, const char* partial) {
+  int busy = 0;
+  pthread_mutex_lock(&g_lock);
+  for (int i = 0; i < g_job_count && !busy; ++i) busy = g_jobs[i] != j && g_jobs[i]->running && !strcmp(g_jobs[i]->destination, j->destination);
+  pthread_mutex_unlock(&g_lock);
+  struct stat st;
+  if (!busy && !stat(partial, &st) && time(NULL) - st.st_mtime < ORPHAN_QUIET_S && st.st_mtime <= time(NULL)) busy = 1;
+  return busy;
+}
+
+static void set_notice(Job* j, const char* text) {
+  pthread_mutex_lock(&g_lock);
+  snprintf(j->notice, sizeof j->notice, "%s", text);
+  g_dirty = 1;
+  pthread_mutex_unlock(&g_lock);
 }
 
 // Abre a parcial: nova (O_EXCL) ou retomada com o checkpoint que bate (prepare do motor nativo).
@@ -2496,6 +2569,7 @@ static int open_partial(Engine* e) {
   snprintf(meta_path, sizeof meta_path, "%s.resume", j->destination);
   free(e->completed); e->completed = NULL;
   e->count = 0; e->committed = 0;
+  e->owned = 0; // glibren.55
   if (e->ranged) {
     uint64_t count = (e->total + j->range_bytes - 1) / j->range_bytes;
     if (count > MAX_RANGES) { engine_fail(e, "too many ranges; increase rangeBytes (maximum 65536 ranges)"); return 0; }
@@ -2510,22 +2584,71 @@ static int open_partial(Engine* e) {
     e->fd = open(partial, O_RDWR);
     int meta = open(meta_path, O_RDONLY);
     Checkpoint saved;
-    int valid = e->fd >= 0 && meta >= 0 && !fstat(e->fd, &st) && S_ISREG(st.st_mode) && st.st_size >= 0 &&
-                (uint64_t)st.st_size <= e->total && read_all(meta, &saved, sizeof saved) &&
-                !memcmp(saved.magic, CHECKPOINT_MAGIC, 8) && saved.total == e->total && saved.range_bytes == j->range_bytes &&
-                saved.count == e->count && !memcmp(saved.identity, e->identity, 65) && read_all(meta, e->completed, e->count);
+    memset(&saved, 0, sizeof saved);
+    // glibren.55: o checkpoint em duas partes. `usable`: um checkpoint deste arquivo (mesmo tamanho total, faixas que
+    // fecham com ele, mapa legivel so com 0/1, nada alem do fim da .part). `same`: e a mesma identidade (mesmo link
+    // validado, mesmo disco). Usavel mas de outra identidade e a parcial de outro job (b123 -> b135 no PS5: o disco
+    // voltou com outro numero de dispositivo, ou o TorBox deu outro link): adotada se o fim da ultima faixa pronta
+    // confere com o servidor; senao, e sem checkpoint, e uma parcial orfa: recomeca do zero (nunca trava o job).
+    int usable = e->fd >= 0 && meta >= 0 && !fstat(e->fd, &st) && S_ISREG(st.st_mode) && st.st_size >= 0 &&
+                 (uint64_t)st.st_size <= e->total && read_all(meta, &saved, sizeof saved) &&
+                 !memcmp(saved.magic, CHECKPOINT_MAGIC, 8) && saved.total == e->total && saved.range_bytes > 0 &&
+                 saved.count <= MAX_RANGES && (e->total + saved.range_bytes - 1) / saved.range_bytes == saved.count;
+    const int same = usable && !memcmp(saved.identity, e->identity, 65);
+    if (usable && saved.range_bytes != j->range_bytes) {
+      // Faixas de outro tamanho (o app ou outro job escolheu outro rangeBytes): segue com as do checkpoint.
+      unsigned char* map = calloc(saved.count ? saved.count : 1, 1);
+      if (!map) { if (meta >= 0) close(meta); engine_fail(e, "out of memory"); return 0; }
+      free(e->completed);
+      e->completed = map;
+      e->count = saved.count;
+      pthread_mutex_lock(&g_lock); j->range_bytes = saved.range_bytes; save_jobs_locked(); pthread_mutex_unlock(&g_lock);
+      logf_("job %s: faixas de %llu bytes, as do checkpoint", j->id, (unsigned long long)saved.range_bytes);
+    }
+    if (usable) usable = read_all(meta, e->completed, e->count);
     if (meta >= 0) close(meta);
-    for (uint32_t i = 0; valid && i < e->count; ++i) if (e->completed[i] > 1) valid = 0;
-    if (!valid) { engine_fail(e, "partial file has no matching durable checkpoint; remove .part/.resume or choose another destination"); return 0; }
-    for (uint32_t i = 0; i < e->count; ++i) {
+    for (uint32_t i = 0; usable && i < e->count; ++i) if (e->completed[i] > 1) usable = 0;
+    for (uint32_t i = 0; usable && i < e->count; ++i) {
       if (!e->completed[i]) continue;
       uint64_t begin = (uint64_t)i * j->range_bytes, end = begin + j->range_bytes;
       if (end > e->total) end = e->total;
-      if (end > (uint64_t)st.st_size) { engine_fail(e, "partial file is shorter than its checkpoint"); return 0; }
+      if (end > (uint64_t)st.st_size) { usable = 0; break; }
       e->committed += end - begin;
     }
-    logf_("job %s: retomando a parcial (%llu de %llu bytes)", j->id, (unsigned long long)e->committed, (unsigned long long)e->total);
-    if (e->committed && !e->etag[0] && !check_sample(e)) return 0;
+    if (!usable) e->committed = 0;
+    if (same && usable) {
+      logf_("job %s: retomando a parcial (%llu de %llu bytes)", j->id, (unsigned long long)e->committed, (unsigned long long)e->total);
+      if (e->committed && !e->etag[0]) {
+        const int check = sample_check(e);
+        if (check < 0) { if (!stopping(e)) engine_fail(e, "network: could not re-read the partial file's tail from the server"); return 0; }
+        if (!check) { engine_fail(e, "the server's file changed since this partial download; use Restart from zero"); return 0; }
+      }
+    } else if (e->fd >= 0) {
+      int check = 0;
+      if (usable && e->committed) {
+        check = sample_check(e);
+        if (check < 0) { if (!stopping(e)) engine_fail(e, "network: could not re-read the partial file's tail from the server"); return 0; }
+      }
+      if (check == 1) {
+        logk_("job %s: parcial de outro download adotada (mesmo arquivo: o fim da ultima faixa pronta confere; %llu de %llu bytes)",
+              j->id, (unsigned long long)e->committed, (unsigned long long)e->total);
+        set_notice(j, "adopted the partial file of an earlier download of the same file");
+      } else {
+        if (partial_busy(j, partial)) {
+          engine_fail(e, "network: another download is still writing this partial file; trying again in a moment");
+          return 0;
+        }
+        const char* why = !usable ? "sem checkpoint deste arquivo" : !check && e->committed ? "o fim da ultima faixa nao confere com o servidor" : "nenhuma faixa pronta";
+        struct stat now_st;
+        const uint64_t had = fstat(e->fd, &now_st) ? 0 : (uint64_t)now_st.st_size;
+        if (ftruncate(e->fd, 0)) { engine_fail(e, "truncate partial file: %s", strerror(errno)); return 0; }
+        unlink(meta_path);
+        memset(e->completed, 0, e->count ? e->count : 1);
+        e->committed = 0;
+        logk_("job %s: parcial orfa apagada (%s; %llu bytes); recomecando do zero", j->id, why, (unsigned long long)had);
+        set_notice(j, "an orphan partial file was deleted; the download started over from zero");
+      }
+    }
   } else if (e->fd < 0 && errno == EEXIST && !e->ranged && access(meta_path, F_OK) != 0) {
     // Servidor sem faixas: nao ha o que retomar (sem checkpoint), comeca do zero.
     e->fd = open(partial, O_RDWR | O_TRUNC);
@@ -2535,6 +2658,7 @@ static int open_partial(Engine* e) {
     engine_fail(e, "partial file must be a regular, unshared file on the selected storage"); return 0;
   }
   if (e->ranged && !write_checkpoint(e)) return 0; // posse e checkpoint vazio antes do primeiro byte
+  e->owned = 1;
   return 1;
 }
 
@@ -2738,7 +2862,7 @@ static int transfer_ranges(Engine* e) {
       if (e->ranged && e->completed[i]) continue;
       if (!e->ranged && e->committed == e->total && e->known && e->total) continue;
       pending = 1;
-      if (e->inflight[i] || active >= cap || e->retry_at[i] > now) continue;
+      if (e->inflight[i] || active >= cap || e->retry_at[i] > now || e->hold_until > now) continue;
       Conn* c = free_conn(e);
       if (!c) break;
       c->index = (int)i; c->probe = 0; c->sample = NULL;
@@ -2791,8 +2915,9 @@ static int transfer_ranges(Engine* e) {
       if (!cut) e->attempts[i] += 1;
       logf_("job %s: faixa %u tentativa %u falhou: %s", j->id, i, e->attempts[i], text);
       if (!cut && e->attempts[i] >= limit) {
-        if (congested(c, result) && (c->status == 0 || result == CURLE_COULDNT_RESOLVE_HOST || result == CURLE_COULDNT_CONNECT)) {
+        if (congested(c, result) && (c->status == 0 || c->status == 429 || result == CURLE_COULDNT_RESOLVE_HOST || result == CURLE_COULDNT_CONNECT)) {
           // Sem rede (ou servidor fora do ar) por muito tempo: o job volta a fila e tenta mais tarde.
+          // glibren.55: e o servidor pedindo para esperar (429) seguidas vezes: tenta mais tarde, sem falhar.
           engine_fail(e, "network: %s", text);
         } else {
           engine_fail(e, "%s", text);
@@ -2801,7 +2926,14 @@ static int transfer_ranges(Engine* e) {
         return 0;
       }
       if (c->status == 429 || c->status >= 500) { e->window = e->window > 1 ? e->window / 2 : 1; e->success_streak = 0; }
-      e->retry_at[i] = now + retry_delay_ms(c, e->attempts[i] ? e->attempts[i] : 1);
+      const int delay = retry_delay_ms(c, e->attempts[i] ? e->attempts[i] : 1);
+      e->retry_at[i] = now + delay;
+      // glibren.55: um 429 segura o job inteiro (nenhuma faixa nova) pelo Retry-After ou pela espera crescente; antes so
+      // a faixa que levou o 429 esperava e as outras conexoes abriam faixas novas, levando mais 429 (b136/b139 no PS5).
+      if (c->status == 429 && now + delay > e->hold_until) {
+        e->hold_until = now + delay;
+        logf_("job %s: servidor pediu para esperar (HTTP 429%s); nenhuma faixa nova por %d ms", j->id, c->retry_after ? ", Retry-After" : "", delay);
+      }
       pthread_mutex_lock(&g_lock); j->retries += 1; pthread_mutex_unlock(&g_lock);
       if (!e->ranged) { e->committed = 0; if (ftruncate(e->fd, 0)) {} }
     }
@@ -3001,6 +3133,9 @@ static void run_job(Job* j) {
   char host[200];
   url_host(j->url, host, sizeof host);
   logk_("job %s: iniciando %s (%s) -> %s%s", j->id, j->name, host, j->destination, j->ahead && !j->followed ? " [fila antecipada, app fechado]" : "");
+  pthread_mutex_lock(&g_lock);
+  if (strncmp(j->notice, "restarted", 9)) j->notice[0] = 0; // glibren.55
+  pthread_mutex_unlock(&g_lock);
   set_state(j, "connecting");
   e->multi = curl_multi_init();
   for (unsigned i = 0; i < MAX_CONNS && e->multi; ++i) { e->conns[i].e = e; e->conns[i].curl = curl_easy_init(); if (!e->conns[i].curl) break; }
@@ -3076,8 +3211,10 @@ static void run_job(Job* j) {
   auto_after_download(j); // glibren.18: pedido do celular baixado com o app fechado: a conversao, se for o caso
   goto out;
 done:
-  if (e->fd >= 0 && e->ranged && e->completed && !e->fail[0]) write_checkpoint(e);
-  else if (e->fd >= 0 && e->ranged && e->completed && e->fail[0] && strncmp(e->fail, "partial file", 12) && strncmp(e->fail, "existing destination", 20)) {
+  // glibren.55: so com a parcial deste job (owned): uma que ainda nao foi adotada (releitura que falhou, outro download
+  // escrevendo nela) nao ganha um checkpoint com a identidade deste job.
+  if (e->owned && e->fd >= 0 && e->ranged && e->completed && !e->fail[0]) write_checkpoint(e);
+  else if (e->owned && e->fd >= 0 && e->ranged && e->completed && e->fail[0] && strncmp(e->fail, "partial file", 12) && strncmp(e->fail, "existing destination", 20)) {
     char keep[600];
     copy_text(keep, sizeof keep, e->fail);
     e->fail[0] = 0;
@@ -3091,7 +3228,7 @@ done:
     // Sem rede: tenta de novo em 30 s, sem desistir (o PS5 pode estar voltando do repouso).
     pthread_mutex_lock(&g_lock);
     snprintf(j->state, sizeof j->state, "queued");
-    snprintf(j->error, sizeof j->error, "%s", e->fail + 9);
+    copy_text(j->error, sizeof j->error, e->fail + 9); // glibren.55: copy_text (o snprintf avisava truncamento)
     j->retry_at = now_s() + 30;
     j->updated = now_s();
     save_jobs_locked();
@@ -3822,6 +3959,20 @@ static int job_action_locked(Job* j, const char* action, int remote, int* remove
       snprintf(j->state, sizeof j->state, "cancelled"); snprintf(j->by, sizeof j->by, "%s", by);
       remember_cancelled_locked(j);
     }
+  } else if (!strcmp(action, "restart")) {
+    // glibren.55: "Recomecar do zero" (celular, /app e a API local): apaga .part/.resume do job e o recomeca do byte 0.
+    // So parado (falhou, pausado, esperando o app ou na fila esperando a rede); um marcador ou pedido sem arquivo, nao.
+    if (j->placeholder || j->requested || !j->destination[0]) return 404;
+    if (j->running || (strcmp(j->state, "failed") && strcmp(j->state, "paused") && strcmp(j->state, "needs-app") && strcmp(j->state, "queued"))) return 409;
+    remove_partials(j);
+    snprintf(j->state, sizeof j->state, "queued");
+    j->error[0] = 0;
+    j->retry_at = 0;
+    j->retries = 0;
+    j->written = 0;
+    j->bytes_per_second = 0;
+    snprintf(j->notice, sizeof j->notice, "restarted from zero; the partial file was deleted");
+    snprintf(j->by, sizeof j->by, "%s", by);
   } else if (remote) {
     return 404;
   } else if (!strcmp(action, "adopt")) {
@@ -3902,10 +4053,12 @@ static void handle_action(int fd, const char* id, const char* action) {
   const int status = job_action_locked(j, action, 0, &removed);
   if (status == 404) { pthread_mutex_unlock(&g_lock); respond_error(fd, 404, "unknown action"); return; }
   Buf b = {0};
-  if (status == 409) buf_str(&b, "{\"error\":\"the job is running; release it first\"}");
+  if (status == 409 && !strcmp(action, "restart")) buf_str(&b, "{\"error\":\"only a stopped download restarts from zero\"}"); // glibren.55
+  else if (status == 409) buf_str(&b, "{\"error\":\"the job is running; release it first\"}");
   else if (!removed) { buf_str(&b, "{\"ok\":true,\"job\":"); job_json(&b, j); buf_str(&b, "}"); }
   else buf_str(&b, "{\"ok\":true,\"removed\":true}");
   pthread_mutex_unlock(&g_lock);
+  if (status == 200 && !strcmp(action, "restart")) logk_("job %s: recomecar do zero (app): parcial apagada", id); // glibren.55
   respond(fd, status, b.data ? b.data : "{}");
   free(b.data);
 }
@@ -5010,6 +5163,14 @@ static void monitor_status(Buf* b) {
     // glibren.18: comecado pelo payload com o app fechado (ainda nao adotado), ou por que ainda espera (so o codigo).
     if (j->requested && j->auto_started && !j->auto_adopted) buf_str(b, ",\"auto\":true");
     if (j->requested && j->placeholder && j->auto_note[0]) { buf_str(b, ",\"autoNote\":"); buf_json(b, j->auto_note); }
+    // glibren.55: "Recomecar do zero" vale para este (parado, com arquivo); "restartAdvised": o erro e de parcial que
+    // nao se retoma (recurso mudou, checkpoint, arquivo danificado): Retomar so repetiria o erro.
+    if (!j->placeholder && !j->requested && j->destination[0] && !j->running &&
+        (!strcmp(j->state, "failed") || !strcmp(j->state, "paused") || !strcmp(j->state, "needs-app"))) {
+      buf_str(b, ",\"canRestart\":true");
+      if (restart_advised(j->error)) buf_str(b, ",\"restartAdvised\":true");
+    }
+    if (j->notice[0]) { buf_str(b, ",\"notice\":"); buf_json(b, j->notice); }
     // glibren.12: download direto: o site (o que o app mandou, ou o do link); pelo TorBox/AllDebrid o host e o CDN
     // deles, e a pagina mostra o "via". E o formato (o do app, ou a extensao do destino/nome) e as partes.
     {
@@ -5149,7 +5310,7 @@ static void monitor_action(int fd, Request* r) {
   id[slash - rest] = 0;
   snprintf(action, sizeof action, "%s", slash + 1);
   const int connections_action = !strcmp(action, "connections");
-  if (strcmp(action, "pause") && strcmp(action, "resume") && strcmp(action, "cancel") && !connections_action) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return; }
+  if (strcmp(action, "pause") && strcmp(action, "resume") && strcmp(action, "cancel") && strcmp(action, "restart") && !connections_action) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return; }
   if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
   // glibren.8: POST /api/jobs/<id>/connections {"connections": 1..64, ou 0/null = as do app}: vale ja para um job
   // baixando, e quando comecar para um na fila (inclusive um "waiting-app", que o app comeca depois).
@@ -5172,8 +5333,10 @@ static void monitor_action(int fd, Request* r) {
   // MODIFIED (glibren.8): os marcadores tambem (um pausado so do app aparece "Pausado" e tem Retomar/Cancelar).
   if (j && strcmp(j->state, "cancelled")) status = job_action_locked(j, action, 1, &removed);
   pthread_mutex_unlock(&g_lock);
+  if (status == 409) { monitor_json(fd, 409, "{\"error\":\"busy\"}"); return; } // glibren.55: restart de um job que nao parou
   if (status != 200) { monitor_json(fd, 404, "{\"error\":\"no such job\"}"); return; }
-  logf_("celular: job %s %s", id, action);
+  if (!strcmp(action, "restart")) logk_("celular: job %s restart (recomecar do zero: parcial apagada)", id);
+  else logf_("celular: job %s %s", id, action);
   monitor_json(fd, 200, "{\"ok\":true}");
 }
 

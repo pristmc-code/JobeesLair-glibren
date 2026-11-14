@@ -4,7 +4,7 @@
 import '../assets/Exo2.ttf';
 import { jsx, jsxs } from 'react/jsx-runtime';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { STALE_PARTIAL, cause, explainError, finalError } from '../downloads/errors.js';
+import { RESTART_FROM_ZERO, cause, explainError, finalError } from '../downloads/errors.js';
 import { WAITING, shownState } from '../downloads/labels.js';
 import { Choice, ReadyPick, TextAction } from './Choice.jsx';
 import { DISABLED, DownloadLabel, statusLine } from './DownloadLabel.jsx';
@@ -151,7 +151,9 @@ import { colors, radius } from '../ui/colors.js';
     const free = useFreeSpace(roots, download.status, !job2);
     const need = spaceNeeded(release, roots[storage]);
     const lacking = download.status === "idle" && need && free[storage] !== null && free[storage] < need + MARGIN2;
-    const stale = ["paused", "failed"].includes(download.status) && STALE_PARTIAL.test(cause(error2));
+    // glibren.55: also when the server's file changed or the file came with another SHA-256 (errors.js RESTART_FROM_ZERO):
+    // Retry would repeat the error, the button restarts from zero (as the Downloads card).
+    const stale = ["paused", "failed"].includes(download.status) && RESTART_FROM_ZERO.test(cause(error2));
     // 0.5.4: a refusal Retry would only meet again (an archive the console can't unpack): the button opens the
     // list of sources instead.
     const refused = download.status === "failed" && finalError(error2, Boolean(job2?.release.parts));

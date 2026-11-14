@@ -9,6 +9,7 @@ import test, { after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -166,3 +167,47 @@ for (const fmt of ['pax', 'gnu']) {
     }
   });
 }
+
+// glibren.55: PS5 real (Alan Wake 2, 13/11/2026): um .exfat dentro de um .7z ("PPSA02572-game-unknown-....exfat.7z") nao
+// da direto ("the archive holds a package or an image"); a extracao falhava com "write: Could not stat
+// .../_temp/c21/PPSA02572.exfat" (o lstat de cada pedaco do caminho do SECURE_SYMLINKS) e, mesmo extraida, a imagem
+// virava "not-a-game". Agora a imagem de dentro e so publicada em homebrew/, sem reconverter. 24 MiB: varios blocos de
+// ARC_BLOCK (1 MiB), o caminho de fluxo.
+const sevenZip = ['7z', '7za'].find((name) => spawnSync(name, ['i'], { stdio: 'ignore' }).status === 0);
+test('.exfat dentro de .7z: a conversao extrai e publica a imagem em homebrew/<codigo>.exfat, sem reconverter', { skip: skip || (!sevenZip && 'sem 7z') }, async () => {
+  const base = path.join(dir, `run${++run}`);
+  mkdirSync(path.join(base, 'state'), { recursive: true });
+  mkdirSync(path.join(base, 'disk/downloads'), { recursive: true });
+  const backup = path.join(base, 'disk/BACKUP/Alan Wake 2 Deluxe Edition (3)');
+  const inner = path.join(base, 'monta');
+  mkdirSync(backup, { recursive: true });
+  mkdirSync(inner, { recursive: true });
+  const bytes = randomBytes(24 * 1024 * 1024);
+  writeFileSync(path.join(inner, 'PPSA02572.exfat'), bytes);
+  const archive = path.join(backup, 'PPSA02572-game-unknown-rcc915f30fb54.exfat.7z');
+  const made = spawnSync(sevenZip, ['a', '-mx=0', archive, 'PPSA02572.exfat'], { cwd: inner, encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  rmSync(inner, { recursive: true, force: true });
+  const api = await freePort();
+  const child = start(base, api, await freePort());
+  try {
+    await up(base, api);
+    const output = path.join(base, 'disk/homebrew/PPSA02572.exfat');
+    const { status, data } = await call(base, api, 'POST', '/convert', { key: 'x-7z-exfat', name: 'Alan Wake 2 Deluxe Edition', label: 'PPSA02572', root: path.join(base, 'disk'), output, kind: 'archive', source: archive, sources: [archive] });
+    assert.equal(status, 201, JSON.stringify(data));
+    let done;
+    for (const end = Date.now() + 60000; Date.now() < end && !done; await wait(50)) {
+      const item = (await call(base, api, 'GET', '/convert')).data.conversions.find((c) => c.id === data.id);
+      if (item && ['done', 'failed'].includes(item.state)) done = item;
+    }
+    assert.ok(done, 'a conversao terminou');
+    assert.equal(done.state, 'done', done.error);
+    const sha = (b) => createHash('sha256').update(b).digest('hex');
+    assert.equal(sha(readFileSync(output)), sha(bytes), 'a imagem de dentro, byte a byte, em homebrew/');
+    assert.ok(!existsSync(path.join(base, 'disk/BACKUP/_temp', data.id)), 'a pasta temporaria foi apagada');
+    assert.ok(existsSync(archive), 'o .7z original fica no BACKUP');
+    assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /imagem pronta dentro do compactado, publicada em/);
+  } finally {
+    await stop(child);
+  }
+});

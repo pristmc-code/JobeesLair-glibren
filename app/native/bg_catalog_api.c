@@ -992,6 +992,7 @@ static int catalog_store_entry(const char* id, StGame* out, char* key, size_t ke
       const int group = ct_group(t);
       const CtRel* base = t->rel ? t->rel : t->base;
       copy_text(l->kind, sizeof l->kind, t->rel ? CT_GROUP[group] : "set");
+      snprintf(l->group, sizeof l->group, "%s", CT_GROUP[group]); // glibren.55: tambem num conjunto
       const char* host = group == GR_TORRENT ? "Torrent" : !strncmp(ct_s(base->provider), "www.", 4) ? base->provider + 4 : ct_s(base->provider);
       copy_utf8(l->host, sizeof l->host, host);
       copy_text(l->format, sizeof l->format, t->rel ? ct_s(t->rel->format) : "archive-set");

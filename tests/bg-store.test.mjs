@@ -462,6 +462,52 @@ test('Baixar com a Jobe fechada: o payload baixa o primeiro link solo sozinho (d
   assert.deepEqual([exists.status, exists.data.error], [409, 'exists']);
 });
 
+// glibren.55: bug do PS5 real (Jobe .53, /app pelo celular): a ficha listava os links mas nao deixava escolher; o Baixar
+// ia no automatico (Stray: um host que precisa do navegador do PS5, e ninguem na TV para tocar em baixar). Agora cada link
+// tem `i`, `group` e `ref`; o Baixar manda o escolhido; o payload confere que e deste jogo.
+test('Baixar com o link escolhido: chega a rota, vira a fonte do pedido; link de outro jogo recusado; navegador avisado', { skip }, async () => {
+  const base = workspace();
+  storeFiles(base);
+  const disk = path.join(base, 'disk');
+  start(base, { BGDL_APP_SILENCE_MS: '600' });
+  await up(base);
+  const session = await unlocked(base);
+  assert.equal((await call(base, 'POST', '/config', { autoRoot: disk, autoConvert: false })).status, 200);
+  const g = (await page('/api/store/game?id=PPSA01001')).data;
+  assert.deepEqual(g.links.map((l) => [l.i, l.group]), [[0, 'browser'], [1, 'direct'], [2, 'direct']]);
+  assert.ok(g.links.every((l) => /^[0-9a-f]{16}$/.test(l.ref)) && new Set(g.links.map((l) => l.ref)).size === 3);
+  const other = (await page('/api/store/game?id=PPSA01002')).data;
+  // Um link de outro jogo (a ref dele com o indice dele), uma ref inventada, um indice fora: 400 "link".
+  for (const body of [{ id: 'PPSA01001', link: 0, ref: other.links[0].ref }, { id: 'PPSA01001', link: 1, ref: '0123456789abcdef' }, { id: 'PPSA01001', link: 9, ref: g.links[0].ref }, { id: 'PPSA01001', link: 0 }]) {
+    const refused = await page('/api/store/add', { method: 'POST', session, body });
+    assert.deepEqual([refused.status, refused.data.error], [400, 'link'], JSON.stringify(body));
+  }
+  assert.equal((await call(base, 'GET', '/jobs')).data.jobs.length, 0, 'nada entrou na fila');
+  await wait(900); // o app calado = fechado
+  // Escolhido o 1o (Vikingfile, navegador): mesmo havendo um solo, vai ao marcador com a fonte dele e avisa o navegador.
+  const viking = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01001', link: 0, ref: g.links[0].ref } });
+  assert.deepEqual([viking.status, viking.data.via, viking.data.picked, viking.data.browser, viking.data.appOpen], [200, 'app', 0, true, false], JSON.stringify(viking.data));
+  const job = (await call(base, 'GET', '/jobs')).data.jobs.find((j) => j.id === viking.data.id);
+  assert.deepEqual([job.placeholder, job.state, job.library.store, job.library.source], [true, 'waiting-app', 'PPSA01001', 0], 'a Jobe recebe a fonte escolhida');
+  assert.equal((await call(base, 'POST', `/jobs/${viking.data.id}/forget`)).status, 200);
+  // Escolhido o conjunto de partes (direto, nao solo): marcador com a fonte 1, sem aviso de navegador.
+  await wait(700);
+  const set = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01001', link: 2, ref: g.links[2].ref } });
+  assert.deepEqual([set.data.via, set.data.picked, set.data.browser], ['app', 2, false]);
+  assert.equal((await call(base, 'GET', '/jobs')).data.jobs.find((j) => j.id === set.data.id).library.source, 1);
+  assert.equal((await call(base, 'POST', `/jobs/${set.data.id}/forget`)).status, 200);
+  // Escolhido o solo: o payload baixa ele sozinho.
+  await wait(700);
+  const solo = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01001', link: 1, ref: g.links[1].ref } });
+  assert.deepEqual([solo.data.via, solo.data.picked, solo.data.browser], ['payload', 1, false]);
+  assert.equal((await call(base, 'GET', '/jobs')).data.jobs.find((j) => j.id === solo.data.id).library.source, 3);
+  // Automatico num jogo so com navegador/torrent (como o Stray): marcador sem fonte (a Jobe escolhe como a TV) e o aviso.
+  await wait(700);
+  const auto = await page('/api/store/add', { method: 'POST', session, body: { id: 'PPSA01002' } });
+  assert.deepEqual([auto.data.via, auto.data.picked, auto.data.browser], ['app', -1, true]);
+  assert.equal((await call(base, 'GET', '/jobs')).data.jobs.find((j) => j.id === auto.data.id).library.source, -1);
+});
+
 test('o pedido da loja sobrevive a reiniciar o payload (jobs.json) e o auto_loop do TorBox nao o pega', { skip }, async () => {
   const base = workspace();
   storeFiles(base, { links: [{ kind: 'browser', host: 'x', format: 'rar', label: 'x', filename: 'x.rar', parts: 0, solo: false, source: 0 }] });

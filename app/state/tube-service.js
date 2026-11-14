@@ -30,7 +30,7 @@
 
 import { Downloads, FileSystem, Http, Payloads, Platform } from '@ps5-react/core';
 import { createTubeUpdater } from './tube-update.js';
-import { tubeAutoUpdate, tubeQuality } from './tube-settings.js';
+import { tubeAutoUpdate, tubeCodec, tubeQuality } from './tube-settings.js';
 import { newer } from './updater.js';
 import { REPO, VERSION } from '../version.js';
 
@@ -120,19 +120,80 @@ import { REPO, VERSION } from '../version.js';
       const label = clip(choice.label || `${choice.height}p`, 48);
       if (seen.has(label)) continue;
       seen.add(label);
-      list.push({ label, height: Number(choice.height) || 0, fps: Number(choice.fps) || 0, codec, url, hls: Boolean(choice.hls_url) || container === "hls" });
+      const height = Number(choice.height) || 0;
+      const family = codecFamily(codec);
+      // glibren.55: HDR (VP9 perfil 2) nao entra no decodificador do PS5 (docs/VIDEO.md: so VP9 perfil 0); vai para o
+      // FFmpeg (processador), que nao abre nada acima de 1080p: essas nem aparecem.
+      const hdr = /HDR|HLG/i.test(String(choice.video_range ?? "")) || /\b(HDR|HLG)/i.test(label);
+      if (family === "vp9" && hdr && height > 1080) continue;
+      list.push({ label, height, fps: Number(choice.fps) || 0, codec, family, hdr, url, hls: Boolean(choice.hls_url) || container === "hls" });
     }
     return list;
   }
 
-  /** A qualidade padrao: a melhor ate `max` (1080p), um link HLS antes de um arquivo; sem nenhuma ate la, a menor. */
-  function defaultChoice(list, max = 1080) {
+  /** glibren.55: a familia do codec ("h264", "vp9", "hevc"): "avc" e o H.264. */
+  function codecFamily(codec) {
+    const value = String(codec ?? "").toLowerCase();
+    return value === "avc" ? "h264" : value;
+  }
+  // glibren.55: os formatos que o jogador escolhe no R2 e ficam guardados (state/tube-settings.js tubeCodec).
+  var TUBE_CODECS = ["auto", "h264", "vp9"];
+  var familyOf = (choice) => choice.family ?? codecFamily(choice.codec);
+
+  /** A melhor de `entries` ({ choice, index }): a mais alta, um link HLS antes de um arquivo, SDR antes de HDR. */
+  function bestOf(entries) {
+    const top = Math.max(...entries.map(({ choice }) => choice.height));
+    const best = entries.filter(({ choice }) => choice.height === top);
+    return (best.find(({ choice }) => choice.hls && !choice.hdr) ?? best.find(({ choice }) => choice.hls) ?? best[0]).index;
+  }
+
+  /**
+   * A qualidade que o player abre: ate `max` (1080p; Configuracoes > Videos), no formato `codec` ("auto", "h264", "vp9").
+   * glibren.55: o automatico prefere o H.264 (o decodificador do PS5 que toca liso; o VP9 engasgou no PS5 real,
+   * 13/11/2026): a melhor H.264 ate `max`; sem nenhuma H.264, a melhor de qualquer formato. Um formato escolhido que o
+   * video nao tem ate `max` vale como automatico. Sem nenhuma ate `max`, a menor (do formato, se houver).
+   */
+  function defaultChoice(list, max = 1080, codec = "auto") {
     if (!list.length) return -1;
-    const fits = list.map((choice, index) => ({ choice, index })).filter(({ choice }) => choice.height <= max);
-    if (!fits.length) return list.reduce((best, choice, index) => choice.height < list[best].height ? index : best, 0);
-    const top = Math.max(...fits.map(({ choice }) => choice.height));
-    const best = fits.filter(({ choice }) => choice.height === top);
-    return (best.find(({ choice }) => choice.hls) ?? best[0]).index;
+    const all = list.map((choice, index) => ({ choice, index }));
+    const want = codec === "h264" || codec === "vp9" ? codec : "h264";
+    const mineOnly = ({ choice }) => familyOf(choice) === want;
+    const fits = all.filter(({ choice }) => choice.height <= max);
+    if (!fits.length) {
+      const pool = all.some(mineOnly) ? all.filter(mineOnly) : all;
+      return pool.reduce((best, entry) => entry.choice.height < best.choice.height ? entry : best).index;
+    }
+    const mine = fits.filter(mineOnly);
+    return bestOf(mine.length ? mine : fits);
+  }
+
+  /**
+   * glibren.55: a qualidade seguinte depois de um erro do player em `failed` (sem as de `tried`, pelos rotulos): o mesmo
+   * formato mais baixo; depois as outras ate a mesma altura, H.264 antes; depois qualquer uma; -1 sem nenhuma. Antes ia
+   * para a proxima da lista, que e o VP9 da mesma altura: um erro no H.264 trocava o formato sozinho e de vez.
+   */
+  function fallbackChoice(list, failed, tried = /* @__PURE__ */ new Set()) {
+    const current = list[failed];
+    if (!current) return -1;
+    const family = familyOf(current);
+    const left = list.map((choice, index) => ({ choice, index })).filter(({ choice, index }) => index !== failed && !tried.has(choice.label));
+    const lower = left.filter(({ choice }) => familyOf(choice) === family && choice.height < current.height);
+    if (lower.length) return bestOf(lower);
+    const rank = (choice) => ({ h264: 0, hevc: 1, vp9: 2 })[familyOf(choice)] ?? 3;
+    const others = left.filter(({ choice }) => choice.height <= current.height).sort((x, y) => rank(x.choice) - rank(y.choice) || y.choice.height - x.choice.height);
+    if (others.length) return others[0].index;
+    return left.length ? left[0].index : -1;
+  }
+
+  /**
+   * glibren.55: o aviso de uma qualidade na lista do R2: "cpu" (VP9 HDR = perfil 2: o decodificador do PS5 nao aceita,
+   * vai pelo processador), "vp9only" (VP9 numa altura sem H.264) ou "vp9" (VP9 com H.264 na mesma altura); "" no resto.
+   */
+  function choiceNote(list, index) {
+    const choice = list[index];
+    if (!choice || familyOf(choice) !== "vp9") return "";
+    if (choice.hdr) return "cpu";
+    return list.some((other) => other.height === choice.height && familyOf(other) === "h264") ? "vp9" : "vp9only";
   }
 
   // glibren-captions: as 14 linguas do app nos codigos de legenda do YouTube. `request`: o caption_language pedido ao
@@ -578,7 +639,7 @@ import { REPO, VERSION } from '../version.js';
     // As playlists de midia da qualidade padrao (vNv/vNa ao lado da master vN.m3u8): um HEAD faz o servico ler os
     // indices do arquivo agora (ele so le os da primeira escolha sozinho), sem trazer o texto para o heap.
     function warm(info) {
-      const index = defaultChoice(info.choices, tubeQuality());
+      const index = defaultChoice(info.choices, tubeQuality(), tubeCodec());
       const url = index >= 0 ? info.choices[index].url : "";
       const match = /^http:\/\/127\.0\.0\.1:\d+(\/media\/[^/?#]+\/v)(\d+)\.m3u8$/.exec(url);
       if (!match || match[2] === "0") return;
@@ -731,4 +792,4 @@ import { REPO, VERSION } from '../version.js';
     }, delayMs);
   }
 
-export { captionLanguage, checkTubeUpdateSoon, setTubeUpdater, tubeUpdater, DEFAULT_FILTERS, DURATIONS, ELF_PATHS, ORDERS, TUBE_API, TUBE_DIR, TUBE_PORT, TYPES, TubeError, UPLOADS, clockText, createTubeService, defaultChoice, pageItems, pickCaption, pickFirstVideo, playableChoices, searchRequest, setTubeService, sponsorSkipTo, tubeService };
+export { TUBE_CODECS, choiceNote, codecFamily, fallbackChoice, captionLanguage, checkTubeUpdateSoon, setTubeUpdater, tubeUpdater, DEFAULT_FILTERS, DURATIONS, ELF_PATHS, ORDERS, TUBE_API, TUBE_DIR, TUBE_PORT, TYPES, TubeError, UPLOADS, clockText, createTubeService, defaultChoice, pageItems, pickCaption, pickFirstVideo, playableChoices, searchRequest, setTubeService, sponsorSkipTo, tubeService };
