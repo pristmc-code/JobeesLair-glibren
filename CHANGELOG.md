@@ -6,6 +6,32 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.54** (fork): the TV store asks the download payload for its pages (Phase 4 of the Orbit model). On the PS5,
+  when the payload's catalog is up (`BG_API` 37), Jobe no longer builds the whole catalog in its own memory: the store
+  grid and Search come page by page (48 games at a time, a few pages kept), the filter counts, the Discover rows
+  (carousel with art and summary, Featured, Recent, Top, New this week, Ready, Popular, Overdrive CDN, Popular genres),
+  the game page (links, page, art, editions, related) and the games the app already knows by code (download queue,
+  recently viewed, favorites: `GET /api/catalog/cards`) all come from the payload (`state/catalog-remote.js`,
+  `state/remote-store.js`). Favorites are filtered and sorted in the app over their cards, with the app's own rules.
+- Fallback, transparent: payload not answering, older than 37, catalog over its memory cap (503) or not ready in 4 s,
+  any error later, the TorBox store chosen, or opening the TorBox Library or the catalog list in Settings: the store is
+  built in the app as before (and rebuilt in place if the payload goes away while it is open). In payload mode the app
+  does not download its own copies of the feeds nor rewrite `store-index.json` (the payload does both).
+- Memory (qjs peak, same data): store open 14.5 MB -> 6.8 MB (the code's own floor), with the Orbit list 17.9 -> 6.8
+  MB; 48 game pages opened (16 kept) 8.8 MB.
+- Fixes from the first real console diagnostics (13/11): the Phase 3 catalog never built on the PS5 because
+  `data/formats.js` and `data/ratings.js` were not in the image (the copy for the payload failed with "No such file");
+  they are now in the `resources` of both `app.json` files, the copy carries on without them if missing, a test checks
+  the resources and `pacote.sh` checks the mounted image. The app read a faked firmware (13.090.001 on a 12.00 console)
+  from its own process: the payload now reads the real one from the kernel (like glibren), writes
+  `/data/JobeesLair/bg/firmware` and reports it in `/health`; the app uses it for the compatibility notes, the "ready"
+  rule and the catalog config, and logs both (`firmware=12.00 appSees=13.090.001`).
+- Download payload 1.37.0 (`BG_API` 37): `GET /api/catalog/cards?ids=`, cards with metacritic, providers, platforms,
+  features, work, recommendations and catalog position; the home rows with art (carousel, Featured), the carousel
+  summary and the genre rail. `BG_MIN_APP_API` stays 33 (only additions).
+- Tests: `tests/fase4-tela.test.mjs` (the TV client against the real payload vs the app's own build: grid of every
+  query page by page, filter counts, Search, home rows, genres, 60 game pages, cards, favorites in the 5 sorts; PS5 and
+  firmware 9.60), `tests/remote-store.test.mjs` (opening and every fallback), `tests/catalog-remote.test.mjs`.
 - **glibren.53** (fork): the full Jobe on the web (Phase 8), a new page served by the download payload at
   `http://<PS5 IP>:34201/app`, next to the phone page (which gains an "Open the full Jobe" link under its header). Store
   as a cover grid with search, filters and sort (virtual list, pages of 100 from `/api/store`), game page with sources and
