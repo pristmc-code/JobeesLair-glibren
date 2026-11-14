@@ -43,9 +43,9 @@ function setup({ health = () => ({ api: PAYLOAD_API }), files = {}, startTries =
   return { s, bg };
 }
 
-test('o contrato: PAYLOAD_API 37 e a versao do embutido 1.37.6 (= BG_VERSION; o bg-self-update.test confere com o C)', () => {
+test('o contrato: PAYLOAD_API 37 e a versao do embutido 1.37.7 (= BG_VERSION; o bg-self-update.test confere com o C)', () => {
   assert.equal(PAYLOAD_API, 37);
-  assert.equal(BG_EMBEDDED_VERSION, '1.37.6');
+  assert.equal(BG_EMBEDDED_VERSION, '1.37.7');
 });
 
 test('antes de subir: app.json com a PAYLOAD_API e o embutido, e a copia do ELF embutido (embedded.elf), uma vez', async () => {

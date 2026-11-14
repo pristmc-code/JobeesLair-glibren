@@ -726,7 +726,10 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   // (/app/capa?id=: o icon0.png do jogo instalado, o cache, ou a capa e as alternativas do catalogo baixadas pelo payload,
   // com DoH quando o DNS bloqueia); host que so falhou (CAPA_RUIM vezes, nenhuma abriu) ja vai direto para o proxy. Nada
   // serviu: o nome do jogo no lugar. No celular e no PC continua direto. Tudo conta em capasMed (vai nas medidas).
-  var CAPA_DEMORA = 8000, CAPA_RUIM = 4, PROXY_JUNTOS = 2;
+  // glibren.63: a lista virtual recria a linha que volta a tela; a capa ja vista vai direto pelo endereco que abriu
+  // (capaBoa, sai do cache do navegador) e o pedido ao proxy que saiu da tela ou passou de PROXY_MAX ms solta a vaga
+  // (antes as 2 vagas podiam ficar presas e as capas sumiam ao voltar ao topo).
+  var CAPA_DEMORA = 8000, CAPA_RUIM = 4, PROXY_JUNTOS = 6, PROXY_MAX = 15000, capaBoa = {};
   var capasMed = { ok: 0, erro: 0, demora: 0, proxyOk: 0, proxyErro: 0, pulou: 0, nome: 0, hosts: {} };
   function capaChave(u) {
     var m = /^https:\/\/([^\/?#:]+)(?::\d+)?([^?#]*)/i.exec(u || ""); if (!m) return "outro";
@@ -744,12 +747,16 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   }
   function noPs5() { return root.classList.contains("ps5"); }
   function idCapa(g) { return g && /^[A-Z]{4}[0-9]{5}$/.test(String(g.id || "")) ? g.id : ""; }
-  var proxyFila = [], proxyAtivos = 0;
+  var proxyFila = [], proxyAtivos = 0, proxyLista = [];
   function proxima() {
+    proxyLista = proxyLista.filter(function (a) {
+      if (a._ativo && (!a.isConnected || Date.now() - a._desde > PROXY_MAX)) { a._ativo = false; proxyAtivos--; }
+      return a._ativo;
+    });
     while (proxyAtivos < PROXY_JUNTOS && proxyFila.length) {
       var img = proxyFila.shift();
       if (!img.isConnected) continue; // a linha saiu da tela (lista virtual): nao pede
-      proxyAtivos++; img._ativo = true;
+      proxyAtivos++; img._ativo = true; img._desde = Date.now(); proxyLista.push(img);
       img.src = "/app/capa?id=" + encodeURIComponent(idCapa(img._g));
     }
   }
@@ -765,6 +772,8 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     proxyFila.push(img); proxima();
   }
   function carregarCapa(img) {
+    var boa = capaBoa[img._u];
+    if (boa) { img._proxy = boa !== img._u; img.src = boa; return; }
     if (noPs5() && idCapa(img._g) && hostRuim(img._u)) { capasMed.pulou++; pedirProxy(img); return; }
     img.src = img._u;
     if (noPs5()) img._t = setTimeout(function () { if (!img._fim && !img._proxy && img.isConnected) { capasMed.demora++; pedirProxy(img); } }, CAPA_DEMORA);
@@ -775,7 +784,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       var img = el("img"); img.alt = ""; img.decoding = "async"; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
       img._g = g; img._box = box; img._u = sized(g.cover, w);
       img.onload = function () {
-        img._fim = true; clearTimeout(img._t); box.classList.add("ok");
+        img._fim = true; clearTimeout(img._t); box.classList.add("ok"); capaBoa[img._u] = img.getAttribute("src");
         if (img._proxy) { capasMed.proxyOk++; soltarProxy(img); } else contarCapa(img._u, true);
       };
       img.onerror = function () {

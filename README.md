@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.63**: Covers no longer vanish when scrolling back in the glibren full-screen store (download payload 1.37.7).
 > **glibren.62**: Covers show again on the TV app and in the glibren full-screen store: the payload no longer drops extra connections and the TV image loader no longer breaks after a refused connection (download payload 1.37.6).
 > **glibren.61**: The TorBox key is kept on the PS5 (payload folder, mode 0600): after a reboot the download payload works from the phone without opening the Jobe; removing the key in the Jobe removes it from the PS5 (download payload 1.37.5).
 > **glibren.60**: Fixes from the first PS5 diagnostics: a TorBox download paused in the app resumes from the phone with the app closed; no more log storms when the network drops; dead links say "choose another source"; "Delete from TorBox and download again" for a broken TorBox copy; no crash notice after a normal power off; diagnostics from the phone carry the app info and retry; renamed games are followed; .7z extracted on several cores; cover bank filled by the phone app JobeControle 0.3-teste (not tested on a device yet) (download payload 1.37.4).

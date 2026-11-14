@@ -6,6 +6,12 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.63** (fork): covers no longer vanish when scrolling back in the glibren full-screen store (`/app`).
+  Download payload 1.37.7.
+  - The store's virtual list rebuilds rows that come back into view; each cover started over (Sony address first,
+    then the payload, 2 at a time) and a request whose row had left the screen could hold its slot forever. A cover
+    already shown now reuses the address that worked (browser cache), a request that left the screen or took over
+    15 s frees its slot, and 6 covers are asked of the payload at once.
 - **glibren.62** (fork): covers that stopped showing on the PS5 TV app and in the glibren full-screen store.
   Download payload 1.37.6.
   - The payload's phone/app port served 4 connections at once and closed every extra one right away: the store
