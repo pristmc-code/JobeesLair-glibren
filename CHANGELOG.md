@@ -6,6 +6,20 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.59** (fork): YouTube player fixes from the PS5 reports of 14/11. Download payload unchanged; built-in
+  YouTube service 0.2.3.
+  - Seek no longer "breaks" the quality: an error right after a seek, a stall or a decoder error reopens the SAME
+    quality at the same position (new decoder), then gets new links, and only then goes down a quality in the same
+    format. VP9 never comes in by itself any more (it flickers on the PS5); it stays in the R2 list.
+  - Progressive seek: a tap moves 10 s; holding speeds up (10 s -> 30 s -> 1 min -> 2 min), the bar shows the target
+    time and the player seeks once, after you let go (taps in a row add up). D-pad left/right and L1/R1.
+  - The player never sits still without a message: a stall (20 s without moving) or a video that does not start
+    (45 s) is reopened; when nothing works it says why (stalled, server refused, decoder refused...).
+  - H.264 hardware decoder (ps5-react): after an error or a seek it resumes only at an IDR and puts the SPS/PPS ahead
+    of the first picture. YouTube's older encoder (official trailers) marks many non-IDR I frames as keyframes, and
+    the decoder got slices without parameter sets until the next IDR ("video decode failed (h264, sceVideodec2)").
+  - Built-in tube-service 0.2.3: the signed-in account plays again (the media check read the TV link before its `n`
+    transform and always got 403, "upstream_media"); `account_media_refused` has its own message.
 - **glibren.58** (fork): fixes from the real PS5 (downloads and the web /app). Download payload 1.37.3 (`BG_API` stays 37).
   - A download paused in Jobee'sLair, with the app then closed, resumes from `/app` (or the phone page) on the
     payload alone. The app's queue sent the paused item without its request when it would not hand it over (a TorBox
