@@ -6,6 +6,13 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.65** (fork): glibren full-screen store (`/app`) on the PS5 browser. Download payload 1.37.9.
+  - Covers no longer use `loading="lazy"` (the store already decides when to ask for each one): the PS5's WebKit lost
+    track of them after scrolling back up and they vanished for good.
+  - The store opened without full screen measured its grid as 0 px and showed no games; it now measures again.
+  - The store sends its own measurements to the payload every 15 s when they change (`POST /api/teste/gravar`, only
+    saves `teste-resultados.txt`), with a new line of what the grid shows right now, so a diagnostic sent from the
+    phone carries them.
 - **glibren.64** (fork): covers in the glibren full-screen store (`/app`) on the PS5 go straight to the payload.
   Download payload 1.37.8.
   - Sony cover addresses were tried directly first; the console's DNS blocks Sony and the request could hang up to

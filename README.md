@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.65**: Full-screen store on the PS5: covers no longer vanish after scrolling up, games show without full screen, measurements go with every diagnostic (download payload 1.37.9).
 > **glibren.64**: Covers in the glibren full-screen store come straight from the payload on the PS5 (download payload 1.37.8).
 > **glibren.63**: Covers no longer vanish when scrolling back in the glibren full-screen store (download payload 1.37.7).
 > **glibren.62**: Covers show again on the TV app and in the glibren full-screen store: the payload no longer drops extra connections and the TV image loader no longer breaks after a refused connection (download payload 1.37.6).

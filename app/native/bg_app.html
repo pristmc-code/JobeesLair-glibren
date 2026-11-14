@@ -648,7 +648,8 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   function nLinhas() { return loja.count > 0 ? Math.ceil(loja.count / V.cols) : 0; }
   function medidas(forcar) {
     var w = grade.clientWidth, r = rem();
-    if (!w) return;
+    // glibren.65: no PS5 a loja aberta sem tela cheia media a grade com 0 px e nunca desenhava; tenta de novo.
+    if (!w) { if (secao === "loja" && !V.remedir) V.remedir = setTimeout(function () { V.remedir = 0; medidas(true); }, 300); return; }
     var lista = w < 30 * r, pad = 0.6 * r, gap = 0.6 * r, min = (root.classList.contains("ps5") ? 10.5 : 8.6) * r;
     var cols = lista ? 1 : Math.max(2, Math.floor((w - 2 * pad + gap) / (min + gap)));
     if (!forcar && cols === V.cols && lista === V.lista && Math.abs(w - V.largura) < 1) return;
@@ -782,10 +783,12 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     img.src = img._u;
     if (noPs5()) img._t = setTimeout(function () { if (!img._fim && !img._proxy && img.isConnected) { capasMed.demora++; pedirProxy(img); } }, CAPA_DEMORA);
   }
+  // glibren.65: sem loading="lazy": a loja ja decide quando pedir (data-src + pedirCapas) e o navegador do PS5 (WebKit)
+  // se perdia com as linhas posicionadas por transform: depois de subir a lista, as capas sumiam e nao voltavam.
   function capa(g, w, adiar) {
     var box = el("div", "capa"); box.appendChild(el("span", "ini", iniciais(g ? g.title : "")));
     if (g && g.cover && okURL(g.cover)) {
-      var img = el("img"); img.alt = ""; img.decoding = "async"; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
+      var img = el("img"); img.alt = ""; img.decoding = "async"; img.referrerPolicy = "no-referrer";
       img._g = g; img._box = box; img._u = sized(g.cover, w);
       img.onload = function () {
         img._fim = true; clearTimeout(img._t); box.classList.add("ok"); capaBoa[img._u] = img.getAttribute("src");
@@ -1651,8 +1654,30 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       "fonte-base: " + getComputedStyle(root).fontSize + "; grade: " + (st.lista ? "lista" : (st.cols || "?") + " colunas") + ", " + Math.round(grade.clientWidth) + "x" + Math.round(grade.clientHeight) + " px",
       "tela cheia: " + (tela.suporte || (root.classList.contains("ps5") ? "sem gancho do payload (patch do ShellUI)" : "sem API")) + "; " + tela.resultado + "; agora " +
         (emTelaCheia() || (root.classList.contains("ps5") && innerWidth >= 1900 && innerHeight >= 1060) ? "em tela cheia" : "com moldura"),
-      textoCapas()].join("\n");
+      textoCapas(), textoNaTela()].join("\n");
   }
+  // glibren.65: o que a grade mostra agora (cartoes na tela, capas abertas, esperando, com o nome no lugar).
+  function textoNaTela() {
+    var q = grade.getBoundingClientRect(), n = 0, ok = 0, esp = 0, pend = 0, nome = 0;
+    Array.prototype.forEach.call(espaco.querySelectorAll(".card"), function (c) {
+      var b = c.getBoundingClientRect(); if (b.bottom <= q.top || b.top >= q.bottom) return;
+      n++; var img = c.querySelector(".capa img"), box = c.querySelector(".capa");
+      if (box && box.classList.contains("sem")) nome++; else if (!img) return;
+      else if (img.hasAttribute("data-src")) pend++; else if (img.complete && img.naturalWidth) ok++; else esp++;
+    });
+    return "na tela agora: " + n + " cartoes, " + ok + " capas abertas, " + esp + " carregando, " + pend + " ainda nao pedidas, " + nome + " com o nome; " +
+      "rolagem " + Math.round(grade.scrollTop) + " px; proxy " + proxyAtivos + " ativos, " + proxyFila.length + " na fila";
+  }
+  // glibren.65: as medidas vao sozinhas para o payload (POST /api/teste/gravar, so grava teste-resultados.txt): o
+  // diagnostico pedido pelo celular ja leva o que a loja viu, sem o botao.
+  var gravadoTxt = "";
+  setInterval(function () {
+    if (secao !== "loja" || !noPs5()) return;
+    var t = anotarTela(), sem = t.replace(/^.*\n/, "");
+    if (sem === gravadoTxt) return;
+    gravadoTxt = sem;
+    api("POST", "/api/teste/gravar", { texto: t }).catch(function () {});
+  }, 15000);
   var telaT = 0;
   function anotarTela() {
     var t = textoTela();

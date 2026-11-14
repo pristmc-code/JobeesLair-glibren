@@ -20,6 +20,8 @@
 //        comeca uma rodada do diagnostico (bg_diag.c, a mesma do "Enviar diagnostico"): o arquivo vai junto, passado
 //        pela mesma higienizacao (diag_clean). Respostas iguais as de POST /api/diag/send (200/400 no-key/409 busy);
 //        400 {error:"texto"} sem o campo.
+//   POST /api/teste/gravar {texto} (glibren.65) so grava teste-resultados.txt, sem rodada: a loja /app manda as medidas
+//        sozinha a cada 15 s quando mudam, e o diagnostico pedido pelo celular ja as leva.
 #include "bg_teste_html.h"
 #include <sys/resource.h>
 #if !defined(__linux__)
@@ -130,7 +132,7 @@ static int teste_body_field(JP* jp, const char* key, void* ctx) {
   t->seen = 1;
   return jp_text(jp, t->text, TESTE_TEXT_MAX) ? 1 : -1;
 }
-static void teste_enviar(int fd, Request* r) {
+static void teste_enviar(int fd, Request* r, int so_gravar) {
   TesteBody t = {calloc(1, TESTE_TEXT_MAX), 0};
   if (!t.text) { monitor_json(fd, 500, "{\"error\":\"memory\"}"); return; }
   JP jp = {r->body ? r->body : "", r->body ? r->body + r->content_length : "", 0};
@@ -145,6 +147,7 @@ static void teste_enviar(int fd, Request* r) {
   }
   free(t.text);
   if (!ok) { monitor_json(fd, 500, "{\"error\":\"not saved\"}"); return; }
+  if (so_gravar) { monitor_json(fd, 200, "{\"ok\":true}"); return; } // glibren.65: a loja /app grava sozinha (sem log)
   logk_("teste: resultados da pagina /teste gravados para o diagnostico");
   diag_reply_start(fd, 0, "teste"); // "from" do info.json (ate 11 letras)
 }
@@ -161,7 +164,8 @@ static int teste_monitor_route(int fd, Request* r) {
   if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return 1; }
   if (get && !strcmp(r->path, "/api/teste/estado")) teste_estado(fd);
   else if (get && !strcmp(r->path, "/api/teste/catalogo")) teste_catalogo(fd); // Fase 3: o catalogo no payload (bg_catalog_api.c)
-  else if (post && !strcmp(r->path, "/api/teste/enviar")) teste_enviar(fd, r);
+  else if (post && !strcmp(r->path, "/api/teste/enviar")) teste_enviar(fd, r, 0);
+  else if (post && !strcmp(r->path, "/api/teste/gravar")) teste_enviar(fd, r, 1); // glibren.65: so grava (loja /app)
   else monitor_json(fd, 404, "{\"error\":\"not found\"}");
   return 1;
 }
