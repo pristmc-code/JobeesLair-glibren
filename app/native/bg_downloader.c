@@ -1732,6 +1732,10 @@ struct Engine {
   int needs_renew;
   int owned; // glibren.55: a parcial aberta e deste job (checkpoint gravado por open_partial); so entao o fim grava checkpoint
   int64_t hold_until; // glibren.55: depois de um 429 (com o Retry-After), nenhuma faixa nova ate esta hora (mono_ms)
+  // glibren.60: sem DNS/sem conexao o job inteiro espera (hold_until crescente) e conta as rodadas (net_fails); o diario
+  // registra no maximo FAIL_LOG_BURST falhas por minuto (as outras viram um resumo). Antes: 13.500 linhas em 10 s.
+  unsigned net_fails, log_count, log_skipped;
+  int64_t log_window_at;
 };
 
 static volatile unsigned g_epoch; // muda a cada volta do repouso / troca de IP
@@ -2135,6 +2139,22 @@ static int congested(const Conn* c, CURLcode result) {
       return 1;
     default: return 0;
   }
+}
+
+// glibren.60: rodadas seguidas sem rede ate o job voltar a fila (1+2+4+8+16+32*4 s, uns 3 min) e o teto do diario.
+#define NET_FAIL_ROUNDS 10
+#define FAIL_LOG_BURST 20
+// glibren.60: no maximo FAIL_LOG_BURST linhas de falha por minuto por job; o resto vira uma linha de resumo.
+static int fail_log_ok(Engine* e, int64_t now) {
+  if (!e->log_window_at || now - e->log_window_at >= 60000) {
+    if (e->log_skipped) logf_("job %s: mais %u falha(s) de faixa no ultimo minuto (nao registradas uma a uma)", e->job->id, e->log_skipped);
+    e->log_window_at = now;
+    e->log_count = 0;
+    e->log_skipped = 0;
+  }
+  if (e->log_count < FAIL_LOG_BURST) { ++e->log_count; return 1; }
+  ++e->log_skipped;
+  return 0;
 }
 
 static int retry_delay_ms(const Conn* c, unsigned attempt) {
@@ -2898,6 +2918,7 @@ static int transfer_ranges(Engine* e) {
         e->committed += c->got;
         c->got = 0;
         if (++e->success_streak >= e->window && e->window < e->max_window) { ++e->window; e->success_streak = 0; }
+        e->net_fails = 0; // glibren.60: a rede voltou
         continue;
       }
       c->got = 0;
@@ -2912,10 +2933,36 @@ static int transfer_ranges(Engine* e) {
         return 0;
       }
       if (c->redirected && c->status >= 400 && (c->status < 500 || e->attempts[i] >= 1)) e->location[0] = 0;
+      // glibren.60: sem DNS ou sem conexao, a falha e da rede, nao da faixa: o job todo espera (1, 2, 4... 32 s) em vez de
+      // cada faixa tentar sozinha e as outras abrirem faixas novas (no PS5, depois do repouso: 13.500 linhas em 10 s, o
+      // diario girou). As conexoes que caem juntas na mesma rodada nao contam. NET_FAIL_ROUNDS rodadas seguidas sem
+      // nenhuma faixa pronta: o job volta a fila ("network:", tenta mais tarde); na volta de um repouso nao falha.
+      if (result == CURLE_COULDNT_RESOLVE_HOST || result == CURLE_COULDNT_CONNECT) {
+        if (now >= e->hold_until) {
+          if (now >= grace_until || e->net_fails + 1 < NET_FAIL_ROUNDS) e->net_fails += 1;
+          const unsigned shift = e->net_fails > 6 ? 5 : e->net_fails - 1;
+          static int64_t base = 0; // BGDL_NET_HOLD_MS so no PC (testes)
+          if (!base) { base = atoll(env_or("BGDL_NET_HOLD_MS", "1000")); if (base <= 0) base = 1000; }
+          const int64_t wait = base << shift;
+          e->hold_until = now + wait;
+          if (fail_log_ok(e, now)) logf_("job %s: sem rede (%s); rodada %u, nenhuma faixa nova por %lld ms", j->id, text, e->net_fails, (long long)wait);
+          if (e->net_fails >= NET_FAIL_ROUNDS) {
+            engine_fail(e, "network: %s", text);
+            drop_all(e);
+            return 0;
+          }
+        } else {
+          ++e->log_skipped;
+        }
+        e->retry_at[i] = e->hold_until;
+        pthread_mutex_lock(&g_lock); j->retries += 1; pthread_mutex_unlock(&g_lock);
+        if (!e->ranged) { e->committed = 0; if (ftruncate(e->fd, 0)) {} }
+        continue;
+      }
       int cut = c->status < 400 && congested(c, result) && now < grace_until;
       unsigned limit = congested(c, result) ? 8 : c->glitch ? 3 : 0;
       if (!cut) e->attempts[i] += 1;
-      logf_("job %s: faixa %u tentativa %u falhou: %s", j->id, i, e->attempts[i], text);
+      if (fail_log_ok(e, now)) logf_("job %s: faixa %u tentativa %u falhou: %s", j->id, i, e->attempts[i], text);
       if (!cut && e->attempts[i] >= limit) {
         if (congested(c, result) && (c->status == 0 || c->status == 429 || result == CURLE_COULDNT_RESOLVE_HOST || result == CURLE_COULDNT_CONNECT)) {
           // Sem rede (ou servidor fora do ar) por muito tempo: o job volta a fila e tenta mais tarde.

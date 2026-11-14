@@ -2435,3 +2435,32 @@ test('glibren.55: um 429 segura o job inteiro pelo Retry-After (nenhuma faixa no
     await stop(child);
   }
 });
+
+test('glibren.60: sem rede no meio (conexao recusada) o job todo espera em rodadas: poucas linhas no diario e volta a fila', { skip }, async () => {
+  const base = workspace();
+  // Um servidor que responde so a sonda (bytes=0-0) e sai do ar: as faixas seguintes levam conexao recusada.
+  const total = 40 * MiB;
+  const gone = http.createServer((req, res) => {
+    res.writeHead(206, { 'Content-Type': 'application/octet-stream', 'Content-Range': `bytes 0-0/${total}`, 'Content-Length': '1', ETag: '"x1"', Connection: 'close' });
+    res.end(Buffer.from([7]));
+    setImmediate(() => { gone.close(); gone.closeAllConnections?.(); });
+  });
+  const goneAt = await freePort();
+  await new Promise((resolve) => gone.listen(goneAt, '127.0.0.1', resolve));
+  const child = start(base, { BGDL_NET_HOLD_MS: '20' });
+  try {
+    await up(base);
+    const dest = path.join(base, 'disk/downloads/offline.bin');
+    const { data } = await call(base, 'POST', '/jobs', { url: `http://127.0.0.1:${goneAt}/f/offline.bin`, destination: dest, storageRoot: path.join(base, 'disk'), rangeBytes: MiB, connections: 16 });
+    const job = await until(base, data.id, ['queued', 'failed'], (item) => Boolean(item.error), 60000);
+    assert.equal(job.state, 'queued', `sem rede: volta a fila (tenta de novo depois), nao falha (${job.error})`);
+    const log = readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').split('\n').filter((line) => line.includes(`job ${data.id}:`));
+    const rounds = log.filter((line) => /sem rede \(.*rodada \d+/.test(line));
+    assert.equal(rounds.length, 10, `uma linha por rodada (NET_FAIL_ROUNDS), nao uma por faixa:\n${log.join('\n')}`);
+    assert.equal(log.filter((line) => /faixa \d+ tentativa/.test(line)).length, 0, 'nenhuma linha por faixa');
+    assert.ok(log.length < 40, `diario curto (${log.length} linhas)`);
+  } finally {
+    gone.close();
+    await stop(child);
+  }
+});
