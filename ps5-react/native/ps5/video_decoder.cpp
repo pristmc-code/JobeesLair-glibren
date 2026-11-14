@@ -197,6 +197,47 @@ std::size_t copy_hevc_base_layer(std::uint8_t* out, const std::uint8_t* in, std:
   return written;
 }
 
+// glibren.59: NAL types in an Annex-B access unit (start codes) or in a length-prefixed MP4 sample (`length` bytes
+// per size). YouTube's older H.264 encoder (weighted prediction) marks many non-IDR I frames (recovery point SEI) as
+// sync samples; h264_mp4toannexb only puts SPS/PPS ahead of an IDR, so resuming the decoder at such a frame after a
+// reset sent slices without parameter sets and every picture failed until the next IDR (seen on a PS5: "video decode
+// failed (h264, sceVideodec2)" on official trailers; analysis of 1T22wNvoNiU / dlQ3FeNu5Yw, 14/11/2026).
+int nal_type(std::uint32_t codec, std::uint8_t header) {
+  return codec == kHevc ? (header >> 1) & 0x3F : header & 0x1F;
+}
+bool is_idr(std::uint32_t codec, int type) {
+  return codec == kHevc ? type >= 16 && type <= 21 : type == 5;
+}
+bool is_sps(std::uint32_t codec, int type) {
+  return codec == kHevc ? type == 32 || type == 33 : type == 7;
+}
+template <typename Test>
+bool annexb_any(std::uint32_t codec, const std::uint8_t* data, std::size_t size, Test test) {
+  for (std::size_t i = 0; i + 3 < size; ++i) {
+    if (data[i] != 0 || data[i + 1] != 0) continue;
+    std::size_t header = 0;
+    if (data[i + 2] == 1) header = i + 3;
+    else if (data[i + 2] == 0 && i + 4 < size && data[i + 3] == 1) header = i + 4;
+    if (!header || header >= size) continue;
+    if (test(nal_type(codec, data[header]))) return true;
+    i = header;
+  }
+  return false;
+}
+template <typename Test>
+bool prefixed_any(std::uint32_t codec, const std::uint8_t* data, std::size_t size, int length, Test test) {
+  std::size_t at = 0;
+  while (length >= 1 && length <= 4 && at + static_cast<std::size_t>(length) < size) {
+    std::size_t nal = 0;
+    for (int i = 0; i < length; ++i) nal = (nal << 8) | data[at + i];
+    at += static_cast<std::size_t>(length);
+    if (nal == 0 || at + nal > size) return false;
+    if (test(nal_type(codec, data[at]))) return true;
+    at += nal;
+  }
+  return false;
+}
+
 // The decoders live for the whole run. After filesystem elevation swaps the process credentials every
 // libSceVideodec2 call that sets one up fails (0x811D0111, as EVO Player found), so each is brought up
 // at launch, before it, sized for 4K, and only reset between streams. One plays at a time: the pools
@@ -342,6 +383,13 @@ private:
   AVBSFContext* filter_ = nullptr;
   AVPacket* filtered_ = nullptr;
   std::vector<std::uint8_t> annexb_header_; // Annex-B extradata, sent once ahead of the stream
+  // glibren.59: the parameter sets the MP4->Annex-B filter puts out (its par_out extradata), put ahead of the first
+  // access unit after every reset/seek when that unit has none (a non-IDR keyframe), and the joined copy.
+  std::vector<std::uint8_t> parameter_sets_, joined_;
+  bool need_parameter_sets_ = false;
+  int length_size_ = 0;                     // NAL length size of the MP4 samples (0: Annex-B input)
+  bool packet_has_idr(const AVPacket* packet) const;
+  bool submit_unit(const std::uint8_t* au, std::size_t size, std::int64_t pts, bool shown);
   unsigned input_index_ = 0;
   std::vector<std::int64_t> pending_pts_;   // timestamps of shown AUs not yet output
   std::deque<video::Frame> ready_;          // decoded, held a little so they leave in display order
@@ -422,6 +470,7 @@ void Videodec2::restart() {
   if (rc != 0) async_log::write("[PS5-REACT] video: sceVideodec2Reset=0x%08x", static_cast<unsigned>(rc));
   outputs_since_flush_ = errors_since_flush_ = 0;
   if (!annexb_header_.empty()) submit(annexb_header_.data(), annexb_header_.size(), kNoPts, false);
+  need_parameter_sets_ = !parameter_sets_.empty();
 }
 
 // MP4 and Matroska carry H.264 and HEVC length-prefixed with parameter sets in avcC/hvcC; the decoder
@@ -446,6 +495,15 @@ bool Videodec2::build_filter() {
     if (av_bsf_init(filter_) < 0) {
       av_bsf_free(&filter_);
       return false;
+    }
+    // glibren.59: the filter's output extradata is the SPS/PPS (VPS/SPS/PPS) in Annex-B.
+    if (codec != kVp9) {
+      const AVCodecParameters* out = filter_->par_out;
+      if (out && out->extradata && out->extradata_size > 4 && out->extradata_size < 65536 &&
+          annexb_any(codec, out->extradata, static_cast<std::size_t>(out->extradata_size), [&](int type) { return is_sps(codec, type); }))
+        parameter_sets_.assign(out->extradata, out->extradata + out->extradata_size);
+      length_size_ = codec == kAvc ? (p->extradata_size > 4 ? (p->extradata[4] & 3) + 1 : 4)
+                   : p->extradata_size > 21 ? (p->extradata[21] & 3) + 1 : 4;
     }
   }
   if (!filtered_) filtered_ = av_packet_alloc();
@@ -574,6 +632,31 @@ void Videodec2::drain() {
   }
 }
 
+// glibren.59: one access unit to the decoder; the first after a reset/seek gets the parameter sets ahead of it when it
+// carries none (an I frame that is not an IDR).
+bool Videodec2::submit_unit(const std::uint8_t* au, std::size_t size, std::int64_t pts, bool shown) {
+  if (need_parameter_sets_ && size) {
+    need_parameter_sets_ = false;
+    const std::uint32_t codec = slot_->codec;
+    if (!annexb_any(codec, au, size, [&](int type) { return is_sps(codec, type); }) && parameter_sets_.size() + size <= kInputSlotBytes) {
+      joined_.assign(parameter_sets_.begin(), parameter_sets_.end());
+      joined_.insert(joined_.end(), au, au + size);
+      return submit(joined_.data(), joined_.size(), pts, shown);
+    }
+  }
+  return submit(au, size, pts, shown);
+}
+
+// glibren.59: whether a demuxed packet holds an IDR (H.264 type 5, HEVC IRAP): after a decode error the decoder resumes
+// only there (a non-IDR keyframe may need pictures it no longer has).
+bool Videodec2::packet_has_idr(const AVPacket* packet) const {
+  const std::uint32_t codec = slot_->codec;
+  if (codec == kVp9) return (packet->flags & AV_PKT_FLAG_KEY) != 0;
+  const auto idr = [&](int type) { return is_idr(codec, type); };
+  if (length_size_) return prefixed_any(codec, packet->data, static_cast<std::size_t>(packet->size), length_size_, idr);
+  return annexb_any(codec, packet->data, static_cast<std::size_t>(packet->size), idr);
+}
+
 // glibren.55: after a decode error mid-stream: the decoder reset (as flush() after a seek) and the packets up to the
 // next keyframe skipped. False when that happened too often in the last minute (the player then reports the error).
 bool Videodec2::recover() {
@@ -600,7 +683,8 @@ bool Videodec2::send(const AVPacket* packet) {
   if (packet && need_key_) {
     // A stream that marks no keyframes is not skipped for more than ~10 s: the decoder then gets every packet again
     // (with kErrorsAfterFlush errors allowed until a picture comes out).
-    if (!(packet->flags & AV_PKT_FLAG_KEY) && ++skipped_ < 600) return true;
+    // glibren.59: and only at an IDR (not at a non-IDR keyframe), still at most ~600 packets.
+    if ((!(packet->flags & AV_PKT_FLAG_KEY) || !packet_has_idr(packet)) && ++skipped_ < 600) return true;
     need_key_ = false;
     skipped_ = 0;
   }
@@ -608,7 +692,7 @@ bool Videodec2::send(const AVPacket* packet) {
     if (filter_) {
       av_bsf_send_packet(filter_, nullptr);
       while (av_bsf_receive_packet(filter_, filtered_) == 0) {
-        submit(filtered_->data, filtered_->size, filtered_->pts, !vp9 || vp9_shown(filtered_->data, filtered_->size));
+        submit_unit(filtered_->data, filtered_->size, filtered_->pts, !vp9 || vp9_shown(filtered_->data, filtered_->size));
         av_packet_unref(filtered_);
       }
     }
@@ -618,7 +702,7 @@ bool Videodec2::send(const AVPacket* packet) {
   }
   const std::int64_t pts = packet->pts != kNoPts ? packet->pts : packet->dts;
   if (!filter_) {
-    if (!submit(packet->data, packet->size, pts, true)) return false;
+    if (!submit_unit(packet->data, packet->size, pts, true)) return false;
     return !broken_ || recover();
   }
   AVPacket* copy = av_packet_clone(packet);
@@ -628,7 +712,7 @@ bool Videodec2::send(const AVPacket* packet) {
   av_packet_free(&copy);
   if (sent < 0) return true; // a packet the filter cannot read is skipped
   while (av_bsf_receive_packet(filter_, filtered_) == 0) {
-    const bool ok = submit(filtered_->data, filtered_->size, filtered_->pts, !vp9 || vp9_shown(filtered_->data, filtered_->size));
+    const bool ok = submit_unit(filtered_->data, filtered_->size, filtered_->pts, !vp9 || vp9_shown(filtered_->data, filtered_->size));
     av_packet_unref(filtered_);
     if (!ok) return false;
   }
