@@ -1,0 +1,8 @@
+LZMA SDK (7-Zip 26.06, pasta C/ de https://github.com/ip7z/7zip, tag 26.06), so os arquivos usados pelo
+bg-downloader para extrair .7z LZMA2 em varios nucleos (app/native/bg_7z.c, que inclui estes .c numa unidade so).
+
+Todos estes arquivos dizem "Public domain" no cabecalho (DOC/License.txt do 7-Zip: "Some files are public domain
+files, if public domain status is stated in source file"). Copiados sem mudanca; nao editar aqui (atualizar copiando
+de uma tag nova do 7-Zip e rodando tests/bg-convert-7z-multi.test.mjs).
+
+Nada do SDK oficial da Sony.
