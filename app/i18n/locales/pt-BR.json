@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "Pareado em {date}",
   "settings.deviceRemove": "Aperte de novo para remover",
   "settings.legacyPin": "Aceitar o PIN antigo",
-  "settings.legacyPinHint": "Durante a troca para o pareamento, o PIN ainda libera a página do celular. Desligue para aceitar só aparelhos pareados."
+  "settings.legacyPinHint": "Durante a troca para o pareamento, o PIN ainda libera a página do celular. Desligue para aceitar só aparelhos pareados.",
+  "settings.card.opening": "Abertura",
+  "settings.opening.minimal": "Abertura mínima",
+  "settings.opening.minimalOn": "Só o logo enquanto a loja carrega",
+  "settings.opening.minimalOff": "Como antes: apresentação, termos e avisos",
+  "settings.opening.what": "Ligada, a Jobee'sLair abre só com o logo e o anel girando até a loja ficar pronta. Novidades, quedas, termos e recados ficam aqui em Configurações > Sobre e créditos. Vale a partir da próxima abertura.",
+  "settings.whatsNew.row": "O que mudou na versão {version}",
+  "settings.whatsNew.new": "Novo: ainda não visto",
+  "settings.whatsNew.seen": "Já visto",
+  "settings.terms.row": "Termos de uso",
+  "settings.terms.accepted": "Aceitos"
 }

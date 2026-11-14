@@ -6,6 +6,20 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.57** (fork): minimal opening. Download payload unchanged (1.37.2, `BG_API` 37).
+  - New "Minimal opening" switch (Settings > Appearance), on by default, also for people updating (a settings file
+    without the key counts as on). The app opens with only the JL logo and a spinning ring until the store is ready,
+    then the store: no intro telemetry lines, no terms dialog with a countdown, no vortex.
+  - Nothing pops over the store any more: the terms are accepted once, silently, and stay readable in Settings > About
+    (legal notice); "What changed in version X" is a row in Settings > About (marked "New" until opened); a console
+    crash is a yellow mark on the "Send diagnostics" row with the time and activity, kept until "See details" is
+    pressed; the automatic reports question is not asked (no answer = off, the switch stays in About); the update
+    offer is the dot on the island's update button and the row in About; the announcements bar is gone (its notes,
+    including the stalled Orbit list warning, are in About).
+  - The ring never freezes: while the logo shows, the catalogue is built at the normal frame pace (parts of up to
+    ~25 ms) instead of the hurried one (up to 49 ms) that held the old notice's OK button.
+  - Turning the switch off brings back the old opening (intro, terms, vortex, notices over the store) from the next
+    launch.
 - **glibren.56** (fork): fixes from the real PS5 (Jobe .55). Download payload 1.37.2 (`BG_API` stays 37).
   - Full Jobe on the web (/app) in the PS5 browser: the X button arrives as a key press (13) and as a cursor click.
     The key press came first, took the focus (none: "move down", the small jump the owner saw) and the real click

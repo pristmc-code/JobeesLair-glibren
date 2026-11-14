@@ -16,6 +16,7 @@ import { LATIN_IN_RTL, useLocale, useT } from '../i18n/index.js';
 import { online, useOnline } from '../state/online.js';
 import { useOrbitStale } from '../state/orbit-feed.js';
 import { usePower } from '../state/power.js';
+import { useMinimalOpening } from '../state/opening.js';
 import { Icon } from './Icon.jsx';
 import { colors, radius } from './colors.js';
 import { EASE_OUT } from './ease.js';
@@ -97,7 +98,9 @@ import { logical } from './scale.js';
     useEffect(() => online().subscribe((now) => setUp(now.announcements.length > 0)), []);
     // glibren.20: e enquanto a lista Orbit Store estiver parada.
     const orbit = useOrbitStale();
-    return up || orbit ? BAR_SPACE : 0;
+    // glibren.56: com a abertura minima a faixa nao aparece (os recados ficam em Configuracoes > Sobre): as paginas nao descem.
+    const minimal = useMinimalOpening();
+    return !minimal && (up || orbit) ? BAR_SPACE : 0;
   }
   /**
    * 0.5.2: where a page is while the bar comes or goes, gliding instead of jumping (ui/page-glide.js): { top, its

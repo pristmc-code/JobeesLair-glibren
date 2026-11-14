@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "اقترن في {date}",
   "settings.deviceRemove": "اضغط مرة أخرى للإزالة",
   "settings.legacyPin": "قبول رمز PIN القديم",
-  "settings.legacyPinHint": "أثناء الانتقال إلى الإقران، ما زال رمز PIN يفتح صفحة الهاتف. أوقفه للسماح للأجهزة المقترنة فقط."
+  "settings.legacyPinHint": "أثناء الانتقال إلى الإقران، ما زال رمز PIN يفتح صفحة الهاتف. أوقفه للسماح للأجهزة المقترنة فقط.",
+  "settings.card.opening": "الافتتاح",
+  "settings.opening.minimal": "افتتاح مختصر",
+  "settings.opening.minimalOn": "الشعار فقط أثناء تحميل المتجر",
+  "settings.opening.minimalOff": "كما في السابق: المقدمة والشروط والإشعارات",
+  "settings.opening.what": "عند التشغيل، يفتح Jobee'sLair بالشعار وحلقته الدوارة فقط حتى يصبح المتجر جاهزًا. الجديد والأعطال والشروط والإعلانات تبقى هنا في الإعدادات > حول والشكر. يسري من التشغيل التالي.",
+  "settings.whatsNew.row": "ما الذي تغيّر في الإصدار {version}",
+  "settings.whatsNew.new": "جديد: لم يُشاهد بعد",
+  "settings.whatsNew.seen": "تمت مشاهدته",
+  "settings.terms.row": "شروط الاستخدام",
+  "settings.terms.accepted": "مقبولة"
 }

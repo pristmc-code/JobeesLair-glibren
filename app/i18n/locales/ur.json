@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "{date} کو جوڑا گیا",
   "settings.deviceRemove": "ہٹانے کے لیے دوبارہ دبائیں",
   "settings.legacyPin": "پرانا PIN قبول کریں",
-  "settings.legacyPinHint": "جوڑنے پر منتقلی کے دوران PIN اب بھی فون پیج کھولتا ہے۔ صرف جڑی ہوئی ڈیوائسز کے لیے اسے بند کریں۔"
+  "settings.legacyPinHint": "جوڑنے پر منتقلی کے دوران PIN اب بھی فون پیج کھولتا ہے۔ صرف جڑی ہوئی ڈیوائسز کے لیے اسے بند کریں۔",
+  "settings.card.opening": "آغاز",
+  "settings.opening.minimal": "مختصر آغاز",
+  "settings.opening.minimalOn": "اسٹور لوڈ ہونے تک صرف لوگو",
+  "settings.opening.minimalOff": "پہلے جیسا: تعارف، شرائط اور اطلاعات",
+  "settings.opening.what": "آن ہونے پر Jobee'sLair اسٹور تیار ہونے تک صرف لوگو اور گھومتے دائرے کے ساتھ کھلتا ہے۔ نیا کیا ہے، کریش، شرائط اور اعلانات یہاں ترتیبات > تعارف اور شکریہ میں رہتے ہیں۔ اگلی بار کھولنے سے لاگو ہوگا۔",
+  "settings.whatsNew.row": "ورژن {version} میں کیا بدلا",
+  "settings.whatsNew.new": "نیا: ابھی نہیں دیکھا",
+  "settings.whatsNew.seen": "دیکھ لیا",
+  "settings.terms.row": "استعمال کی شرائط",
+  "settings.terms.accepted": "قبول شدہ"
 }

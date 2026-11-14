@@ -68,6 +68,8 @@ import { Header } from './ui/Header.jsx';
 import { Legend } from './ui/Legend.jsx';
 import { Splash } from './ui/Splash.jsx';
 import { Reveal } from './ui/Reveal.jsx';
+import { Opening } from './ui/Opening.jsx'; // glibren.56: abertura minima
+import { acceptTerms, bootLayers, minimalOpening, useMinimalOpening } from './state/opening.js';
 import { laterReady } from './ui/later.js';
 import { Disclaimer } from './ui/Disclaimer.jsx';
 import { UpdateDialog } from './ui/UpdateDialog.jsx';
@@ -114,6 +116,9 @@ import { beginRemoteStore } from './state/remote-store.js';
   // which fades once the JL mark has popped and flown toward the island; the reveal unmounts when done.
   // CURTAIN_MS only covers a reveal that never reports back.
   var CURTAIN_MS = 3600;
+  // glibren.57 (abertura minima): o logo fica no minimo isto. O catalogo NAO e apressado (hurryCatalog deixa quadros de ate
+  // 49 ms): o anel tem de girar liso enquanto a loja monta em partes de ate ~25 ms por quadro (state/frame-pace.js).
+  var OPENING_MIN_MS = 700;
   // A screen slides in over the one it replaces: the full-screen container is translated, never faded or
   // scaled (a full-screen fade repaints every frame of it).
   var SCREEN_FADE = { type: "tween", duration: 0.32, ease: [0.22, 1, 0.36, 1] };
@@ -257,6 +262,8 @@ import { beginRemoteStore } from './state/remote-store.js';
     const key = top.name === "game" ? `game:${top.id}` : top.name === "homebrew-app" ? `homebrew-app:${top.id}` : top.name;
     const immersive = useIsImmersive();
     const { rtl } = useLocale();
+    // glibren.56: com a abertura minima, os recados do Jobee'sLair ficam em Configuracoes > Sobre, sem a faixa no topo.
+    const minimal = useMinimalOpening();
     return (
       // Arabic and Urdu mirror every row and right-align every paragraph from here.
       /* @__PURE__ */ (0, jsxs)(View, { style: [{ width: 1920, height: 1080, backgroundColor: colors.canvas }, { direction: rtl ? "rtl" : "ltr" }], children: [
@@ -269,7 +276,7 @@ import { beginRemoteStore } from './state/remote-store.js';
             jsx(ScreenFrame, { immersive, children: /* @__PURE__ */ (0, jsx)(FocusScope, { focusKey: "screen", children: jsx(ScreenGuard, { children: /* @__PURE__ */ (0, jsx)(Screen, { screen: top }) }) }) }, key)
           ),
           immersive ? null : /* @__PURE__ */ (0, jsx)(Legend, { screen: top.name }),
-          immersive ? null : jsx(AnnouncementBar, {}),
+          immersive || minimal ? null : jsx(AnnouncementBar, {}),
           /* @__PURE__ */ (0, jsx)(UpdateDialog, {}),
           jsx(AutoRestartNotice, {}),
           HOMEBREW_ONLY ? null : /* @__PURE__ */ (0, jsx)(AutoReportAsk, {}),
@@ -294,16 +301,31 @@ import { beginRemoteStore } from './state/remote-store.js';
     const [introLeaving, setIntroLeaving] = (0, useState)(false);
     // glibren.45: the store mounts once the notice is passed AND the catalog is built (state/catalog.js builds it in parts
     // from the launch, while the intro and the notice show; past the notice, in longer parts).
-    const [noticed, setNoticed] = (0, useState)(false);
+    // glibren.56 (abertura minima, state/opening.js): lida uma vez ao abrir; mudada em Configuracoes, vale na proxima.
+    const [minimal] = (0, useState)(minimalOpening);
+    const [noticed, setNoticed] = (0, useState)(minimal);
     const [catalogBuilt, setCatalogBuilt] = (0, useState)(isCatalogReady);
     (0, useEffect)(() => whenCatalogReady(() => setCatalogBuilt(true)), []);
-    const booted = noticed && catalogBuilt;
+    // Abertura minima: o logo fica pelo menos OPENING_MIN_MS (nao pisca quando a loja ja esta pronta); o catalogo segue no
+    // ritmo normal de quadros, para o anel nunca congelar (o OK do aviso antigo nao respondia porque a montagem apressada
+    // segurava os quadros).
+    const [shownLongEnough, setShownLongEnough] = (0, useState)(!minimal);
+    (0, useEffect)(() => {
+      if (!minimal) return void 0;
+      // Os termos: aceitos uma vez, nunca mais aparecem; nunca aceitos, aceitos em silencio nesta edicao (fork pessoal).
+      acceptTerms("silently, minimal opening");
+      const ids = [setTimeout(() => setShownLongEnough(true), OPENING_MIN_MS)];
+      return () => ids.forEach(clearTimeout);
+    }, []);
+    const booted = noticed && catalogBuilt && shownLongEnough;
     const setBooted = () => {
       hurryCatalog();
+      acceptTerms("continue");
       setNoticed(true);
     };
     // The PS4 skips the vortex (light-motion.js): the store comes up right after the startup notice.
-    const [curtain, setCurtain] = (0, useState)(!LIGHT);
+    // glibren.56: na abertura minima o logo sai por cima da loja ja montada (ui/Opening.jsx), no PS4 tambem.
+    const [curtain, setCurtain] = (0, useState)(minimal || !LIGHT);
     const theme = useThemeEpoch();
     // This build says it started right away (state/update.js startInstaller): after an update the updater
     // waits for that, and the startup notice below can stay up for as long as the player likes.
@@ -346,9 +368,16 @@ import { beginRemoteStore } from './state/remote-store.js';
       const id = setTimeout(() => setIntroDone(true), 5e3);
       return () => clearTimeout(id);
     }, []);
-    return /* @__PURE__ */ (0, jsx)(View, { style: { width: 1920, height: 1080, backgroundColor: colors.canvas }, children: booted
-      ? [/* @__PURE__ */ (0, jsx)(View, { style: { width: 1920, height: 1080 }, children: /* @__PURE__ */ (0, jsx)(LocaleProvider, { children: /* @__PURE__ */ (0, jsx)(StoreProvider, { children: /* @__PURE__ */ (0, jsx)(NavProvider, { restore: restoreScreen, children: /* @__PURE__ */ (0, jsx)(App, {}) }) }) }) }, `store:${theme}`), curtain ? /* @__PURE__ */ (0, jsx)(Reveal, { onDone: () => setCurtain(false) }, "curtain") : null]
-      : [introDone || introLeaving ? /* @__PURE__ */ (0, jsx)(Disclaimer, { onDone: () => setBooted(true) }, "notice") : null, introDone ? null : /* @__PURE__ */ (0, jsx)(Splash, { onExit: () => setIntroLeaving(true), onDone: () => setIntroDone(true) }, "intro")] });
+    // glibren.56: as camadas vem de state/opening.js bootLayers (testado sem desenhar). O logo da abertura minima tem a mesma
+    // chave antes e depois de a loja montar, para nao recomecar.
+    const layer = {
+      store: () => /* @__PURE__ */ (0, jsx)(View, { style: { width: 1920, height: 1080 }, children: /* @__PURE__ */ (0, jsx)(LocaleProvider, { children: /* @__PURE__ */ (0, jsx)(StoreProvider, { children: /* @__PURE__ */ (0, jsx)(NavProvider, { restore: restoreScreen, children: /* @__PURE__ */ (0, jsx)(App, {}) }) }) }) }, `store:${theme}`),
+      opening: () => jsx(Opening, { leaving: booted, onDone: () => setCurtain(false) }, "opening"),
+      reveal: () => /* @__PURE__ */ (0, jsx)(Reveal, { onDone: () => setCurtain(false) }, "curtain"),
+      terms: () => /* @__PURE__ */ (0, jsx)(Disclaimer, { onDone: () => setBooted(true) }, "notice"),
+      splash: () => /* @__PURE__ */ (0, jsx)(Splash, { onExit: () => setIntroLeaving(true), onDone: () => setIntroDone(true) }, "intro")
+    };
+    return /* @__PURE__ */ (0, jsx)(View, { style: { width: 1920, height: 1080, backgroundColor: colors.canvas }, children: bootLayers({ minimal, booted, curtain, introDone, introLeaving }).map((name) => layer[name]()) });
   }
   // glibren.31: a volta do app de videos abre na tela de onde ele foi aberto (state/return-screen.js); o jogo tem de
   // existir no catalogo. takeStartStack responde uma vez so: o app remontado pela troca de tema comeca no inicio.

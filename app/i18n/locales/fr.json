@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "Associé le {date}",
   "settings.deviceRemove": "Appuyez encore pour retirer",
   "settings.legacyPin": "Accepter l'ancien PIN",
-  "settings.legacyPinHint": "Pendant le passage à l'association, le PIN déverrouille encore la page mobile. Désactivez-le pour n'accepter que les appareils associés."
+  "settings.legacyPinHint": "Pendant le passage à l'association, le PIN déverrouille encore la page mobile. Désactivez-le pour n'accepter que les appareils associés.",
+  "settings.card.opening": "Ouverture",
+  "settings.opening.minimal": "Ouverture minimale",
+  "settings.opening.minimalOn": "Seulement le logo pendant le chargement de la boutique",
+  "settings.opening.minimalOff": "Comme avant : présentation, conditions et avis",
+  "settings.opening.what": "Activée, Jobee'sLair s'ouvre avec seulement le logo et son anneau qui tourne jusqu'à ce que la boutique soit prête. Les nouveautés, les plantages, les conditions et les annonces restent ici dans Réglages > À propos et crédits. Prend effet au prochain lancement.",
+  "settings.whatsNew.row": "Ce qui a changé dans la version {version}",
+  "settings.whatsNew.new": "Nouveau : pas encore vu",
+  "settings.whatsNew.seen": "Déjà vu",
+  "settings.terms.row": "Conditions d'utilisation",
+  "settings.terms.accepted": "Acceptées"
 }

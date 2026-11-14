@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "配对于 {date}",
   "settings.deviceRemove": "再按一次以移除",
   "settings.legacyPin": "接受旧 PIN",
-  "settings.legacyPinHint": "在改用配对期间，PIN 仍可解锁手机页面。关闭后只允许已配对的设备。"
+  "settings.legacyPinHint": "在改用配对期间，PIN 仍可解锁手机页面。关闭后只允许已配对的设备。",
+  "settings.card.opening": "启动画面",
+  "settings.opening.minimal": "简洁启动",
+  "settings.opening.minimalOn": "商店加载时只显示标志",
+  "settings.opening.minimalOff": "和以前一样：开场、条款和通知",
+  "settings.opening.what": "开启后，Jobee'sLair 启动时只显示标志和旋转的圆环，直到商店准备好。新功能、崩溃、条款和公告都在“设置 > 关于与致谢”中。下次启动时生效。",
+  "settings.whatsNew.row": "版本 {version} 的更新内容",
+  "settings.whatsNew.new": "新：尚未查看",
+  "settings.whatsNew.seen": "已查看",
+  "settings.terms.row": "使用条款",
+  "settings.terms.accepted": "已接受"
 }

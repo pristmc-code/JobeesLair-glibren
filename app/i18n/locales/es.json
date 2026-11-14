@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "Vinculado el {date}",
   "settings.deviceRemove": "Pulsa de nuevo para quitar",
   "settings.legacyPin": "Aceptar el PIN antiguo",
-  "settings.legacyPinHint": "Durante el cambio a la vinculación, el PIN todavía desbloquea la página del teléfono. Desactívalo para aceptar solo dispositivos vinculados."
+  "settings.legacyPinHint": "Durante el cambio a la vinculación, el PIN todavía desbloquea la página del teléfono. Desactívalo para aceptar solo dispositivos vinculados.",
+  "settings.card.opening": "Inicio",
+  "settings.opening.minimal": "Inicio mínimo",
+  "settings.opening.minimalOn": "Solo el logo mientras carga la tienda",
+  "settings.opening.minimalOff": "Como antes: presentación, términos y avisos",
+  "settings.opening.what": "Activado, Jobee'sLair se abre solo con el logo y su anillo girando hasta que la tienda esté lista. Las novedades, los cierres inesperados, los términos y los anuncios quedan aquí en Ajustes > Acerca de y créditos. Se aplica en el próximo inicio.",
+  "settings.whatsNew.row": "Qué cambió en la versión {version}",
+  "settings.whatsNew.new": "Nuevo: aún sin ver",
+  "settings.whatsNew.seen": "Ya visto",
+  "settings.terms.row": "Términos de uso",
+  "settings.terms.accepted": "Aceptados"
 }

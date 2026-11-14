@@ -84,7 +84,8 @@ test('the report code is six letters and digits, the same each time', () => {
 });
 
 // A queue to push snapshots through, and the timers startAutoReports sets, run by hand.
-function autoWorld(start) {
+// glibren.56: `quiet` = a abertura minima (state/opening.js); estes testes sao o comportamento antigo (pergunta), salvo quando dito.
+function autoWorld(start, { quiet = false } = {}) {
   const queueListeners = new Set();
   const choiceListeners = new Set();
   const world = { choice: start, asked: 0, sent: [], timers: [] };
@@ -98,6 +99,7 @@ function autoWorld(start) {
     ask: () => world.asked++,
     subscribe: (listener) => (choiceListeners.add(listener), () => choiceListeners.delete(listener)),
     relay: () => RELAY,
+    quiet: () => quiet,
     read: () => '',
     timer: (fn) => world.timers.push(fn),
     cancel: () => {},
@@ -120,6 +122,23 @@ test('the first failure asks before any log goes; yes sends what failed, and a b
   assert.equal(world.sent.length, 1);
   assert.match(world.sent[0].reason, /^Download failed: Game A: Source unavailable: HTTP 404/);
   assert.equal(world.sent[0].auto, true);
+  world.stop();
+});
+
+test('glibren.56: com a abertura minima, sem resposta = desligado: nao pergunta, nada espera, nada vai; um sim depois manda os seguintes', () => {
+  const world = autoWorld(null, { quiet: true });
+  world.push([]);
+  world.push([{ id: 'a', title: 'Game A', state: 'failed', error: 'HTTP 404' }]);
+  assert.equal(world.asked, 0, 'a pergunta nao aparece');
+  world.run();
+  assert.equal(world.sent.length, 0, 'nada vai sem o sim');
+  world.answer(true); // o jogador liga em Configuracoes > Sobre
+  world.run();
+  assert.equal(world.sent.length, 0, 'o que falhou antes nao ficou esperando');
+  world.push([{ id: 'a', title: 'Game A', state: 'failed', error: 'HTTP 404' }, { id: 'b', title: 'Game B', state: 'failed', error: 'HTTP 410' }]);
+  world.run();
+  assert.equal(world.sent.length, 1);
+  assert.match(world.sent[0].reason, /Game B/);
   world.stop();
 });
 

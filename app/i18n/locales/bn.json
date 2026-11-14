@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "{date} তারিখে পেয়ার করা",
   "settings.deviceRemove": "সরাতে আবার চাপুন",
   "settings.legacyPin": "পুরোনো PIN গ্রহণ করুন",
-  "settings.legacyPinHint": "পেয়ারিংয়ে যাওয়ার সময় PIN এখনো ফোন পেজ খুলে দেয়। শুধু পেয়ার করা ডিভাইস রাখতে এটি বন্ধ করুন।"
+  "settings.legacyPinHint": "পেয়ারিংয়ে যাওয়ার সময় PIN এখনো ফোন পেজ খুলে দেয়। শুধু পেয়ার করা ডিভাইস রাখতে এটি বন্ধ করুন।",
+  "settings.card.opening": "শুরু",
+  "settings.opening.minimal": "ন্যূনতম শুরু",
+  "settings.opening.minimalOn": "স্টোর লোড হওয়া পর্যন্ত শুধু লোগো",
+  "settings.opening.minimalOff": "আগের মতো: পরিচিতি, শর্তাবলি ও বিজ্ঞপ্তি",
+  "settings.opening.what": "চালু থাকলে Jobee'sLair স্টোর প্রস্তুত না হওয়া পর্যন্ত শুধু লোগো আর ঘুরতে থাকা বৃত্ত নিয়ে খোলে। নতুন কী, ক্র্যাশ, শর্তাবলি ও ঘোষণা এখানে সেটিংস > পরিচিতি ও কৃতজ্ঞতায় থাকে। পরের বার খোলা থেকে কার্যকর।",
+  "settings.whatsNew.row": "সংস্করণ {version}-এ কী বদলেছে",
+  "settings.whatsNew.new": "নতুন: এখনও দেখা হয়নি",
+  "settings.whatsNew.seen": "দেখা হয়েছে",
+  "settings.terms.row": "ব্যবহারের শর্তাবলি",
+  "settings.terms.accepted": "গৃহীত"
 }

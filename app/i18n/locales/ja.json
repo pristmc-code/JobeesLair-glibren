@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "{date} にペアリング",
   "settings.deviceRemove": "もう一度押すと削除します",
   "settings.legacyPin": "以前の PIN を受け付ける",
-  "settings.legacyPinHint": "ペアリングへの移行中は、PIN でもスマホページのロックを解除できます。オフにするとペアリング済みのデバイスだけになります。"
+  "settings.legacyPinHint": "ペアリングへの移行中は、PIN でもスマホページのロックを解除できます。オフにするとペアリング済みのデバイスだけになります。",
+  "settings.card.opening": "起動画面",
+  "settings.opening.minimal": "シンプルな起動",
+  "settings.opening.minimalOn": "ストアの読み込み中はロゴだけ",
+  "settings.opening.minimalOff": "従来どおり：イントロ、利用規約、お知らせ",
+  "settings.opening.what": "オンにすると、Jobee'sLairはストアの準備ができるまでロゴと回転するリングだけで起動します。新機能、クラッシュ、利用規約、お知らせは「設定 > このアプリについて・クレジット」にまとめてあります。次回の起動から反映されます。",
+  "settings.whatsNew.row": "バージョン {version} の変更点",
+  "settings.whatsNew.new": "新着：まだ見ていません",
+  "settings.whatsNew.seen": "確認済み",
+  "settings.terms.row": "利用規約",
+  "settings.terms.accepted": "同意済み"
 }

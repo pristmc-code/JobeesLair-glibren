@@ -7,6 +7,7 @@ import { jsx, jsxs } from 'react/jsx-runtime';
 import { useState } from 'react';
 import { useT } from '../i18n/index.js';
 import { crashTime, dismissCrash, usePendingCrash } from '../state/crash-notice.js';
+import { useMinimalOpening } from '../state/opening.js';
 import { Button2 } from './Button.jsx';
 import { LongText } from './LongText.jsx';
 import { colors, radius } from './colors.js';
@@ -18,7 +19,11 @@ import { FocusScope, Text, View, motion } from '@ps5-react/core';
   var sans = (size, color, extra) => ({ fontFamily: "Exo2", fontSize: size, lineHeight: Math.round(size * 1.42), color, ...extra });
   function CrashNotice() {
     const t2 = useT();
-    const crash = usePendingCrash();
+    const pending = usePendingCrash();
+    // glibren.56: com a abertura minima (state/opening.js) nao interrompe: a queda fica marcada em Configuracoes > Sobre,
+    // na linha do diagnostico (ui/DiagnosticsRow.jsx).
+    const minimal = useMinimalOpening();
+    const crash = minimal ? null : pending;
     const [details, setDetails] = useState(false);
     const ok = () => {
       setDetails(false);

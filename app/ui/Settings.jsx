@@ -41,6 +41,9 @@ import { CONVERT_OPTIONS, setConvertOption, useConvertOptions } from '../state/c
 import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { memorySample, memorySnapshot, subscribeMemory } from '../state/memory-meter.js';
 import { DiagnosticsRow } from './DiagnosticsRow.jsx'; // glibren.44
+import { setMinimalOpening, termsAccepted, useMinimalOpening } from '../state/opening.js'; // glibren.56
+import { WHATS_NEW, onWhatsNewSeen, openWhatsNew, shouldShowWhatsNew } from '../state/whats-new.js'; // glibren.56
+import { useOrbitStale } from '../state/orbit-feed.js'; // glibren.56
 import { PayloadRows } from './PayloadRows.jsx'; // glibren.49 (Fase 2)
 import { PairedDevicesRows } from './PairedDevicesRows.jsx'; // pareamento por aparelho
 import { choosePhoneMonitorPin, setPhoneMonitor, usePhoneMonitor } from '../state/phone-monitor.js';
@@ -218,6 +221,18 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       jsx(CardHead, { icon: "power", title: t2("settings.card.energy") }),
       jsx(Row, { focusKey: "settings:energySaver", name: t2("settings.energySaver"), detail: saver ? t2("settings.energySaverOn") : t2("settings.energySaverOff"), end: jsx(Switch, { on: saver }), onPress: () => setEnergySaver(!saver) }),
       ...["settings.energyWhat", "settings.energyRest"].map((key) => jsx(View, { style: { flexDirection: "row" }, children: jsx(LongText, { style: text(20, colors.muted), box: { flex: 1 }, children: t2(key) }) }, key))
+    ] });
+  }
+  // glibren.56: "Abertura minima" (state/opening.js): ligada (o padrao), a Jobe abre so com o logo e a animacao girando ate a
+  // loja ficar pronta; desligada, como antes (apresentacao, termos e os avisos por cima da loja). Vale na proxima abertura;
+  // a faixa de recados some ou volta na hora. A nota quebra linha (ui/LongText.jsx), em todos os idiomas.
+  function OpeningCard() {
+    const t2 = useT();
+    const on = useMinimalOpening();
+    return jsxs(View, { scrollAnchor: true, style: CARD, children: [
+      jsx(CardHead, { icon: "play", title: t2("settings.card.opening") }),
+      jsx(Row, { focusKey: "settings:minimalOpening", name: t2("settings.opening.minimal"), detail: on ? t2("settings.opening.minimalOn") : t2("settings.opening.minimalOff"), end: jsx(Switch, { on }), onPress: () => setMinimalOpening(!on) }),
+      jsx(View, { style: { flexDirection: "row" }, children: jsx(LongText, { style: text(20, colors.muted), box: { flex: 1 }, children: t2("settings.opening.what") }) })
     ] });
   }
   // glibren.48: the Homebrew section's second list, the darkxex catalog (state/darkxex-catalog.js): on by default. The
@@ -986,7 +1001,11 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
   function OnlineRows() {
     const t2 = useT();
     const { enabled, announcements } = useOnline();
+    // glibren.56: com a abertura minima a faixa do topo nao aparece; o aviso da lista Orbit Store parada fica aqui tambem.
+    const minimal = useMinimalOpening();
+    const orbit = useOrbitStale();
     return jsxs(Fragment, { children: [
+      minimal && orbit ? jsx(Callout, { tone: "warn", children: t2(`orbit.stale.${orbit}`) }, "orbit") : null,
       ...announcements.map((note) => jsx(Callout, { tone: note.level === "warning" ? "warn" : "info", children: `${t2("news.title")}: ${note.text}` }, note.id)),
       jsx(Row, { focusKey: "settings:stats", name: t2("settings.online.row"), hint: t2("settings.online.detail"), end: jsx(Switch, { on: enabled }), onPress: () => online().setEnabled(!enabled) }),
       jsx(Folded, { focusKey: "settings:stats:what", name: t2("settings.online.what"), paragraphs: [tWhole("settings.online.sends"), tWhole("settings.online.never")] })
@@ -1035,6 +1054,14 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       ...open ? top.map((item, index) => jsx(Text, { style: text(20, colors.muted), children: t2("settings.memory.item", { n: index + 1, action: memoryActionName(t2, item.action), mb: memoryMB(item.used) }) }, item.action)) : []
     ] });
   }
+  // glibren.56: "O que mudou na versao X" abre o painel de novidades (ui/WhatsNew.jsx) quando o jogador quiser; "Novo" ate
+  // ele ser visto. Com a abertura minima e o unico caminho ate ele.
+  function WhatsNewRow() {
+    const t2 = useT();
+    const [unseen, setUnseen] = (0, useState)(shouldShowWhatsNew);
+    (0, useEffect)(() => onWhatsNewSeen(() => setUnseen(shouldShowWhatsNew())), []);
+    return jsx(Row, { focusKey: "settings:whatsNew", name: t2("settings.whatsNew.row", { version: WHATS_NEW }), detail: unseen ? t2("settings.whatsNew.new") : t2("settings.whatsNew.seen"), end: jsx(Icon, { name: "star", color: unseen ? colors.glow : colors.muted }), onPress: () => void openWhatsNew() });
+  }
   function AboutCard() {
     const t2 = useT();
     const { online: count } = useOnline();
@@ -1056,6 +1083,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       ] }),
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:update", name: t2("settings.update.row"), detail: updateDetail(t2, update, install), end: /* @__PURE__ */ (0, jsx)(Icon, { name: update.update ? "download" : "restart", color: update.update ? colors.glow : colors.muted }), onPress: () => update.update ? openUpdateDialog() : void checkForUpdate() }),
       canInstall ? /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:autoUpdate", name: t2("settings.update.auto"), hint: t2("settings.update.autoDetail"), end: /* @__PURE__ */ (0, jsx)(Switch, { on: automatic }), onPress: () => setAutoInstall(!automatic) }) : null,
+      jsx(WhatsNewRow, {}), // glibren.56: as novidades da versao, fora da abertura
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:project", name: t2("settings.about.project"), detail: `github.com/${REPO}`, end: /* @__PURE__ */ (0, jsx)(Icon, { name: "external", color: colors.muted }), onPress: () => {
         try {
           Linking.openURL(`https://github.com/${REPO}`);
@@ -1085,6 +1113,8 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     return /* @__PURE__ */ (0, jsxs)(View, { scrollAnchor: true, style: CARD, children: [
       /* @__PURE__ */ (0, jsx)(CardHead, { icon: "alert", title: t2("settings.card.legal") }),
       /* @__PURE__ */ (0, jsx)(Text, { style: text(20, colors.muted), children: t2("settings.legal.neutral") }),
+      // glibren.56: os termos de uso da abertura antiga, sempre a mao (com a abertura minima eles nao aparecem mais).
+      jsx(Folded, { focusKey: "settings:terms", name: termsAccepted() ? `${t2("settings.terms.row")} · ${t2("settings.terms.accepted")}` : t2("settings.terms.row"), paragraphs: [t2("notice.termsText", { creator: CREATOR }), t2("notice.strictText"), t2("notice.disclaimerText"), t2("notice.agreement")] }),
       /* @__PURE__ */ (0, jsx)(Folded, { focusKey: "settings:legal:read", name: t2("settings.legal.read"), paragraphs: [tWhole("settings.legal.nohost"), tWhole("settings.legal.feeds"), tWhole("settings.legal.report")] }),
       /* @__PURE__ */ (0, jsx)(Row, { focusKey: "settings:report", name: t2("settings.legal.reportRow"), detail: `github.com/${REPO}/issues`, end: /* @__PURE__ */ (0, jsx)(Icon, { name: "external", color: colors.muted }), onPress: () => {
         try {
@@ -1147,7 +1177,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       feeds: [/* @__PURE__ */ (0, jsx)(FeedsCard, { onAdd: () => setAdding(true), onAddFile: () => setPickingFile(true), onMirror: setMirrorOf }, "feeds"), jsx(HomebrewCard, {}, "homebrew")],
       debrid: [/* @__PURE__ */ (0, jsx)(DebridCard, { onKey: () => setKeying(true), onAllDebridKey: () => setKeyingAll(true) }, "debrid")],
       torboxLibrary: [jsx(TorBoxLibraryCard, {}, "torboxLibrary")],
-      look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver"), jsx(EnergyCard, {}, "energy"), jsx(VideosCard, {}, "videos")],
+      look: [/* @__PURE__ */ (0, jsx)(ThemeCard, {}, "theme"), /* @__PURE__ */ (0, jsx)(LanguageCard, {}, "language"), /* @__PURE__ */ (0, jsx)(FeedbackCard, {}, "feedback"), /* @__PURE__ */ (0, jsx)(ScreenSaverCard, {}, "screenSaver"), jsx(EnergyCard, {}, "energy"), jsx(VideosCard, {}, "videos"), jsx(OpeningCard, {}, "opening")],
       guide: [/* @__PURE__ */ (0, jsx)(GuideCard, {}, "guide")],
       about: [/* @__PURE__ */ (0, jsx)(AboutCard, {}, "about"), /* @__PURE__ */ (0, jsx)(NoticeCard, {}, "notice")]
     };

@@ -45,6 +45,10 @@ const labels = (element) => {
   return out;
 };
 
+// glibren.57: este teste e o aviso antigo (por cima da loja, com o OK de 10 s): so com a "Abertura minima" desligada
+// (a ligada, o padrao, esta em tests/render/opening.mjs).
+globalThis.__stubFiles ??= new Map();
+(await load('app/state/opening.js')).setMinimalOpening(false);
 const notice = await load('app/state/crash-notice.js');
 const { CrashNotice } = await load('app/ui/CrashNotice.jsx');
 const crash = { id: '1762890000', lastTime: '2026-11-11 14:32:05', activity: 'convert', name: 'Astro Bot', milestone: 'escrita do exFAT: 3.20 GB de 7.80 GB (85.0 MB/s)',

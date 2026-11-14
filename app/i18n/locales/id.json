@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "Dipasangkan pada {date}",
   "settings.deviceRemove": "Tekan lagi untuk menghapus",
   "settings.legacyPin": "Terima PIN lama",
-  "settings.legacyPinHint": "Selama beralih ke pemasangan, PIN masih membuka halaman ponsel. Matikan agar hanya perangkat yang dipasangkan."
+  "settings.legacyPinHint": "Selama beralih ke pemasangan, PIN masih membuka halaman ponsel. Matikan agar hanya perangkat yang dipasangkan.",
+  "settings.card.opening": "Pembukaan",
+  "settings.opening.minimal": "Pembukaan minimal",
+  "settings.opening.minimalOn": "Hanya logo selama toko dimuat",
+  "settings.opening.minimalOff": "Seperti dulu: intro, ketentuan, dan pemberitahuan",
+  "settings.opening.what": "Jika aktif, Jobee'sLair terbuka hanya dengan logo dan cincinnya yang berputar sampai toko siap. Yang baru, crash, ketentuan, dan pengumuman ada di sini di Pengaturan > Tentang & kredit. Berlaku mulai pembukaan berikutnya.",
+  "settings.whatsNew.row": "Yang berubah di versi {version}",
+  "settings.whatsNew.new": "Baru: belum dilihat",
+  "settings.whatsNew.seen": "Sudah dilihat",
+  "settings.terms.row": "Ketentuan penggunaan",
+  "settings.terms.accepted": "Diterima"
 }

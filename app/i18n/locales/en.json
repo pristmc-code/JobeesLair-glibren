@@ -1901,5 +1901,15 @@
     "settings.deviceAt": "Paired on {date}",
     "settings.deviceRemove": "Press again to remove",
     "settings.legacyPin": "Accept the old PIN",
-    "settings.legacyPinHint": "While moving to pairing, the PIN still unlocks the phone page. Turn it off to allow only paired devices."
+    "settings.legacyPinHint": "While moving to pairing, the PIN still unlocks the phone page. Turn it off to allow only paired devices.",
+    "settings.card.opening": "Opening",
+    "settings.opening.minimal": "Minimal opening",
+    "settings.opening.minimalOn": "Only the logo while the store loads",
+    "settings.opening.minimalOff": "As before: intro, terms and notices",
+    "settings.opening.what": "On, Jobee'sLair opens with just the logo and its spinning ring until the store is ready. What's new, crashes, the terms and announcements stay here in Settings > About & credits. Takes effect at the next launch.",
+    "settings.whatsNew.row": "What changed in version {version}",
+    "settings.whatsNew.new": "New: not seen yet",
+    "settings.whatsNew.seen": "Already seen",
+    "settings.terms.row": "Terms of use",
+    "settings.terms.accepted": "Accepted"
 }

@@ -20,6 +20,7 @@ import { shadowRequest } from './shadowmount.js';
 import { deviceFacts } from './device.js';
 import { loadList, saveList } from './saved.js';
 import { VERSION_LABEL } from '../version.js';
+import { minimalOpening } from './opening.js';
 
   var DISCORD = /^https:\/\/(?:[a-z]+\.)?discord(?:app)?\.com\//i;
   var RELAY = /^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[A-Za-z0-9._~\/-]*)?$/;
@@ -153,8 +154,10 @@ import { VERSION_LABEL } from '../version.js';
   }
   /** Whether the question (Send the logs by themselves?) is up: the first failure asks it, the answer closes it. */
   var askingAutoReports = () => asking;
+  // glibren.56: com a abertura minima (state/opening.js) a pergunta nao aparece: sem resposta, vale desligado (a chave fica
+  // em Configuracoes > Sobre).
   function askAutoReports() {
-    if (asking || autoReportsChoice() !== null) return;
+    if (asking || autoReportsChoice() !== null || minimalOpening()) return;
     asking = true;
     notify();
   }
@@ -175,7 +178,7 @@ import { VERSION_LABEL } from '../version.js';
   // A debrid service still fetching the file (TorBox's or AllDebrid's PENDING) is a download to resume later, not a
   // failure to report.
   var STILL_FETCHING = /is still fetching this/;
-  function startAutoReports(queue, { send = sendReport, choose = autoReportsChoice, ask = askAutoReports, subscribe = subscribeAutoReports, relay = reportRelay, read = (path) => FileSystem.readFile(path), delay = 20e3, now = () => Date.now(), timer = setTimeout, cancel = clearTimeout } = {}) {
+  function startAutoReports(queue, { send = sendReport, choose = autoReportsChoice, ask = askAutoReports, subscribe = subscribeAutoReports, relay = reportRelay, quiet = minimalOpening, read = (path) => FileSystem.readFile(path), delay = 20e3, now = () => Date.now(), timer = setTimeout, cancel = clearTimeout } = {}) {
     if (!relay()) return () => {
     };
     const seen = /* @__PURE__ */ new Set();
@@ -196,6 +199,8 @@ import { VERSION_LABEL } from '../version.js';
     const report = (reason, crashed = false) => {
       const said = choose();
       if (said === false) return;
+      // glibren.56: abertura minima e sem resposta = desligado, sem perguntar (nada fica esperando).
+      if (said === null && quiet()) return;
       waiting.push(reason);
       previous ||= crashed;
       if (said === null) ask();

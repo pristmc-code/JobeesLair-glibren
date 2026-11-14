@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "{date} को पेयर किया",
   "settings.deviceRemove": "हटाने के लिए फिर से दबाएँ",
   "settings.legacyPin": "पुराना PIN स्वीकार करें",
-  "settings.legacyPinHint": "पेयरिंग पर जाने के दौरान PIN अब भी फ़ोन पेज खोलता है। केवल पेयर किए गए डिवाइस रखने के लिए इसे बंद करें।"
+  "settings.legacyPinHint": "पेयरिंग पर जाने के दौरान PIN अब भी फ़ोन पेज खोलता है। केवल पेयर किए गए डिवाइस रखने के लिए इसे बंद करें।",
+  "settings.card.opening": "शुरुआत",
+  "settings.opening.minimal": "न्यूनतम शुरुआत",
+  "settings.opening.minimalOn": "स्टोर लोड होने तक सिर्फ़ लोगो",
+  "settings.opening.minimalOff": "पहले जैसा: परिचय, शर्तें और सूचनाएँ",
+  "settings.opening.what": "चालू होने पर Jobee'sLair स्टोर तैयार होने तक सिर्फ़ लोगो और घूमते घेरे के साथ खुलता है। नया क्या है, क्रैश, शर्तें और घोषणाएँ यहाँ सेटिंग्स > परिचय और श्रेय में रहती हैं। अगली बार खोलने से लागू होगा।",
+  "settings.whatsNew.row": "संस्करण {version} में क्या बदला",
+  "settings.whatsNew.new": "नया: अभी देखा नहीं",
+  "settings.whatsNew.seen": "देख लिया",
+  "settings.terms.row": "उपयोग की शर्तें",
+  "settings.terms.accepted": "स्वीकृत"
 }

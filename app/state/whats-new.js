@@ -17,6 +17,24 @@ import { loadList, saveList } from './saved.js';
   };
   function markWhatsNewSeen() {
     saveList(SETTINGS, "settings", { ...loadList(SETTINGS, "settings"), whatsNewSeen: WHATS_NEW });
+    for (const listener of [...seenListeners]) listener();
+  }
+  // glibren.56 (abertura minima, state/opening.js): o painel nao abre sozinho; abre por Configuracoes > Sobre ("O que mudou
+  // na versao X"), por openWhatsNew. Quem desenha o painel (ui/WhatsNew.jsx) escuta com onOpenWhatsNew.
+  var openers = /* @__PURE__ */ new Set();
+  var seenListeners = /* @__PURE__ */ new Set();
+  function openWhatsNew() {
+    for (const open of [...openers]) open();
+    return openers.size > 0;
+  }
+  function onOpenWhatsNew(open) {
+    openers.add(open);
+    return () => openers.delete(open);
+  }
+  /** Avisa quando o painel e marcado como visto (a linha de Configuracoes tira o "Novo"). */
+  function onWhatsNewSeen(listener) {
+    seenListeners.add(listener);
+    return () => seenListeners.delete(listener);
   }
 
-export { WHATS_NEW, lastWhatsNewSeen, markWhatsNewSeen, shouldShowWhatsNew };
+export { WHATS_NEW, lastWhatsNewSeen, markWhatsNewSeen, onOpenWhatsNew, onWhatsNewSeen, openWhatsNew, shouldShowWhatsNew };

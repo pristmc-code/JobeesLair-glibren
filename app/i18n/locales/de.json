@@ -1901,5 +1901,15 @@
   "settings.deviceAt": "Gekoppelt am {date}",
   "settings.deviceRemove": "Erneut drücken zum Entfernen",
   "settings.legacyPin": "Alte PIN akzeptieren",
-  "settings.legacyPinHint": "Während des Wechsels zur Kopplung entsperrt die PIN die Handy-Seite noch. Schalten Sie sie ab, um nur gekoppelte Geräte zuzulassen."
+  "settings.legacyPinHint": "Während des Wechsels zur Kopplung entsperrt die PIN die Handy-Seite noch. Schalten Sie sie ab, um nur gekoppelte Geräte zuzulassen.",
+  "settings.card.opening": "Start",
+  "settings.opening.minimal": "Minimaler Start",
+  "settings.opening.minimalOn": "Nur das Logo, während der Store lädt",
+  "settings.opening.minimalOff": "Wie vorher: Intro, Bedingungen und Hinweise",
+  "settings.opening.what": "Eingeschaltet öffnet sich Jobee'sLair nur mit dem Logo und seinem drehenden Ring, bis der Store bereit ist. Neuigkeiten, Abstürze, die Bedingungen und Ankündigungen findest du hier unter Einstellungen > Info & Danksagungen. Gilt ab dem nächsten Start.",
+  "settings.whatsNew.row": "Was sich in Version {version} geändert hat",
+  "settings.whatsNew.new": "Neu: noch nicht gesehen",
+  "settings.whatsNew.seen": "Schon gesehen",
+  "settings.terms.row": "Nutzungsbedingungen",
+  "settings.terms.accepted": "Akzeptiert"
 }

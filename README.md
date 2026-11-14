@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.57**: Minimal opening: the app now opens with only the logo and a spinning ring until the store is ready. Notices and what's new moved to Settings > About; to get the old opening back, turn off Minimal opening in Settings > Appearance. Download payload 1.37.2 (unchanged).
 > **glibren.56**: Fixes from the real PS5: clicking a game and the filters work in the PS5 browser (/app), covers in the PS5 browser through the payload (never from Sony), and the console's payload is replaced when the app brings a newer one. Download payload 1.37.2.
 > **glibren.55**: Fixes from the real PS5: the YouTube format you pick sticks (Automatic prefers H.264), pick any source on the /app game page, AkiraBox capture, downloads that resume after a new TorBox link and a "Restart from zero" button. Download payload 1.37.1.
 > **glibren.54**: The TV store reads its pages from the download payload instead of building the whole catalog in Jobe's memory (store open: 14.5 MB -> 6.8 MB); falls back to the old way when the payload is missing or older. Fixes: the payload's catalog now builds on the PS5 (two data files were missing from the image) and Jobe uses the console's real firmware. Download payload 1.37.0.

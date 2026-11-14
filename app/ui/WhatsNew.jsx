@@ -8,7 +8,8 @@ import { useEffect, useRef, useState } from 'react';
 import { FocusScope, Text, View, motion, useIsFocused } from '@ps5-react/core';
 import { tWhole, useT } from '../i18n/index.js';
 import { useNavActions } from '../state/nav.jsx';
-import { lastWhatsNewSeen, markWhatsNewSeen, shouldShowWhatsNew } from '../state/whats-new.js';
+import { lastWhatsNewSeen, markWhatsNewSeen, onOpenWhatsNew, shouldShowWhatsNew } from '../state/whats-new.js';
+import { minimalOpening } from '../state/opening.js';
 import { FocusRing } from './FocusRing.jsx';
 import { Icon } from './Icon.jsx';
 import { JLMark } from './JLMark.jsx';
@@ -42,25 +43,33 @@ import { useAutoDismiss, withCountdown } from './useAutoDismiss.js';
   }
   function WhatsNew() {
     const t2 = useT();
-    const { push } = useNavActions();
+    const { push, focusLater } = useNavActions();
+    // false, "auto" (aberto sozinho depois da loja, como antes) ou "asked" (glibren.56: por Configuracoes > Sobre).
     const [open, setOpen] = useState(false);
     // Read before closing marks this release seen.
     const [items] = useState(() => itemsFor(lastWhatsNewSeen()));
     const done = useRef(false);
     useEffect(() => {
-      if (!shouldShowWhatsNew()) return void 0;
-      const id = setTimeout(() => setOpen(true), DELAY_MS);
+      // glibren.56: com a abertura minima (state/opening.js) ele nao abre sozinho.
+      if (minimalOpening() || !shouldShowWhatsNew()) return void 0;
+      const id = setTimeout(() => setOpen("auto"), DELAY_MS);
       return () => clearTimeout(id);
     }, []);
+    useEffect(() => onOpenWhatsNew(() => {
+      done.current = false;
+      setOpen("asked");
+    }), []);
     const close = (then) => {
       if (done.current) return;
       done.current = true;
+      const asked = open === "asked";
       markWhatsNewSeen();
       setOpen(false);
-      then?.();
+      if (then) then();
+      else if (asked) focusLater?.("settings:whatsNew");
     };
-    // glibren.44: passa sozinho depois de 10 s sem nenhum botao (o mesmo que "Fechar").
-    const left = useAutoDismiss(open, () => close());
+    // glibren.44: passa sozinho depois de 10 s sem nenhum botao (o mesmo que "Fechar"). Pedido em Configuracoes, espera.
+    const left = useAutoDismiss(open === "auto", () => close());
     if (!open) return null;
     return jsx(View, { style: { position: "absolute", top: 0, left: 0, width: 1920, height: 1080, zIndex: 90, alignItems: "center", justifyContent: "center", backgroundColor: "#000000b3" }, children: jsx(FocusScope, { trap: true, autoFocus: true, onBack: () => (close(), true), children: jsxs(motion.View, { initial: { y: 24, opacity: 0 }, animate: { y: 0, opacity: 1 }, transition: { type: "tween", duration: 0.3, ease: [0.22, 1, 0.36, 1] }, style: { width: 1120, gap: 30, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.canvas2, paddingHorizontal: 56, paddingVertical: 48 }, children: [
       jsxs(View, { style: { flexDirection: "row", alignItems: "center", gap: 20 }, children: [

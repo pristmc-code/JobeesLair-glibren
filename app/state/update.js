@@ -20,6 +20,7 @@ import { loadList, saveList, savedList } from './saved.js';
 import { shadowRequest } from './shadowmount.js';
 import { forgetScreen } from './return-screen-run.js';
 import { shouldShowWhatsNew } from './whats-new.js';
+import { minimalOpening } from './opening.js';
 import { REPO, TITLE_ID, VERSION } from '../version.js';
 import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Platform, SelfUpdate } from '@ps5-react/core';
 
@@ -183,6 +184,12 @@ import { Archives, BackHandler, Downloads, FileSystem, Http, Notifications, Plat
   function offerDialog(version) {
     // glibren.46: uma versao sem assinatura valida nao abre o dialogo sozinha; o motivo fica em Configuracoes.
     if (automatic || dialog || prompts.get().version === version || state.update?.unsigned) return;
+    // glibren.56: com a abertura minima (state/opening.js) a oferta nao abre por cima de nada: fica o ponto no botao de
+    // atualizacao da ilha (ui/Header.jsx, na loja) e a linha em Configuracoes > Sobre; o jogador abre quando quiser.
+    if (minimalOpening()) {
+      console.log(`update: ${version} offered by the island's badge (minimal opening: no dialog by itself)`);
+      return;
+    }
     let waited = 0;
     const open = () => {
       if (state.update?.version !== version || dialog || prompts.get().version === version) return;
