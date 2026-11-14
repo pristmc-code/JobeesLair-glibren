@@ -61,6 +61,6 @@
   "filesystemAccess": "console",
   "networking": true,
   "video": true,
-  "userAgent": "JobeesLair-Homebrew/0.5.5-glibren.59 (PS5)",
+  "userAgent": "JobeesLair-Homebrew/0.5.5-glibren.60 (PS5)",
   "timeoutSeconds": 0
 }

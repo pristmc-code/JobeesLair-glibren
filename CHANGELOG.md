@@ -6,6 +6,44 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.60** (fork): fixes from the first PS5 diagnostics and the cover bank filled by the phone. Download payload 1.37.4; phone app
+  JobeControle 0.3-teste.
+  - A TorBox download paused in the app before it reached the payload no longer stays "Waiting for the Jobe" when
+    resumed with the app closed: it goes to the payload with its link age and the payload asks TorBox for a new link.
+  - No DNS / no connection in the middle of a download: the whole job waits (1 s, 2 s, 4 s... 32 s) instead of each
+    range retrying alone (13,500 log lines in 10 s after rest mode); after 10 rounds it goes back to the queue. At
+    most 20 failure lines per minute per job in the payload log, the rest summed up in one line.
+  - A direct link that is gone (404/410, or Archive.org 401/403: a restricted or removed item) fails as "Source
+    unavailable: ... choose another source" instead of "Waiting for the Jobe" (Another World).
+  - "Delete from TorBox and download again" on the download card (TV) when TorBox holds a broken copy or refuses the
+    link: it deletes the item from your TorBox account (the key in Settings) and starts over with a new request.
+  - Turning the console off with nothing running no longer shows the crash notice at the next start (only
+    interrupted downloads/conversions or a fatal signal in the payload do).
+  - Diagnostics: the app sends its versions and the Memory sample to the payload when it opens and every 10 min, so a
+    report asked from the phone no longer says `"app": null`; each file is sent again up to 3 times (no answer, 409,
+    429, 5xx); the app log goes with the date of its last write (its lines only have the time).
+  - Memory meter: logs the 20-minute floor when it rises (memory really held), apart from garbage waiting for the
+    collector (the peak alone grew on the Downloads screen without proving a leak).
+  - A game image renamed by glibren is followed (same size, where ShadowMount has the title) instead of "is gone" at
+    every check; the catalog build log no longer shows "0 ms" times the console clock cannot measure.
+  - .7z extraction on several cores: unencrypted .7z with plain LZMA2 folders (7-Zip's default) is extracted by
+    7-Zip 26.06's Lzma2DecMt (public domain, `app/native/lzma/`) in up to 7 threads (cores - 1, limited by memory,
+    `BGDL_7Z_MEM_MB` 1536), with read-ahead and writing in their own threads, CRC per file and per block, and
+    `.7z.001` volumes. Out of memory midway it retries with 1 thread, then libarchive; LZMA/BCJ/AES/encrypted headers
+    still go through libarchive. Non-ASCII names inside a .7z are no longer lost. Not tested on the PS5.
+  - **Cover bank filled by the phone (NOT tested on a phone, an emulator or the PS5 yet).** JobeControle 0.3-teste
+    (`JobeControle.apk`, installs over 0.2 with the same signature): with the app open and on Wi-Fi, it asks the
+    payload which covers are missing, downloads them natively over the PHONE's internet (including
+    image.api.playstation.com, which the PS5 never contacts and a web page cannot read: no CORS), shrinks them to at
+    most 440 px JPEG and sends them to the payload. Up to 300 per round, one every 0.6 s, again after 15 min. Gear >
+    "Cover bank": switch (on by default), "Covers: N sent, M missing", "Send now". Off Wi-Fi nothing is downloaded.
+  - Payload (`bg_covers_bank.c`): paired-device routes `GET /api/capas/estado`, `GET /api/capas/lista`,
+    `POST /api/capas/enviar` (PNG/JPEG/WebP checked by the bytes, catalog ids only, up to 512 KiB),
+    `POST /api/capas/falhou` (24 h off), `POST /api/capas/apagar`. Bank in `/data/JobeesLair/capas-banco`, capped at
+    192 MiB / 8000 files / 1 GiB free (answers 507 "full"; nothing is deleted by itself). `/app/capa` uses the bank
+    first and marks missing covers as "requested" so the phone fetches them first. TV: PS5 covers from
+    image.api.playstation.com come from the payload (`/app/capa?u=`, only from disk: bank, icon0, cache); PS4 covers
+    unchanged. With an older payload the phone app says so and does nothing.
 - **glibren.59** (fork): YouTube player fixes from the PS5 reports of 14/11. Download payload unchanged; built-in
   YouTube service 0.2.3.
   - Seek no longer "breaks" the quality: an error right after a seek, a stall or a decoder error reopens the SAME
