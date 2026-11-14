@@ -153,6 +153,8 @@
   "downloads.action.pausing": "Messa in pausa",
   "downloads.action.restart": "Ricomincia",
   "downloads.action.restartConfirm": "Premi di nuovo: elimina e ricomincia",
+  "downloads.action.redoInTorBox": "Elimina da TorBox e scarica di nuovo",
+  "downloads.action.redoInTorBoxConfirm": "Premi di nuovo: elimina da TorBox e scarica di nuovo",
   "downloads.restart.ask": "Ricomincia da zero elimina ciò che è stato scaricato di questo gioco e lo scarica di nuovo. Continuare?",
   "downloads.restart.yes": "Sì, ricomincia da zero",
   "downloads.restart.advised": "Riprendere ripeterebbe solo questo errore: la parte salvata non corrisponde più al file. Usa Ricomincia da zero.",

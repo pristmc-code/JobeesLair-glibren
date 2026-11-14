@@ -153,6 +153,8 @@
   "downloads.action.pausing": "Menjeda",
   "downloads.action.restart": "Mulai ulang",
   "downloads.action.restartConfirm": "Tekan lagi: hapus dan mulai ulang",
+  "downloads.action.redoInTorBox": "Hapus dari TorBox dan unduh lagi",
+  "downloads.action.redoInTorBoxConfirm": "Tekan lagi: hapus dari TorBox dan unduh lagi",
   "downloads.restart.ask": "Mulai ulang dari awal menghapus bagian game ini yang sudah diunduh lalu mengunduhnya lagi. Lanjutkan?",
   "downloads.restart.yes": "Ya, mulai ulang dari awal",
   "downloads.restart.advised": "Melanjutkan hanya akan mengulang galat ini: bagian yang tersimpan tidak lagi cocok dengan file. Gunakan Mulai ulang dari awal.",

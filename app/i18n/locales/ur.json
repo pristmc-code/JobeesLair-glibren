@@ -153,6 +153,8 @@
   "downloads.action.pausing": "توقف دیا جا رہا ہے",
   "downloads.action.restart": "دوبارہ شروع کریں",
   "downloads.action.restartConfirm": "دوبارہ دبائیں: حذف کر کے نئے سرے سے",
+  "downloads.action.redoInTorBox": "TorBox سے حذف کر کے دوبارہ ڈاؤن لوڈ کریں",
+  "downloads.action.redoInTorBoxConfirm": "دوبارہ دبائیں: TorBox سے حذف کر کے دوبارہ ڈاؤن لوڈ کریں",
   "downloads.restart.ask": "صفر سے دوبارہ شروع کرنے پر اس گیم کا ڈاؤن لوڈ شدہ حصہ حذف ہو جائے گا اور یہ دوبارہ ڈاؤن لوڈ ہوگی۔ جاری رکھیں؟",
   "downloads.restart.yes": "ہاں، صفر سے دوبارہ شروع کریں",
   "downloads.restart.advised": "جاری رکھنے سے یہی خرابی دہرائی جائے گی: محفوظ حصہ اب فائل سے میل نہیں کھاتا۔ صفر سے دوبارہ شروع کریں کا بٹن استعمال کریں۔",

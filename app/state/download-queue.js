@@ -231,6 +231,8 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
     // 0.5.4: told each launch learned from ShadowMount's log, (title, {outcome, verdict, format, fixed, backport}),
     // for the players' numbers (state/online.js launched).
     onLaunch = () => {},
+    // glibren.60: apaga do TorBox a copia (quebrada/vencida) dos links de um release: (release) => Promise<removidos>.
+    forgetDebridCopy = null,
     wait = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms))
   }) {
     // Builds before the rename kept the queue in "overdrive"; it is read from there until the first save here.
@@ -3666,6 +3668,18 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         job2.error = "";
         change();
         pump();
+      },
+      // glibren.60: "Apagar do TorBox e baixar de novo": a copia que o TorBox guarda esta quebrada (uma pagina de erro) ou
+      // vencida; pedir de novo traria a mesma. Apaga o item da conta (a chave das Configuracoes) e recomeca do zero: o
+      // proximo resolve cria um pedido novo no TorBox. So num download do TorBox parado/falho.
+      async redoInTorBox(id) {
+        const job2 = find(id);
+        if (!["paused", "failed"].includes(job2.state) || lanes.has(job2) || job2.release?.debrid?.service !== "torbox") return { note: "" };
+        if (typeof forgetDebridCopy !== "function") throw new Error("TorBox isn't set up any more. Add its API key in Settings, or choose another source.");
+        const removed = await forgetDebridCopy(job2.release);
+        console.log(`[download-queue] ${job2.id}: ${removed} TorBox item(s) deleted; downloading again from zero`);
+        await queueApi.restart(id);
+        return { note: "" };
       },
       async restart(id) {
         const job2 = find(id);

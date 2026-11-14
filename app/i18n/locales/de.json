@@ -153,6 +153,8 @@
   "downloads.action.pausing": "Wird pausiert",
   "downloads.action.restart": "Neu starten",
   "downloads.action.restartConfirm": "Erneut drücken: löschen und neu starten",
+  "downloads.action.redoInTorBox": "Aus TorBox löschen und neu laden",
+  "downloads.action.redoInTorBoxConfirm": "Erneut drücken: aus TorBox löschen und neu laden",
   "downloads.restart.ask": "Von vorne anfangen löscht, was von diesem Spiel heruntergeladen wurde, und lädt es erneut herunter. Fortfahren?",
   "downloads.restart.yes": "Ja, von vorne anfangen",
   "downloads.restart.advised": "Fortsetzen würde nur diesen Fehler wiederholen: Der gespeicherte Teil passt nicht mehr zur Datei. Nutze Von vorne anfangen.",

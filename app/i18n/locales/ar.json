@@ -153,6 +153,8 @@
   "downloads.action.pausing": "جاري الإيقاف المؤقت",
   "downloads.action.restart": "إعادة تشغيل",
   "downloads.action.restartConfirm": "اضغط مرة أخرى: حذف وإعادة البدء",
+  "downloads.action.redoInTorBox": "احذفه من TorBox ونزّله من جديد",
+  "downloads.action.redoInTorBoxConfirm": "اضغط مرة أخرى: احذفه من TorBox ونزّله من جديد",
   "downloads.restart.ask": "«إعادة تشغيل من الصفر» يحذف ما تم تنزيله من هذه اللعبة ويعيد تنزيلها. هل تريد المتابعة؟",
   "downloads.restart.yes": "نعم، أعد التشغيل من الصفر",
   "downloads.restart.advised": "الاستئناف سيكرر هذا الخطأ فقط: الجزء المحفوظ لم يعد يطابق الملف. استخدم «إعادة تشغيل من الصفر».",

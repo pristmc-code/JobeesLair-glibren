@@ -11,7 +11,7 @@ import { remoteCatalog, remoteCatalogOn } from './catalog-remote.js';
 import { DATA_DIR } from './data-dir.js';
 import { createDownloadQueue } from './download-queue.js';
 import { createSourceResolver } from './download-sources.js';
-import { debridHandoff, debridResolver, debridSecret } from './debrid.js';
+import { debridHandoff, debridResolver, debridSecret, forgetTorBoxCopy } from './debrid.js';
 import { createBackgroundDownloads, onBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from './background-downloads.js';
 import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
@@ -121,6 +121,7 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
     convertExfat: convertToExfatOn,
     // 0.5.4: each launch learned goes to the players' numbers (state/online.js; only with stats on).
     onLaunch: (title, report) => !OWN_TITLES.includes(title) && online().launched({ title, ...report }),
+    forgetDebridCopy: forgetTorBoxCopy, // glibren.60: "Apagar do TorBox e baixar de novo"
     // glibren.16: above firmware 11.60 a PS5 package waits on Install, which warns first (Settings > Downloads).
     warnPs5Packages: ps5PkgWarningOn
   }));

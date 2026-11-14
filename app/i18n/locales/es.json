@@ -153,6 +153,8 @@
   "downloads.action.pausing": "Pausando",
   "downloads.action.restart": "Reiniciar",
   "downloads.action.restartConfirm": "Pulsa otra vez: borrar y reiniciar",
+  "downloads.action.redoInTorBox": "Borrar de TorBox y descargar de nuevo",
+  "downloads.action.redoInTorBoxConfirm": "Pulsa otra vez: borrar de TorBox y descargar de nuevo",
   "downloads.restart.ask": "Reiniciar desde cero borra lo descargado de este juego y lo descarga de nuevo. ¿Continuar?",
   "downloads.restart.yes": "Sí, reiniciar desde cero",
   "downloads.restart.advised": "Reanudar solo repetiría este error: la parte guardada ya no coincide con el archivo. Usa Reiniciar desde cero.",

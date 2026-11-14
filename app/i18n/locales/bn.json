@@ -153,6 +153,8 @@
   "downloads.action.pausing": "থামানো হচ্ছে",
   "downloads.action.restart": "পুনরায় শুরু করুন",
   "downloads.action.restartConfirm": "আবার চাপুন: মুছে আবার শুরু",
+  "downloads.action.redoInTorBox": "TorBox থেকে মুছে আবার ডাউনলোড করুন",
+  "downloads.action.redoInTorBoxConfirm": "আবার চাপুন: TorBox থেকে মুছে আবার ডাউনলোড করুন",
   "downloads.restart.ask": "শূন্য থেকে পুনরায় শুরু করলে এই গেমের ডাউনলোড হওয়া অংশ মুছে যাবে এবং আবার ডাউনলোড হবে। চালিয়ে যাবেন?",
   "downloads.restart.yes": "হ্যাঁ, শূন্য থেকে শুরু করুন",
   "downloads.restart.advised": "আবার চালু করলে একই ত্রুটি হবে: সংরক্ষিত অংশ আর ফাইলের সাথে মেলে না। শূন্য থেকে পুনরায় শুরু করুন বোতাম ব্যবহার করুন।",

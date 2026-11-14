@@ -153,6 +153,8 @@
   "downloads.action.pausing": "Pause",
   "downloads.action.restart": "Recommencer",
   "downloads.action.restartConfirm": "Appuyez encore : effacer et recommencer",
+  "downloads.action.redoInTorBox": "Supprimer de TorBox et retélécharger",
+  "downloads.action.redoInTorBoxConfirm": "Appuyez à nouveau : supprimer de TorBox et retélécharger",
   "downloads.restart.ask": "Recommencer de zéro efface ce qui a été téléchargé pour ce jeu et le télécharge à nouveau. Continuer ?",
   "downloads.restart.yes": "Oui, recommencer de zéro",
   "downloads.restart.advised": "Reprendre ne ferait que répéter cette erreur : la partie enregistrée ne correspond plus au fichier. Utilisez Recommencer de zéro.",

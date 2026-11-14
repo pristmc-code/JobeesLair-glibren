@@ -153,6 +153,8 @@
   "downloads.action.pausing": "正在暂停",
   "downloads.action.restart": "重新开始",
   "downloads.action.restartConfirm": "再按一次：删除并重新开始",
+  "downloads.action.redoInTorBox": "从 TorBox 删除并重新下载",
+  "downloads.action.redoInTorBoxConfirm": "再按一次：从 TorBox 删除并重新下载",
   "downloads.restart.ask": "“从头重新下载”会删除这个游戏已下载的部分，然后重新下载。继续吗？",
   "downloads.restart.yes": "是，从头重新下载",
   "downloads.restart.advised": "继续下载只会重复这个错误：已保存的部分与文件不再一致。请使用“从头重新下载”。",

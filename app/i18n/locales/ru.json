@@ -153,6 +153,8 @@
   "downloads.action.pausing": "Пауза",
   "downloads.action.restart": "Перезапустить",
   "downloads.action.restartConfirm": "Нажмите ещё раз: удалить и начать заново",
+  "downloads.action.redoInTorBox": "Удалить из TorBox и скачать заново",
+  "downloads.action.redoInTorBoxConfirm": "Нажмите ещё раз: удалить из TorBox и скачать заново",
   "downloads.restart.ask": "«Перезапустить с нуля» удалит уже загруженное для этой игры и загрузит её заново. Продолжить?",
   "downloads.restart.yes": "Да, перезапустить с нуля",
   "downloads.restart.advised": "Возобновление лишь повторит эту ошибку: сохранённая часть больше не совпадает с файлом. Используйте «Перезапустить с нуля».",

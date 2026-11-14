@@ -153,6 +153,8 @@
   "downloads.action.pausing": "Pausando",
   "downloads.action.restart": "Reiniciar",
   "downloads.action.restartConfirm": "Aperte de novo: apagar e recomeçar",
+  "downloads.action.redoInTorBox": "Apagar do TorBox e baixar de novo",
+  "downloads.action.redoInTorBoxConfirm": "Aperte de novo: apagar do TorBox e baixar de novo",
   "downloads.restart.ask": "Recomeçar do zero apaga o que já foi baixado deste jogo e baixa tudo de novo. Confirma?",
   "downloads.restart.yes": "Sim, recomeçar do zero",
   "downloads.restart.advised": "Retomar só repetiria este erro: a parte salva não confere mais com o arquivo. Use Recomeçar do zero.",

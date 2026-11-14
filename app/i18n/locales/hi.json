@@ -153,6 +153,8 @@
   "downloads.action.pausing": "रोका जा रहा है",
   "downloads.action.restart": "फिर से शुरू करें",
   "downloads.action.restartConfirm": "फिर से दबाएँ: हटाएँ और फिर से शुरू करें",
+  "downloads.action.redoInTorBox": "TorBox से हटाकर फिर से डाउनलोड करें",
+  "downloads.action.redoInTorBoxConfirm": "फिर से दबाएँ: TorBox से हटाकर फिर से डाउनलोड करें",
   "downloads.restart.ask": "शून्य से फिर से शुरू करने पर इस गेम का डाउनलोड किया गया हिस्सा हट जाएगा और यह फिर से डाउनलोड होगा। जारी रखें?",
   "downloads.restart.yes": "हाँ, शून्य से फिर से शुरू करें",
   "downloads.restart.advised": "रिज़्यूम करने पर यही गड़बड़ी दोहराई जाएगी: सहेजा गया हिस्सा अब फ़ाइल से मेल नहीं खाता। शून्य से फिर से शुरू करें बटन इस्तेमाल करें।",

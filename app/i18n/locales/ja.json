@@ -153,6 +153,8 @@
   "downloads.action.pausing": "停止中",
   "downloads.action.restart": "やり直す",
   "downloads.action.restartConfirm": "もう一度押す: 削除してやり直す",
+  "downloads.action.redoInTorBox": "TorBox から削除して再ダウンロード",
+  "downloads.action.redoInTorBoxConfirm": "もう一度押す: TorBox から削除して再ダウンロード",
   "downloads.restart.ask": "「最初からやり直す」は、このゲームのダウンロード済みの分を削除して、もう一度ダウンロードします。続けますか？",
   "downloads.restart.yes": "はい、最初からやり直す",
   "downloads.restart.advised": "再開しても同じエラーになります。保存された部分がファイルと一致しません。「最初からやり直す」を使ってください。",

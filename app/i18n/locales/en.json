@@ -153,6 +153,8 @@
     "downloads.action.pausing": "Pausing",
     "downloads.action.restart": "Restart",
     "downloads.action.restartConfirm": "Press again: delete and restart",
+    "downloads.action.redoInTorBox": "Delete from TorBox and download again",
+    "downloads.action.redoInTorBoxConfirm": "Press again: delete from TorBox and download again",
     "downloads.restart.ask": "Restart from zero deletes what was downloaded of this game and downloads it again. Go ahead?",
     "downloads.restart.yes": "Yes, restart from zero",
     "downloads.restart.advised": "Resuming would only repeat this error: the saved part no longer matches the file. Use Restart from zero.",

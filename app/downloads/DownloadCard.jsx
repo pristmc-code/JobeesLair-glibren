@@ -92,7 +92,10 @@ import { t as t2Static } from '../i18n/core.js';
   }
   // MODIFIED (0.5.0 Pre Release 3): a download in parts waiting on the browser opens it from here ("Wait"
   // while it counts down to opening it by itself), not from the game page.
-  function primary({ state, error: error2, parts, autoOpenAt, aheadAt, convert }, run, openGame, ready) {
+  function primary({ state, error: error2, parts, autoOpenAt, aheadAt, convert, release }, run, openGame, ready) {
+    // glibren.60: a copia que o TorBox guarda esta quebrada (pagina de erro) ou o link foi recusado de vez: "Apagar do
+    // TorBox e baixar de novo" (arma no 1o toque: apaga o item da conta e a parcial). Antes so dizia para fazer a mao.
+    if (state === "failed" && release?.debrid?.service === "torbox" && /^broken-file:|provider denied the file|HTTP 40[13]\b/i.test(cause(error2))) return { icon: "restart", label: "downloads.action.redoInTorBox", armedLabel: "downloads.action.redoInTorBoxConfirm", onPress: () => run("redoInTorBox") };
     if (state === "awaiting-browser" && autoOpenAt) return { icon: "pause", label: "downloads.action.waitPart", onPress: () => run("waitForPart") };
     // 0.5.0 Pre Release 4: the next part's browser about to open while this one downloads.
     if (aheadAt && BUSY.includes(state)) return { icon: "pause", label: "downloads.action.waitPart", onPress: () => run("waitForPart") };

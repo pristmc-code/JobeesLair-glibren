@@ -115,9 +115,10 @@ function engine(fs, plan = () => null) {
   };
 }
 
-function queueWith({ fs, downloads, archives = null, sources, platform = 'desktop', notices = [], wait, concurrency }) {
+function queueWith({ fs, downloads, archives = null, sources, platform = 'desktop', notices = [], wait, concurrency, forgetDebridCopy }) {
   return createDownloadQueue({
     ...(concurrency ? { concurrency } : {}),
+    ...(forgetDebridCopy ? { forgetDebridCopy } : {}),
     fs, downloads, http: { request: async () => ({ ok: false, status: 404, json: async () => ({}) }) }, formats: DownloadFormats,
     dataDir: '/data/app', platform, notifications: { show: (title) => notices.push(title) }, power: { keepAwake() {} }, linking: null,
     sources: sources ?? { resolve: async (release) => ({ url: release.url }) }, archives, packages: null, wait: wait ?? (async () => {}),
@@ -654,6 +655,36 @@ test('glibren.13: a broken copy at the debrid service (payload broken-file, or t
   assert.equal(shown.title, 'The debrid service has a broken copy of this file');
   assert.match(shown.action, /Delete it in TorBox/);
   assert.ok(finalError('broken-file: x'), 'a retry would meet it again');
+});
+
+test('glibren.60: "Delete from TorBox and download again" deletes the account item and starts over with a new TorBox request', async () => {
+  const fs = memoryFs();
+  let links = 0, broken = true;
+  const sources = { resolve: async () => ({ url: `https://store.torbox.example/dl/${++links}` }) };
+  const downloads = engine(fs, () => broken ? { error: new Error('Downloads.enqueue /data/x: broken-file: TorBox has a broken copy of this file: it holds a web page (170 bytes) instead of the game. Delete it in TorBox and add it again.') } : null);
+  const forgotten = [];
+  const queue = queueWith({ fs, downloads, sources, forgetDebridCopy: async (release) => { forgotten.push(release.debrid?.service); return 1; } });
+  const id = queue.enqueue(game, debridPage(), '/data');
+  let job = await settle(queue, id);
+  assert.equal(job.state, 'failed');
+  broken = false;
+  await queue.redoInTorBox(id);
+  assert.deepEqual(forgotten, ['torbox'], 'the TorBox item is deleted first');
+  job = await settle(queue, id);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(links, 2, 'a new TorBox request, not the old link');
+  // not a TorBox download, or not stopped: nothing
+  const plain = queue.enqueue(other(2), image('Plain.exfat'), '/data');
+  await settle(queue, plain);
+  await queue.redoInTorBox(plain);
+  assert.equal(forgotten.length, 1);
+  const { forgetTorBoxCopy } = await import(pathToFileURL(path.join(repo, 'app/state/debrid.js')).href);
+  assert.equal(typeof forgetTorBoxCopy, 'function');
+});
+
+test('glibren.60: the card offers "Delete from TorBox and download again" for a broken or refused TorBox copy', () => {
+  const card = readFileSync(path.join(repo, 'app/downloads/DownloadCard.jsx'), 'utf8');
+  assert.match(card, /label: "downloads\.action\.redoInTorBox", armedLabel: "downloads\.action\.redoInTorBoxConfirm", onPress: \(\) => run\("redoInTorBox"\)/);
 });
 
 test('debrid link: at most six renewals an hour', async () => {
