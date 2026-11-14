@@ -43,6 +43,7 @@
 //   payload (.49): GET /api/payload, POST /api/payload/update ("Procurar e atualizar"), /api/payload/revert ("Voltar ao
 //   payload embutido")
 //   testes da Fase 0: GET /api/teste/estado, POST /api/teste/enviar
+//   banco de capas pelo celular (bg_covers_bank.c): GET /api/capas/estado|lista, POST /api/capas/enviar|falhou|apagar
 //   a propria sessao: GET /api/session
 //   so aparelho pareado ou 127.0.0.1 (monitor_strong; o PIN antigo nao): GET /api/pair/devices, POST /api/pair/remove|pin
 // Livres (leitura simples, como antes): GET /, GET /teste (a pagina), GET /api/status, /api/library, /api/library/game,
