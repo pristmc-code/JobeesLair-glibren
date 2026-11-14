@@ -114,3 +114,17 @@ test('nothing is measured when the host has no reading, and a failing read never
   assert.equal(memorySample('tela:browse'), null);
   assert.equal(memorySnapshot().peak, null);
 });
+
+test('glibren.60: garbage going up and down (GC sawtooth) logs no floor; a floor that rises is logged once per step', () => {
+  let clock = 0, used = 30;
+  const lines = [];
+  const meter = createMemoryMeter({ read: () => ({ heapUsed: Math.round(used * MB), heapLimit: 64 * MB }), write: (line, level = 'INFO') => lines.push(level + ' ' + line), now: () => clock, floorMs: 600e3 });
+  // 5 min de dente de serra: 30 -> 41 e de volta a 30 (a coleta)
+  for (let i = 0; i < 80; i++) { used = 30 + (i % 10) * 1.2; meter.sample('tela:downloads'); clock += 15e3; }
+  assert.ok(!lines.some((line) => line.includes('piso')), lines.join('\n'));
+  // o minimo sobe 3 MB e fica: uma linha de piso
+  for (let i = 0; i < 50; i++) { used = 33.5 + (i % 2); meter.sample('tela:downloads'); clock += 15e3; }
+  const floor = lines.filter((line) => line.includes('piso'));
+  assert.ok(floor.length >= 1 && floor.length <= 4, lines.join('\n')); // um por degrau de 1 MB, nao um por amostra
+  assert.match(floor.at(-1), /^WARN memoria: piso de 10 min 33,5 MB em tela:downloads/);
+});

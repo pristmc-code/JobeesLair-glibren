@@ -25,8 +25,16 @@ import { log } from '../services/logger.js';
    * Um medidor. `read()` devolve {heapUsed, heapLimit, processUsed?, processSize?} ou null; `write(line, level)`
    * vai ao log. Para os testes: `step`, `warnAt`, `top`, `keep` e `now`.
    */
-  function createMemoryMeter({ read, write = () => {}, step = STEP, warnAt = WARN_AT, rearmAt = REARM_AT, top = TOP, keep = KEEP, now = Date.now } = {}) {
+  // glibren.60: o pico so sobe, e o heap do QuickJS junta lixo ate a coleta (ps5-react js_heap.cpp: ate 1,5x o que
+  // sobrou, no minimo 8 MB a mais): um pico subindo parado numa tela nao prova vazamento. O PISO (a menor amostra dos
+  // ultimos floorMs, 20 min) passando da maior marca prova: vai ao log a cada degrau novo, "memoria: piso de 20 min ...".
+  var FLOOR_MS = 20 * 6e4;
+  var FLOOR_KEEP = 64;
+  function createMemoryMeter({ read, write = () => {}, step = STEP, warnAt = WARN_AT, rearmAt = REARM_AT, top = TOP, keep = KEEP, now = Date.now, floorMs = FLOOR_MS } = {}) {
     let last = null;
+    let recent = []; // {at, used} dos ultimos floorMs (no maximo FLOOR_KEEP)
+    let floorLevel = 0;
+    let floorStart = 0;
     let peak = null;
     let loggedLevel = 0;
     let warned = false;
@@ -68,6 +76,19 @@ import { log } from '../services/logger.js';
         if (level > loggedLevel) {
           loggedLevel = level;
           write(`memoria: pico ${mb(used)}${limit ? ` de ${mb(limit)}` : ""} MB em ${name}${processText(reading)}`);
+        }
+      }
+      // glibren.60: o piso dos ultimos floorMs (so com a janela inteira coberta)
+      const at = last.at;
+      floorStart || (floorStart = at);
+      recent = [...recent.filter((item) => at - item.at <= floorMs), { at, used }].slice(-FLOOR_KEEP);
+      if (at - floorStart >= floorMs) {
+        const floor = Math.min(...recent.map((item) => item.used));
+        const level = Math.floor(floor / step);
+        if (!floorLevel) floorLevel = level; // so a maior marca: um piso que volta a descer nao rearma
+        else if (level > floorLevel) {
+          floorLevel = level;
+          write(`memoria: piso de ${Math.round(floorMs / 6e4)} min ${mb(floor)} MB em ${name} (o minimo subiu: memoria presa, nao lixo)`, "WARN");
         }
       }
       if (limit && used >= limit * warnAt) {
