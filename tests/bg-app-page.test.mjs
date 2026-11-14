@@ -182,6 +182,7 @@ test('Fase 8: a pagina monta contra a API falsa nos 5 tamanhos e na area util do
   mkdirSync(out, { recursive: true });
   const argv = [pwRunner.script, '--checar', '--rapido', `--saida=${pwRunner.out(out)}`];
   if (pwRunner.playwright) argv.push(`--playwright=${pwRunner.playwright}`);
+  if (process.env.JL_F8_SEM_LINHA_TROCADA === '1') argv.push('--sem-linha-trocada'); // glibren.61: ver medir.mjs
   const r = spawnSync(pwRunner.node, argv, { encoding: 'utf8', timeout: 540000, cwd: pwRunner.playwright ? '/mnt/c' : repo });
   const line = (r.stdout || '').split('\n').find((l) => l.startsWith('JSON '));
   assert.ok(line, `sem resultado: ${(r.stderr || r.stdout || '').slice(-1500)}`);

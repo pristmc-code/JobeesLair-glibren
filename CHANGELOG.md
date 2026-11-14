@@ -6,6 +6,13 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.61** (fork): the TorBox key kept on the PS5, so the download payload works without opening the Jobe.
+  Download payload 1.37.5.
+  - The payload keeps the TorBox/AllDebrid key the app hands it (POST /secret) in `/data/JobeesLair/bg/debrid-keys.json`
+    (mode 0600, only the key) and reads it back when it starts. After a reboot, new requests from the phone, expired
+    TorBox links and the TorBox Library no longer wait for "the Jobe" to open once.
+  - Removing or changing the key in the Jobe's Settings reaches the running payload at once: an empty key removes that
+    service from the file, and the file is deleted when no key is left. The key never goes to the payload log.
 - **glibren.60** (fork): fixes from the first PS5 diagnostics and the cover bank filled by the phone. Download payload 1.37.4; phone app
   JobeControle 0.3-teste.
   - A TorBox download paused in the app before it reached the payload no longer stays "Waiting for the Jobe" when

@@ -177,6 +177,7 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
     }
     log("alldebrid", key ? "API key set" : "API key removed");
     updateAll({ ...keyFields(key), account: void 0, hosters: void 0 });
+    keyChanged();
   }
   /** "Test connection" for AllDebrid: the account and the hosts it can use, saved for the rows. */
   async function testAllDebrid({ quiet = (_reason, work) => work() } = {}) {
@@ -212,6 +213,7 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
     log("torbox", key ? "API key set" : "API key removed");
     update({ ...keyFields(key), account: void 0, items: void 0 });
     instant.clear();
+    keyChanged();
   }
   // The hosts TorBox lists, kept for the rows; an empty answer says nothing (the rows treat it as unknown).
   function saveHosters(list) {
@@ -229,6 +231,20 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
       }
       return account;
     });
+  }
+  // glibren.61: quem quer saber quando uma chave muda (o payload grava a dele no PS5).
+  var keyListeners = /* @__PURE__ */ new Set();
+  function keyChanged() {
+    for (const listener of keyListeners) {
+      try {
+        listener();
+      } catch {
+      }
+    }
+  }
+  function onDebridKey(listener) {
+    keyListeners.add(listener);
+    return () => keyListeners.delete(listener);
   }
   var listeners = /* @__PURE__ */ new Set();
   var notify = () => {
@@ -583,4 +599,4 @@ import { FileSystem, Http, LocalServer, Platform } from '@ps5-react/core';
     return typeof api.cachedFiles === "function" ? api.cachedFiles(links) : null;
   }
 
-export { activeService, askInstant as askTorBoxInstant, brokenAtTorBox, forgetTorBoxCopy, rememberTorBoxItem, torBoxApi, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant, availableByTorBox, refreshTorBoxHosts, setTorBoxQuick, torBoxQuick, torBoxQuotas, torBoxReady, useTorBoxQuick };
+export { onDebridKey, activeService, askInstant as askTorBoxInstant, brokenAtTorBox, forgetTorBoxCopy, rememberTorBoxItem, torBoxApi, torBoxFileNames, torBoxFormatNames, debridHandoff, debridResolver, debridSecret, debridSnapshot, debridSource, debridStatus, debridSupports, heldByTorBox, masked, serviceName, setAllDebridClient, setAllDebridKey, setTorBoxClient, setTorBoxKey, testAllDebrid, testTorBox, useDebrid, useTorBoxInstant, availableByTorBox, refreshTorBoxHosts, setTorBoxQuick, torBoxQuick, torBoxQuotas, torBoxReady, useTorBoxQuick };

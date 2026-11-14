@@ -97,7 +97,7 @@ import { setConsoleFirmware } from './device.js';
   // glibren.49 (Fase 2): a versao do bg-downloader.elf embutido neste app (BG_VERSION em app/native/bg_downloader.c; o
   // tests/bg-self-update.test.mjs confere que sao iguais). Vai em <stateDir>/app.json junto com PAYLOAD_API: o payload
   // so usa um baixado MAIS NOVO que este e compativel com esta API (contrato em app/native/bg_self.c).
-  var BG_EMBEDDED_VERSION = "1.37.4";
+  var BG_EMBEDDED_VERSION = "1.37.5";
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -292,7 +292,7 @@ function createBackgroundDownloads({
     requestsMs = 5e3
   }) {
     const base = `http://127.0.0.1:${port}`;
-    let secretsFor = null; // pid do payload que ja recebeu a chave
+    const secretsFor = /* @__PURE__ */ new Map(); // glibren.61: servico -> "pid:chave" que o payload ja recebeu
     let configFor = null; // pid + a configuracao que o payload ja recebeu (downloads simultaneos, pagina do celular)
     let videoCapSent = false; // glibren.41 (A1): o payload recebeu um limite de video (falta mandar o 0 que o tira)
     const readToken = () => {
@@ -541,11 +541,13 @@ function createBackgroundDownloads({
     async function handSecretNow(token, provider) {
       if (provider !== "torbox" && provider !== "alldebrid") return;
       const state = await health(token);
-      if (!state || secretsFor === `${state.pid}:${provider}`) return;
-      const key = secret(provider);
-      if (!key) return;
+      if (!state) return;
+      // glibren.61: o payload grava a chave no PS5 (debrid-keys.json); a chave vazia (apagada na Jobe) apaga de la.
+      const key = secret(provider) || "";
+      const mark = `${state.pid}:${key}`;
+      if (secretsFor.get(provider) === mark) return;
       const answer = await call(token, "POST", "/secret", { service: provider, key });
-      if (answer.status === 200) secretsFor = `${state.pid}:${provider}`;
+      if (answer.status === 200) secretsFor.set(provider, mark);
     }
     // O payload baixa ate `concurrency()` jobs ao mesmo tempo, e serve a pagina do celular como `monitor()` diz: a
     // configuracao vai a cada payload novo (pid) e a cada mudanca.
@@ -939,6 +941,12 @@ function createBackgroundDownloads({
     // glibren: a pagina do celular mudou (ligada/desligada, PIN): o payload no ar recebe a configuracao de novo.
     // glibren.5: e a pausa ao fechar o app tambem.
     wrapper.refreshConfig = () => syncConcurrency(readToken()).catch(() => {});
+    // glibren.61: a chave do TorBox/AllDebrid mudou ou foi apagada: o payload no ar grava (ou apaga) a dele.
+    wrapper.refreshSecrets = () => {
+      const token = readToken();
+      if (!token) return;
+      for (const provider of ["torbox", "alldebrid"]) handSecret(token, provider).catch(() => {});
+    };
     // glibren.5: o botao "Sair": o app vai fechar. O payload no ar passa a conta-lo como fechado ja (sem esperar ~15 s de
     // silencio) e aplica a pausa conforme a opcao. O batimento para, para nao parecer que o app continua aberto.
     wrapper.bye = async () => {

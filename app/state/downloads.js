@@ -11,7 +11,7 @@ import { remoteCatalog, remoteCatalogOn } from './catalog-remote.js';
 import { DATA_DIR } from './data-dir.js';
 import { createDownloadQueue } from './download-queue.js';
 import { createSourceResolver } from './download-sources.js';
-import { debridHandoff, debridResolver, debridSecret, forgetTorBoxCopy } from './debrid.js';
+import { debridHandoff, debridResolver, debridSecret, forgetTorBoxCopy, onDebridKey } from './debrid.js';
 import { createBackgroundDownloads, onBackgroundDownloads, onPauseOnClose, pauseOnCloseSeconds } from './background-downloads.js';
 import { onSimultaneousDownloads, setSimultaneousDownloads, simultaneousDownloads } from './simultaneous-downloads.js';
 import { onPhoneMonitor, phoneMonitorConfig, setPhoneMonitorAddress, setPhoneMonitorProbe } from './phone-monitor.js';
@@ -138,6 +138,8 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
   onBackgroundDownloads(() => void startBackgroundAtLaunch());
   // MODIFIED (glibren.5): mudar o tempo da pausa ao fechar o app chega ao payload no ar na hora.
   onPauseOnClose(() => background?.refreshConfig?.());
+  // glibren.61: a chave do TorBox mudada ou apagada chega ao payload no ar (que a grava ou apaga no PS5).
+  onDebridKey(() => background?.refreshSecrets?.());
   // glibren.13: mudar o limite de velocidade (Configuracoes, ou adotado do celular) chega ao payload no ar na hora.
   onSpeedLimit(() => background?.refreshConfig?.());
   // glibren.41 (A1): while a video plays the cap is sent again every 30 s (it expires in the payload after 90 s).

@@ -1976,6 +1976,33 @@ test('glibren.18: com o app fechado, o payload comeca sozinho os pedidos do celu
   }
 });
 
+test('glibren.61: a chave do TorBox fica gravada no PS5 (debrid-keys.json 0600), volta depois de reiniciar e some quando a Jobe apaga', { skip }, async () => {
+  const base = workspace();
+  const keys = path.join(base, 'state/debrid-keys.json');
+  let child = start(base);
+  try {
+    await up(base);
+    assert.ok(!existsSync(keys), 'sem chave, sem arquivo');
+    assert.equal((await call(base, 'POST', '/secret', { service: 'torbox', key: KEY })).status, 200);
+    assert.deepEqual(JSON.parse(readFileSync(keys, 'utf8')), { torbox: { key: KEY } });
+    assert.equal(statSync(keys).mode & 0o777, 0o600, 'so o dono le');
+    assert.equal((await call(base, 'POST', '/secret', { service: 'alldebrid', key: 'abcDEF1234567890abcd' })).status, 200);
+    assert.deepEqual(JSON.parse(readFileSync(keys, 'utf8')), { torbox: { key: KEY }, alldebrid: { key: 'abcDEF1234567890abcd' } });
+    await stop(child);
+    // Reiniciado sem a Jobe: a chave volta do arquivo (a Biblioteca TorBox nao diz mais "no-key").
+    child = start(base);
+    await up(base);
+    assert.match(readFileSync(path.join(base, 'state/bgdl.log'), 'utf8'), /chave\(s\) do debrid gravada\(s\) no PS5: 2/);
+    assert.equal((await call(base, 'POST', '/secret', { service: 'alldebrid', key: '' })).status, 200);
+    assert.deepEqual(JSON.parse(readFileSync(keys, 'utf8')), { torbox: { key: KEY } }, 'chave vazia tira o servico');
+    assert.equal((await call(base, 'POST', '/secret', { service: 'torbox', key: '' })).status, 200);
+    assert.ok(!existsSync(keys), 'sem nenhuma chave, o arquivo some');
+    assert.ok(!readFileSync(path.join(base, 'state/bgdl.log'), 'utf8').includes(KEY), 'a chave nunca no diario');
+  } finally {
+    await stop(child);
+  }
+});
+
 test('glibren.18: auto_plan (payload) = destino do app (download-formats + destinationFor + stagedPath) nos mesmos casos', { skip }, async () => {
   const base = workspace();
   const child = start(base);

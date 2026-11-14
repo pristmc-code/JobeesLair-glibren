@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.4"
+#define BG_VERSION "1.37.5"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -1590,7 +1590,10 @@ static void load_jobs(void) {
 //
 // debrid_key(service, out, cap) -> 1 com a chave em `out`, 0 sem chave. Nunca registra a chave.
 // Ordem:
-//   1. a chave em memoria que o app entregou por POST /secret (so loopback + token; nunca gravada);
+//   1. a chave em memoria que o app entregou por POST /secret (so loopback + token). glibren.61: ela tambem fica
+//      gravada em <g_dir>/debrid-keys.json (modo 0600, autorizado pelo usuario em 14/11) e volta para a memoria quando
+//      o payload sobe (load_saved_keys), para o payload seguir sem a Jobe depois de reiniciar o PS5; uma chave vazia
+//      (a Jobe apagou a chave) tira o servico da memoria e do arquivo, que some quando nao sobra nenhuma;
 //   2. o debrid.json do app (hoje em texto puro: {"torbox":{"key":"..."},"alldebrid":{"key":"..."}}), lido dos
 //      caminhos de key_files(): no PS5 a pasta do app fora do sandbox (/mnt/sandbox/PPSA99471_00N/download0/
 //      JobeesLair/debrid.json, que so existe enquanto o sistema mantem o download0 do app montado); no Linux
@@ -1636,6 +1639,34 @@ static int key_files(char paths[][256], int max) {
   if (path && n < max) snprintf(paths[n++], 256, "%s", path);
 #endif
   return n;
+}
+// glibren.61: o arquivo com as chaves que o app entregou. Chamar com g_key_lock.
+static void saved_keys_path(char* path, size_t cap) { snprintf(path, cap, "%s/debrid-keys.json", g_dir); }
+static void save_keys_locked(void) {
+  char path[600], text[400];
+  saved_keys_path(path, sizeof path);
+  if (!g_memory_key[0][0] && !g_memory_key[1][0]) {
+    unlink(path);
+    return;
+  }
+  int n = snprintf(text, sizeof text, "{");
+  if (g_memory_key[0][0]) n += snprintf(text + n, sizeof text - n, "\"torbox\":{\"key\":\"%s\"}", g_memory_key[0]);
+  if (g_memory_key[1][0]) n += snprintf(text + n, sizeof text - n, "%s\"alldebrid\":{\"key\":\"%s\"}", g_memory_key[0][0] ? "," : "", g_memory_key[1]);
+  n += snprintf(text + n, sizeof text - n, "}\n");
+  if (save_atomic(path, text, (size_t)n, 0600)) chmod(path, 0600);
+  else logf_("chave do debrid nao gravada em %s (errno %d)", path, errno);
+  memset(text, 0, sizeof text);
+}
+static void load_saved_keys(void) {
+  char path[600], key[96];
+  saved_keys_path(path, sizeof path);
+  int count = 0;
+  pthread_mutex_lock(&g_key_lock);
+  if (read_key_file(path, "torbox", key, sizeof key)) { snprintf(g_memory_key[0], sizeof g_memory_key[0], "%s", key); ++count; }
+  if (read_key_file(path, "alldebrid", key, sizeof key)) { snprintf(g_memory_key[1], sizeof g_memory_key[1], "%s", key); ++count; }
+  pthread_mutex_unlock(&g_key_lock);
+  memset(key, 0, sizeof key);
+  if (count) logf_("chave(s) do debrid gravada(s) no PS5: %d", count);
 }
 static int debrid_key(const char* service, char* out, size_t cap) {
   int slot = !strcmp(service, "alldebrid") ? 1 : 0;
@@ -4680,7 +4711,11 @@ static void route(int fd, Request* r) {
       return;
     }
     pthread_mutex_lock(&g_key_lock);
-    snprintf(g_memory_key[!strcmp(s.service, "alldebrid") ? 1 : 0], sizeof g_memory_key[0], "%s", s.key);
+    char* slot = g_memory_key[!strcmp(s.service, "alldebrid") ? 1 : 0];
+    if (strcmp(slot, s.key)) { // glibren.61: grava (ou apaga, chave vazia) so quando muda
+      snprintf(slot, sizeof g_memory_key[0], "%s", s.key);
+      save_keys_locked();
+    }
     pthread_mutex_unlock(&g_key_lock);
     memset(&s, 0, sizeof s);
     memset(r->body, 0, r->content_length);
@@ -7525,6 +7560,7 @@ int main(void) {
   pthread_mutex_lock(&g_lock);
   load_jobs();
   load_config();
+  load_saved_keys(); // glibren.61: a chave do TorBox gravada no PS5 (payload sem a Jobe)
   load_sessions_locked(); // glibren.19: as sessoes do PIN guardadas (depois do config: precisam do pinHash)
   pair_load();            // pareamento: os aparelhos pareados e o PIN antigo ligado/desligado (devices.json)
   pthread_mutex_unlock(&g_lock);
