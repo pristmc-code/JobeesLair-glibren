@@ -22,7 +22,7 @@
 //   GET  /api/store?q=&platform=&format=&access=&genre=&feature=&release=&size=&provider=&solo=1&sort=&offset=&limit=
 //        -> {ok, key, builtAt, console, readyFirmware, total, count, offset, limit, games:[{id, title, code, platform,
 //            cover, sizeGb, formats, ready, stars, ratingCount, year, solo, queued}], facets:{<filtro>:[{value, name, count}]}}
-//        (valores separados por virgula; sort: relevance|newest|rating|size|title). 404 {"error":"no-store"} sem o
+//        (valores separados por virgula; sort: relevance|newest|rating|size|title; dir=rev inverte, glibren.68). 404 {"error":"no-store"} sem o
 //        arquivo, 500 {"error":"bad-store"} quando nada se aproveita dele. Sem sessao (como /api/library): nada de link.
 //   GET  /api/store/game?id= -> {ok, game:{...}, details?:{summary, about, shots, hero}, links:[{i, kind, group, host,
 //        format, size, label, parts, solo, ref}] (sem URL), download:"payload"|"app"}
@@ -371,7 +371,7 @@ typedef struct { int n; int code[ST_SELECT]; } StSel;
 typedef struct {
   char q[200];
   StSel sel[SF_COUNT];
-  int sort, offset, limit;
+  int sort, offset, limit, rev; // rev (glibren.68): dir=rev, o sentido contrario da ordem
 } StQuery;
 static int st_code(const StIndex* x, int facet, const char* value) {
   switch (facet) {
@@ -437,6 +437,7 @@ static void st_query_parse(const char* query, const StIndex* x, StQuery* q) {
       lower_ascii(q->q);
     } else if (!strcmp(key, "sort")) {
       for (int k = 0; k < ST_SORTS; ++k) if (!strcmp(value, ST_SORT_KEYS[k])) q->sort = k;
+    } else if (!strcmp(key, "dir")) { q->rev = !strcmp(value, "rev");
     } else if (!strcmp(key, "offset")) { const long v = strtol(value, NULL, 10); q->offset = v < 0 ? 0 : v > ST_MAX_GAMES ? ST_MAX_GAMES : (int)v; }
     else if (!strcmp(key, "limit")) { const long v = strtol(value, NULL, 10); q->limit = v < 1 ? 1 : v > ST_PAGE ? ST_PAGE : (int)v; }
     else {
@@ -465,6 +466,14 @@ static void st_query_parse(const char* query, const StIndex* x, StQuery* q) {
   }
 }
 typedef struct { uint32_t rank; int index; } StOrder;
+// glibren.68: quem nao tem o dado da ordem (sem tamanho, sem data, sem nota) fica no fim nos dois sentidos.
+static int st_has_key(const StGame* g, int sort) {
+  const char* k = ST_SORT_KEYS[sort];
+  if (!strcmp(k, "size")) return g->has_size && g->size_gb > 0;
+  if (!strcmp(k, "newest")) return g->release_date[0] != 0;
+  if (!strcmp(k, "rating")) return g->has_stars && g->rating_count > 0;
+  return 1;
+}
 static int st_order_cmp(const void* a, const void* b) {
   const StOrder* x = a;
   const StOrder* y = b;
@@ -574,6 +583,11 @@ static void store_list(int fd, const char* query) {
     }
   }
   if (count > 1) qsort(matches, (size_t)count, sizeof *matches, st_order_cmp);
+  if (q->rev) {
+    int k = count;
+    while (k > 0 && !st_has_key(&x->games[matches[k - 1].index], q->sort)) --k;
+    for (int i = 0, j = k - 1; i < j; ++i, --j) { const StOrder t = matches[i]; matches[i] = matches[j]; matches[j] = t; }
+  }
   Buf b = {0};
   buf_str(&b, "{\"ok\":true,\"key\":"); buf_json(&b, x->key);
   buf_str(&b, ",\"builtAt\":"); buf_json(&b, x->built);

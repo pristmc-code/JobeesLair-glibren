@@ -6,6 +6,10 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.68** (fork): sort both ways in the glibren full-screen store (`/app`). Download payload 1.37.12.
+  - Every order now comes in both directions, side by side: Most/Least popular, Newest/Oldest, Top/Lowest rated,
+    Largest/Smallest, Title/Title (Z–A) (`GET /api/store?...&dir=rev`). Games without the data for that order (no size,
+    no date, no rating) stay at the end either way.
 - **glibren.67** (fork): the store page fixes from glibren.63–.66 finally reach the PS5. Download payload 1.37.11.
   - The payload serves the full-screen store (`/app`) from a generated header (`bg_app_html.h`) that was last rebuilt
     in glibren.58, so none of the store changes since .63 shipped. The package script now always regenerates it.

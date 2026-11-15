@@ -203,6 +203,7 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
       return json(res, 200, { ok: true, token: TOKEN, id: '0123456789abcdef' });
     }
     if (p === '/api/unlock' && req.method === 'POST') return body.pin === PIN ? json(res, 200, { session: SESSAO }) : json(res, 403, { retryIn: 0 });
+    if (p === '/api/teste/gravar' && req.method === 'POST') return json(res, 200, { ok: true }); // glibren.65: medidas da loja no PS5
     if (p === '/api/session' && req.method === 'GET') return sessaoOk(req) ? json(res, 200, { ok: true }) : json(res, 401, { error: 'pin' });
     return json(res, 404, { error: 'not found' });
   }

@@ -207,6 +207,11 @@
   "en": "Title",
   "pt-BR": "Título"
  },
+ "ordens.relevanceRev": {"pt-BR": "Menos populares", "en": "Least popular", "es": "Menos populares", "fr": "Les moins populaires", "de": "Am wenigsten beliebt", "it": "Le meno popolari", "ru": "Наименее популярные", "ja": "人気が低い順", "zh-Hans": "最不受欢迎", "ar": "الأقل شعبية", "hi": "सबसे कम लोकप्रिय", "bn": "সবচেয়ে কম জনপ্রিয়", "id": "Paling tidak populer", "ur": "سب سے کم مقبول"},
+ "ordens.newestRev": {"pt-BR": "Mais antigos", "en": "Oldest", "es": "Más antiguos", "fr": "Les plus anciens", "de": "Älteste", "it": "Più vecchi", "ru": "Старые", "ja": "古い順", "zh-Hans": "最旧", "ar": "الأقدم", "hi": "सबसे पुराने", "bn": "পুরনো", "id": "Terlama", "ur": "پرانے"},
+ "ordens.ratingRev": {"pt-BR": "Pior avaliados", "en": "Lowest rated", "es": "Peor valorados", "fr": "Les moins bien notés", "de": "Am schlechtesten bewertet", "it": "I meno votati", "ru": "С худшими оценками", "ja": "低評価", "zh-Hans": "评分最低", "ar": "الأقل تقييمًا", "hi": "सबसे कम रेटिंग वाले", "bn": "সর্বনিম্ন রেটিং", "id": "Peringkat terendah", "ur": "سب سے کم ریٹنگ والے"},
+ "ordens.sizeRev": {"pt-BR": "Menores", "en": "Smallest", "es": "Más pequeños", "fr": "Les plus légers", "de": "Kleinste", "it": "Più piccoli", "ru": "Самые маленькие", "ja": "サイズが小さい順", "zh-Hans": "体积最小", "ar": "الأصغر", "hi": "सबसे छोटे", "bn": "সবচেয়ে ছোট", "id": "Terkecil", "ur": "سب سے چھوٹے"},
+ "ordens.titleRev": {"pt-BR": "Título (Z–A)", "en": "Title (Z–A)", "es": "Título (Z–A)", "fr": "Titre (Z–A)", "de": "Titel (Z–A)", "it": "Titolo (Z–A)", "ru": "Название (Я–А)", "ja": "タイトル (逆順)", "zh-Hans": "标题 (倒序)", "ar": "العنوان (ي–أ)", "hi": "शीर्षक (उल्टा)", "bn": "শিরোনাম (উল্টো)", "id": "Judul (Z–A)", "ur": "عنوان (الٹا)"},
  "nJogos": {
   "en": "{n} games",
   "pt-BR": "{n} jogos"

@@ -293,6 +293,9 @@ test('filtros "any" e "todos", busca, solo, opcoes e campos de cada jogo', { ski
   const ids = async (qs) => (await page(`/api/store?${qs}`)).data.games.map((g) => g.id);
   assert.deepEqual(await ids(''), ['CUSA00003', 'PPSA00002', 'PPSA00001', 'CUSA00004'], 'relevance pelo rank');
   assert.deepEqual(await ids('sort=newest'), ['PPSA00001', 'PPSA00002', 'CUSA00003', 'CUSA00004']);
+  assert.deepEqual(await ids('sort=title&dir=rev'), (await ids('sort=title')).reverse(), 'glibren.68: dir=rev inverte');
+  const novos = await ids('sort=newest'), velhos = await ids('sort=newest&dir=rev');
+  assert.equal(velhos.length, novos.length, 'glibren.68: mesmos jogos nos dois sentidos');
   assert.deepEqual(await ids('genre=Action,RPG&sort=title'), ['PPSA00001'], 'genero: todos os escolhidos');
   assert.deepEqual(await ids('format=pkg,exfat&sort=title'), ['PPSA00002', 'PPSA00001', 'CUSA00003'], 'formato: qualquer um');
   assert.deepEqual(await ids('format=ready&sort=title'), ['PPSA00001', 'CUSA00003'], '"ready" pelo campo ready');
