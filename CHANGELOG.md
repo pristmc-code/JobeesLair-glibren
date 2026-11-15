@@ -6,6 +6,11 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.66** (fork): glibren full-screen store (`/app`) on the PS5 browser. Download payload 1.37.10.
+  - After scrolling back up, everything stopped loading: the PS5 browser opens only 6 connections per address and
+    removing an image does not cancel its request, so orphan cover requests filled them and nothing else came from the
+    payload (covers, catalog pages, measurements). A row that leaves the screen now cancels its covers, covers already
+    seen through the proxy also wait in the queue, and the proxy uses at most 4 connections.
 - **glibren.65** (fork): glibren full-screen store (`/app`) on the PS5 browser. Download payload 1.37.9.
   - Covers no longer use `loading="lazy"` (the store already decides when to ask for each one): the PS5's WebKit lost
     track of them after scrolling back up and they vanished for good.

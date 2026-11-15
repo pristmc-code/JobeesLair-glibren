@@ -675,7 +675,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     while (a < b) { var m = (a + b + 1) >> 1; if (V.topos[m] <= y) a = m; else b = m - 1; }
     return a;
   }
-  function limparLinhas() { for (var k in V.linhas) V.linhas[k].remove(); V.linhas = {}; }
+  function limparLinhas() { for (var k in V.linhas) { largarLinha(V.linhas[k]); V.linhas[k].remove(); } V.linhas = {}; proxima(); }
   function agendar() { if (!V.pend) V.pend = requestAnimationFrame(desenhar); }
   var montado = false;
   function desenhar() {
@@ -686,10 +686,11 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
     espaco.style.height = topo(n) + "px";
     var st = grade.scrollTop, h = grade.clientHeight;
     var a = Math.max(0, linhaEm(st) - 2), b = Math.min(n - 1, linhaEm(st + h) + 2);
-    for (var k in V.linhas) { var i0 = +k; if (i0 < a || i0 > b) { V.linhas[k].remove(); delete V.linhas[k]; } }
+    var largou = false;
+    for (var k in V.linhas) { var i0 = +k; if (i0 < a || i0 > b) { largarLinha(V.linhas[k]); largou = true; V.linhas[k].remove(); delete V.linhas[k]; } }
     for (var i = a; i <= b; i++) {
       var lin = V.linhas[i];
-      if (!lin || (!lin._cheia && linhaCheia(i))) { var nova = criarLinha(i); if (lin) lin.replaceWith(nova); else espaco.appendChild(nova); V.linhas[i] = lin = nova; }
+      if (!lin || (!lin._cheia && linhaCheia(i))) { var nova = criarLinha(i); if (lin) { largarLinha(lin); largou = true; lin.replaceWith(nova); } else espaco.appendChild(nova); V.linhas[i] = lin = nova; }
       lin.style.transform = "translateY(" + topo(i) + "px)";
     }
     // mede; uma linha que mudou de altura acima da tela corrige o scroll
@@ -704,6 +705,7 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       espaco.style.height = topo(n) + "px";
       if (ajuste) grade.scrollTop = st + ajuste;
     }
+    if (largou) proxima();
     var p0 = Math.floor(a * V.cols / PAGINA), p1 = Math.floor(Math.min(loja.count - 1, (b + 1) * V.cols - 1) / PAGINA);
     for (var p = p0; p <= p1; p++) if (!loja.pedidas[p]) carregarPagina(p);
     agendarCapas();
@@ -731,7 +733,12 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   // (capaBoa, sai do cache do navegador) e o pedido ao proxy que saiu da tela ou passou de PROXY_MAX ms solta a vaga
   // (antes as 2 vagas podiam ficar presas e as capas sumiam ao voltar ao topo).
   var SONY_CAPA = /^https:\/\/(?:image\.api\.playstation\.com|[a-z0-9-]+\.playstation\.(?:com|net))\//i;
-  var CAPA_DEMORA = 8000, CAPA_RUIM = 4, PROXY_JUNTOS = 6, PROXY_MAX = 15000, capaBoa = {};
+  // glibren.66: o navegador do PS5 abre so 6 conexoes por endereco e tirar a <img> da tela nao cancela o pedido: depois
+  // de subir a lista, pedidos orfaos (linhas que sairam, capas ja vistas pedidas todas juntas) ocupavam as 6 e nada mais
+  // chegava do payload (capas, paginas do catalogo, medidas). Agora a linha que sai cancela as capas dela (largarCapa),
+  // a capa ja vista do proxy tambem entra na fila e o proxy usa no maximo 4 (sobram 2 para o resto).
+  var CAPA_DEMORA = 8000, CAPA_RUIM = 4, PROXY_JUNTOS = 4, PROXY_MAX = 15000, capaBoa = {};
+  var CAPA_VAZIA = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=";
   var capasMed = { ok: 0, erro: 0, demora: 0, proxyOk: 0, proxyErro: 0, pulou: 0, nome: 0, hosts: {} };
   function capaChave(u) {
     var m = /^https:\/\/([^\/?#:]+)(?::\d+)?([^?#]*)/i.exec(u || ""); if (!m) return "outro";
@@ -752,7 +759,8 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   var proxyFila = [], proxyAtivos = 0, proxyLista = [];
   function proxima() {
     proxyLista = proxyLista.filter(function (a) {
-      if (a._ativo && (!a.isConnected || Date.now() - a._desde > PROXY_MAX)) { a._ativo = false; proxyAtivos--; }
+      if (a._ativo && !a.isConnected) largarCapa(a);
+      else if (a._ativo && Date.now() - a._desde > PROXY_MAX) { largarCapa(a); semCapa(a); }
       return a._ativo;
     });
     while (proxyAtivos < PROXY_JUNTOS && proxyFila.length) {
@@ -762,6 +770,13 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
       img.src = "/app/capa?id=" + encodeURIComponent(idCapa(img._g));
     }
   }
+  function largarCapa(img) { // cancela o pedido em andamento (sem disparar onload/onerror) e solta a vaga do proxy
+    if (img._fim || !img.getAttribute("src")) return;
+    img._fim = true; clearTimeout(img._t); img.onload = img.onerror = null;
+    if (img._ativo) { img._ativo = false; proxyAtivos--; }
+    img.src = CAPA_VAZIA;
+  }
+  function largarLinha(lin) { Array.prototype.forEach.call(lin.querySelectorAll(".capa img"), largarCapa); }
   function soltarProxy(img) { if (img._ativo) { img._ativo = false; proxyAtivos--; } proxima(); }
   function semCapa(img) {
     var box = img._box; img.remove(); capasMed.nome++;
@@ -775,7 +790,8 @@ html.ps5 .barra{padding:.4rem .6rem .3rem}
   }
   function carregarCapa(img) {
     var boa = capaBoa[img._u];
-    if (boa) { img._proxy = boa !== img._u; img.src = boa; return; }
+    if (boa === img._u) { img.src = boa; return; }
+    if (boa) { img._proxy = false; pedirProxy(img); return; } // glibren.66: pela fila, nao todas de uma vez
     // glibren.64: no PS5 o DNS do console bloqueia a Sony e o pedido direto pode ficar pendurado (sem erro) ate
     // CAPA_DEMORA; quem rolava nesse meio tempo nunca via a capa, mesmo com ela no banco do payload. Capa da Sony vai
     // direto ao proxy (banco, icon0, cache).
