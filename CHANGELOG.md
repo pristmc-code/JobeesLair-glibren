@@ -6,6 +6,12 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.67** (fork): the store page fixes from glibren.63–.66 finally reach the PS5. Download payload 1.37.11.
+  - The payload serves the full-screen store (`/app`) from a generated header (`bg_app_html.h`) that was last rebuilt
+    in glibren.58, so none of the store changes since .63 shipped. The package script now always regenerates it.
+  - Now really in: Sony covers straight from the payload, no lazy covers, the grid measures again when opened without
+    full screen, rows leaving the screen cancel their covers, covers already seen wait in the queue, automatic store
+    measurements for the diagnostic.
 - **glibren.66** (fork): glibren full-screen store (`/app`) on the PS5 browser. Download payload 1.37.10.
   - After scrolling back up, everything stopped loading: the PS5 browser opens only 6 connections per address and
     removing an image does not cancel its request, so orphan cover requests filled them and nothing else came from the
