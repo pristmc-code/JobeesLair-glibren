@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.71**: Choose the conversion format after a download: .exfat or, through ps5-dump-forge, .ffpkg, .ffpfs, .ffpfsc, .pkg, images with zstd packs and folders with zstd/LZ4 packs (download payload 1.37.15).
 > **glibren.70**: Homebrew tab in the full-screen store (/app) with search and download through the payload (download payload 1.37.14, tube-service 0.2.4).
 > **glibren.69**: Missing covers with the reason, free space of each drive and "Clear finished" on the phone page (download payload 1.37.13).
 > **glibren.68**: Full-screen store on the PS5: every sort order in both directions (download payload 1.37.12).

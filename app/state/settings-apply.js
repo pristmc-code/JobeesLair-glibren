@@ -10,7 +10,7 @@ import { setSpeedLimit } from './speed-limit.js';
 import { setDefaultDrive } from './last-drive.js';
 import { setAutoContinueParts } from './auto-continue.js';
 import { setConvertToExfat } from './exfat-convert.js';
-import { CONVERT_OPTIONS, setConvertOption } from './convert-options.js';
+import { CONVERT_CHOICES, CONVERT_OPTIONS, setConvertOption } from './convert-options.js';
 import { setPs5PkgWarning } from './ps5-pkg-warning.js';
 import { setPhoneMonitor } from './phone-monitor.js';
 import { setTorBoxQuick } from './debrid.js';
@@ -64,6 +64,8 @@ import { setAutoPlayFirst } from './auto-play-first.js';
     autoPlayFirstVideo: (value) => setAutoPlayFirst(orFalse(value))
   };
   for (const key of Object.keys(CONVERT_OPTIONS)) APPLY[key] = (value) => setConvertOption(key, whole(value, 0));
+  // glibren.71: o formato da conversao e o nivel do .pkg (texto; fora da lista = o padrao, o primeiro).
+  for (const [key, choices] of Object.entries(CONVERT_CHOICES)) APPLY[key] = (value) => setConvertOption(key, choices.includes(value) ? value : choices[0]);
   var started = false;
   /**
    * Liga as configuracoes ao payload (so no PS5): o payload de segundo plano no ar (background-downloads.js) e a fonte;

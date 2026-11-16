@@ -97,7 +97,7 @@ import { setConsoleFirmware } from './device.js';
   // glibren.49 (Fase 2): a versao do bg-downloader.elf embutido neste app (BG_VERSION em app/native/bg_downloader.c; o
   // tests/bg-self-update.test.mjs confere que sao iguais). Vai em <stateDir>/app.json junto com PAYLOAD_API: o payload
   // so usa um baixado MAIS NOVO que este e compativel com esta API (contrato em app/native/bg_self.c).
-  var BG_EMBEDDED_VERSION = "1.37.14";
+  var BG_EMBEDDED_VERSION = "1.37.15";
   var MiB = 1024 * 1024;
   var ENGINE_RANGE = 32 * MiB; // o rangeBytes padrao do motor nativo: a parcial so e a mesma com o mesmo valor
 
@@ -563,6 +563,9 @@ function createBackgroundDownloads({
       // pac1: so os campos validos das opcoes da conversao.
       const conv = convertOptions() ?? {};
       const convFields = Object.fromEntries(["convertPauseSeconds", "convertWriteLimit", "convertSyncMB"].filter((key) => Number.isInteger(conv[key]) && conv[key] >= 0).map((key) => [key, conv[key]]));
+      // glibren.71: o formato da conversao e o nivel de compressao (as conversoes que o payload pede sozinho usam estes).
+      if (typeof conv.convertFormat === "string" && /^[a-z_]{1,16}$/.test(conv.convertFormat)) convFields.convertFormat = conv.convertFormat;
+      if (typeof conv.convertLevel === "string" && /^[a-z]{1,16}$/.test(conv.convertLevel)) convFields.convertLevel = conv.convertLevel;
       const video = videoCap() | 0;
       // o campo do video so vai quando ha limite, e uma vez com 0 para tira-lo (videoCapSent); sem video, o corpo e o de antes
       const videoFields = video > 0 ? { videoCap: video, videoCapSeconds: VIDEO_CAP_TTL_S } : videoCapSent ? { videoCap: 0 } : {};
@@ -1191,7 +1194,7 @@ function createBackgroundDownloads({
         const answer = await call(token, "POST", "/convert", request);
         if (answer.status !== 200 && answer.status !== 201) throw new Error(`source: the helper refused the conversion (HTTP ${answer.status}: ${answer.data?.error ?? ""})`);
         id = answer.data.id;
-        log(`${request.name}: conversion to .exfat ${answer.data.attached ? "followed again" : "handed to the payload"} (${id})`);
+        log(`${request.name}: conversion to ${request.format || "exfat"} ${answer.data.attached ? "followed again" : "handed to the payload"} (${id})`);
       };
       const done = (async () => {
         await start();
@@ -1216,7 +1219,8 @@ function createBackgroundDownloads({
             continue;
           }
           // glibren.58: na extracao, o progresso dela (payload 1.37.3+: formato, bytes, velocidade, tempo, motivo).
-          tell({ state: item.state, written: Number(item.written) || 0, total: Number(item.total) || null, extract: extractionOf(item) });
+          // glibren.71: "waiting" = esperando o ps5-dump-forge (o motivo vem em error: "forge-missing: ...").
+          tell({ state: item.state, written: Number(item.written) || 0, total: Number(item.total) || null, extract: extractionOf(item), ...item.state === "waiting" ? { waiting: String(item.error || "") } : {} });
           if (item.state === "done") return item;
           if (item.state === "failed") throw new Error(item.error || "write: the conversion failed");
           if (item.state === "cancelled") throw Object.assign(new Error("Conversion cancelled."), { name: "AbortError" });

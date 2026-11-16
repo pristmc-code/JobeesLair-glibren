@@ -119,6 +119,9 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
     autoContinue: autoContinueParts,
     // glibren.12: PS5 games become .exfat when their download ends (Settings > Downloads); the payload converts.
     convertExfat: convertToExfatOn,
+    // glibren.71: the format (and the compression level) chosen in Settings > Downloads (state/convert-options.js).
+    convertFormat: () => convertOptions().convertFormat,
+    convertLevel: () => convertOptions().convertLevel,
     // 0.5.4: each launch learned goes to the players' numbers (state/online.js; only with stats on).
     onLaunch: (title, report) => !OWN_TITLES.includes(title) && online().launched({ title, ...report }),
     forgetDebridCopy: forgetTorBoxCopy, // glibren.60: "Apagar do TorBox e baixar de novo"

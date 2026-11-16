@@ -48,7 +48,7 @@ for (const status of states) {
   assert.ok(shown.length && shown[0], `${status}: ${shown.join('|')}`);
   assert.ok(Array.isArray(statusLine(status, 0.1, 30)), status);
 }
-assert.deepEqual(texts({ type: DownloadLabel, props: { status: 'converting', amount: '', dark: false } }), ['Converting to EXFAT']);
+assert.deepEqual(texts({ type: DownloadLabel, props: { status: 'converting', amount: '', dark: false } }), ['Converting']);
 assert.ok(DISABLED.includes('converting'), 'a conversion is not paused from the game page');
 assert.ok(texts({ type: DownloadLabel, props: { status: 'some-new-state', amount: '', dark: false } }).length, 'a state it does not know yet still draws');
 

@@ -2,7 +2,7 @@
 // Before, each file asked the system for a free port (listen on 0) and closed it; the payload bound it a moment later.
 // The test files run in parallel, so another file could take the same port in between ("fetch failed" in bg-convert,
 // now and then). The blocks sit below the system's automatic range (32768-60999 on Linux), so nothing else picks them:
-// each file gives its own block number (0-19), and a port is handed out once per run.
+// each file gives its own block number (0-20; glibren.71: 20 = bg-convert-forge), and a port is handed out once per run.
 import net from 'node:net';
 
 const FIRST = 12000;
@@ -16,7 +16,7 @@ const canListen = (port) => new Promise((resolve) => {
 });
 
 export function freePortFrom(block) {
-  if (!Number.isInteger(block) || block < 0 || block > 19) throw new Error(`free-port: block ${block} out of 0-19`);
+  if (!Number.isInteger(block) || block < 0 || block > 20) throw new Error(`free-port: block ${block} out of 0-20`);
   return async () => {
     const start = FIRST + block * BLOCK;
     for (let port = start; port < start + BLOCK; port++) {

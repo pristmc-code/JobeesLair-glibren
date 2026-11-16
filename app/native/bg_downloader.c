@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.14"
+#define BG_VERSION "1.37.15"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -970,6 +970,20 @@ static volatile int g_conv_write_limit;
 // 0 = desligado, o padrao: o writer segue com o fsync dele a cada 256 MiB, sem marco), cada fsync um marco com o tempo.
 #define MAX_CONVERT_SYNC 4096
 static volatile int g_conv_sync_mb;
+// glibren.71: o formato da conversao ("convertFormat") e o nivel de compressao ("convertLevel", "padrao" = o do Dump
+// Forge) das conversoes que o payload pede sozinho (app fechado: auto_after_download, "Converter agora" do BACKUP). As
+// do app vem com o formato no POST /convert. Ids combinados com o glibren; "exfat" e "pasta" o payload faz sozinho, os
+// outros pelo ps5-dump-forge (bg_convert.c, conv_forge_run). Em config.json.
+static const char* const CONV_FORMATS[] = {"exfat", "ffpkg", "ffpfs", "ffpfsc", "pkg", "exfat_zstd", "ffpkg_zstd", "ffpfs_zstd", "ffpfsc_zstd", "pasta", "pasta_zstd", "pasta_lz4"};
+static const char* const CONV_LEVELS[] = {"padrao", "rapido", "equilibrado", "menor", "sem"};
+static int conv_in_list(const char* value, const char* const* list, size_t count) {
+  for (size_t i = 0; i < count; ++i) if (!strcmp(value, list[i])) return 1;
+  return 0;
+}
+#define CONV_FORMAT_OK(v) conv_in_list((v), CONV_FORMATS, sizeof CONV_FORMATS / sizeof *CONV_FORMATS)
+#define CONV_LEVEL_OK(v) conv_in_list((v), CONV_LEVELS, sizeof CONV_LEVELS / sizeof *CONV_LEVELS)
+static char g_conv_format[16] = "exfat";
+static char g_conv_level[16] = "padrao";
 static int g_running_count;
 static int g_dirty;
 // A pagina do celular (porta 34201): ligada por padrao; o PIN chega do app so como sal + SHA-256 (hex), e o texto
@@ -3445,6 +3459,9 @@ typedef struct {
   // pac1: a pausa entre conversoes (s) e o limite de escrita da conversao (MB/s).
   int has_conv_pause, has_conv_write, has_conv_sync;
   uint64_t conv_pause, conv_write, conv_sync;
+  // glibren.71: o formato e o nivel da conversao.
+  int has_conv_format, has_conv_level;
+  char conv_format[16], conv_level[16];
   // glibren.41 (A1): limite temporario enquanto um video toca (so do POST, nunca do config.json; nunca gravado).
   int has_video_cap;
   uint64_t video_cap, video_cap_seconds;
@@ -3468,6 +3485,8 @@ static int config_field(JP* jp, const char* key, void* ctx) {
   if (!strcmp(key, "convertPauseSeconds")) { c->found = c->has_conv_pause = 1; return jp_uint(jp, &c->conv_pause) ? 1 : -1; }
   if (!strcmp(key, "convertWriteLimit")) { c->found = c->has_conv_write = 1; return jp_uint(jp, &c->conv_write) ? 1 : -1; }
   if (!strcmp(key, "convertSyncMB")) { c->found = c->has_conv_sync = 1; return jp_uint(jp, &c->conv_sync) ? 1 : -1; }
+  if (!strcmp(key, "convertFormat")) { c->found = c->has_conv_format = 1; return jp_text(jp, c->conv_format, sizeof c->conv_format) ? 1 : -1; }
+  if (!strcmp(key, "convertLevel")) { c->found = c->has_conv_level = 1; return jp_text(jp, c->conv_level, sizeof c->conv_level) ? 1 : -1; }
   if (!c->from_disk && !strcmp(key, "videoCap")) { c->found = c->has_video_cap = 1; return jp_uint(jp, &c->video_cap) ? 1 : -1; }
   if (!c->from_disk && !strcmp(key, "videoCapSeconds")) return jp_uint(jp, &c->video_cap_seconds) ? 1 : -1;
   if (!strcmp(key, "pauseOnCloseSeconds")) {
@@ -3490,6 +3509,8 @@ static int config_valid(const ConfigBody* c) {
   if (c->has_conv_pause && c->conv_pause > MAX_CONVERT_PAUSE) return 0;
   if (c->has_conv_write && c->conv_write > MAX_CONVERT_WRITE) return 0;
   if (c->has_conv_sync && c->conv_sync > MAX_CONVERT_SYNC) return 0;
+  if (c->has_conv_format && !CONV_FORMAT_OK(c->conv_format)) return 0;
+  if (c->has_conv_level && !CONV_LEVEL_OK(c->conv_level)) return 0;
   if (c->has_auto_root && c->auto_root[0] && !safe_path(c->auto_root)) return 0;
   if (c->has_pin_salt != c->has_pin_hash) return 0;
   if (c->has_pin_hash && !((is_hex64(c->pin_salt) && is_hex64(c->pin_hash)) || (!c->pin_salt[0] && !c->pin_hash[0]))) return 0;
@@ -3544,6 +3565,16 @@ static int config_apply_locked(const ConfigBody* c) {
   if (c->has_conv_sync && g_conv_sync_mb != (int)c->conv_sync) {
     logk_("gravar em pedacos (fsync da conversao): %d -> %d MB (0 = desligado)", g_conv_sync_mb, (int)c->conv_sync);
     g_conv_sync_mb = (int)c->conv_sync;
+    changed = 1;
+  }
+  if (c->has_conv_format && strcmp(g_conv_format, c->conv_format)) {
+    logk_("formato da conversao: %s -> %s", g_conv_format, c->conv_format);
+    copy_text(g_conv_format, sizeof g_conv_format, c->conv_format);
+    changed = 1;
+  }
+  if (c->has_conv_level && strcmp(g_conv_level, c->conv_level)) {
+    logk_("nivel de compressao da conversao: %s -> %s", g_conv_level, c->conv_level);
+    copy_text(g_conv_level, sizeof g_conv_level, c->conv_level);
     changed = 1;
   }
   if (c->has_monitor && g_monitor_on != (c->monitor ? 1 : 0)) {
@@ -3622,6 +3653,7 @@ static void save_config_locked(void) {
   buf_json(&b, g_auto_root);
   buf_fmt(&b, ",\"autoConvert\":%s", g_auto_convert ? "true" : "false");
   buf_fmt(&b, ",\"convertPauseSeconds\":%d,\"convertWriteLimit\":%d,\"convertSyncMB\":%d", g_conv_pause_s, g_conv_write_limit, g_conv_sync_mb); // pac1
+  buf_fmt(&b, ",\"convertFormat\":\"%s\",\"convertLevel\":\"%s\"", g_conv_format, g_conv_level); // glibren.71
   // glibren.5: so quando o app mandou o tempo (sem ele, vale o padrao de quem roda: 30 s, ou BGDL_QUIET_MS nos testes).
   if (g_pause_seconds >= 0) buf_fmt(&b, ",\"pauseOnCloseSeconds\":%d", g_pause_seconds);
   buf_str(&b, "}\n");

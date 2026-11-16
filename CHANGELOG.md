@@ -6,6 +6,20 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.71** (fork): choose the conversion format, with ps5-dump-forge. Download payload 1.37.15.
+  - Settings > Downloads: "Convert after downloading" (the old "Convert PS5 games to .exfat" switch, still on by default)
+    and the format, each with one line on what it gains or loses: `.exfat` (Jobee'sLair's own converter), and through
+    ps5-dump-forge (quer3q/ps5-dump-forge, running on the PS5): `.ffpkg` (UFS2, recommended by ShadowMount+), `.ffpfs`,
+    `.ffpfsc` (compressed), `.pkg` (debug FPKG, Kraken; runs directly only with kraken-mount/ShadowKraken, ShadowMount+
+    only installs it), an image with zstd packs (`.exfat`/`.ffpkg`/`.ffpfs`/`.ffpfsc` + zstd), a folder with zstd or LZ4
+    packs (these need ampr-emu-ng), or "Folder (extract only)". An advanced compression level ("Default (recommended)"
+    first, the Dump Forge default). The same options in the full-screen store (/app) settings.
+  - With the switch off, archives (RAR, 7z, zip) are still extracted; everything else stays as downloaded.
+  - The payload talks to Dump Forge's local API (127.0.0.1:8095: `start_job`, `jobs`, `cancel_job`), follows its progress
+    and translates its errors. An archive is extracted first. Without Dump Forge the conversion waits ("start it from
+    glibren > Payloads") and the card offers "Use without converting". The original is never deleted; the work folder
+    only after Dump Forge reports the output checked.
+  - Texts in the 14 languages.
 - **glibren.70** (fork): Homebrew tab in the full-screen store (/app). Download payload 1.37.14, built-in tube-service 0.2.4.
   - The Homebrew tab of the full-screen store is no longer "coming soon": it lists the same homebrew as the Homebrew tab
     of the app (the JobeesLair-Homebrew index), with icon, author, version and description, a search box and pages of 60

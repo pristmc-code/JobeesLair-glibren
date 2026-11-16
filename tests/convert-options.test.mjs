@@ -43,7 +43,7 @@ test('pac1: opcoes da conversao desligadas por padrao, guardadas so quando ligad
   globalThis.__stubFiles = new Map([[FILE, JSON.stringify({ backgroundDownloads: true })]]);
   try {
     const mod = await fresh('a');
-    assert.deepEqual(mod.convertOptions(), { convertPauseSeconds: 0, convertWriteLimit: 0, convertSyncMB: 0 });
+    assert.deepEqual(mod.convertOptions(), { convertPauseSeconds: 0, convertWriteLimit: 0, convertSyncMB: 0, convertFormat: 'exfat', convertLevel: 'padrao' });
     assert.deepEqual(mod.CONVERT_OPTIONS.convertSyncMB, [0, 64, 128, 256, 512]);
     const heard = [];
     const stop = mod.onConvertOptions((values) => heard.push(values));
@@ -52,7 +52,7 @@ test('pac1: opcoes da conversao desligadas por padrao, guardadas so quando ligad
     assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { backgroundDownloads: true, convertPauseSeconds: 120, convertSyncMB: 256 });
     for (const [key, bad] of [['convertPauseSeconds', 7], ['convertWriteLimit', -1], ['convertSyncMB', '256'], ['nope', 0]]) mod.setConvertOption(key, bad);
     assert.equal(heard.length, 2, 'valor fora da lista nao muda nada');
-    assert.deepEqual((await fresh('b')).convertOptions(), { convertPauseSeconds: 120, convertWriteLimit: 0, convertSyncMB: 256 });
+    assert.deepEqual((await fresh('b')).convertOptions(), { convertPauseSeconds: 120, convertWriteLimit: 0, convertSyncMB: 256, convertFormat: 'exfat', convertLevel: 'padrao' });
     mod.setConvertOption('convertPauseSeconds', 0);
     assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { backgroundDownloads: true, convertSyncMB: 256 }, 'desligada: o campo sai');
     stop();
@@ -135,4 +135,52 @@ test('pac1: queda nova avisa uma vez; OK marca como vista (settings.json) e nao 
     notice.resetCrashNotice();
     delete globalThis.__stubFiles;
   }
+});
+
+// glibren.71: o formato da conversao e o nivel de compressao (texto, o primeiro da lista e o padrao e nao e gravado).
+test('glibren.71: formato e nivel da conversao: padrao exfat/padrao, guardados so fora do padrao, lista fechada', async () => {
+  const fresh = (tag) => import(`../app/state/convert-options.js?t=${Date.now()}-${tag}`);
+  globalThis.__stubFiles = new Map([[FILE, JSON.stringify({})]]);
+  try {
+    const mod = await fresh('f1');
+    assert.deepEqual(mod.CONVERT_CHOICES.convertFormat, ['exfat', 'ffpkg', 'ffpfs', 'ffpfsc', 'pkg', 'exfat_zstd', 'ffpkg_zstd', 'ffpfs_zstd', 'ffpfsc_zstd', 'pasta', 'pasta_zstd', 'pasta_lz4']);
+    assert.equal(mod.convertFormat(), 'exfat');
+    mod.setConvertOption('convertFormat', 'ffpkg');
+    mod.setConvertOption('convertLevel', 'menor');
+    assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { convertFormat: 'ffpkg', convertLevel: 'menor' });
+    for (const [key, bad] of [['convertFormat', 'zip'], ['convertFormat', 1], ['convertLevel', 'max']]) mod.setConvertOption(key, bad);
+    assert.equal((await fresh('f2')).convertFormat(), 'ffpkg');
+    mod.setConvertOption('convertFormat', 'exfat');
+    assert.deepEqual(JSON.parse(globalThis.__stubFiles.get(FILE)), { convertLevel: 'menor' }, 'o padrao sai do settings.json');
+    globalThis.__stubFiles.set(FILE, JSON.stringify({ convertFormat: 'iso' }));
+    assert.equal((await fresh('f3')).convertFormat(), 'exfat', 'um valor salvo fora da lista vale o padrao');
+    // extensoes e niveis por formato
+    assert.equal(mod.FORMAT_EXT.ffpfsc_zstd, '.ffpfsc');
+    assert.equal(mod.FORMAT_EXT.pasta_lz4, '');
+    assert.deepEqual(mod.levelsFor('exfat'), []);
+    assert.deepEqual(mod.levelsFor('pasta'), []);
+    assert.deepEqual(mod.levelsFor('pkg'), ['padrao', 'rapido', 'equilibrado', 'menor', 'sem']);
+    assert.deepEqual(mod.levelsFor('ffpfsc'), ['padrao', 'rapido', 'equilibrado', 'menor', 'sem']);
+    assert.deepEqual(mod.levelsFor('exfat_zstd'), ['padrao', 'rapido', 'equilibrado', 'menor']);
+    assert.deepEqual(mod.levelsFor('pasta_lz4'), ['padrao', 'rapido', 'equilibrado', 'menor']);
+    assert.equal(mod.needsForge('exfat'), false);
+    assert.equal(mod.needsForge('pasta'), false);
+    assert.equal(mod.needsForge('exfat_zstd'), true);
+  } finally {
+    delete globalThis.__stubFiles;
+  }
+});
+
+test('glibren.71: formato e nivel vao no POST /config (validos), e o "waiting" do Dump Forge chega ao progresso', async () => {
+  const payload = fakePayload();
+  const wrapper = make(payload, { convertOptions: () => ({ convertPauseSeconds: 0, convertWriteLimit: 0, convertSyncMB: 0, convertFormat: 'ffpkg_zstd', convertLevel: 'rapido' }) });
+  await wrapper.refreshConfig();
+  const sent = payload.configs.at(-1);
+  assert.equal(sent.convertFormat, 'ffpkg_zstd');
+  assert.equal(sent.convertLevel, 'rapido');
+  const bad = fakePayload();
+  const other = make(bad, { convertOptions: () => ({ convertFormat: '../x', convertLevel: 7 }) });
+  await other.refreshConfig();
+  assert.equal(bad.configs.at(-1).convertFormat, undefined);
+  assert.equal(bad.configs.at(-1).convertLevel, undefined);
 });

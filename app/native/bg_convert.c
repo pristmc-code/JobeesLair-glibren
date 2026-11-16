@@ -24,7 +24,19 @@
 // Pagina do celular (porta 34201): /api/status leva "conversions" (nome, estado, progresso, erro, sem caminhos);
 //   GET  /api/backup                  {games:[{root, name, bytes, files}], totalBytes}
 //   POST /api/backup/delete {root, name}   com a sessao do PIN: apaga <root>/BACKUP/<name>
-// Erros comecam por um codigo que o app traduz: "space:", "not-a-game:", "source:", "write:", "verify:".
+// Erros comecam por um codigo que o app traduz: "space:", "not-a-game:", "source:", "write:", "verify:", "forge:".
+//
+// glibren.71: o formato ("format", ids combinados com o glibren; vazio = "exfat") e o nivel ("level", "padrao" = o do Dump
+// Forge). "exfat" segue no nosso exfat_writer; "pasta" so extrai (a pasta do jogo vai para <root>/homebrew/<nome>);
+// os outros (.ffpkg, .ffpfs, .ffpfsc, .pkg, "<imagem>_zstd", "pasta_zstd", "pasta_lz4") sao feitos pelo ps5-dump-forge
+// (quer3q/ps5-dump-forge, GPL-3.0) no proprio PS5, pela API local dele (http://127.0.0.1:8095, sem autenticacao;
+// conv_forge_run): POST /api/start_job {"request": ConvertRequest} -> id; GET /api/jobs -> {instance, jobs:[{id,
+// progress:{stage,done,total}, done:{result:{Ok|Err}}}]}; POST /api/cancel_job {id}. Um compactado vai primeiro pela
+// extracao daqui (conv_extract_in_place) e a pasta extraida e a fonte. O Dump Forge confere a imagem antes de dar Ok;
+// nada de original e apagado (delete_source nunca vai), so a pasta de trabalho depois do Ok e da saida no disco.
+// Dump Forge fora do ar: a conversao fica "waiting" (error "forge-missing: ...") e tenta de novo a cada
+// BGDL_FORGE_RETRY_MS (10 s); 429 (fila cheia dele) = "forge-busy: ...". O job dele fica em forgeJob/forgeInstance
+// (conversions.json): o payload reiniciado acompanha o mesmo job em vez de comecar outro.
 #include <archive.h>
 #include <archive_entry.h>
 #include <dirent.h>
@@ -57,7 +69,11 @@ typedef struct {
   int npasswords;
   char source[1024], output[1024], work[1024], root[1024];
   char label[32];
-  char state[16]; // queued converting verifying done failed cancelled
+  char format[16], level[16]; // glibren.71: o formato e o nivel ("" = exfat / padrao)
+  uint64_t forge_job;         // glibren.71: o id do job no ps5-dump-forge (0 = nenhum) e a instancia dele
+  char forge_instance[40];
+  int64_t retry_ms;           // glibren.71: "waiting": quando tentar de novo (mono_ms; so na memoria)
+  char state[16]; // queued waiting converting verifying done failed cancelled
   char error[600];
   uint64_t written, total, image_bytes;
   int64_t created, updated;
@@ -273,6 +289,7 @@ static void conv_json(Buf* b, const Conv* c, int for_phone) {
   buf_str(b, ",\"name\":"); buf_json(b, c->name);
   buf_str(b, ",\"state\":"); buf_json(b, c->state);
   buf_str(b, ",\"error\":"); buf_json(b, c->error);
+  buf_str(b, ",\"format\":"); buf_json(b, c->format[0] ? c->format : "exfat"); // glibren.71
   if (!for_phone) {
     buf_str(b, ",\"kind\":"); buf_json(b, c->kind);
     buf_str(b, ",\"source\":"); buf_json(b, c->source);
@@ -280,6 +297,9 @@ static void conv_json(Buf* b, const Conv* c, int for_phone) {
     buf_str(b, ",\"work\":"); buf_json(b, c->work);
     buf_str(b, ",\"root\":"); buf_json(b, c->root);
     buf_str(b, ",\"label\":"); buf_json(b, c->label);
+    buf_str(b, ",\"level\":"); buf_json(b, c->level);
+    buf_fmt(b, ",\"forgeJob\":%llu", (unsigned long long)c->forge_job);
+    buf_str(b, ",\"forgeInstance\":"); buf_json(b, c->forge_instance);
     buf_str(b, ",\"sources\":[");
     for (int i = 0; i < c->nsources; ++i) { if (i) buf_str(b, ","); buf_json(b, c->sources[i]); }
     buf_str(b, "],\"passwords\":[");
@@ -330,12 +350,16 @@ static int conv_field(JP* jp, const char* key, void* ctx) {
   CTEXT("work", work);
   CTEXT("root", root);
   CTEXT("label", label);
+  CTEXT("format", format);
+  CTEXT("level", level);
+  CTEXT("forgeInstance", forge_instance);
   CTEXT("state", state);
   CTEXT("error", error);
 #undef CTEXT
   if (!strcmp(key, "written")) return jp_uint(jp, &c->written) ? 1 : -1;
   if (!strcmp(key, "total")) return jp_uint(jp, &c->total) ? 1 : -1;
   if (!strcmp(key, "imageBytes")) return jp_uint(jp, &c->image_bytes) ? 1 : -1;
+  if (!strcmp(key, "forgeJob")) return jp_uint(jp, &c->forge_job) ? 1 : -1;
   if (!strcmp(key, "created")) return jp_int64(jp, &c->created) ? 1 : -1;
   if (!strcmp(key, "updated")) return jp_int64(jp, &c->updated) ? 1 : -1;
   return 0;
@@ -347,12 +371,26 @@ static int conv_inside(const char* path, const char* dir) {
   return n && !strncmp(path, dir, n) && path[n] == '/' && path[n + 1];
 }
 
+// glibren.71: a extensao do que o formato grava em homebrew/ ("" = uma pasta).
+static const char* conv_ext(const char* format) {
+  if (!format[0] || !strncmp(format, "exfat", 5)) return ".exfat";
+  if (!strncmp(format, "ffpfsc", 6)) return ".ffpfsc";
+  if (!strncmp(format, "ffpkg", 5)) return ".ffpkg";
+  if (!strncmp(format, "ffpfs", 5)) return ".ffpfs";
+  if (!strcmp(format, "pkg")) return ".pkg";
+  return ""; // pasta, pasta_zstd, pasta_lz4
+}
+static int conv_is_exfat(const Conv* c) { return !c->format[0] || !strcmp(c->format, "exfat"); }
 // Os caminhos de uma conversao: tudo absoluto e no mesmo disco (root); a imagem em <root>/homebrew/<nome>.exfat; a
 // pasta de trabalho (apagada no fim) so dentro de <root>/downloads/, e a fonte "dir" dentro dela quando houver.
 static int conv_validate(Conv* c, char* error, size_t cap) {
   char homebrew[1100], downloads[1100];
   if (!c->key[0] || !queue_key_ok(c->key)) { snprintf(error, cap, "key"); return 0; }
   if (strcmp(c->kind, "dir") && strcmp(c->kind, "pkg") && strcmp(c->kind, "archive")) { snprintf(error, cap, "kind must be dir, pkg or archive"); return 0; }
+  if (!c->format[0]) snprintf(c->format, sizeof c->format, "exfat"); // glibren.71: um pedido antigo e .exfat
+  if (!c->level[0]) snprintf(c->level, sizeof c->level, "padrao");
+  if (!CONV_FORMAT_OK(c->format)) { snprintf(error, cap, "format must be one of exfat, ffpkg, ffpfs, ffpfsc, pkg, exfat_zstd, ffpkg_zstd, ffpfs_zstd, ffpfsc_zstd, pasta, pasta_zstd, pasta_lz4"); return 0; }
+  if (!CONV_LEVEL_OK(c->level)) { snprintf(error, cap, "level must be padrao, rapido, equilibrado, menor or sem"); return 0; }
   if (!strcmp(c->kind, "archive")) {
     if (!c->nsources) { snprintf(error, cap, "archive needs its sources"); return 0; }
     for (int i = 0; i < c->nsources; ++i)
@@ -367,8 +405,11 @@ static int conv_validate(Conv* c, char* error, size_t cap) {
   snprintf(homebrew, sizeof homebrew, "%s/homebrew", c->root);
   snprintf(downloads, sizeof downloads, "%s/downloads", c->root);
   const size_t out = strlen(c->output);
-  if (!conv_inside(c->output, homebrew) || strchr(c->output + strlen(homebrew) + 1, '/') || out < 7 || strcasecmp(c->output + out - 6, ".exfat")) {
-    snprintf(error, cap, "output must be <root>/homebrew/<name>.exfat"); return 0;
+  const char* ext = conv_ext(c->format);
+  const size_t ext_len = strlen(ext);
+  if (!conv_inside(c->output, homebrew) || strchr(c->output + strlen(homebrew) + 1, '/') ||
+      (ext_len ? out < strlen(homebrew) + 2 + ext_len || strcasecmp(c->output + out - ext_len, ext) : c->output[strlen(homebrew) + 1] == '.')) {
+    snprintf(error, cap, "output must be <root>/homebrew/<name>%s", ext_len ? ext : " (a folder)"); return 0;
   }
   if (!conv_inside(c->source, c->root)) { snprintf(error, cap, "source must be on the same drive (root)"); return 0; }
   // glibren.41 (J1): a pasta de trabalho tambem pode ser a da extracao (<root>/BACKUP/_temp/<id>, conv_extract_in_place):
@@ -425,6 +466,7 @@ static void conv_load(void) {
             logf_("conversao %s (%s): parada no meio; recomeca do zero", c->id, c->name);
           }
         }
+        if (!strcmp(c->state, "waiting")) snprintf(c->state, sizeof c->state, "queued"); // glibren.71: espera o Dump Forge de novo
         g_convs[g_conv_count++] = c;
       }
       jp_ws(&jp);
@@ -796,7 +838,22 @@ static long long arc_read(void* ctx, const exw_entry* e, uint64_t offset, void* 
   return (long long)done;
 }
 
+static void conv_forge_run(Conv* c); // glibren.71 (abaixo)
 static void conv_run(Conv* c) {
+  // glibren.71: outro formato que nao o .exfat: um compactado e extraido antes (a pasta e a fonte); o resto vai direto.
+  if (!conv_is_exfat(c)) {
+    if (!strcmp(c->kind, "archive") && !c->cancel && !g_stop) {
+      logk_("conversao %s: %s pede a pasta extraida; o payload extrai antes", c->id, c->format);
+      pthread_mutex_lock(&g_conv_lock);
+      copy_utf8(c->error, sizeof c->error, "");
+      pthread_mutex_unlock(&g_conv_lock);
+      conv_extract_begin(c);
+      conv_set_state(c, "extracting");
+      return;
+    }
+    conv_forge_run(c);
+    return;
+  }
   char err[512] = "", part[1100], message[1700];
   snprintf(part, sizeof part, "%s.part", c->output);
   unlink(part); // recomeca limpa
@@ -962,6 +1019,363 @@ end:
   }
 }
 
+
+// ---- glibren.71: o ps5-dump-forge (formatos que nao o .exfat) ----
+static char g_forge_base[200] = "http://127.0.0.1:8095";
+static size_t forge_collect(char* data, size_t size, size_t count, void* ctx) {
+  Buf* b = ctx;
+  if (b->size + size * count > 8u * 1024 * 1024) return 0; // a lista de jobs tem no maximo 32 jobs x 200 linhas
+  buf_add(b, data, size * count);
+  return b->failed ? 0 : size * count;
+}
+// 0 = respondeu (status em *status, corpo em out), -1 = ninguem na porta (Dump Forge fora do ar), -2 = outro erro.
+static int forge_call(const char* method, const char* path, const char* body, Buf* out, long* status, char* err, size_t cap) {
+  CURL* curl = curl_easy_init();
+  if (!curl) { snprintf(err, cap, "curl"); return -2; }
+  char url[300];
+  snprintf(url, sizeof url, "%s%s", g_forge_base, path);
+  struct curl_slist* headers = curl_slist_append(NULL, "Content-Type: application/json");
+  curl_easy_setopt(curl, CURLOPT_URL, url);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  if (!strcmp(method, "POST")) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body ? body : "{}");
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 3L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+  curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(curl, CURLOPT_PROXY, "");
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, forge_collect);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
+  const CURLcode result = curl_easy_perform(curl);
+  *status = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, status);
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+  buf_add(out, "", 1); // termina o texto
+  if (out->size) --out->size;
+  if (result == CURLE_OK) return 0;
+  snprintf(err, cap, "%s", curl_easy_strerror(result));
+  return result == CURLE_COULDNT_CONNECT || result == CURLE_COULDNT_RESOLVE_HOST ? -1 : -2;
+}
+static int forge_error_field(JP* jp, const char* key, void* ctx) {
+  if (strcmp(key, "error")) return 0;
+  return lib_text(jp, (char*)ctx, 400) ? 1 : -1;
+}
+// O texto de erro de uma resposta {"error": "..."} (ou o corpo cortado).
+static void forge_error_text(const Buf* b, char* out, size_t cap) {
+  char text[400] = "";
+  JP jp = {b->data ? b->data : "", b->data ? b->data + b->size : "", 0};
+  if (!b->data || !jp_object(&jp, forge_error_field, text) || !text[0]) copy_utf8(text, sizeof text, b->data ? b->data : "");
+  copy_utf8(out, cap, text);
+}
+typedef struct {
+  uint64_t id, done, total;
+  char stage[32], err[600];
+  int has_progress, finished, ok;
+} ForgeJob;
+typedef struct { uint64_t want; int found; ForgeJob job; char instance[40]; } ForgeList;
+static int forge_progress_field(JP* jp, const char* key, void* ctx) {
+  ForgeJob* j = ctx;
+  if (!strcmp(key, "stage")) return lib_text(jp, j->stage, sizeof j->stage) ? 1 : -1;
+  if (!strcmp(key, "done")) return lib_uint(jp, &j->done) ? 1 : -1;
+  if (!strcmp(key, "total")) return lib_uint(jp, &j->total) ? 1 : -1;
+  return 0;
+}
+static int forge_result_field(JP* jp, const char* key, void* ctx) {
+  ForgeJob* j = ctx;
+  if (!strcmp(key, "Ok")) { j->ok = 1; return 0; }
+  if (!strcmp(key, "Err")) { j->ok = 0; return lib_text(jp, j->err, sizeof j->err) ? 1 : -1; }
+  return 0;
+}
+static int forge_done_field(JP* jp, const char* key, void* ctx) {
+  if (strcmp(key, "result")) return 0;
+  return jp_object(jp, forge_result_field, ctx) ? 1 : -1;
+}
+static int forge_job_field(JP* jp, const char* key, void* ctx) {
+  ForgeJob* j = ctx;
+  if (!strcmp(key, "id")) return lib_uint(jp, &j->id) ? 1 : -1;
+  if (!strcmp(key, "progress") || !strcmp(key, "done")) {
+    jp_ws(jp);
+    if (jp_literal(jp, "null")) return 1;
+    if (!strcmp(key, "progress")) { j->has_progress = 1; return jp_object(jp, forge_progress_field, j) ? 1 : -1; }
+    j->finished = 1;
+    return jp_object(jp, forge_done_field, j) ? 1 : -1;
+  }
+  return 0;
+}
+static int forge_job_item(JP* jp, void* ctx) {
+  ForgeList* l = ctx;
+  ForgeJob j;
+  memset(&j, 0, sizeof j);
+  if (!jp_object(jp, forge_job_field, &j)) return 0;
+  if (j.id == l->want) { l->found = 1; l->job = j; }
+  return 1;
+}
+static int forge_list_field(JP* jp, const char* key, void* ctx) {
+  ForgeList* l = ctx;
+  if (!strcmp(key, "instance")) return lib_text(jp, l->instance, sizeof l->instance) ? 1 : -1;
+  if (!strcmp(key, "jobs")) return jp_array(jp, forge_job_item, l) ? 1 : -1;
+  return 0;
+}
+// GET /api/jobs: o job `want` (l->found) e a instancia. 0 ok, -1 fora do ar, -2 outro erro (err).
+static int forge_jobs(uint64_t want, ForgeList* l, char* err, size_t cap) {
+  memset(l, 0, sizeof *l);
+  l->want = want;
+  Buf b = {0};
+  long status = 0;
+  int rc = forge_call("GET", "/api/jobs", NULL, &b, &status, err, cap);
+  if (!rc && status != 200) { snprintf(err, cap, "GET /api/jobs: HTTP %ld", status); rc = -2; }
+  if (!rc) {
+    JP jp = {b.data ? b.data : "", b.data ? b.data + b.size : "", 0};
+    if (!b.data || !jp_object(&jp, forge_list_field, l)) { snprintf(err, cap, "GET /api/jobs: unreadable answer"); rc = -2; }
+  }
+  free(b.data);
+  return rc;
+}
+// O pedido (ConvertRequest da v0.5.6) do formato e do nivel: o "format" do Dump Forge, zstd_pack, e o nivel de cada um
+// (kraken_level do .pkg, ffpfsc_level zlib 0..9, zstd_level 1..22, lz4_level 0/3..12). "padrao" nao manda nivel nenhum.
+static void forge_request(const Conv* c, Buf* b) {
+  const char* f = c->format;
+  const int zstd = strlen(f) > 5 && !strcmp(f + strlen(f) - 5, "_zstd");
+  const char* target = !strcmp(f, "pasta_lz4") ? "lz4" : !strncmp(f, "pasta", 5) ? "folder" : !strncmp(f, "ffpfsc", 6) ? "ffpfsc"
+                       : !strncmp(f, "ffpkg", 5) ? "ffpkg" : !strncmp(f, "ffpfs", 5) ? "ffpfs" : !strcmp(f, "pkg") ? "pkg" : "exfat";
+  const char* lv = c->level;
+  const int fast = !strcmp(lv, "rapido"), mid = !strcmp(lv, "equilibrado"), small = !strcmp(lv, "menor"), none = !strcmp(lv, "sem");
+  buf_str(b, "{\"request\":{\"source\":"); buf_json(b, c->source);
+  buf_str(b, ",\"output\":"); buf_json(b, c->output);
+  buf_str(b, ",\"format\":"); buf_json(b, target);
+  if (zstd && strcmp(target, "pkg")) {
+    buf_str(b, ",\"zstd_pack\":true");
+    if (fast || mid || small) buf_fmt(b, ",\"zstd_level\":%d", fast ? 1 : mid ? 9 : 19);
+  }
+  if (!strcmp(target, "pkg") && (fast || mid || small || none)) buf_fmt(b, ",\"kraken_level\":\"%s\"", fast ? "fast" : mid ? "balanced" : small ? "smallest" : "stored");
+  if (!strcmp(target, "ffpfsc") && (fast || mid || small || none)) buf_fmt(b, ",\"ffpfsc_level\":%d", fast ? 1 : mid ? 6 : small ? 9 : 0);
+  if (!strcmp(target, "lz4") && (mid || small)) buf_fmt(b, ",\"lz4_level\":%d", mid ? 9 : 12);
+  buf_str(b, "}}");
+}
+// O nome curto do formato para o aviso ("pronto (FFPKG)").
+static void forge_label(const char* format, char* out, size_t cap) {
+  snprintf(out, cap, "%s", format);
+  for (char* p = out; *p; ++p) *p = *p == '_' ? '+' : (char)toupper((unsigned char)*p);
+}
+static void conv_wait_forge(Conv* c, const char* why) {
+  static int retry = -1;
+  if (retry < 0) retry = atoi(env_or("BGDL_FORGE_RETRY_MS", "10000"));
+  pthread_mutex_lock(&g_conv_lock);
+  const int changed = strcmp(c->state, "waiting") || strcmp(c->error, why);
+  snprintf(c->state, sizeof c->state, "waiting");
+  copy_utf8(c->error, sizeof c->error, why);
+  c->retry_ms = mono_ms() + retry;
+  c->running = 0;
+  c->written = 0;
+  c->updated = now_s();
+  conv_save_locked();
+  pthread_mutex_unlock(&g_conv_lock);
+  if (changed) {
+    logk_("conversao %s: esperando o Dump Forge (%s)", c->id, why);
+    conv_mark(c, "esperando o Dump Forge: %s", why);
+  }
+}
+// A conversao de um formato que nao e o .exfat: "pasta" (rename da pasta) ou o ps5-dump-forge.
+static void conv_forge_run(Conv* c) {
+  char err[400] = "", message[1200] = "", label[24];
+  struct stat st;
+  const char* outcome = "failed";
+  forge_label(c->format, label, sizeof label);
+  conv_set_state(c, "converting");
+  logk_("conversao %s: %s (%s) -> %s [%s, nivel %s]", c->id, c->name, c->kind, c->output, c->format, c->level);
+  conv_mark(c, "inicio: %s (%s, %s); origem %s; destino %s", c->name, c->kind, c->format, c->source, c->output);
+  if (!lstat(c->output, &st) && !c->forge_job) {
+    snprintf(message, sizeof message, "write: %s already exists in homebrew/", base_name(c->output));
+    goto end;
+  }
+  {
+    char parent[sizeof c->output];
+    copy_text(parent, sizeof parent, c->output);
+    char* slash = strrchr(parent, '/');
+    if (slash) { *slash = 0; mkdir_p(parent); }
+  }
+  // "pasta" com uma pasta: so muda de lugar (o mesmo disco), nada e lido.
+  if (!strcmp(c->format, "pasta") && !strcmp(c->kind, "dir")) {
+    if (rename(c->source, c->output)) {
+      snprintf(message, sizeof message, "write: the folder was not moved to %.500s (%s)", c->output, strerror(errno));
+      goto end;
+    }
+    sync_parent(c->output);
+    uint64_t bytes = 0;
+    unsigned files = 0;
+    conv_tree_size(c->output, 0, &bytes, &files);
+    pthread_mutex_lock(&g_conv_lock);
+    c->image_bytes = c->written = c->total = bytes;
+    pthread_mutex_unlock(&g_conv_lock);
+    if (c->work[0] && strcmp(c->work, c->source) && conv_remove_tree(c->work, 0)) logf_("conversao %s: pasta de trabalho %s nao apagada inteira", c->id, c->work);
+    outcome = "done";
+    goto end;
+  }
+  {
+    static int poll = -1;
+    if (poll < 0) poll = atoi(env_or("BGDL_FORGE_POLL_MS", "1000"));
+    ForgeList l;
+    // Um job de antes (o payload reiniciou no meio): acompanha o mesmo se o Dump Forge ainda e o mesmo.
+    if (c->forge_job) {
+      const int rc = forge_jobs(c->forge_job, &l, err, sizeof err);
+      if (rc || strcmp(l.instance, c->forge_instance) || !l.found) {
+        logk_("conversao %s: o job %llu do Dump Forge nao existe mais (%s); comeca outro", c->id, (unsigned long long)c->forge_job, rc ? err : "outra instancia");
+        pthread_mutex_lock(&g_conv_lock);
+        c->forge_job = 0;
+        c->forge_instance[0] = 0;
+        pthread_mutex_unlock(&g_conv_lock);
+        if (!lstat(c->output, &st)) { snprintf(message, sizeof message, "write: %s already exists in homebrew/", base_name(c->output)); goto end; }
+      }
+    }
+    if (!c->forge_job) {
+      Buf body = {0}, answer = {0};
+      long status = 0;
+      forge_request(c, &body);
+      const int rc = body.failed ? -2 : forge_call("POST", "/api/start_job", body.data, &answer, &status, err, sizeof err);
+      free(body.data);
+      if (rc == -1) {
+        free(answer.data);
+        conv_wait_forge(c, "forge-missing: Dump Forge is not running on 127.0.0.1:8095 (start it from glibren > Payloads)");
+        return;
+      }
+      if (rc) { free(answer.data); snprintf(message, sizeof message, "forge: %s", err); goto end; }
+      if (status == 429) {
+        free(answer.data);
+        conv_wait_forge(c, "forge-busy: Dump Forge already has 8 jobs queued or running");
+        return;
+      }
+      if (status != 200) {
+        forge_error_text(&answer, err, sizeof err);
+        free(answer.data);
+        snprintf(message, sizeof message, "forge: %s (HTTP %ld)", err, status);
+        goto end;
+      }
+      const uint64_t id = strtoull(answer.data ? answer.data : "0", NULL, 10); // os ids do Dump Forge comecam em 1
+      free(answer.data);
+      if (!id) { snprintf(message, sizeof message, "forge: no job id in the answer"); goto end; }
+      ForgeList first;
+      char instance[40] = "";
+      if (!forge_jobs(id, &first, err, sizeof err)) copy_text(instance, sizeof instance, first.instance);
+      pthread_mutex_lock(&g_conv_lock);
+      c->forge_job = id;
+      copy_text(c->forge_instance, sizeof c->forge_instance, instance);
+      c->updated = now_s();
+      conv_save_locked();
+      pthread_mutex_unlock(&g_conv_lock);
+      logk_("conversao %s: job %llu no Dump Forge (%s)", c->id, (unsigned long long)id, c->format);
+      conv_mark(c, "Dump Forge: job %llu (%s, nivel %s)", (unsigned long long)id, c->format, c->level);
+    }
+    int misses = 0, cancel_sent = 0;
+    int64_t cancel_at = 0, last_save = mono_ms();
+    for (;;) {
+      if (g_stop) {
+        // O payload esta parando: o job segue no Dump Forge e e acompanhado de novo quando o payload voltar.
+        outcome = "queued";
+        logk_("conversao %s: payload parando; o job %llu segue no Dump Forge", c->id, (unsigned long long)c->forge_job);
+        goto end;
+      }
+      if (c->cancel && !cancel_sent) {
+        char body[64];
+        Buf answer = {0};
+        long status = 0;
+        snprintf(body, sizeof body, "{\"id\":%llu}", (unsigned long long)c->forge_job);
+        forge_call("POST", "/api/cancel_job", body, &answer, &status, err, sizeof err);
+        free(answer.data);
+        cancel_sent = 1;
+        cancel_at = mono_ms();
+        logk_("conversao %s: cancelada; pedido ao Dump Forge (job %llu)", c->id, (unsigned long long)c->forge_job);
+      }
+      if (cancel_sent && mono_ms() - cancel_at > 30000) { outcome = "cancelled"; goto end; }
+      sleep_ms(poll > 0 ? poll : 1000);
+      const int rc = forge_jobs(c->forge_job, &l, err, sizeof err);
+      if (rc) {
+        if (++misses >= 30) {
+          // Fechou no meio (ou travou): espera ele voltar e comeca de novo (a saida dele ainda e um .part).
+          pthread_mutex_lock(&g_conv_lock);
+          c->forge_job = 0;
+          c->forge_instance[0] = 0;
+          pthread_mutex_unlock(&g_conv_lock);
+          if (cancel_sent) { outcome = "cancelled"; goto end; }
+          conv_wait_forge(c, "forge-missing: Dump Forge stopped answering in the middle of the conversion (start it from glibren > Payloads)");
+          return;
+        }
+        continue;
+      }
+      misses = 0;
+      if (c->forge_instance[0] && strcmp(l.instance, c->forge_instance)) l.found = 0; // reiniciou: o job sumiu com ele
+      if (!l.found) {
+        if (cancel_sent) { outcome = "cancelled"; goto end; }
+        logk_("conversao %s: o job %llu sumiu do Dump Forge; comeca de novo", c->id, (unsigned long long)c->forge_job);
+        pthread_mutex_lock(&g_conv_lock);
+        c->forge_job = 0;
+        c->forge_instance[0] = 0;
+        snprintf(c->state, sizeof c->state, "queued");
+        c->updated = now_s();
+        conv_save_locked();
+        pthread_cond_broadcast(&g_conv_wake);
+        pthread_mutex_unlock(&g_conv_lock);
+        return;
+      }
+      if (l.job.has_progress) {
+        pthread_mutex_lock(&g_conv_lock);
+        c->written = l.job.done;
+        c->total = l.job.total;
+        const int verifying = !strcmp(l.job.stage, "verify");
+        if (verifying && strcmp(c->state, "verifying")) snprintf(c->state, sizeof c->state, "verifying");
+        if (mono_ms() - last_save >= 15000) { last_save = mono_ms(); c->updated = now_s(); conv_save_locked(); }
+        pthread_mutex_unlock(&g_conv_lock);
+      }
+      if (!l.job.finished) continue;
+      if (l.job.ok) break;
+      if (cancel_sent || c->cancel || !strncmp(l.job.err, "cancelled", 9)) { outcome = "cancelled"; goto end; }
+      snprintf(message, sizeof message, "forge: %s", l.job.err[0] ? l.job.err : "the job failed");
+      goto end;
+    }
+    // Ok: o Dump Forge ja conferiu a saida (verify) antes de dar Ok; aqui so a presenca dela no disco.
+    if (lstat(c->output, &st)) { snprintf(message, sizeof message, "write: Dump Forge said done but %s is not on the drive", base_name(c->output)); goto end; }
+    uint64_t bytes = (uint64_t)st.st_size;
+    if (S_ISDIR(st.st_mode)) { unsigned files = 0; bytes = 0; conv_tree_size(c->output, 0, &bytes, &files); }
+    sync_parent(c->output);
+    pthread_mutex_lock(&g_conv_lock);
+    c->image_bytes = bytes;
+    c->written = c->total = bytes;
+    pthread_mutex_unlock(&g_conv_lock);
+    if (c->work[0] && conv_remove_tree(c->work, 0)) logf_("conversao %s: pasta de trabalho %s nao apagada inteira", c->id, c->work);
+    outcome = "done";
+  }
+end:
+  if (strcmp(outcome, "queued")) {
+    pthread_mutex_lock(&g_conv_lock);
+    c->forge_job = 0;
+    c->forge_instance[0] = 0;
+    pthread_mutex_unlock(&g_conv_lock);
+  } else {
+    pthread_mutex_lock(&g_conv_lock);
+    snprintf(c->state, sizeof c->state, "queued");
+    c->running = 0;
+    c->updated = now_s();
+    conv_save_locked();
+    pthread_mutex_unlock(&g_conv_lock);
+    conv_mark(c, "fim: interrompida (payload parando)");
+    return;
+  }
+  if (!strcmp(outcome, "failed")) logk_("conversao %s: falhou: %s", c->id, message);
+  conv_finish(c, outcome, !strcmp(outcome, "failed") ? message : "");
+  char text[400];
+  if (!strcmp(outcome, "done")) {
+    logk_("conversao %s: pronta, %s (%llu bytes)", c->id, c->output, (unsigned long long)c->image_bytes);
+    snprintf(text, sizeof text, "%s: pronto (%s)", c->name, label);
+    notify(text);
+    conv_ask_scan(c);
+    conv_mark(c, "fim: pronta");
+  } else {
+    conv_mark(c, "fim: %s%s%.300s", outcome, !strcmp(outcome, "failed") ? ": " : "", !strcmp(outcome, "failed") ? message : "");
+    if (!strcmp(outcome, "failed")) {
+      snprintf(text, sizeof text, "%s: conversao para %s falhou", c->name, label);
+      notify(text);
+    }
+  }
+}
+
 static void conv_extract_in_place(Conv* c); // glibren.20 (abaixo)
 static int conv_temp_work(const Conv* c) { return c->work[0] && strstr(c->work, "/BACKUP/_temp/") != NULL; }
 static void* conv_loop(void* arg) {
@@ -971,6 +1385,9 @@ static void* conv_loop(void* arg) {
     pthread_mutex_lock(&g_conv_lock);
     Conv* next = NULL;
     for (int i = 0; i < g_conv_count && !next; ++i) if (!strcmp(g_convs[i]->state, "queued")) next = g_convs[i];
+    // glibren.71: nenhuma na fila: uma que espera o Dump Forge e ja passou da hora de tentar de novo.
+    for (int i = 0; i < g_conv_count && !next; ++i)
+      if (!strcmp(g_convs[i]->state, "waiting") && g_convs[i]->retry_ms <= mono_ms() && !g_convs[i]->cancel) next = g_convs[i];
     // pac1: a pausa entre conversoes (so antes de uma conversao diferente da ultima).
     const int64_t left = next ? conv_wait_left_ms_locked(next) : 0;
     if (!next || left > 0) {
@@ -1020,6 +1437,7 @@ static void* conv_loop(void* arg) {
 
 static void conv_start(void) {
   snprintf(g_smp_base, sizeof g_smp_base, "%s", env_or("BGDL_SMP_BASE", g_smp_base));
+  snprintf(g_forge_base, sizeof g_forge_base, "%s", env_or("BGDL_FORGE_BASE", g_forge_base)); // glibren.71
   g_conv_delay_ms = atoi(env_or("BGDL_CONVERT_DELAY_MS", "0"));
   {
     const unsigned long long mark = strtoull(env_or("BGDL_MARK_BYTES", "0"), NULL, 10); // pac1: testes
@@ -1177,9 +1595,11 @@ static int conv_route(int fd, Request* r) {
     pthread_mutex_lock(&g_conv_lock);
     Conv* c = conv_find_locked(id);
     int status = c ? 200 : 404;
+    char leftover[1024] = ""; // glibren.71: a pasta extraida de uma que esperava o Dump Forge
     if (c && !strcmp(action, "cancel")) {
       if (!conv_terminal(c->state)) {
         c->cancel = 1;
+        if (!c->running && !c->in_use && !strcmp(c->state, "waiting") && conv_temp_work(c)) copy_text(leftover, sizeof leftover, c->work);
         if (!c->running) { snprintf(c->state, sizeof c->state, "cancelled"); c->updated = now_s(); conv_save_locked(); }
       }
     } else if (c && !strcmp(action, "forget")) {
@@ -1198,6 +1618,7 @@ static int conv_route(int fd, Request* r) {
       status = 404;
     }
     pthread_mutex_unlock(&g_conv_lock);
+    if (leftover[0] && conv_remove_tree(leftover, 0)) logf_("conversao %s: pasta temporaria %s nao apagada inteira", id, leftover);
     if (status == 200) respond(fd, 200, "{\"ok\":true}");
     else respond_error(fd, status, status == 409 ? "still running" : "no such conversion");
     return 1;
@@ -1333,10 +1754,22 @@ static int name_has_code(const char* name, const char* code) {
     if (!strncasecmp(p, code, n) && !isdigit((unsigned char)p[n]) && (p == name || !isalnum((unsigned char)p[-1]))) return 1;
   return 0;
 }
+// glibren.71: tambem .ffpkg/.ffpfs/.ffpfsc com o codigo (as que o Dump Forge fez); e a pasta <codigo> em homebrew/.
+static int conv_image_name(const char* name) {
+  const char* const ext[] = {".exfat", ".ffpkg", ".ffpfs", ".ffpfsc"};
+  const size_t n = strlen(name);
+  for (size_t i = 0; i < sizeof ext / sizeof *ext; ++i) if (n > strlen(ext[i]) && !strcasecmp(name + n - strlen(ext[i]), ext[i])) return 1;
+  return 0;
+}
 static int exfat_of_code(const char* root, const char* code, char* where, size_t cap) {
   struct stat st;
-  snprintf(where, cap, "%.255s/homebrew/%s.exfat", root, code);
-  if (!stat(where, &st) && S_ISREG(st.st_mode)) return 1;
+  const char* const own[] = {".exfat", ".ffpkg", ".ffpfs", ".ffpfsc"};
+  for (size_t i = 0; i < sizeof own / sizeof *own; ++i) {
+    snprintf(where, cap, "%.255s/homebrew/%s%s", root, code, own[i]);
+    if (!stat(where, &st) && S_ISREG(st.st_mode)) return 1;
+  }
+  snprintf(where, cap, "%.255s/homebrew/%s", root, code);
+  if (!stat(where, &st) && S_ISDIR(st.st_mode)) return 1;
   char roots[24][256];
   const int count = conv_backup_roots(roots, 24);
   for (int i = 0; i < count; ++i) {
@@ -1347,7 +1780,7 @@ static int exfat_of_code(const char* root, const char* code, char* where, size_t
     int found = 0;
     for (struct dirent* it; !found && (it = readdir(d));) {
       const size_t n = strlen(it->d_name);
-      if (it->d_name[0] == '.' || n < 7 || strcasecmp(it->d_name + n - 6, ".exfat") || !name_has_code(it->d_name, code)) continue;
+      if (it->d_name[0] == '.' || n < 7 || !conv_image_name(it->d_name) || !name_has_code(it->d_name, code)) continue;
       snprintf(where, cap, "%s/%s", dir, it->d_name);
       found = !stat(where, &st) && S_ISREG(st.st_mode);
     }
@@ -1597,6 +2030,9 @@ static int conv_add_auto(const char* key, const char* name, const char* kind, co
   copy_text(body->root, sizeof body->root, root);
   copy_text(body->label, sizeof body->label, label);
   copy_text(body->work, sizeof body->work, work ? work : "");
+  // glibren.71: o formato e o nivel das Configuracoes (POST /config, config.json).
+  copy_text(body->format, sizeof body->format, g_conv_format);
+  copy_text(body->level, sizeof body->level, g_conv_level);
   if (!strcmp(kind, "archive")) {
     for (int i = 0; i < nsources && i < ARC_MAX_VOLUMES; ++i) copy_text(body->sources[body->nsources++], sizeof body->sources[0], sources[i]);
     for (size_t i = 0; i < sizeof AUTO_PASSWORDS / sizeof *AUTO_PASSWORDS && i < ARC_MAX_PASSWORDS; ++i)
@@ -1678,9 +2114,10 @@ static void auto_output(const char* root, const char* code, const char* fallback
     if (!id[0]) snprintf(id, sizeof id, "jogo");
   }
   struct stat st;
+  const char* ext = conv_ext(g_conv_format); // glibren.71
   for (int n = 1; n < 100; ++n) {
-    if (n == 1) snprintf(output, cap, "%s/homebrew/%s.exfat", root, id);
-    else snprintf(output, cap, "%s/homebrew/%s-%d.exfat", root, id, n);
+    if (n == 1) snprintf(output, cap, "%s/homebrew/%s%s", root, id, ext);
+    else snprintf(output, cap, "%s/homebrew/%s-%d%s", root, id, n, ext);
     if (stat(output, &st)) break;
   }
   snprintf(label, label_cap, "%.11s", system_code_ok(code) ? code : "JOBE");

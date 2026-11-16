@@ -34,6 +34,7 @@ import { MARGIN2, spaceShortfall, stillNeeded } from './space.js';
 import { hostOf } from './download-tuning.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 import { mirrorsFor } from './download-mirrors.js';
+import { FORMAT_EXT, levelsFor } from './convert-options.js';
 import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platformOf, PS4_FOLDER, writeBackupMarker } from './exfat-convert.js';
 
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
@@ -225,6 +226,10 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
     // payload through downloads.convert (background-downloads.js) unless `converter` is given (tests).
     convertExfat = () => false,
     converter = null,
+    // glibren.71: the conversion's format (state/convert-options.js: "exfat" by our own writer, the others by the
+    // ps5-dump-forge the payload calls) and the compression level ("padrao" = Dump Forge's default). Off here (exfat).
+    convertFormat = () => "exfat",
+    convertLevel = () => "padrao",
     // glibren.16: whether a PS5 package waits on Install (and its warning) above firmware 11.60 (state/ps5-pkg-warning.js,
     // Settings; the app passes the option, on by default). Off here, as in the tests that do not ask for it.
     warnPs5Packages = () => false,
@@ -2407,11 +2412,21 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       }
       return { files, more: budget <= 0 };
     }
+    // glibren.71: the format this conversion makes: the one chosen in Settings, else .exfat. A folder converted by hand
+    // (the Files tab) never becomes "just a folder" (it already is one): .exfat then.
+    function formatFor(job2) {
+      const chosen = String(convertFormat() || "exfat");
+      return job2.manual && chosen === "pasta" ? "exfat" : chosen;
+    }
     function queueConversion(job2, spec) {
       const owned2 = (path) => jobs.some((other) => other !== job2 && [other.artifact?.destination, other.convert?.output].includes(path));
-      const kept = job2.convert?.output;
-      const output = kept && !fs.exists(kept) && !owned2(kept) ? kept : exfatOutput(job2.root, { titleId: job2.titleId, fallback: job2.release.filename }, (path) => fs.exists(path) || owned2(path));
-      job2.convert = { kind: spec.kind, ...spec.sources ? { sources: spec.sources } : { source: spec.source }, ...spec.work ? { work: spec.work } : {}, output };
+      const format = spec.format || formatFor(job2);
+      const chosenLevel = spec.level || String(convertLevel() || "padrao");
+      const level = levelsFor(format).includes(chosenLevel) && chosenLevel !== "padrao" ? chosenLevel : "";
+      const kept = (job2.convert?.format || "exfat") === format ? job2.convert?.output : null;
+      const output = kept && !fs.exists(kept) && !owned2(kept) ? kept : exfatOutput(job2.root, { titleId: job2.titleId, fallback: job2.release.filename, format }, (path) => fs.exists(path) || owned2(path));
+      job2.convert = { kind: spec.kind, ...spec.sources ? { sources: spec.sources } : { source: spec.source }, ...spec.work ? { work: spec.work } : {}, output, format, ...level ? { level } : {} };
+      delete job2.convertWaiting;
       job2.state = "converting";
       job2.written = 0;
       job2.total = null;
@@ -2433,6 +2448,9 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         output: spec.output,
         label: exfatLabel(job2.titleId),
         work: spec.work || "",
+        // glibren.71: the format (and the compression level); an old job without one stays .exfat.
+        format: spec.format || "exfat",
+        ...spec.level ? { level: spec.level } : {},
         ...spec.kind === "archive" ? { source: spec.sources[0], sources: spec.sources, passwords: archivePasswords(job2) } : { source: spec.source }
       };
       let task;
@@ -2455,6 +2473,16 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         // glibren.58: o payload extraindo o compactado antes de converter: o progresso dele (formato, bytes, velocidade,
         // tempo restante e "limitado pelo processador" no 7z), em vez de "Aguardando para converter".
         const extract = progress.state === "extracting" ? progress.extract : null;
+        // glibren.71: waiting for the ps5-dump-forge (not running): "Use without converting" shows on the card meanwhile.
+        if (progress.state === "waiting") {
+          job2.convertWaiting = true;
+          job2.bytesPerSecond = 0;
+          sample = null;
+          job2.message = t(/^forge-busy/.test(progress.waiting || "") ? "downloads.convert.waitingForgeBusy" : "downloads.convert.waitingForge");
+          emit2();
+          return;
+        }
+        if (job2.convertWaiting) delete job2.convertWaiting;
         if (extract) {
           job2.written = extract.done;
           job2.total = extract.total || null;
@@ -2476,7 +2504,9 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         }
         job2.written = written;
         job2.total = progress.total || null;
-        job2.message = t(progress.state === "verifying" ? "downloads.convert.verifying" : progress.state === "converting" ? "downloads.convert.running" : progress.state === "extracting" ? "downloads.convert.extracting" : "downloads.convert.queued");
+        const step = progress.state === "verifying" ? "verifying" : progress.state === "converting" ? "running" : progress.state === "extracting" ? "extracting" : "queued";
+        // glibren.71: another format than .exfat says which one ("Converting to .ffpkg").
+        job2.message = (spec.format || "exfat") === "exfat" ? t(`downloads.convert.${step}`) : t(`downloads.convert.${step}As`, { format: t(`settings.convertFormat.${spec.format}`) });
         emit2();
       }) ?? (() => {});
       try {
@@ -2496,21 +2526,26 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       }
     }
     async function conversionDone(job2, result) {
-      const output = job2.convert.output;
+      // glibren.71: the payload may have changed where it went (an image found inside the archive); a folder format's
+      // output is a folder (its size is what the payload counted).
+      const output = typeof result?.output === "string" && result.output.startsWith(`${job2.root}/homebrew/`) ? result.output : job2.convert.output;
       if (!fs.exists(output)) throw new Error(`write: ${output} is not on the drive`);
-      const size = fs.stat(output)?.size ?? result?.imageBytes ?? 0;
+      const format = job2.convert.format || "exfat";
+      const folder = FORMAT_EXT[format] === "";
+      const size = (folder ? null : fs.stat(output)?.size) ?? (Number(result?.imageBytes) || 0);
       const work = job2.convert.work;
       if (work && job2.output && (job2.output === work || job2.output.startsWith(`${work}/`))) delete job2.output;
-      job2.artifact = { ...job2.artifact, format: "exfat", directory: `${job2.root}/homebrew`, destination: output, images: [output], nextAction: "shadowmount" };
+      job2.artifact = { ...job2.artifact, format: folder ? "folder" : format, directory: `${job2.root}/homebrew`, destination: output, images: [output], nextAction: "shadowmount" };
       job2.payload = [{ path: output, size }];
       delete job2.publishTo;
       delete job2.packages;
-      job2.converted = { from: job2.convert.kind, at: Date.now() };
+      job2.converted = { from: job2.convert.kind, format, at: Date.now() };
       delete job2.convert;
+      delete job2.convertWaiting;
       job2.state = "downloaded";
       job2.written = job2.total = size;
       job2.bytesPerSecond = 0;
-      job2.message = t("downloads.convert.done");
+      job2.message = format === "exfat" ? t("downloads.convert.done") : t("downloads.convert.doneAs", { format: t(`settings.convertFormat.${format}`) });
       if (job2.manual) manualFolderDone(job2);
       console.log(`[download-queue] ${job2.id}: converted to ${output} (${size} bytes); the original stays in ${job2.backupDir ?? "its folder"}`);
       notifications.show(t("downloads.notice.complete"), job2.title);
@@ -3618,6 +3653,12 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       /** glibren.12: "Use without converting": the folder is published, the archive extracted or the package installed, as before. */
       async skipConversion(id) {
         const job2 = find(id);
+        // glibren.71: also while it waits for the ps5-dump-forge: that conversion is cancelled first (nothing was written).
+        if (job2.state === "converting" && job2.convert && job2.convertWaiting) {
+          await this.cancelConversion(id);
+          if (job2.state !== "failed" || !job2.convert) return;
+          delete job2.convertWaiting;
+        }
         if (job2.state !== "failed" || !job2.convert) return;
         await useWithoutConverting(job2, job2.convert);
       },

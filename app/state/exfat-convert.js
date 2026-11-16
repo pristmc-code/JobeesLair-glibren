@@ -18,11 +18,14 @@
 import { useEffect, useState } from 'react';
 import { loadList, saveList } from './saved.js';
 import { formatFromName } from './link-formats.js';
+import { FORMAT_EXT } from './convert-options.js';
 
   var SETTINGS = "settings.json";
   var BACKUP = "BACKUP";
   var PS4_FOLDER = "PS4";
-  // ---- A opcao "Converter jogos de PS5 para .exfat" (ligada por padrao) ----
+  // ---- A opcao "Converter depois de baixar" (antes "Converter jogos de PS5 para .exfat"; ligada por padrao) ----
+  // glibren.71: o formato vem de convert-options.js (convertFormat). Desligada, o compactado continua sendo extraido (o
+  // caminho de sempre da fila: queueExtraction e a pasta publicada em homebrew/); o resto fica como baixou.
   var enabled = null;
   var listeners = /* @__PURE__ */ new Set();
   function convertToExfatOn() {
@@ -107,18 +110,21 @@ import { formatFromName } from './link-formats.js';
   }
   var baseName = (path) => String(path).slice(String(path).lastIndexOf("/") + 1);
   // Onde a imagem convertida fica: <disco>/homebrew/<codigo>.exfat (o codigo do jogo; senao o nome do release).
-  function exfatOutput(root, { titleId = "", fallback = "jogo" } = {}, taken = () => false) {
+  // glibren.71: `format` (state/convert-options.js) troca a extensao: .ffpkg, .ffpfs, .ffpfsc, .pkg, ou nenhuma (uma pasta).
+  function exfatOutput(root, { titleId = "", fallback = "jogo", format = "exfat" } = {}, taken = () => false) {
     const id = /^[A-Z]{4}\d{5}$/i.test(String(titleId)) ? String(titleId).toUpperCase() : String(fallback).replace(/\.[^.]*$/, "").replace(/[^a-z0-9_.-]/gi, "_").slice(0, 80) || "jogo";
+    const ext = FORMAT_EXT[format] ?? ".exfat";
     for (let n = 1; n < 100; n++) {
-      const path = `${root}/homebrew/${id}${n === 1 ? "" : `-${n}`}.exfat`;
+      const path = `${root}/homebrew/${id}${n === 1 ? "" : `-${n}`}${ext}`;
       if (!taken(path)) return path;
     }
-    return `${root}/homebrew/${id}-${Date.now()}.exfat`;
+    return `${root}/homebrew/${id}-${Date.now()}${ext}`;
   }
   // O rotulo do volume exFAT (ate 11 caracteres): o codigo do jogo.
   var exfatLabel = (titleId) => String(titleId || "JOBE").toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 11) || "JOBE";
   // O codigo de um erro da conversao ("space: ...", "not-direct: ..."): o que o payload (bg_convert.c) manda.
-  var CODES = ["space", "not-direct", "not-a-game", "source", "write", "verify", "unavailable"];
+  // glibren.71: "forge" = o ps5-dump-forge recusou ou nao terminou a conversao (o texto dele vem no detalhe).
+  var CODES = ["space", "not-direct", "not-a-game", "source", "write", "verify", "unavailable", "forge"];
   function errorCode(message) {
     const code = /^([a-z-]+):/.exec(String(message || ""))?.[1];
     return CODES.includes(code) ? code : "other";

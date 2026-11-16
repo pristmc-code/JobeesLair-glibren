@@ -74,6 +74,8 @@ static const SettingSpec SETTING_SPECS[] = {
   {"convertPauseSeconds", ST_INTS, SC_PREF, 0, 0, "0,30,60,120,300"},
   {"convertWriteLimit", ST_INTS, SC_PREF, 0, 0, "0,25,50,100,200"},
   {"convertSyncMB", ST_INTS, SC_PREF, 0, 0, "0,64,128,256,512"},
+  {"convertFormat", ST_TEXTS, SC_PREF, 0, 0, "exfat,ffpkg,ffpfs,ffpfsc,pkg,exfat_zstd,ffpkg_zstd,ffpfs_zstd,ffpfsc_zstd,pasta,pasta_zstd,pasta_lz4"}, // glibren.71
+  {"convertLevel", ST_TEXTS, SC_PREF, 0, 0, "padrao,rapido,equilibrado,menor,sem"},
   {"warnPs5Pkg", ST_BOOL, SC_PREF, 0, 0, NULL},
   {"phoneMonitor", ST_BOOL, SC_PREF, 0, 0, NULL},
   // TorBox, loja e catalogos (state/debrid.js, orbit-feed.js, homebrew-store.js, store-mode.js, format-filter.js)
@@ -679,6 +681,19 @@ static void settings_mirror_config(const SettingsSet* s, const char changed[][SE
     else if (!strcmp(changed[i], "convertPauseSeconds")) { c.found = c.has_conv_pause = 1; c.conv_pause = value >= 0 ? (uint64_t)value : 0; }
     else if (!strcmp(changed[i], "convertWriteLimit")) { c.found = c.has_conv_write = 1; c.conv_write = value >= 0 ? (uint64_t)value : 0; }
     else if (!strcmp(changed[i], "convertSyncMB")) { c.found = c.has_conv_sync = 1; c.conv_sync = value >= 0 ? (uint64_t)value : 0; }
+    // glibren.71: Converter depois de baixar (ligada por padrao) vale tambem para o que o payload converte sozinho.
+    else if (!strcmp(changed[i], "convertExfat")) { c.found = c.has_auto_convert = 1; c.auto_convert = !(at >= 0 && !strcmp(s->items[at].value, "false")); }
+    // glibren.71: texto (o valor guardado e o JSON, com aspas); fora da lista (ou apagada) = o padrao.
+    else if (!strcmp(changed[i], "convertFormat") || !strcmp(changed[i], "convertLevel")) {
+      const int format = !strcmp(changed[i], "convertFormat");
+      char text[16] = "";
+      if (at >= 0) {
+        JP tj = {s->items[at].value, s->items[at].value + strlen(s->items[at].value), 0};
+        if (!jp_text(&tj, text, sizeof text)) text[0] = 0;
+      }
+      if (format) { c.found = c.has_conv_format = 1; copy_text(c.conv_format, sizeof c.conv_format, CONV_FORMAT_OK(text) ? text : "exfat"); }
+      else { c.found = c.has_conv_level = 1; copy_text(c.conv_level, sizeof c.conv_level, CONV_LEVEL_OK(text) ? text : "padrao"); }
+    }
   }
   if (concurrency < 0 && speed < 0 && !c.found) return;
   pthread_mutex_lock(&g_lock);

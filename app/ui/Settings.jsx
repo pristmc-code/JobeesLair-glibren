@@ -37,7 +37,7 @@ import { TubeAccountRows, TubeRevertRow } from './TubeAccount.jsx';
 import { deleteBackup, listBackup, setConvertToExfat, useConvertToExfat } from '../state/exfat-convert.js';
 import { setPs5PkgWarning, usePs5PkgWarning } from '../state/ps5-pkg-warning.js';
 import { PAUSE_CHOICES, setBackgroundDownloads, setPauseOnCloseSeconds, useBackgroundDownloads, usePauseOnCloseSeconds } from '../state/background-downloads.js';
-import { CONVERT_OPTIONS, setConvertOption, useConvertOptions } from '../state/convert-options.js';
+import { CONVERT_CHOICES, CONVERT_OPTIONS, levelsFor, setConvertOption, useConvertOptions } from '../state/convert-options.js';
 import { exitSummary, leaveApp } from '../state/exit-app.js';
 import { memorySample, memorySnapshot, subscribeMemory } from '../state/memory-meter.js';
 import { DiagnosticsRow } from './DiagnosticsRow.jsx'; // glibren.44
@@ -571,6 +571,41 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       }, value)) })
     ] });
   }
+  // glibren.71: the conversion's format, one row per format (name + one line on what it gains or loses), the chosen one
+  // with the switch on. Formats other than .exfat and "folder" are made by the ps5-dump-forge (the payload calls it).
+  function ConvertFormatRows() {
+    const t2 = useT();
+    const current = useConvertOptions().convertFormat;
+    return jsxs(View, { style: { gap: 3 }, children: [
+      jsxs(View, { style: { gap: 3, paddingVertical: 8 }, children: [
+        jsx(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.convertFormat") }),
+        jsx(Text, { style: text(20, colors.muted), children: t2("settings.convertFormatDetail") })
+      ] }),
+      ...CONVERT_CHOICES.convertFormat.map((format) => jsx(Row, { focusKey: `settings:convertFormat:${format}`, name: t2(`settings.convertFormat.${format}`), hint: t2(`settings.convertFormatHint.${format}`), end: jsx(Switch, { on: format === current }), onPress: () => setConvertOption("convertFormat", format) }, format))
+    ] });
+  }
+  // glibren.71: the compression level (advanced): "Default (recommended)" first, then the ones the format takes, pills
+  // of the same width.
+  function ConvertLevelRow({ format }) {
+    const t2 = useT();
+    const chosen = useConvertOptions().convertLevel;
+    const levels = levelsFor(format);
+    const current = levels.includes(chosen) ? chosen : "padrao";
+    return jsxs(View, { style: { gap: 10 }, children: [
+      jsxs(View, { style: { gap: 3 }, children: [
+        jsx(Text, { style: text(23, colors.fg, { fontWeight: 600 }), children: t2("settings.convertLevel") }),
+        jsx(Text, { style: text(20, colors.muted), children: t2("settings.convertLevelHint") })
+      ] }),
+      jsx(View, { style: { flexDirection: "row", gap: 12 }, children: levels.map((level) => jsx(View, {
+        focusKey: `settings:convertLevel:${level}`,
+        focusable: true,
+        onPress: () => setConvertOption("convertLevel", level),
+        // a longer label ("Default (recommended)" in some languages) wraps to two lines instead of being cut
+        style: { position: "relative", flex: 1, minHeight: 56, paddingVertical: 6, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: level === current ? colors.accent : colors.surface2 },
+        children: jsx(SpeedFace, { label: t2(`settings.convertLevel.${level}`), chosen: level === current })
+      }, level)) })
+    ] });
+  }
   // glibren.6: the drive every download starts on (state/last-drive.js), as the rows above: "Automatic" (the last
   // drive used, as before) and one pill per drive plugged in. A drive picked and unplugged reads as Automatic.
   function DefaultDriveRow({ roots }) {
@@ -644,6 +679,7 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
     const autoParts = useAutoContinueParts();
     const background = useBackgroundDownloads();
     const convertExfat = useConvertToExfat();
+    const convertFormatNow = useConvertOptions().convertFormat; // glibren.71
     const warnPs5Pkg = usePs5PkgWarning();
     const phone = usePhoneMonitor();
     const phoneHint = !phone.on ? t2("settings.phoneMonitorDetail") : phone.address ? t2("settings.phoneMonitorAddress", { url: phone.address }) : t2("settings.phoneMonitorNoAddress");
@@ -658,6 +694,9 @@ import { DeviceInfo, FileSystem, FocusScope, Image, Keyboard, Linking, ScrollVie
       // glibren.12: PS5 games to .exfat (state/exfat-convert.js), and the BACKUP folder with the originals.
       jsx(Row, { focusKey: "settings:convertExfat", name: t2("settings.convertExfat"), hint: t2("settings.convertExfatDetail"), end: jsx(Switch, { on: convertExfat }), onPress: () => setConvertToExfat(!convertExfat) }),
       // pac1: the conversion's options (the payload converts): pause between conversions, write limit, write in chunks.
+      // glibren.71: the format (and, when it has one, the compression level), only with the conversion on.
+      convertExfat ? jsx(ConvertFormatRows, {}) : null,
+      convertExfat && levelsFor(convertFormatNow).length ? jsx(View, { style: { paddingVertical: 8 }, children: jsx(ConvertLevelRow, { format: convertFormatNow }) }) : null,
       ...convertExfat ? ["convertPauseSeconds", "convertWriteLimit", "convertSyncMB"].map((name) => jsx(View, { style: { paddingVertical: 8 }, children: jsx(ConvertOptionRow, { name }) }, name)) : [],
       jsx(BackupRow, { roots: drives.roots }),
       // glibren.16: Install on a PS5 .pkg asks first above firmware 11.60 (state/ps5-pkg-warning.js, ui/Ps5PkgWarning.jsx).
