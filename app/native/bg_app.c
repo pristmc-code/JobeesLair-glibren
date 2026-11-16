@@ -154,6 +154,25 @@ static void app_fullscreen(int fd, Request* r, int post) {
   else { snprintf(out, sizeof out, "{\"error\":\"glibren\",\"status\":%ld}", status); monitor_json(fd, 502, out); }
 }
 
+// glibren.72: a pagina sai com a versao deste payload no lugar do marcador __BG_VERSAO__ (uma vez no .html). Ao ver
+// outra versao no /api/status (payload trocado com a pagina aberta), a pagina recarrega sozinha uma vez. O PS5 nao tem
+// memmem: busca simples.
+static void app_send_page(int fd) {
+  static const char mark[] = "__BG_VERSAO__";
+  const size_t ml = sizeof mark - 1, vl = strlen(BG_VERSION);
+  size_t at = 0;
+  int found = 0;
+  for (; at + ml <= (size_t)BG_APP_HTML_SIZE; ++at)
+    if (BG_APP_HTML[at] == '_' && !memcmp(BG_APP_HTML + at, mark, ml)) { found = 1; break; }
+  char* out = found ? malloc(BG_APP_HTML_SIZE - ml + vl) : NULL;
+  if (!out) { monitor_send(fd, 200, "text/html; charset=utf-8", BG_APP_HTML, BG_APP_HTML_SIZE); return; }
+  memcpy(out, BG_APP_HTML, at);
+  memcpy(out + at, BG_VERSION, vl);
+  memcpy(out + at + vl, BG_APP_HTML + at + ml, BG_APP_HTML_SIZE - at - ml);
+  monitor_send(fd, 200, "text/html; charset=utf-8", out, BG_APP_HTML_SIZE - ml + vl);
+  free(out);
+}
+
 // Pagina do celular. 1 = tratou.
 static int app_monitor_route(int fd, Request* r) {
   if (!strcmp(r->path, "/api/app/telacheia")) {
@@ -164,6 +183,6 @@ static int app_monitor_route(int fd, Request* r) {
   }
   if (strcmp(r->path, "/app") && strcmp(r->path, "/app/") && strcmp(r->path, "/app/index.html")) return 0;
   if (strcmp(r->method, "GET")) { monitor_json(fd, 404, "{\"error\":\"not found\"}"); return 1; }
-  monitor_send(fd, 200, "text/html; charset=utf-8", BG_APP_HTML, BG_APP_HTML_SIZE);
+  app_send_page(fd);
   return 1;
 }

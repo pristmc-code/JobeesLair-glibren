@@ -80,7 +80,10 @@ const tamanhoDe = (g) => (g.sizeGb <= 10 ? 'small' : g.sizeGb <= 50 ? 'medium' :
 export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = true } = {}) {
   const lista = jogosFalsos(jogos);
   if (!capas) for (const g of lista) g.cover = '';
-  const contadores = { store: 0, capas: 0, fichas: 0, status: 0, add: 0, ultimoAdd: null, homebrew: 0, homebrewAdd: 0, ultimoHomebrew: null };
+  const contadores = { store: 0, capas: 0, fichas: 0, status: 0, add: 0, ultimoAdd: null, homebrew: 0, homebrewAdd: 0, ultimoHomebrew: null, app: 0 };
+  // glibren.72: a versao do payload falso: "pagina" = a que vai no lugar de __BG_VERSAO__ ao servir /app (como bg_app.c);
+  // "payload" = a do /api/status. Diferentes = payload trocado com a pagina aberta (ou uma pagina velha guardada).
+  const versao = { pagina: '1.0.0-falsa', payload: '1.0.0-falsa' };
   const homebrews = homebrewsFalsos();
   const refFalsa = (id, i) => `ref${String(id).toLowerCase()}${i}`.padEnd(16, '0').slice(0, 16);
   const jobs = [
@@ -111,7 +114,8 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
       if (p === '/app' || p === '/app/' || p === '/app/index.html') {
         if (req.method !== 'GET') return json(res, 404, { error: 'not found' });
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
-        return res.end(readFileSync(PAGINA));
+        contadores.app++;
+        return res.end(readFileSync(PAGINA, 'utf8').replace('__BG_VERSAO__', versao.pagina));
       }
       if (p === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end('<!doctype html><title>pagina do celular</title><p>a pagina do celular (fora deste teste)</p>'); }
       const capa = /^\/capa\/(\d+)\.svg$/.exec(p);
@@ -182,7 +186,7 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
     if (p === '/api/status' && req.method === 'GET') {
       contadores.status++;
       for (const j of jobs) if (j.state === 'downloading') j.written = Math.min(j.total, j.written + j.bytesPerSecond * 2);
-      return json(res, 200, { jobs, cancelledRecent: [], limit: 2, maxLimit: 4, maxConnections: 64, limitSet: false, pinSet: true, speedLimit: 0, maxSpeedLimit: 1000, speedLimitSet: false });
+      return json(res, 200, { version: versao.payload, jobs, cancelledRecent: [], limit: 2, maxLimit: 4, maxConnections: 64, limitSet: false, pinSet: true, speedLimit: 0, maxSpeedLimit: 1000, speedLimitSet: false });
     }
     // glibren.70: a aba Homebrew (GET /api/homebrew com busca e paginas; POST /api/homebrew/add pede credencial)
     if (p === '/api/homebrew' && req.method === 'GET') {
@@ -258,7 +262,7 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
   }
   await new Promise((resolve) => server.listen(porta, '127.0.0.1', resolve));
   const real = server.address().port;
-  return { porta: real, url: `http://127.0.0.1:${real}`, contadores, lista, config, telaPedidos, close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); }) };
+  return { porta: real, url: `http://127.0.0.1:${real}`, contadores, lista, config, telaPedidos, versao, close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); }) };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

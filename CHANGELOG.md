@@ -6,6 +6,17 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.72** (fork): the full-screen store (/app) reloads by itself when the download payload changes. Download payload 1.37.16.
+  - The page knows the payload version that served it (the payload writes it into the page) and `/api/status` now
+    carries the current version. The store asks every 60 s (and when the tab comes back; the Downloads list already asks
+    every 2 s): a different version shows a short notice and reloads the page once, keeping the search and the filters
+    (the tab and the open game stay in the address). It never reloads twice for the same version. The page was already
+    sent with `Cache-Control: no-store`. Settings > Measurements shows the page's and the payload's version.
+  - Fixes the flaky "row replaced mid-click" check of the store test: closing the game sheet re-laid the grid out one
+    frame later, and a click in that frame fell on the empty page. The grid now redraws in the same frame and the test
+    waits for it to settle.
+  - tube-service 0.2.5 built in (TV_SAMSUNG/TV_SAMSUNG_T5 clients instead of TV/TV_DOWNGRADED).
+  - Texts in the 14 languages.
 - **glibren.71** (fork): choose the conversion format, with ps5-dump-forge. Download payload 1.37.15.
   - Settings > Downloads: "Convert after downloading" (the old "Convert PS5 games to .exfat" switch, still on by default)
     and the format, each with one line on what it gains or loses: `.exfat` (Jobee'sLair's own converter), and through

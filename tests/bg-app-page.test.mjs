@@ -125,7 +125,12 @@ test('glibren.58: a ficha e a grade da /app seguem o "na fila" do payload (pedid
 
 test('Fase 8: /app sai sem sessao e igual ao .h; so GET; Host com nome da 403; "/" continua a pagina do celular', { skip }, async () => {
   const p = await startPayload();
-  const page = readFileSync(embed.APP_PAGE, 'utf8');
+  // glibren.72: o payload troca o marcador __BG_VERSAO__ pela versao dele (uma vez), e o /api/status diz a mesma
+  const versao = /#define BG_VERSION "([^"]+)"/.exec(readFileSync(path.join(repo, 'app/native/bg_downloader.c'), 'utf8'))[1];
+  const bruta = readFileSync(embed.APP_PAGE, 'utf8');
+  assert.equal(bruta.split('__BG_VERSAO__').length, 2, 'o marcador da versao aparece uma vez na pagina');
+  const page = bruta.replace('__BG_VERSAO__', versao);
+  assert.equal(JSON.parse((await p.raw('/api/status')).text).version, versao, 'a versao no /api/status');
   for (const route of ['/app', '/app/', '/app/index.html']) {
     const r = await p.raw(route);
     assert.equal(r.status, 200, route);

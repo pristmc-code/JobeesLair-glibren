@@ -379,14 +379,35 @@ async function medirTamanho(navegador, api, t, jogo) {
     ps5Cliques.rolagem = iRol > 0 && (await fichaAberta()) === (await idDe(iRol));
     conferir(ps5Cliques.rolagem, `${t.nome}: PS5, rolagem e clique no cartao ${iRol} nao abriu`);
     // 5) a linha trocada entre o mousedown e o mouseup (a pagina dela chegou no meio do clique)
+    // glibren.72: a causa da falha "as vezes" (desde 14/11): fechar a ficha muda a largura da grade -> mais colunas ->
+    // medidas() refaz todas as linhas e reposiciona a rolagem. Com a maquina carregada isso podia acontecer depois dos
+    // 250 ms da espera: o cartao iRol (escolhido antes, com a ficha aberta) ja nao estava ali e o mousedown caia no fundo
+    // (alvo html, nenhum cartao). Agora a grade desenha no mesmo quadro (bg_app.html) e o teste escolhe o cartao depois
+    // que a grade parou: o mesmo cartao, no mesmo lugar, em 3 leituras seguidas, e e ele que esta debaixo do ponto.
     await fichaFechada();
-    c = await centro(iRol);
+    const parado = await pagina.evaluate(async () => {
+      const g = document.getElementById('grade');
+      const ler = () => {
+        const r0 = g.getBoundingClientRect();
+        const e = [...document.querySelectorAll('.card:not(.vazio)')].find((x) => { const r = x.getBoundingClientRect(); return +x.getAttribute('data-i') > 0 && r.top > r0.top + 4 && r.bottom < r0.bottom - 4; });
+        if (!e) return null;
+        const r = e.getBoundingClientRect(), x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+        const p = document.elementFromPoint(x, y);
+        return p && p.closest && p.closest('.card') === e ? { i: +e.getAttribute('data-i'), x, y } : null;
+      };
+      const quadro = () => new Promise((ok) => requestAnimationFrame(() => setTimeout(ok, 40)));
+      let ant = null, iguais = 0;
+      for (let k = 0; k < 100 && iguais < 2; k++) { await quadro(); const a = ler(); iguais = a && ant && a.i === ant.i && a.x === ant.x && a.y === ant.y ? iguais + 1 : 0; ant = a; }
+      return iguais >= 2 ? ant : null;
+    });
+    conferir(Boolean(parado), `${t.nome}: PS5, a grade nao parou depois de fechar a ficha`);
+    const iLin = parado ? parado.i : iRol;
+    c = parado || await centro(iRol);
     await pagina.mouse.move(c.x, c.y); await pagina.mouse.down();
-    await pagina.evaluate((k) => { const lin = document.querySelector(`.card[data-i="${k}"]`).parentNode; lin.replaceWith(lin.cloneNode(true)); }, iRol);
+    await pagina.evaluate((k) => { const lin = document.querySelector(`.card[data-i="${k}"]`).parentNode; lin.replaceWith(lin.cloneNode(true)); }, iLin);
     await pagina.mouse.up();
-    ps5Cliques.linhaTrocada = (await fichaAberta()) === (await idDe(iRol));
-    // glibren.61: --sem-linha-trocada (JL_F8_SEM_LINHA_TROCADA=1 no teste) so avisa: desde 14/11 falha sempre no PC, ate
-    // com o codigo da .60 (pendencia: investigar; a pagina nao mudou).
+    ps5Cliques.linhaTrocada = (await fichaAberta()) === (await idDe(iLin));
+    // --sem-linha-trocada (JL_F8_SEM_LINHA_TROCADA=1 no teste) so avisa (ficou para emergencia; desde a .72 nao precisa).
     if (args['sem-linha-trocada'] && !ps5Cliques.linhaTrocada) console.error(`AVISO ${t.nome}: linha trocada no meio do clique nao abriu (pulado)`);
     else conferir(ps5Cliques.linhaTrocada, `${t.nome}: PS5, linha trocada no meio do clique: nao abriu`);
     await fichaFechada();
@@ -494,6 +515,49 @@ async function medirTamanho(navegador, api, t, jogo) {
     prints: ['loja', 'ficha', 'parear', 'downloads', 'config'].map((q) => path.join(saida, `app-${t.nome}-${q}.png`)) };
 }
 
+// glibren.72: a pagina recarrega sozinha UMA vez quando o payload muda (versao no /api/status), guardando a busca; uma
+// pagina servida ainda com a versao velha (cache) nao recarrega de novo para a mesma versao (sem laco).
+async function testarRecarga(navegador, api) {
+  const contexto = await navegador.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1, locale: 'pt-BR' });
+  const pagina = await contexto.newPage();
+  const antes = { ...api.versao };
+  try {
+    passo = 'recarga: abrir';
+    await pagina.goto(`${api.url}/app`, { waitUntil: 'domcontentloaded' });
+    await pagina.waitForFunction(() => window.jobeApp && window.jobeApp.montadoMs !== null, null, { timeout: 15000 });
+    const v0 = await pagina.evaluate(() => window.jobeApp.versao());
+    conferir(v0.pagina === api.versao.pagina, `recarga: a pagina nao sabe a versao que a serviu (${v0.pagina})`);
+    await pagina.fill('#busca', 'Remastered');
+    await pagina.waitForFunction(() => window.jobeApp.estado().count >= 0 && window.jobeApp.estado().count < 2639, null, { timeout: 5000 });
+    const contagem = await pagina.evaluate(() => window.jobeApp.estado().count);
+    passo = 'recarga: versao nova';
+    api.versao.payload = '9.9.9-nova';
+    const apps = api.contadores.app;
+    const carregou = pagina.waitForEvent('load', { timeout: 10000 });
+    await pagina.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await pagina.waitForFunction(() => { const a = document.getElementById('aviso'); return !a.hidden && /9\.9\.9-nova/.test(a.textContent); }, null, { timeout: 5000 });
+    const aviso = await pagina.evaluate(() => document.getElementById('aviso').textContent);
+    await carregou;
+    await pagina.waitForFunction(() => window.jobeApp && window.jobeApp.montadoMs !== null, null, { timeout: 15000 });
+    passo = 'recarga: depois';
+    const depois = await pagina.evaluate(() => ({ busca: document.getElementById('busca').value, count: window.jobeApp.estado().count, v: window.jobeApp.versao(), hash: location.hash }));
+    conferir(api.contadores.app === apps + 1, `recarga: a pagina devia recarregar uma vez (${api.contadores.app - apps})`);
+    conferir(depois.busca === 'Remastered', `recarga: a busca nao voltou (${depois.busca})`);
+    conferir(depois.hash === '#/loja', `recarga: o endereco mudou (${depois.hash})`);
+    // a pagina servida continua com a versao velha (como um cache teimoso): nao recarrega de novo para a 9.9.9-nova
+    await pagina.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await pagina.waitForFunction(() => window.jobeApp.versao().payload === '9.9.9-nova', null, { timeout: 5000 });
+    await espera(2500);
+    const fim = await pagina.evaluate(() => ({ v: window.jobeApp.versao(), tela: window.jobeApp.tela() }));
+    conferir(api.contadores.app === apps + 1 && !fim.v.recarregando, `recarga: entrou em laco (${api.contadores.app - apps} recargas)`);
+    conferir(/payload: pagina servida pela 1\.0\.0-falsa; payload agora 9\.9\.9-nova/.test(fim.tela), 'recarga: Medidas sem a versao do payload');
+    return { aviso, contagem, depois, fim: fim.v };
+  } finally {
+    Object.assign(api.versao, antes);
+    await contexto.close();
+  }
+}
+
 const api = await apiFalsa({ jogos: 2639, atraso: 15 });
 const { navegador, canal } = await abrirNavegador();
 const resultados = [];
@@ -501,6 +565,7 @@ try {
   for (const [k, t] of TAMANHOS.entries()) {
     try { resultados.push(await medirTamanho(navegador, api, t, 11 * (k + 1))); } catch (e) { falhas.push(`${t.nome} [${passo}]: ${String(e.message).split(String.fromCharCode(10))[0]}`); }
   }
+  if (checar) { try { console.error('recarga:', JSON.stringify(await testarRecarga(navegador, api))); } catch (e) { falhas.push(`recarga [${passo}]: ${String(e.message).split(String.fromCharCode(10))[0]}`); } }
 } finally {
   await navegador.close();
   await api.close();

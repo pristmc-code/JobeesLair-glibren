@@ -2078,5 +2078,21 @@
   "bn": "আরও দেখান",
   "id": "Tampilkan lebih banyak",
   "ur": "مزید دکھائیں"
+ },
+ "versaoNova": {
+  "en": "Downloads payload updated to {v}: reloading the page.",
+  "pt-BR": "Payload de downloads atualizado para a {v}: recarregando a página.",
+  "es": "Payload de descargas actualizado a la {v}: recargando la página.",
+  "fr": "Payload de téléchargements mis à jour vers la {v} : rechargement de la page.",
+  "de": "Download-Payload auf {v} aktualisiert: Seite wird neu geladen.",
+  "it": "Payload dei download aggiornato alla {v}: ricarico la pagina.",
+  "ru": "Пейлоад загрузок обновлён до {v}: страница перезагружается.",
+  "ja": "ダウンロードのペイロードが {v} に更新されました：ページを再読み込みします。",
+  "zh-Hans": "下载负载已更新到 {v}：正在重新加载页面。",
+  "ar": "تم تحديث حمولة التنزيلات إلى {v}: جارٍ إعادة تحميل الصفحة.",
+  "hi": "डाउनलोड पेलोड {v} पर अपडेट हुआ: पेज फिर से लोड हो रहा है।",
+  "bn": "ডাউনলোড পেলোড {v}-এ আপডেট হয়েছে: পেজ আবার লোড হচ্ছে।",
+  "id": "Payload unduhan diperbarui ke {v}: memuat ulang halaman.",
+  "ur": "ڈاؤن لوڈ پے لوڈ {v} پر اپ ڈیٹ ہو گیا: صفحہ دوبارہ لوڈ ہو رہا ہے۔"
  }
 }

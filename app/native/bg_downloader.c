@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.15"
+#define BG_VERSION "1.37.16"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -5296,7 +5296,8 @@ static void monitor_status(Buf* b) {
     while (k >= 0 && (sorted[k]->ahead || sorted[k]->placeholder ? sorted[k]->order : 0) > rank) { sorted[k + 1] = sorted[k]; --k; }
     sorted[k + 1] = item;
   }
-  buf_str(b, "{\"jobs\":[");
+  // glibren.72: a versao do payload (a loja /app compara com a versao que a serviu e recarrega sozinha se mudou).
+  buf_fmt(b, "{\"version\":\"%s\",\"jobs\":[", BG_VERSION);
   int first = 1;
   for (int i = 0; i < g_job_count; ++i) {
     const Job* j = sorted[i];
