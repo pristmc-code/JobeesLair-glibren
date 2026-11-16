@@ -294,7 +294,7 @@ test('rotas protegidas: 401 sem credencial e liberadas com o token; leitura da l
   const p = await startPayload();
   const protectedRoutes = [
     ['POST', '/api/jobs/x1/pause'], ['POST', '/api/jobs/x1/resume'], ['POST', '/api/jobs/x1/cancel'], ['POST', '/api/jobs/x1/connections'],
-    ['POST', '/api/config'], ['POST', '/api/power'], ['POST', '/api/cancelled/clear'], ['POST', '/api/library/add'], ['POST', '/api/store/add'],
+    ['POST', '/api/config'], ['POST', '/api/power'], ['POST', '/api/cancelled/clear'], ['POST', '/api/finished/clear'], ['GET', '/api/capas/faltam'], ['POST', '/api/capas/tentar'], ['POST', '/api/library/add'], ['POST', '/api/store/add'],
     ['GET', '/api/log'], ['POST', '/api/backup/delete'], ['POST', '/api/backup/convert'], ['POST', '/api/backup/convert-all'],
     ['GET', '/api/diag'], ['POST', '/api/diag/key'], ['POST', '/api/diag/key/remove'], ['POST', '/api/diag/send'], ['GET', '/api/diag/zip'],
     ['GET', '/api/jobe'], ['POST', '/api/jobe/update'], ['GET', '/api/payload'], ['POST', '/api/payload/update'], ['POST', '/api/payload/revert'],

@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.69**: Missing covers with the reason, free space of each drive and "Clear finished" on the phone page (download payload 1.37.13).
 > **glibren.68**: Full-screen store on the PS5: every sort order in both directions (download payload 1.37.12).
 > **glibren.67**: Full-screen store on the PS5: the store fixes from .63-.66 now really ship (download payload 1.37.11).
 > **glibren.66**: Full-screen store on the PS5: nothing stops loading after scrolling back up (download payload 1.37.10).

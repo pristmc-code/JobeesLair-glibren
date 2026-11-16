@@ -155,3 +155,10 @@ test('glibren.58: a pagina do celular mostra o progresso da extracao e esconde a
   assert.deepEqual(live(list.filter((c) => c.id !== 'c30')).map((c) => c.id), ['c21', 'c5'], 'sem a nova, a falha aparece');
   assert.deepEqual(live([{ id: 'a', name: 'X', target: '', state: 'failed' }, { id: 'b', name: 'X', target: '', state: 'queued' }]).map((c) => c.id), ['b'], 'pelo nome, sem destino');
 });
+
+test('.69: a pagina do celular tem espaco livre dos discos, Limpar concluidos, Capas que faltam e emenda os lotes do banco de capas', () => {
+  const page = readFileSync(embed.PAGE, 'utf8');
+  for (const piece of ['/api/discos', '/api/finished/clear', 'window.doneHook', 'id="doneBox"', 'id="disks"', '/api/capas/faltam', '/api/capas/tentar', 'Capas que faltam',
+    'Limpar concluídos', 'capasEstado', 'capasAgora', 'livres de']) assert.ok(page.includes(piece), piece);
+  assert.ok(page.includes('if (window.doneHook) window.doneHook();'), 'render chama o gancho da secao Finalizados');
+});

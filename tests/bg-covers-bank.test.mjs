@@ -245,3 +245,46 @@ test('capas: limites do banco (bytes e arquivos) dao 507 cheio; cheio = lista va
   assert.equal((await q.req('/api/capas/estado', { session: t2 })).data.cheio, true);
   await q.stop();
 });
+
+test('.69: Capas que faltam (motivo, nome, tentar de novo), Limpar concluidos e espaco dos discos', { skip }, async () => {
+  const base = path.join(dir, `run${++run}`);
+  mkdirSync(path.join(base, 'disco'), { recursive: true });
+  const p = await startPayload({ base, env: { BGDL_BACKUP_ROOTS: path.join(base, 'disco') } });
+  for (const [route, method] of [['/api/capas/faltam', 'GET'], ['/api/capas/tentar', 'POST'], ['/api/finished/clear', 'POST']])
+    assert.equal((await p.req(route, { method, body: method === 'POST' ? Buffer.from('{}') : undefined })).status, 401, `${route} sem credencial`);
+  const discos = await p.req('/api/discos');
+  assert.equal(discos.status, 200, 'o espaco dos discos e leitura livre, como /api/status');
+  assert.equal(discos.data.discos.length, 1);
+  assert.equal(discos.data.discos[0].caminho, path.join(base, 'disco'));
+  assert.ok(discos.data.discos[0].total > 0 && discos.data.discos[0].livre <= discos.data.discos[0].total);
+  const token = await pair(p);
+  assert.deepEqual((await p.req('/api/capas/faltam', { session: token })).data, { ok: true, total: 0, itens: [] }, 'nada anotado ainda');
+  // /app/capa sem fonte (a Sony o payload nao baixa; patches desligado): motivo "rede"; a TV sem nada no disco: "tv"
+  assert.equal((await p.req('/app/capa?id=PPSA10001')).status, 404);
+  assert.equal((await p.req(`/app/capa?u=${encodeURIComponent(SONY(2))}`)).status, 404);
+  let faltam = (await p.req('/api/capas/faltam', { session: token })).data;
+  assert.deepEqual(faltam.itens.map((i) => [i.id, i.nome, i.motivo, i.esperando]), [['PPSA10002', 'Dois', 'tv', true], ['PPSA10001', 'Um', 'fonte', true]], 'a mais recente primeiro, com o nome do catalogo');
+  // o celular tambem nao achou: motivo "celular", fora das pedidas por 24 h (ate)
+  await p.req('/api/capas/falhou?ids=PPSA10001', { method: 'POST', session: token });
+  faltam = (await p.req('/api/capas/faltam', { session: token })).data;
+  const um = faltam.itens.find((i) => i.id === 'PPSA10001');
+  assert.equal(um.motivo, 'celular');
+  assert.equal(um.esperando, false);
+  assert.ok(um.ate > Date.now() / 1000 + 3600);
+  // Tentar de novo: tira a marca de 24 h e pede ao celular de novo (volta a lista do banco, primeiro)
+  assert.deepEqual((await p.req('/api/capas/tentar?ids=PPSA10001', { method: 'POST', session: token, body: Buffer.from('{}') })).data, { ok: true, pedidas: 1 });
+  faltam = (await p.req('/api/capas/faltam', { session: token })).data;
+  assert.equal(faltam.itens.find((i) => i.id === 'PPSA10001').esperando, true);
+  assert.equal(faltam.itens.find((i) => i.id === 'PPSA10001').ate, 0);
+  assert.equal((await p.req('/api/capas/lista?max=1', { session: token })).data.itens[0].id, 'PPSA10001');
+  // sem ids = todos da lista
+  assert.deepEqual((await p.req('/api/capas/tentar', { method: 'POST', session: token, body: Buffer.from('{}') })).data, { ok: true, pedidas: 2 });
+  // a capa chegou pelo celular: sai da lista
+  assert.equal((await p.req('/api/capas/enviar?id=PPSA10002', { method: 'POST', session: token, body: JPEG })).status, 200);
+  faltam = (await p.req('/api/capas/faltam', { session: token })).data;
+  assert.deepEqual(faltam.itens.map((i) => i.id), ['PPSA10001']);
+  assert.equal(faltam.total, 1);
+  // Limpar concluidos: sem nada concluido, 0 removidos
+  assert.deepEqual((await p.req('/api/finished/clear', { method: 'POST', session: token, body: Buffer.from('{}') })).data, { ok: true, removidos: 0 });
+  await p.stop();
+});

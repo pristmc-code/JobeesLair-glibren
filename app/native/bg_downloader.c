@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.12"
+#define BG_VERSION "1.37.13"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -7253,6 +7253,54 @@ static void auto_after_download(Job* j) {
 #include "bg_app.c"   // Fase 8: a Jobe web completa (/app), esqueleto; convive com a pagina do celular
 #include "bg_capa.c"  // .56: o proxy de capas da /app (navegador do PS5: jogo instalado, cache, rede e DoH)
 #include "bg_covers_bank.c" // banco de capas pelo celular (JobeControle): /api/capas/*, /app/capa?u= (TV)
+
+// .69: POST /api/finished/clear (monitor_allowed): "Limpar concluidos" da secao Finalizados (pagina do celular e /app).
+// So tira da lista os downloads concluidos parados e as conversoes prontas; nenhum arquivo e apagado. {ok, removidos}
+static void monitor_clear_finished(int fd, const Request* r) {
+  if (!monitor_allowed(r)) { monitor_json(fd, 401, "{\"error\":\"pin\"}"); return; }
+  int removed = 0;
+  pthread_mutex_lock(&g_lock);
+  for (int k = g_job_count - 1; k >= 0; --k) {
+    Job* j = g_jobs[k];
+    if (j->running || strcmp(j->state, "completed")) continue;
+    remove_job_locked(j);
+    ++removed;
+  }
+  if (removed) save_jobs_locked();
+  pthread_mutex_unlock(&g_lock);
+  removed += conv_forget_done();
+  char out[64];
+  snprintf(out, sizeof out, "{\"ok\":true,\"removidos\":%d}", removed);
+  monitor_json(fd, 200, out);
+}
+// .69: GET /api/discos (livre, como /api/status): o espaco de cada disco montado, o mesmo statvfs que recusa download
+// sem espaco (space_short). {ok, discos:[{caminho, livre, total}]}: /data e os /mnt/usb* e /mnt/ext* montados (uma pasta
+// em /mnt no mesmo disco de /mnt e um ponto sem disco: fica de fora). BGDL_BACKUP_ROOTS troca a lista (testes do PC).
+static void monitor_discos(int fd) {
+  char roots[16][256];
+  const int n = conv_backup_roots(roots, 16);
+  struct stat base;
+  const int have_base = !stat("/mnt", &base);
+  Buf b = {0};
+  buf_str(&b, "{\"ok\":true,\"discos\":[");
+  int shown = 0;
+  for (int i = 0; i < n; ++i) {
+    struct stat st;
+    if (stat(roots[i], &st) || !S_ISDIR(st.st_mode)) continue;
+    if (!strncmp(roots[i], "/mnt/", 5) && have_base && st.st_dev == base.st_dev) continue;
+    struct statvfs vfs;
+    if (statvfs(roots[i], &vfs)) continue;
+    const uint64_t total = (uint64_t)vfs.f_blocks * (uint64_t)vfs.f_frsize, livre = (uint64_t)vfs.f_bavail * (uint64_t)vfs.f_frsize;
+    if (!total) continue;
+    buf_str(&b, shown++ ? ",{\"caminho\":" : "{\"caminho\":");
+    buf_json(&b, roots[i]);
+    buf_fmt(&b, ",\"livre\":%llu,\"total\":%llu}", (unsigned long long)livre, (unsigned long long)total);
+  }
+  buf_str(&b, "]}");
+  if (b.failed || !b.data) monitor_json(fd, 500, "{\"error\":\"out of memory\"}");
+  else monitor_json(fd, 200, b.data);
+  free(b.data);
+}
 // glibren.49: o /health diz se o payload no ar foi posto de lado ("Voltar ao payload embutido"): o app sobe o embutido.
 static void self_health(int* replace) {
   self_init();
@@ -7309,6 +7357,8 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
     monitor_json(fd, 200, "{\"ok\":true}");
     return;
   }
+  if (!strcmp(r->method, "POST") && !strcmp(r->path, "/api/finished/clear")) { monitor_clear_finished(fd, r); return; }
+  if (!strcmp(r->method, "GET") && !strcmp(r->path, "/api/discos")) { monitor_discos(fd); return; }
   monitor_json(fd, 404, "{\"error\":\"not found\"}");
 }
 

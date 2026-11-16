@@ -24,7 +24,8 @@
 // BGDL_GLIBREN_BASE apontam para pastas e servidores falsos.
 
 #define DIAG_TAIL (2u * 1024 * 1024)       // cada log: so os ultimos ~2 MB
-#define DIAG_MAX_FILES 16 // glibren.47: + teste-resultados.txt e teste-estado.json (pagina /teste)
+#define DIAG_MAX_FILES 18 // glibren.47: + teste-resultados.txt e teste-estado.json (pagina /teste); .69: + capas-faltam.txt
+static char* miss_diag_text(size_t* size); // .69: "Capas que faltam" (bg_covers_bank.c, incluido depois)
 #define DIAG_MEMORY_MAX (48 * 1024)        // a amostra da Memoria que o app manda
 #define DIAG_REPO_PATH "/repos/pristmc-code/ps5-diagnosticos/contents/"
 #define DIAG_COMMITTER "{\"name\":\"PristMC\",\"email\":\"285300718+pristmc-code@users.noreply.github.com\"}"
@@ -540,6 +541,11 @@ static void diag_collect(DiagSet* s, const char* folder, const char* from) {
   else if (!strcmp(from, "teste")) { diag_missing(s, "teste-resultados.txt"); logf_("diagnostico: teste-resultados.txt nao achado (%s)", strerror(errno)); }
   snprintf(path, sizeof path, "%.500s/teste-estado.json", g_dir);
   if (diag_exists(path)) diag_add_path(s, "teste-estado.json", path, &known);
+  { // .69: os jogos sem capa e o motivo (a mesma lista da secao "Capas que faltam" da pagina do celular)
+    size_t miss_size = 0;
+    char* miss = miss_diag_text(&miss_size);
+    if (miss) diag_put_file(s, "capas-faltam.txt", miss, miss_size, 0, &known);
+  }
   diag_add_glibren(s, &known);
   // info.json: versoes, a Memoria do app, de onde veio o pedido e o que foi junto
   Buf b = {0};

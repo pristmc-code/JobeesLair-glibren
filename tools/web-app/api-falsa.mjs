@@ -165,6 +165,15 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
       for (const j of jobs) if (j.state === 'downloading') j.written = Math.min(j.total, j.written + j.bytesPerSecond * 2);
       return json(res, 200, { jobs, cancelledRecent: [], limit: 2, maxLimit: 4, maxConnections: 64, limitSet: false, pinSet: true, speedLimit: 0, maxSpeedLimit: 1000, speedLimitSet: false });
     }
+    // .69: o espaco livre dos discos e "Limpar concluidos"
+    if (p === '/api/discos' && req.method === 'GET') {
+      return json(res, 200, { ok: true, discos: [{ caminho: '/data', livre: 312 * 2 ** 30, total: 825 * 2 ** 30 }, { caminho: '/mnt/ext0', livre: 1210 * 2 ** 30, total: 3726 * 2 ** 30 }] });
+    }
+    if (p === '/api/finished/clear' && req.method === 'POST') {
+      const antes = jobs.length;
+      for (let i = jobs.length - 1; i >= 0; --i) if (jobs[i].state === 'completed') jobs.splice(i, 1);
+      return json(res, 200, { ok: true, removidos: antes - jobs.length });
+    }
     const acao = /^\/api\/jobs\/([^/]+)\/(pause|resume|cancel)$/.exec(p);
     if (acao && req.method === 'POST') {
       if (!sessaoOk(req)) return json(res, 401, { error: 'pin' });

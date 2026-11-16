@@ -6,6 +6,19 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.69** (fork): missing covers, free space and "Clear finished" on the phone page. Download payload 1.37.13.
+  - Phone page: new "Missing covers" area lists each game without a cover, with the reason (only a Sony cover in the
+    catalog or none, the PS5 network and the patches site failed, the TV found nothing on the PS5, the phone could not
+    find it either, code outside PPSA/CUSA, waiting for the phone) and "Try again" (clears the failure marks and asks the
+    phone again). `GET /api/capas/faltam`, `POST /api/capas/tentar`; the list also goes in the diagnostics
+    (`capas-faltam.txt`).
+  - "Clear finished" is back in the Finished section of the phone page and in Downloads of the full-screen store
+    (`POST /api/finished/clear`): it only removes finished downloads and ready conversions from the list; no file is
+    deleted.
+  - Free space of each drive ("X free of Y": internal, external and USB drives that are mounted) on the phone page and in
+    Downloads of the full-screen store (`GET /api/discos`).
+  - Cover bank: while the JobeControle app is open on Wi-Fi and covers are still missing, the phone page starts the next
+    batch of 300 right after the previous one (no more 15 min wait). No new APK.
 - **glibren.68** (fork): sort both ways in the glibren full-screen store (`/app`). Download payload 1.37.12.
   - Every order now comes in both directions, side by side: Most/Least popular, Newest/Oldest, Top/Lowest rated,
     Largest/Smallest, Title/Title (Z–A) (`GET /api/store?...&dir=rev`). Games without the data for that order (no size,

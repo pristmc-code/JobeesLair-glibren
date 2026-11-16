@@ -33,6 +33,16 @@
 //                                   | 507 {error:"cheio"}
 //   POST /api/capas/falhou?ids=A,B  o celular nao achou capa para esses jogos: saem da lista por 24 h -> {ok, marcadas}
 //   POST /api/capas/apagar          esvazia o banco -> {ok, apagadas}
+//   GET  /api/capas/faltam          .69 "Capas que faltam": {ok, total, itens:[{id, nome, motivo, esperando, desde, ate}]},
+//                                   os jogos sem capa com o MOTIVO (motivo: "fonte" o catalogo so com a Sony ou sem
+//                                   endereco e o site de patches sem icone; "rede" os enderecos e o site de patches falharam pela rede do PS5;
+//                                   "tv" a TV pediu e nao havia nada no disco; "celular" o celular tambem nao achou, fora
+//                                   da lista por 24 h ate `ate`; "codigo" o codigo do jogo nao e de 4 letras + 5 numeros
+//                                   (PPSA/CUSA) e nao da para buscar; "espera" so aguardando o celular). esperando = esta
+//                                   nas pedidas do celular. Some da lista quando a capa chega (banco, icon0 ou cache). Em
+//                                   memoria (MISS_MAX); vai tambem no diagnostico (capas-faltam.txt, bg_diag.c).
+//   POST /api/capas/tentar?ids=A,B  "Tentar de novo" (sem ids = todos da lista): tira a marca de falha (24 h do celular e
+//                                   10 min da rede do PS5) e pede de novo ao celular (bank_ask) -> {ok, pedidas}
 // Rota livre (como /app/capa, so o Host conferido):
 //   GET  /app/capa?u=<url>          a TV (Image.setRouter no PS5, app/state/picture-route.js) pede pela URL da capa do
 //                                   catalogo: o payload acha o jogo pela URL (sem a parte depois do "?") e serve SO o
@@ -146,6 +156,38 @@ static void bank_unask_locked(const char* id) {
     --g_bank_asked_n;
     return;
   }
+}
+
+// ---- .69: "Capas que faltam" (com g_bank_lock) ----
+#define MISS_MAX 400
+#define MISS_LIST_MAX 200
+#define MISS_CODIGO 5
+#define MISS_ESPERA 6
+static struct { char id[10]; uint8_t why; int64_t at; } g_miss[MISS_MAX]; // a mais antiga primeiro
+static int g_miss_n;
+static void miss_forget_locked(const char* id) {
+  for (int i = 0; i < g_miss_n; ++i) {
+    if (strcmp(g_miss[i].id, id)) continue;
+    memmove(&g_miss[i], &g_miss[i + 1], sizeof g_miss[0] * (size_t)(g_miss_n - i - 1));
+    --g_miss_n;
+    return;
+  }
+}
+static void miss_note_locked(const char* id, int why) {
+  if (!capa_id_ok(id)) return;
+  uint8_t old = 0;
+  for (int i = 0; i < g_miss_n; ++i) if (!strcmp(g_miss[i].id, id)) { old = g_miss[i].why; miss_forget_locked(id); break; }
+  if (g_miss_n == MISS_MAX) { memmove(&g_miss[0], &g_miss[1], sizeof g_miss[0] * (MISS_MAX - 1)); --g_miss_n; }
+  copy_text(g_miss[g_miss_n].id, sizeof g_miss[0].id, id);
+  // A TV nao sabe o motivo: nao apaga um mais preciso (rede, catalogo, celular) visto antes.
+  g_miss[g_miss_n].why = (uint8_t)(why == MISS_TV && old ? old : why);
+  g_miss[g_miss_n].at = now_s();
+  ++g_miss_n;
+}
+static void miss_note(const char* id, int why) {
+  pthread_mutex_lock(&g_bank_lock);
+  miss_note_locked(id, why);
+  pthread_mutex_unlock(&g_bank_lock);
 }
 
 // /app/capa (bg_capa.c): 1 = serviu do banco.
@@ -466,6 +508,7 @@ static void bank_enviar(int fd, Request* r, const char* query) {
       } else ok = 0; // sem memoria para o indice: o arquivo fica e entra na proxima subida
     }
     bank_unask_locked(id);
+    miss_forget_locked(id);
     for (int i = 0; i < BANK_FAILED; ++i) if (!strcmp(g_bank_failed[i].id, id)) g_bank_failed[i].until = 0;
     ++g_bank_received;
     snprintf(out, sizeof out, "{\"ok\":true,\"id\":\"%s\",\"enviadas\":%d,\"bytes\":%llu}", id, g_bank_n, (unsigned long long)g_bank_bytes);
@@ -491,6 +534,7 @@ static void bank_falhou(int fd, const char* query) {
     g_bank_failed[g_bank_failed_at].until = until;
     g_bank_failed_at = (g_bank_failed_at + 1) % BANK_FAILED;
     bank_unask_locked(tok);
+    miss_note_locked(tok, MISS_CELULAR);
     ++marked;
   }
   pthread_mutex_unlock(&g_bank_lock);
@@ -532,8 +576,188 @@ static void bank_tv(int fd, const char* id) {
     snprintf(path, sizeof path, "%.600s/%s%s", cache, id, CAPA_TYPES[i].ext);
     if (capa_send_file(fd, path, CAPA_TYPES[i].type, "cache")) return;
   }
+  miss_note(id, MISS_TV);
   bank_ask(id);
   monitor_json(fd, 404, "{\"error\":\"sem-capa\"}");
+}
+
+// ---- .69: a lista "Capas que faltam" (pagina do celular e diagnostico) ----
+typedef struct { char id[10], nome[160]; uint8_t why, waiting; int64_t at, until; } MissItem;
+static const char* miss_code(int why) {
+  switch (why) {
+    case MISS_FONTE: return "fonte";
+    case MISS_REDE: return "rede";
+    case MISS_TV: return "tv";
+    case MISS_CELULAR: return "celular";
+    case MISS_CODIGO: return "codigo";
+    default: return "espera";
+  }
+}
+static const char* miss_text(int why) {
+  switch (why) {
+    case MISS_FONTE: return "so ha capa da Sony no catalogo (o PS5 nao fala com a Sony) ou nenhuma, e o site de patches nao achou";
+    case MISS_REDE: return "a capa nao abriu pela rede do PS5 nem pelo site de patches";
+    case MISS_TV: return "a TV pediu e nao havia capa no PS5";
+    case MISS_CELULAR: return "o celular tambem nao achou (tenta de novo em 24 h)";
+    case MISS_CODIGO: return "codigo fora do padrao PPSA/CUSA: nao da para buscar capa";
+    default: return "aguardando o celular buscar";
+  }
+}
+static int miss_has_cover(const char* id, char (*el)[10], int nel) {
+  return bank_find_locked(id) || (nel && bsearch(id, el, (size_t)nel, sizeof *el, bank_id_cmp));
+}
+// A lista (malloc, ate MISS_LIST_MAX em *n; *total conta todas), a mais recente primeiro: as anotadas, as pedidas sem
+// anotacao e, por ultimo, os jogos do catalogo com codigo fora do padrao. Sem as que ja tem capa (banco, icon0, cache).
+static MissItem* miss_collect(int* n, int* total) {
+  *n = *total = 0;
+  MissItem* out = calloc(MISS_LIST_MAX, sizeof *out);
+  if (!out) return NULL;
+  int nel = 0;
+  char (*el)[10] = bank_elsewhere(&nel);
+  const int64_t now = now_s();
+  pthread_mutex_lock(&g_bank_lock);
+  bank_setup_locked();
+  for (int i = g_miss_n - 1; i >= 0; --i) {
+    const char* id = g_miss[i].id;
+    if (miss_has_cover(id, el, nel)) continue;
+    ++*total;
+    if (*n >= MISS_LIST_MAX) continue;
+    MissItem* it = &out[(*n)++];
+    copy_text(it->id, sizeof it->id, id);
+    it->why = g_miss[i].why;
+    it->at = g_miss[i].at;
+    for (int k = 0; k < g_bank_asked_n && !it->waiting; ++k) it->waiting = !strcmp(g_bank_asked[k], id);
+    for (int k = 0; k < BANK_FAILED; ++k)
+      if (g_bank_failed[k].until > now && g_bank_failed[k].until > it->until && !strcmp(g_bank_failed[k].id, id)) it->until = g_bank_failed[k].until;
+  }
+  for (int i = 0; i < g_bank_asked_n; ++i) {
+    const char* id = g_bank_asked[i];
+    int dup = 0;
+    for (int k = 0; k < g_miss_n && !dup; ++k) dup = !strcmp(g_miss[k].id, id);
+    if (dup || miss_has_cover(id, el, nel)) continue;
+    ++*total;
+    if (*n >= MISS_LIST_MAX) continue;
+    MissItem* it = &out[(*n)++];
+    copy_text(it->id, sizeof it->id, id);
+    it->why = MISS_ESPERA;
+    it->waiting = 1;
+  }
+  pthread_mutex_unlock(&g_bank_lock);
+  free(el);
+  const int noted = *n;
+  Catalog* c = cat_get();
+  if (c) {
+    for (int i = 0; i < noted; ++i) {
+      const CtGame* g = ct_find_game(c, out[i].id);
+      if (g && g->title) copy_text(out[i].nome, sizeof out[i].nome, g->title);
+    }
+    for (int i = 0; i < c->ngames; ++i) {
+      const CtGame* g = c->games[i];
+      if (capa_id_ok(g->id)) continue;
+      ++*total;
+      if (*n >= MISS_LIST_MAX) continue;
+      MissItem* it = &out[(*n)++];
+      copy_text(it->id, sizeof it->id, g->id);
+      if (g->title) copy_text(it->nome, sizeof it->nome, g->title);
+      it->why = MISS_CODIGO;
+    }
+    cat_put(c);
+    return out;
+  }
+  for (int i = 0; i < noted; ++i) {
+    StGame g;
+    char key[96];
+    if (st_lookup(out[i].id, &g, key, sizeof key, NULL) == 1) copy_text(out[i].nome, sizeof out[i].nome, g.title);
+  }
+  pthread_mutex_lock(&g_store_lock);
+  if (st_refresh_locked() == 1 && g_store)
+    for (int i = 0; i < g_store->count; ++i) {
+      if (capa_id_ok(g_store->games[i].id)) continue;
+      ++*total;
+      if (*n >= MISS_LIST_MAX) continue;
+      MissItem* it = &out[(*n)++];
+      copy_text(it->id, sizeof it->id, g_store->games[i].id);
+      copy_text(it->nome, sizeof it->nome, g_store->games[i].title);
+      it->why = MISS_CODIGO;
+    }
+  pthread_mutex_unlock(&g_store_lock);
+  return out;
+}
+static void bank_faltam(int fd) {
+  int n = 0, total = 0;
+  MissItem* items = miss_collect(&n, &total);
+  if (!items) { monitor_json(fd, 500, "{\"error\":\"out of memory\"}"); return; }
+  Buf b = {0};
+  buf_fmt(&b, "{\"ok\":true,\"total\":%d,\"itens\":[", total);
+  for (int i = 0; i < n; ++i) {
+    buf_str(&b, i ? ",{\"id\":" : "{\"id\":");
+    buf_json(&b, items[i].id);
+    buf_str(&b, ",\"nome\":");
+    buf_json(&b, items[i].nome);
+    buf_fmt(&b, ",\"motivo\":\"%s\",\"esperando\":%s,\"desde\":%lld,\"ate\":%lld}", miss_code(items[i].why), items[i].waiting ? "true" : "false",
+            (long long)items[i].at, (long long)items[i].until);
+  }
+  buf_str(&b, "]}");
+  free(items);
+  if (b.failed || !b.data) monitor_json(fd, 500, "{\"error\":\"out of memory\"}");
+  else monitor_json(fd, 200, b.data);
+  free(b.data);
+}
+// "Tentar de novo": sem ids, todos os da lista que tem codigo valido.
+static void bank_tentar(int fd, const char* query) {
+  char list[1000];
+  bank_param(query, "ids", list, sizeof list);
+  char (*ids)[10] = NULL;
+  int nids = 0;
+  if (list[0]) {
+    ids = calloc(64, sizeof *ids);
+    char* save = NULL;
+    for (char* tok = strtok_r(list, ",", &save); ids && tok && nids < 64; tok = strtok_r(NULL, ",", &save))
+      if (capa_id_ok(tok)) copy_text(ids[nids++], 10, tok);
+  } else {
+    int n = 0, total = 0;
+    MissItem* items = miss_collect(&n, &total);
+    if (items && (ids = calloc((size_t)(n ? n : 1), sizeof *ids)))
+      for (int i = 0; i < n; ++i) if (capa_id_ok(items[i].id)) copy_text(ids[nids++], 10, items[i].id);
+    free(items);
+  }
+  if (!ids) { monitor_json(fd, 500, "{\"error\":\"out of memory\"}"); return; }
+  for (int i = 0; i < nids; ++i) {
+    capa_neg_clear(ids[i]);
+    pthread_mutex_lock(&g_bank_lock);
+    for (int k = 0; k < BANK_FAILED; ++k) if (!strcmp(g_bank_failed[k].id, ids[i])) g_bank_failed[k].until = 0;
+    for (int k = 0; k < g_miss_n; ++k) if (!strcmp(g_miss[k].id, ids[i]) && g_miss[k].why == MISS_CELULAR) g_miss[k].why = MISS_ESPERA;
+    pthread_mutex_unlock(&g_bank_lock);
+  }
+  // bank_ask poe a mais recente primeiro: a ordem inversa deixa a primeira da lista no topo das pedidas
+  for (int i = nids - 1; i >= 0; --i) bank_ask(ids[i]);
+  free(ids);
+  if (nids) logf_("capas: tentar de novo pedido para %d jogo(s)", nids);
+  char out[80];
+  snprintf(out, sizeof out, "{\"ok\":true,\"pedidas\":%d}", nids);
+  monitor_json(fd, 200, out);
+}
+// O diagnostico (bg_diag.c): capas-faltam.txt em texto simples. NULL sem nada a contar.
+static char* miss_diag_text(size_t* size) {
+  int n = 0, total = 0;
+  MissItem* items = miss_collect(&n, &total);
+  if (!items) return NULL;
+  Buf b = {0};
+  buf_fmt(&b, "# Capas que faltam: %d jogo(s)%s (desde a subida do payload; a mais recente primeiro)\n", total, total > n ? ", mostrando os primeiros" : "");
+  for (int i = 0; i < n; ++i) {
+    char when[32] = "-";
+    if (items[i].at) {
+      struct tm tm;
+      const time_t t = (time_t)items[i].at;
+      if (localtime_r(&t, &tm)) strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tm);
+    }
+    buf_fmt(&b, "%s\t%s\t%s\t%s%s\n", items[i].id[0] ? items[i].id : "(sem codigo)", items[i].nome[0] ? items[i].nome : "?", when, miss_text(items[i].why),
+            items[i].waiting && items[i].why != MISS_ESPERA ? "; aguardando o celular" : "");
+  }
+  free(items);
+  if (b.failed || !b.data) { free(b.data); return NULL; }
+  *size = b.size;
+  return b.data;
 }
 
 // Pagina do celular. 1 = tratou.
@@ -549,7 +773,8 @@ static int bank_monitor_route(int fd, Request* r, const char* query) {
   if (strncmp(r->path, "/api/capas/", 11)) return 0;
   const char* what = r->path + 11;
   const int get = !strcmp(r->method, "GET"), post = !strcmp(r->method, "POST");
-  if (!(get && (!strcmp(what, "estado") || !strcmp(what, "lista"))) && !(post && (!strcmp(what, "enviar") || !strcmp(what, "falhou") || !strcmp(what, "apagar")))) {
+  if (!(get && (!strcmp(what, "estado") || !strcmp(what, "lista") || !strcmp(what, "faltam"))) &&
+      !(post && (!strcmp(what, "enviar") || !strcmp(what, "falhou") || !strcmp(what, "apagar") || !strcmp(what, "tentar")))) {
     monitor_json(fd, 404, "{\"error\":\"not found\"}");
     return 1;
   }
@@ -558,6 +783,8 @@ static int bank_monitor_route(int fd, Request* r, const char* query) {
   else if (!strcmp(what, "lista")) bank_lista(fd, query);
   else if (!strcmp(what, "enviar")) bank_enviar(fd, r, query);
   else if (!strcmp(what, "falhou")) bank_falhou(fd, query);
+  else if (!strcmp(what, "faltam")) bank_faltam(fd);
+  else if (!strcmp(what, "tentar")) bank_tentar(fd, query);
   else bank_apagar(fd);
   return 1;
 }

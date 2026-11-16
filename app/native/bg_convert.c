@@ -1222,6 +1222,24 @@ static void conv_status_json(Buf* b) {
   pthread_mutex_unlock(&g_conv_lock);
 }
 
+// .69: "Limpar concluidos" (pagina do celular e /app): esquece as conversoes prontas (done) que o ciclo nao usa mais.
+// So tira da lista: o .exfat fica no disco. Devolve quantas sairam.
+static int conv_forget_done(void) {
+  int removed = 0;
+  pthread_mutex_lock(&g_conv_lock);
+  for (int i = g_conv_count - 1; i >= 0; --i) {
+    Conv* c = g_convs[i];
+    if (strcmp(c->state, "done") || c->running || c->in_use) continue;
+    memmove(&g_convs[i], &g_convs[i + 1], sizeof(Conv*) * (size_t)(g_conv_count - i - 1));
+    --g_conv_count;
+    free(c);
+    ++removed;
+  }
+  if (removed) conv_save_locked();
+  pthread_mutex_unlock(&g_conv_lock);
+  return removed;
+}
+
 // Os discos onde pode haver BACKUP: o interno e os externos (BGDL_BACKUP_ROOTS, separados por ':', so nos testes).
 static int conv_backup_roots(char roots[][256], int max) {
   int count = 0;

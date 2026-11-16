@@ -526,3 +526,11 @@ test('glibren.58: a /app mostra a conversao/extracao do payload na secao Downloa
   assert.ok(conv[0].convBps > 0, 'velocidade da conversao');
   assert.ok(all(ctx.cartao(conv[0])).includes(textos['pt-BR'].conv.convertendo));
 });
+
+test('.69: a /app mostra o espaco livre dos discos e tem Limpar concluidos (textos nos 14 idiomas)', () => {
+  const page = readFileSync(embed.APP_PAGE || path.join(repo, 'app/native/bg_app.html'), 'utf8');
+  for (const piece of ['/api/discos', '/api/finished/clear', 'id="dDiscos"', 'id="dLimpar"', 'data-t="limparProntos"']) assert.ok(page.includes(piece), piece);
+  const { textos, faltou } = textosGer.montar();
+  assert.deepEqual(faltou, []);
+  for (const k of ['limparProntos', 'discoLivre', 'discoInterno', 'discoExterno']) for (const idioma of Object.keys(textos)) assert.equal(typeof textos[idioma][k], 'string', `${k} [${idioma}]`);
+});

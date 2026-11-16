@@ -156,6 +156,13 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
 .citem{display:flex;flex-direction:column;gap:5px;padding:9px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;min-width:0}
 .citem .name{font-size:15px}
 .citem small{color:var(--subtle);font-size:12.5px}
+/* .69: espaco livre dos discos e "Capas que faltam" (textos quebram linha, nunca cortam) */
+.disks{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--subtle);font-size:13px;padding:0 2px 8px}
+.disks b{color:var(--fg);font-weight:600}
+#doneBox{margin-bottom:8px}
+.miss .citem{margin-top:6px}
+.miss .citem small{overflow-wrap:anywhere}
+.miss .citem .btn{align-self:flex-start;min-height:34px}
 /* Celular deitado / telas largas: duas colunas e topo mais baixo */
 /* Celular deitado / telas largas: duas colunas e topo mais baixo */
 @media (orientation:landscape) and (max-height:520px){
@@ -204,6 +211,8 @@ main{padding:12px max(var(--pad),env(safe-area-inset-right)) calc(20px + env(saf
   <nav class="secbar" id="secbar" aria-label="Seções"><button class="pick spd" type="button" id="speedBtn" aria-haspopup="menu" hidden></button><button class="pick sec" type="button" id="secPick" aria-haspopup="menu"></button></nav>
 </div>
 <main>
+  <div class="disks" id="disks" hidden></div>
+  <div class="cancelled" id="doneBox" hidden></div>
   <div class="list" id="list"></div>
   <div class="cancelled" id="cancelledBox" hidden></div>
   <div class="foot" id="foot"></div>
@@ -415,6 +424,7 @@ function render() {
   limitBar();
   renderSections();
   renderCancelled();
+  if (window.doneHook) window.doneHook(); // .69: "Limpar concluidos" na secao Finalizados
   const visible = jobs.filter((j) => shows(sectionOfJob(j)));
   // glibren.12: lista vazia: a mensagem de sempre em "Tudo"; numa secao, so quando ela nao mostra outra coisa.
   if (!visible.length && (section === "all" ? !jobs.length : !["converting", "done", "cancelled", "backup"].includes(section))) {
@@ -1452,6 +1462,155 @@ pinOnOpen();
   }
   box.addEventListener("toggle", () => { if (box.open && (session || DEMO)) load(); else if (!box.open && polling) { clearInterval(polling); polling = null; } render(); });
   render();
+})();
+</script>
+<!-- .69: o espaco livre dos discos (GET /api/discos, livre), "Limpar concluidos" na secao Finalizados (POST
+     /api/finished/clear: so tira da lista, o arquivo fica), a area "Capas que faltam" (GET /api/capas/faltam e POST
+     /api/capas/tentar, com o pareamento) e, dentro do app JobeControle, o banco de capas emendando o proximo lote de 300
+     logo em seguida enquanto ainda falta capa, o app esta aberto e no Wi-Fi (JobeApp.capasEstado/capasAgora, sem APK novo). -->
+<script>
+"use strict";
+(() => {
+  const X = {
+    pt: { internal: "Interno", external: "Externo", free: "livres de", clearDone: "Limpar concluídos", doneHead: "Só tira da lista: os arquivos ficam no disco.",
+      title: "Capas que faltam", unlock: "Liberar os controles", none: "Nenhuma capa faltando agora.", retryAll: "Tentar de novo (todas)", retry: "Tentar de novo",
+      count: "{n} jogo(s) sem capa.", shown: "Mostrando {n} de {t}.", asked: "Pedido ao celular: ele busca quando o app JobeControle estiver aberto no Wi-Fi.", fail: "Não deu. Tente de novo.",
+      noCode: "sem código", waiting: "Aguardando o celular buscar.", until: "O celular tenta de novo depois de {t}.",
+      why: { fonte: "O catálogo só tem a capa da Sony (o PS5 não fala com a Sony) ou nenhuma, e o site de patches não achou.", rede: "A capa não abriu pela rede do PS5 nem pelo site de patches.",
+        tv: "A TV pediu e não havia capa no PS5.", celular: "O celular também não achou a capa.", codigo: "Código fora do padrão PPSA/CUSA: não dá para buscar capa.",
+        espera: "Aguardando o celular buscar." } },
+    en: { internal: "Internal", external: "External", free: "free of", clearDone: "Clear finished", doneHead: "Only removes them from the list: the files stay on the drive.",
+      title: "Missing covers", unlock: "Unlock the controls", none: "No cover missing right now.", retryAll: "Try again (all)", retry: "Try again",
+      count: "{n} game(s) without a cover.", shown: "Showing {n} of {t}.", asked: "Asked the phone: it fetches them while the JobeControle app is open on Wi-Fi.", fail: "It did not work. Try again.",
+      noCode: "no code", waiting: "Waiting for the phone to fetch it.", until: "The phone tries again after {t}.",
+      why: { fonte: "The catalog only has the Sony cover (the PS5 never talks to Sony) or none, and the patches site found none.", rede: "The cover did not open through the PS5 network nor the patches site.",
+        tv: "The TV asked and there was no cover on the PS5.", celular: "The phone could not find the cover either.", codigo: "Code outside the PPSA/CUSA pattern: no way to look up a cover.",
+        espera: "Waiting for the phone to fetch it." } }
+  }[L === T.pt ? "pt" : "en"];
+  const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+  const relock = (again) => { session = ""; lockButton(); pending = again; openPin(); };
+  const when = (s) => new Date(s * 1000).toLocaleString(document.documentElement.lang, { dateStyle: "short", timeStyle: "short" });
+
+  // ---- Espaco livre: "Interno: 312 GB livres de 825 GB" por disco montado ----
+  const diskName = (c) => { const m = /^\/mnt\/(usb|ext)(\d+)$/.exec(c); return c === "/data" ? X.internal : m ? `${m[1] === "usb" ? "USB" : X.external} ${Number(m[2]) + 1}` : c; };
+  async function loadDisks() {
+    if (document.hidden) return;
+    let list = [];
+    if (DEMO) list = [{ caminho: "/data", livre: 312 * GB, total: 825 * GB }, { caminho: "/mnt/ext0", livre: 1210 * GB, total: 3726 * GB }];
+    else { const r = await api("GET", "/api/discos").catch(() => null); if (r && r.status === 200 && Array.isArray(r.data.discos)) list = r.data.discos; }
+    const box = $("disks"); box.textContent = "";
+    for (const d of list) {
+      const s = document.createElement("span"), b = document.createElement("b");
+      b.textContent = size(d.livre);
+      s.append(`${diskName(d.caminho)}: `, b, ` ${X.free} ${size(d.total)}`);
+      box.append(s);
+    }
+    box.hidden = !list.length;
+  }
+  loadDisks();
+  setInterval(loadDisks, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadDisks(); });
+
+  // ---- "Limpar concluidos" na secao Finalizados ----
+  async function clearDone() {
+    if (DEMO) { demo.jobs = demo.jobs.filter((j) => j.state !== "completed"); window.demoConversions = (window.demoConversions || []).filter((c) => c.state !== "done"); await refresh(); return; }
+    const r = await api("POST", "/api/finished/clear");
+    if (r.status === 401) return relock(clearDone);
+    await refresh();
+  }
+  window.doneHook = () => {
+    const box = $("doneBox"); box.textContent = "";
+    box.hidden = section !== "done";
+    if (box.hidden) return;
+    const head = document.createElement("div"); head.className = "head";
+    const h = document.createElement("span"); h.textContent = X.doneHead;
+    const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = X.clearDone;
+    b.disabled = !sectionCounts().done;
+    b.onclick = () => guarded(clearDone);
+    head.append(h, b); box.append(head);
+  };
+
+  // ---- "Capas que faltam" ----
+  const box = document.createElement("details"); box.className = "diag miss";
+  const head = document.createElement("summary"); head.textContent = X.title;
+  const body = document.createElement("div"); body.className = "dg-body";
+  box.append(head, body);
+  $("foot").before(box);
+  let data = null, msg = "", msgOk = false;
+  const demoMiss = { ok: true, total: 3, itens: [
+    { id: "PPSA01784", nome: "Ghost of Tsushima Director's Cut", motivo: "celular", esperando: false, desde: Math.floor(Date.now() / 1000) - 600, ate: Math.floor(Date.now() / 1000) + 86000 },
+    { id: "CUSA00552", nome: "The Last of Us Remastered", motivo: "rede", esperando: true, desde: Math.floor(Date.now() / 1000) - 120, ate: 0 },
+    { id: "", nome: "Homebrew sem código", motivo: "codigo", esperando: false, desde: 0, ate: 0 }] };
+  async function load() {
+    if (DEMO) { data = demoMiss; render(); return; }
+    const r = await api("GET", "/api/capas/faltam").catch(() => ({ status: 0, data: {} }));
+    if (r.status === 401) return relock(load);
+    data = r.status === 200 ? r.data : null;
+    if (!data) { msg = X.fail; msgOk = false; }
+    render();
+  }
+  async function retry(ids) {
+    msg = "";
+    if (DEMO) { for (const it of demoMiss.itens) if (!ids || ids.includes(it.id)) if (it.id) { it.esperando = true; it.ate = 0; } msg = X.asked; msgOk = true; render(); return; }
+    const r = await api("POST", `/api/capas/tentar${ids ? `?ids=${encodeURIComponent(ids.join(","))}` : ""}`, {}).catch(() => ({ status: 0, data: {} }));
+    if (r.status === 401) return relock(() => retry(ids));
+    if (r.status === 200) { msg = X.asked; msgOk = true; } else { msg = X.fail; msgOk = false; }
+    await load();
+  }
+  function line(text, cls = "dg-note") { const d = document.createElement("div"); d.className = cls; d.textContent = text; body.append(d); }
+  function render() {
+    body.textContent = "";
+    if (!session && !DEMO) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn primary"; b.textContent = X.unlock; b.onclick = () => guarded(load); body.append(b);
+      return;
+    }
+    if (data) {
+      const items = data.itens || [];
+      if (!items.length) line(X.none, "dg-ok");
+      else {
+        line(fill(X.count, { n: data.total }));
+        if (data.total > items.length) line(fill(X.shown, { n: items.length, t: data.total }));
+        if (items.some((it) => it.id)) {
+          const all = document.createElement("button"); all.type = "button"; all.className = "btn primary"; all.textContent = X.retryAll;
+          all.onclick = () => guarded(() => retry(null)); body.append(all);
+        }
+      }
+      if (msg) line(msg, msgOk ? "dg-ok" : "dg-err");
+      for (const it of items) {
+        const c = document.createElement("div"); c.className = "citem";
+        const nm = document.createElement("div"); nm.className = "name"; nm.textContent = it.nome || it.id || X.noCode; c.append(nm);
+        const code = document.createElement("small"); code.textContent = it.id || X.noCode; c.append(code);
+        const why = document.createElement("small"); why.textContent = X.why[it.motivo] || X.why.espera; c.append(why);
+        if (it.esperando && it.motivo !== "espera") { const w = document.createElement("small"); w.textContent = X.waiting; c.append(w); }
+        if (it.ate > 0) { const u = document.createElement("small"); u.textContent = fill(X.until, { t: when(it.ate) }); c.append(u); }
+        if (it.id && it.motivo !== "codigo") {
+          const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = X.retry;
+          b.onclick = () => guarded(() => retry([it.id])); c.append(b);
+        }
+        body.append(c);
+      }
+    } else if (msg) line(msg, "dg-err");
+  }
+  box.addEventListener("toggle", () => { if (box.open && (session || DEMO)) load(); else render(); });
+  render();
+
+  // ---- JobeControle: emenda os lotes do banco de capas ----
+  // O app busca ate 300 capas por vez e so volta depois de 15 min (BancoDeCapas.INTERVALO_MS). Com esta pagina aberta
+  // (a tela do app), no Wi-Fi, ligado, parado e com capa ainda faltando, e o lote anterior terminou por ter chegado ao
+  // limite ("Pausa:" com capas enviadas), pede o proximo na hora pelo mesmo botao "Enviar agora" (capasAgora). Um lote
+  // que so falhou (nestaVez 0) ou "nenhuma capa que este celular consiga buscar" nao emenda.
+  const app = window.JobeApp;
+  if (app && typeof app.capasEstado === "function" && typeof app.capasAgora === "function") {
+    let kicked = 0;
+    setInterval(() => {
+      if (document.hidden || Date.now() - kicked < 20000) return;
+      let st = null;
+      try { st = JSON.parse(app.capasEstado()); } catch { return; }
+      if (!st || !st.ligado || st.rodando || !st.wifi || !(st.faltando > 0) || !(st.nestaVez > 0) || !/^Pausa/.test(st.mensagem || "")) return;
+      kicked = Date.now();
+      try { app.capasAgora(); } catch {}
+    }, 10000);
+  }
 })();
 </script>
 <!-- glibren.49 (Fase 2): area "Payload de downloads": a versao em uso (embutida ou baixada e assinada), procurar e

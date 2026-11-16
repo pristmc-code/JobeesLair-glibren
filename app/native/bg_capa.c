@@ -27,6 +27,12 @@
 // Banco de capas pelo celular (bg_covers_bank.c, incluido depois): olhado PRIMEIRO; o que nada serviu vira "pedida".
 static int bank_send(int fd, const char* id);
 static void bank_ask(const char* id);
+// .69: "Capas que faltam" (bg_covers_bank.c): cada jogo sem capa fica anotado com o motivo, para a pagina do celular.
+#define MISS_FONTE 1   // /app/capa?id=: o catalogo so tem a capa da Sony (ou nenhuma) e o site de patches nao achou
+#define MISS_REDE 2    // /app/capa?id=: os enderecos do catalogo e o site de patches falharam pela rede do PS5
+#define MISS_TV 3      // /app/capa?u= (a TV): nada no disco (banco, icon0, cache)
+#define MISS_CELULAR 4 // o celular tambem nao achou (POST /api/capas/falhou, marcado por 24 h)
+static void miss_note(const char* id, int why);
 
 #define CAPA_MAX_BYTES (3u * 1024 * 1024)
 #define CAPA_CACHE_MAX_BYTES (48ull * 1024 * 1024)
@@ -99,6 +105,12 @@ static void capa_neg_add(const char* id) {
   copy_text(g_capa_neg[g_capa_neg_at].id, sizeof g_capa_neg[0].id, id);
   g_capa_neg[g_capa_neg_at].until = now_s() + CAPA_NEG_S;
   g_capa_neg_at = (g_capa_neg_at + 1) % CAPA_NEG;
+}
+// .69: "Tentar de novo" na pagina do celular: a rede volta a ser tentada ja (sem esperar os 10 min). Pega g_capa_lock.
+static void capa_neg_clear(const char* id) {
+  pthread_mutex_lock(&g_capa_lock);
+  for (int i = 0; i < CAPA_NEG; ++i) if (!strcmp(g_capa_neg[i].id, id)) g_capa_neg[i].until = 0;
+  pthread_mutex_unlock(&g_capa_lock);
 }
 
 // Os enderecos do jogo: a capa e as alternativas (png/jpg antes, webp depois, sem avif). Devolve quantos (malloc cada).
@@ -391,6 +403,7 @@ static void capa_route(int fd, const char* query) {
   if (n) ++g_capa_count.falhou; else ++g_capa_count.sem;
   pthread_mutex_unlock(&g_capa_lock);
   if (!n) capa_log("%s: sem endereco de capa no catalogo", id);
+  miss_note(id, n ? MISS_REDE : MISS_FONTE);
   bank_ask(id);
   monitor_json(fd, 404, "{\"error\":\"sem-capa\"}");
 }
