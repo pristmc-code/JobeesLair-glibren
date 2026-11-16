@@ -66,7 +66,7 @@ async function startPayload({ glibren, env = {} } = {}) {
   // a API local (127.0.0.1:BGDL_PORT, com o token do app): o que a Jobe mostraria na TV
   const local = (route) => raw(route, { port: api, headers: { 'X-Jobe-Token': readFileSync(path.join(base, 'state/token'), 'utf8').trim() } });
   for (const end = performance.now() + 30000; ; await wait(50)) {
-    try { if ((await raw('/api/session')).status === 401) break; } catch {}
+    try { if ([200, 401].includes((await raw('/api/session')).status)) break; } catch {} // 200 com BGDL_TEST_LOCAL=1 (glibren.70)
     if (performance.now() > end) throw new Error('payload did not start');
   }
   const stop = async () => { const gone = new Promise((resolve) => child.once('exit', resolve)); child.kill('SIGTERM'); await gone; };
@@ -76,7 +76,7 @@ async function startPayload({ glibren, env = {} } = {}) {
       const partes = []; res.on('data', (c) => partes.push(c)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(partes) }));
     }).on('error', reject);
   });
-  return { raw, rawBin, local, stop, base, monitor };
+  return { raw, rawBin, local, stop, base, monitor, api };
 }
 
 test('bg_app.c compila junto com o payload, sem avisos (-Wall -Wextra -Werror)', { skip: !compiler || missing ? 'no compiler or headers' : false }, () => {
@@ -94,7 +94,7 @@ test('Fase 8: a pagina /app segue o padrao de tela e o navegador do PS5', () => 
   for (const piece of ['"/api/store/game?id="', '"/api/store/add"', '"/api/status"', '"/api/jobs/"', '"/api/unlock"', 'CHAVE: "jobe.session"', 'X-Session',
     '"/api/pair"', '"/api/pair/request"', '"/api/pair/confirm"', '"jobe.deviceName"', 'Auth.com(', 'Usar o PIN', 'Código da TV', 'navigator.getGamepads', 'gamepadconnected', 'keydown', 'requestAnimationFrame', 'ResizeObserver', 'loading = "lazy"', 'data-src',
     'visibilitychange', '/PlayStation/', 'html.ps5', 'clamp(15px,min(1.04vw,1.95vh),20px)', 'requestFullscreen', 'webkitRequestFullscreen', '"jobe.app.tela"',
-    '"/api/teste/enviar"', 'guardaCursor', 'GP.rodaAte', 'window.jobeTelaCheiaPs5', 'k === 116 || k === 117', 'CODIGOS = { 38:', 'jobeGuarda', 'GP.porTeclas', 'window.jobeVoltar', '"← JOGOS"', '"← GAMES"', 'Biblioteca (em breve)', 'Homebrew (em breve)', '"/api/settings"', '"/api/app/telacheia"', 'root.dir = "rtl"',
+    '"/api/teste/enviar"', 'guardaCursor', 'GP.rodaAte', 'window.jobeTelaCheiaPs5', 'k === 116 || k === 117', 'CODIGOS = { 38:', 'jobeGuarda', 'GP.porTeclas', 'window.jobeVoltar', '"← JOGOS"', '"← GAMES"', 'Biblioteca (em breve)', '"/api/homebrew?q="', '"/api/homebrew/add"', '"/api/settings"', '"/api/app/telacheia"', 'root.dir = "rtl"',
     '(max-height:500px) and (min-width:600px)', '(min-width:761px) and (min-height:501px)', '100dvh', '[hidden]{display:none!important}']) assert.ok(page.includes(piece), piece);
   assert.ok(!/text-overflow|nowrap|ellipsis/.test(page), 'texto quebra a linha, sem reticencias');
   assert.match(page, /\.fila\{display:grid;grid-auto-flow:column;grid-auto-columns:minmax\(0,1fr\)/, 'botoes de uma linha com a mesma largura');
@@ -533,4 +533,66 @@ test('.69: a /app mostra o espaco livre dos discos e tem Limpar concluidos (text
   const { textos, faltou } = textosGer.montar();
   assert.deepEqual(faltou, []);
   for (const k of ['limparProntos', 'discoLivre', 'discoInterno', 'discoExterno']) for (const idioma of Object.keys(textos)) assert.equal(typeof textos[idioma][k], 'string', `${k} [${idioma}]`);
+});
+
+test('glibren.70: a aba Homebrew da /app lista os homebrews do payload, com busca e Baixar (textos nos 14 idiomas)', () => {
+  const page = readFileSync(embed.APP_PAGE || path.join(repo, 'app/native/bg_app.html'), 'utf8');
+  for (const piece of ['id="secHomebrew"', 'id="hBusca"', 'id="hLista"', 'id="hDeNovo"', '"/api/homebrew?q="', '"/api/homebrew/add"', 'secao === "homebrew" ? $("hLista")',
+    'k === 113 && secao === "homebrew"', '$("secBreve").hidden = s !== "biblioteca"']) assert.ok(page.includes(piece), piece);
+  assert.ok(!page.includes('Homebrew (em breve)'), 'o "em breve" do Homebrew saiu');
+  assert.ok(page.includes('Biblioteca (em breve)'), 'a Biblioteca continua em breve (Fase 6)');
+  const { textos, faltou } = textosGer.montar();
+  assert.deepEqual(faltou, []);
+  for (const k of ['busca', 'contagem', 'carregando', 'semLista', 'nada', 'baixar', 'naFila', 'soJobe', 'outros', 'vaiHomebrew', 'vaiPkg', 'vaiArquivo', 'jobeAberta', 'semDisco', 'mudou', 'mais'])
+    for (const idioma of Object.keys(textos)) {
+      assert.equal(typeof textos[idioma].hb[k], 'string', `hb.${k} [${idioma}]`);
+      assert.ok(!/\.\.\.|…/.test(textos[idioma].hb[k]), `hb.${k} [${idioma}] sem reticencias`);
+    }
+});
+
+test('glibren.70: /api/homebrew no payload de verdade (lista da Jobe, busca, arquivo fora do repo descartado) e /api/homebrew/add', { skip }, async () => {
+  const base = path.join(dir, 'hb');
+  mkdirSync(base, { recursive: true });
+  const indice = path.join(base, 'homebrew-index.json');
+  const rel = (repo, nome) => `https://github.com/${repo}/releases/download/v1/${nome}`;
+  writeFileSync(indice, JSON.stringify({ version: 1, categories: [{ id: 'system', name: 'System tools' }], apps: [
+    { repo: 'Dono/Ferramenta', name: 'Ferramenta Boa', author: 'Dono', category: 'system', description: 'Uma ferramenta de sistema.', icon: 'https://exemplo.invalid/i.png', stars: 5, release: { tag: 'v1.2' },
+      files: [{ name: 'ferramenta.elf', kind: 'payload', url: rel('Dono/Ferramenta', 'ferramenta.elf'), size: 1234 }, { name: 'ferramenta.zip', kind: 'app', url: rel('Dono/Ferramenta', 'ferramenta.zip'), size: 99, folder: '.' },
+        { name: 'outro.elf', kind: 'payload', url: rel('Outro/Repo', 'outro.elf'), size: 1 }] },
+    { repo: 'Dono/Imagem', name: 'Jogo Caseiro', files: [{ name: 'jogo.exfat', kind: 'image', url: rel('Dono/Imagem', 'jogo.exfat'), size: 5 }] },
+    { repo: 'repo invalido', name: 'Nada', files: [{ name: 'x.elf', kind: 'payload', url: rel('repo invalido', 'x.elf') }] },
+    { repo: 'Dono/SemArquivo', name: 'Sem arquivo', files: [{ name: 'y.elf', kind: 'payload', url: 'https://outro.site/y.elf' }] },
+  ] }));
+  const p = await startPayload({ env: { BGDL_HOMEBREW_URL: '', BGDL_HOMEBREW_JOBE: indice, BGDL_TEST_LOCAL: '1', BGDL_APP_SILENCE_MS: '600' } });
+  const lista = JSON.parse((await p.raw('/api/homebrew')).text);
+  assert.equal(lista.ok, true);
+  assert.equal(lista.from, 'jobe');
+  assert.deepEqual(lista.apps.map((a) => a.id), ['dono/ferramenta', 'dono/imagem'], 'repo invalido e app sem arquivo valido saem');
+  const [ferr] = lista.apps;
+  assert.deepEqual(ferr.files.map((f) => [f.name, f.kind, f.payload]), [['ferramenta.elf', 'payload', true], ['ferramenta.zip', 'app', false]], 'arquivo de outro repo sai');
+  assert.equal(ferr.version, 'v1.2');
+  assert.equal(lista.apps[1].author, 'Dono', 'sem autor: o dono do repo');
+  const busca = JSON.parse((await p.raw('/api/homebrew?q=' + encodeURIComponent('JOGO caseiro'))).text);
+  assert.deepEqual(busca.apps.map((a) => a.id), ['dono/imagem']);
+  assert.equal(busca.count, 1);
+  assert.equal(JSON.parse((await p.raw('/api/homebrew?limit=1&offset=1')).text).apps[0].id, 'dono/imagem', 'paginas');
+  // Baixar: com credencial (BGDL_TEST_LOCAL: 127.0.0.1 faz o papel do celular pareado), a Jobe fechada e o disco dado
+  const add = (body) => p.raw('/api/homebrew/add', { method: 'POST', body }).then((r) => ({ status: r.status, data: JSON.parse(r.text) }));
+  assert.deepEqual((await add({ id: 'dono/ferramenta', i: 0, name: 'ferramenta.elf' })).data.error, 'app-open', 'Jobe aberta: a fila e dela');
+  await wait(900); // o app calado = fechado
+  assert.deepEqual((await add({ id: 'dono/ferramenta', i: 0, name: 'ferramenta.elf' })).data.error, 'no-root', 'sem disco escolhido');
+  const token = readFileSync(path.join(p.base, 'state/token'), 'utf8').trim();
+  assert.equal((await p.raw('/config', { method: 'POST', port: p.api, headers: { 'X-Jobe-Token': token }, body: { autoRoot: path.join(base, 'disco'), autoConvert: false } })).status, 200);
+  await wait(900); // o app calado = fechado
+  assert.deepEqual([(await add({ id: 'dono/ferramenta', i: 0, name: 'outro.elf' })).data.error], ['file'], 'arquivo que nao e o desse indice');
+  assert.deepEqual([(await add({ id: 'dono/ferramenta', i: 1, name: 'ferramenta.zip' })).data.error], ['kind'], 'app fica com a Jobe');
+  assert.equal((await add({ id: 'nao/existe', i: 0, name: 'x' })).status, 404);
+  const ok = await add({ id: 'dono/imagem', i: 0, name: 'jogo.exfat' });
+  assert.deepEqual([ok.status, ok.data.via, ok.data.where], [200, 'payload', 'homebrew'], JSON.stringify(ok.data));
+  const elf = await add({ id: 'dono/ferramenta', i: 0, name: 'ferramenta.elf' });
+  assert.equal(elf.data.where, 'files', JSON.stringify(elf.data));
+  assert.equal((await add({ id: 'dono/imagem', i: 0, name: 'jogo.exfat' })).data.already, true, 'pedir de novo: ja esta');
+  const depois = JSON.parse((await p.raw('/api/homebrew')).text);
+  assert.equal(depois.apps[1].files[0].queued, true, 'a lista marca o que esta na fila');
+  await p.stop();
 });

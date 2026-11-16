@@ -6,6 +6,19 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.70** (fork): Homebrew tab in the full-screen store (/app). Download payload 1.37.14, built-in tube-service 0.2.4.
+  - The Homebrew tab of the full-screen store is no longer "coming soon": it lists the same homebrew as the Homebrew tab
+    of the app (the JobeesLair-Homebrew index), with icon, author, version and description, a search box and pages of 60
+    ("Show more"). The payload reads the newest copy between its own (downloaded from the index repository every 6 h)
+    and the one the app keeps (`GET /api/homebrew`).
+  - "Download <file>" puts disk images, .pkg files and payloads in the payload's queue, the same way the store does with
+    the app closed (`POST /api/homebrew/add`, paired devices): images go to `homebrew/` (ShadowMount+ mounts them), .pkg
+    to `downloads/packages` and payloads to `downloads/files`. Apps and archives are still installed from the app's
+    Homebrew tab (the card says so). Files must come from the app's own GitHub releases, as in the app.
+  - Controller and keyboard as in the store (square = search). Texts in the 14 languages.
+  - Library stays "coming soon" (Phase 6).
+  - Built-in tube-service 0.2.4 (YouTube: waits for the opening ad before reading the video again; fixes the 403 with
+    the account). Also published on its own as `tube-service-0.2.4`.
 - **glibren.69** (fork): missing covers, free space and "Clear finished" on the phone page. Download payload 1.37.13.
   - Phone page: new "Missing covers" area lists each game without a cover, with the reason (only a Sony cover in the
     catalog or none, the PS5 network and the patches site failed, the TV found nothing on the PS5, the phone could not

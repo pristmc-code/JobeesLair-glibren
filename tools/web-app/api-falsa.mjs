@@ -1,7 +1,7 @@
 // Fase 8: uma API FALSA do payload para a Jobe web completa (app/native/bg_app.html), para testar e medir a pagina
 // sem o PS5 e sem o payload: /app, /api/store (paginas, busca, filtros, ordem e facetas como bg_store.c),
 // /api/store/game, /api/store/add (pede credencial), /api/status, /api/jobs/<id>/<acao>, /api/unlock (PIN 1234),
-// /api/session e o pareamento por aparelho da .50 (GET /api/pair, POST /api/pair/request e /api/pair/confirm: codigo 123456). As capas sao SVG pequenos servidos daqui (/capa/<n>.svg), para contar quantas a pagina pede (lazy-load);
+// /api/session, /api/homebrew e /api/homebrew/add (glibren.70) e o pareamento por aparelho da .50 (GET /api/pair, POST /api/pair/request e /api/pair/confirm: codigo 123456). As capas sao SVG pequenos servidos daqui (/capa/<n>.svg), para contar quantas a pagina pede (lazy-load);
 // por isso a CSP daqui acrescenta 'self' em img-src (a do payload so aceita data: e https:).
 // Uso: import { apiFalsa } from './api-falsa.mjs'; const api = await apiFalsa({ jogos: 2639 }); ... api.close().
 // Sozinha: node tools/web-app/api-falsa.mjs [porta]  ->  http://127.0.0.1:<porta>/app
@@ -49,6 +49,24 @@ export function jogosFalsos(n = 2639) {
   return lista;
 }
 
+/** glibren.70: os homebrews falsos (como GET /api/homebrew do payload): nomes e descricoes de tamanhos variados, um de
+ *  cada tipo de arquivo (o payload so baixa imagem, .pkg e payload; os outros ficam com a Jobe). */
+export function homebrewsFalsos(n = 75) {
+  const KINDS = ['payload', 'image', 'app', 'pkg', 'archive-payload'];
+  const EXT = { payload: 'elf', image: 'exfat', app: 'zip', pkg: 'pkg', 'archive-payload': '7z' };
+  const lista = [];
+  for (let i = 0; i < n; i++) {
+    const nome = `${PALAVRAS[i % PALAVRAS.length]} ${PALAVRAS[(i * 7 + 3) % PALAVRAS.length]}${i % 13 === 0 ? ' Ultimate Homebrew Loader with a Very Long Name for Wrapping' : ''} ${i + 1}`;
+    const kind = KINDS[i % KINDS.length];
+    const files = [{ i: 0, name: `${nome.replace(/\s+/g, '_')}.${EXT[kind]}`, kind, size: (i % 4 === 0 ? 900 * 1024 : (i + 1) * 3 * 2 ** 20), payload: ['payload', 'image', 'pkg'].includes(kind), queued: false }];
+    if (i % 6 === 0) files.push({ i: 1, name: `extra-${i + 1}.zip`, kind: 'app', size: 12 * 2 ** 20, payload: false, queued: false });
+    lista.push({ id: `autor${i}/hb${i}`, repo: `Autor${i}/hb${i}`, name: nome, author: `Autor${i}`, category: 'system',
+      description: i % 5 === 0 ? 'Uma descrição comprida de exemplo para conferir a quebra de linha no cartão do homebrew, sem cortar nada com reticências, em qualquer tamanho de tela.' : 'Ferramenta de exemplo.',
+      icon: i % 3 === 0 ? '' : `/capa/${i}.svg`, version: `v1.${i}`, stars: 100 - i, files });
+  }
+  return lista;
+}
+
 // Capa barata de desenhar (cor lisa e um numero): o navegador decodifica um JPEG de verdade fora da thread principal, ja
 // um SVG com degrade e texto grande custa na thread principal e mediria o SVG, nao a pagina.
 function capaSvg(i) {
@@ -62,7 +80,8 @@ const tamanhoDe = (g) => (g.sizeGb <= 10 ? 'small' : g.sizeGb <= 50 ? 'medium' :
 export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = true } = {}) {
   const lista = jogosFalsos(jogos);
   if (!capas) for (const g of lista) g.cover = '';
-  const contadores = { store: 0, capas: 0, fichas: 0, status: 0, add: 0, ultimoAdd: null };
+  const contadores = { store: 0, capas: 0, fichas: 0, status: 0, add: 0, ultimoAdd: null, homebrew: 0, homebrewAdd: 0, ultimoHomebrew: null };
+  const homebrews = homebrewsFalsos();
   const refFalsa = (id, i) => `ref${String(id).toLowerCase()}${i}`.padEnd(16, '0').slice(0, 16);
   const jobs = [
     { id: 'j1', name: lista[0].title, state: 'downloading', via: 'TorBox', format: 'exfat', platform: 'ps5', code: lista[0].code, written: 31.6 * 2 ** 30, total: 48.2 * 2 ** 30, bytesPerSecond: 38.5 * 2 ** 20 },
@@ -164,6 +183,27 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
       contadores.status++;
       for (const j of jobs) if (j.state === 'downloading') j.written = Math.min(j.total, j.written + j.bytesPerSecond * 2);
       return json(res, 200, { jobs, cancelledRecent: [], limit: 2, maxLimit: 4, maxConnections: 64, limitSet: false, pinSet: true, speedLimit: 0, maxSpeedLimit: 1000, speedLimitSet: false });
+    }
+    // glibren.70: a aba Homebrew (GET /api/homebrew com busca e paginas; POST /api/homebrew/add pede credencial)
+    if (p === '/api/homebrew' && req.method === 'GET') {
+      contadores.homebrew++;
+      const palavras = (q.get('q') || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const achados = homebrews.filter((a) => palavras.every((w) => `${a.name} ${a.author} ${a.description}`.toLowerCase().includes(w)));
+      const offset = Math.max(0, Number(q.get('offset')) || 0), limit = Math.min(600, Math.max(1, Number(q.get('limit')) || 60));
+      return json(res, 200, { ok: true, total: homebrews.length, count: achados.length, offset, limit, from: 'payload', categories: [], apps: achados.slice(offset, offset + limit) });
+    }
+    if (p === '/api/homebrew/add' && req.method === 'POST') {
+      contadores.homebrewAdd++;
+      if (!sessaoOk(req)) return json(res, 401, { error: 'pin' });
+      const a = homebrews.find((x) => x.id === body.id);
+      const f = a && a.files[body.i];
+      if (!a) return json(res, 404, { error: 'not-found' });
+      if (!f || f.name !== body.name) return json(res, 400, { error: 'file' });
+      if (!f.payload) return json(res, 409, { error: 'kind' });
+      contadores.ultimoHomebrew = body;
+      if (f.queued) return json(res, 200, { ok: true, already: true, id: 'h9' });
+      f.queued = true;
+      return json(res, 200, { ok: true, id: 'h9', via: 'payload', kind: f.kind, where: f.kind === 'image' ? 'homebrew' : f.kind === 'pkg' ? 'packages' : 'files' });
     }
     // .69: o espaco livre dos discos e "Limpar concluidos"
     if (p === '/api/discos' && req.method === 'GET') {
