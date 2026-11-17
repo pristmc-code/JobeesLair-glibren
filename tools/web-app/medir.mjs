@@ -275,7 +275,29 @@ async function medirTamanho(navegador, api, t, jogo) {
     conferir(api.telaPedidos.length > 0 && /^#\//.test(api.telaPedidos.at(-1)), `${t.nome}: o ⛶ nao pediu ao payload com a volta para a /app`);
     await pagina.click('#tcNao');
   }
-  for (const [qual, r] of [['config', r5]]) {
+  // glibren.73 (Fase 6): a Biblioteca TorBox (cartoes da conta, um que falhou explica, Arquivos abre os arquivos, Baixar
+  // pede o arquivo com o id e o nome)
+  passo = 'await pagina.click(\'#nav .nb[data-sec="biblioteca"]\');';
+  await pagina.click('#nav .nb[data-sec="biblioteca"]');
+  await pagina.waitForFunction(() => document.querySelectorAll('#bLista .hb').length >= 40, null, { timeout: 8000 });
+  const bib = await pagina.evaluate(() => {
+    const L = window.jobeApp.L, cartoes = [...document.querySelectorAll('#bLista .hb')];
+    return { contagem: document.getElementById('bContagem').textContent, falhou: cartoes[2].querySelector('.tbEst').textContent, ruim: cartoes[2].querySelector('.tbEst.ruim') !== null,
+      parado: cartoes[5].querySelector('.tbEst').textContent, porParado: L.tb.porParado, mais: Boolean(document.getElementById('bMais')) };
+  });
+  conferir(/95/.test(bib.contagem), `${t.nome}: Biblioteca: contagem ${bib.contagem}`);
+  conferir(bib.ruim && bib.falhou.length > 10, `${t.nome}: Biblioteca: o item que o TorBox nao conseguiu devia explicar: ${bib.falhou}`);
+  conferir(bib.parado.includes(bib.porParado), `${t.nome}: Biblioteca: o parado sem fontes: ${bib.parado}`);
+  conferir(bib.mais, `${t.nome}: Biblioteca: sem "Mostrar mais"`);
+  await pagina.click('#bLista .hb:nth-child(2) .fila .btn');
+  await pagina.waitForSelector('#bLista .hb:nth-child(2) .tbArqs .btn', { timeout: 5000 });
+  await pagina.click('#bLista .hb:nth-child(2) .tbArqs .btn');
+  await pagina.waitForFunction(() => document.querySelector('#bLista .hb:nth-child(2) .tbArqs .btn').textContent.indexOf(window.jobeApp.L.tb.naFila.split('{')[0]) === 0, null, { timeout: 5000 });
+  conferir(api.contadores.ultimoTorbox && api.contadores.ultimoTorbox.id === '9001' && api.contadores.ultimoTorbox.fileId === '0' && /\.exfat$/.test(api.contadores.ultimoTorbox.name),
+    `${t.nome}: Biblioteca: o Baixar nao mandou o arquivo: ${JSON.stringify(api.contadores.ultimoTorbox)}`);
+  const r6 = await pagina.evaluate(REGRAS);
+  await pagina.screenshot({ path: path.join(saida, `app-${t.nome}-biblioteca.png`) });
+  for (const [qual, r] of [['config', r5], ['biblioteca', r6]]) {
     conferir(!r.largo.length, `${t.nome} ${qual}: rola de lado: ${r.largo.join(', ')}`);
     conferir(!r.reticencias, `${t.nome} ${qual}: reticencias`);
     conferir(!r.desiguais.length, `${t.nome} ${qual}: botoes de larguras diferentes: ${r.desiguais.join('; ')}`);
@@ -512,7 +534,7 @@ async function medirTamanho(navegador, api, t, jogo) {
   conferir(!errosJs.length, `${t.nome}: erros de JS: ${errosJs.join(' | ')}`);
   await contexto.close();
   return { tamanho: t.nome, ps5: Boolean(t.ps5), tela, montagem, capasNaMontagem, rolagem, controle, ps5Cliques, errosJs,
-    prints: ['loja', 'ficha', 'parear', 'downloads', 'config'].map((q) => path.join(saida, `app-${t.nome}-${q}.png`)) };
+    prints: ['loja', 'ficha', 'parear', 'downloads', 'config', 'biblioteca'].map((q) => path.join(saida, `app-${t.nome}-${q}.png`)) };
 }
 
 // glibren.72: a pagina recarrega sozinha UMA vez quando o payload muda (versao no /api/status), guardando a busca; uma

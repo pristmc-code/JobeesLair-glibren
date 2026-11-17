@@ -94,7 +94,7 @@ test('Fase 8: a pagina /app segue o padrao de tela e o navegador do PS5', () => 
   for (const piece of ['"/api/store/game?id="', '"/api/store/add"', '"/api/status"', '"/api/jobs/"', '"/api/unlock"', 'CHAVE: "jobe.session"', 'X-Session',
     '"/api/pair"', '"/api/pair/request"', '"/api/pair/confirm"', '"jobe.deviceName"', 'Auth.com(', 'Usar o PIN', 'Código da TV', 'navigator.getGamepads', 'gamepadconnected', 'keydown', 'requestAnimationFrame', 'ResizeObserver', 'loading = "lazy"', 'data-src',
     'visibilitychange', '/PlayStation/', 'html.ps5', 'clamp(15px,min(1.04vw,1.95vh),20px)', 'requestFullscreen', 'webkitRequestFullscreen', '"jobe.app.tela"',
-    '"/api/teste/enviar"', 'guardaCursor', 'GP.rodaAte', 'window.jobeTelaCheiaPs5', 'k === 116 || k === 117', 'CODIGOS = { 38:', 'jobeGuarda', 'GP.porTeclas', 'window.jobeVoltar', '"← JOGOS"', '"← GAMES"', 'Biblioteca (em breve)', '"/api/homebrew?q="', '"/api/homebrew/add"', '"/api/settings"', '"/api/app/telacheia"', 'root.dir = "rtl"',
+    '"/api/teste/enviar"', 'guardaCursor', 'GP.rodaAte', 'window.jobeTelaCheiaPs5', 'k === 116 || k === 117', 'CODIGOS = { 38:', 'jobeGuarda', 'GP.porTeclas', 'window.jobeVoltar', '"← JOGOS"', '"← GAMES"', '"/api/homebrew?q="', '"/api/homebrew/add"', '"/api/settings"', '"/api/app/telacheia"', 'root.dir = "rtl"',
     '(max-height:500px) and (min-width:600px)', '(min-width:761px) and (min-height:501px)', '100dvh', '[hidden]{display:none!important}']) assert.ok(page.includes(piece), piece);
   assert.ok(!/text-overflow|nowrap|ellipsis/.test(page), 'texto quebra a linha, sem reticencias');
   assert.match(page, /\.fila\{display:grid;grid-auto-flow:column;grid-auto-columns:minmax\(0,1fr\)/, 'botoes de uma linha com a mesma largura');
@@ -543,9 +543,9 @@ test('.69: a /app mostra o espaco livre dos discos e tem Limpar concluidos (text
 test('glibren.70: a aba Homebrew da /app lista os homebrews do payload, com busca e Baixar (textos nos 14 idiomas)', () => {
   const page = readFileSync(embed.APP_PAGE || path.join(repo, 'app/native/bg_app.html'), 'utf8');
   for (const piece of ['id="secHomebrew"', 'id="hBusca"', 'id="hLista"', 'id="hDeNovo"', '"/api/homebrew?q="', '"/api/homebrew/add"', 'secao === "homebrew" ? $("hLista")',
-    'k === 113 && secao === "homebrew"', '$("secBreve").hidden = s !== "biblioteca"']) assert.ok(page.includes(piece), piece);
+    'k === 113 && secao === "homebrew"', '$("secBib").hidden = s !== "biblioteca"', '"/api/app/torbox?q="', '"/api/app/torbox/add"', 'secao === "biblioteca" ? $("bLista")']) assert.ok(page.includes(piece), piece);
   assert.ok(!page.includes('Homebrew (em breve)'), 'o "em breve" do Homebrew saiu');
-  assert.ok(page.includes('Biblioteca (em breve)'), 'a Biblioteca continua em breve (Fase 6)');
+  assert.ok(!page.includes('Biblioteca (em breve)') && !page.includes('secBreve'), 'glibren.73: a Biblioteca saiu do "em breve" (Fase 6)');
   const { textos, faltou } = textosGer.montar();
   assert.deepEqual(faltou, []);
   for (const k of ['busca', 'contagem', 'carregando', 'semLista', 'nada', 'baixar', 'naFila', 'soJobe', 'outros', 'vaiHomebrew', 'vaiPkg', 'vaiArquivo', 'jobeAberta', 'semDisco', 'mudou', 'mais'])
@@ -600,4 +600,127 @@ test('glibren.70: /api/homebrew no payload de verdade (lista da Jobe, busca, arq
   const depois = JSON.parse((await p.raw('/api/homebrew')).text);
   assert.equal(depois.apps[1].files[0].queued, true, 'a lista marca o que esta na fila');
   await p.stop();
+});
+
+// glibren.73 (Fase 6): a Biblioteca TorBox da /app no payload de verdade (bg_tblib.c) contra um TorBox falso: chave
+// ausente e recusada, conta vazia, conta com 253 itens (paginas de 100 do TorBox, pedacos de 40 para a pagina, busca,
+// tipo), o que o TorBox nao conseguiu (erro, parado, 6 h sem nada), 429 com a lista guardada, arquivos de um item e o
+// Baixar virando o pedido "account" da fila (o mesmo da Biblioteca do celular).
+test('glibren.73: /api/app/torbox (Biblioteca TorBox da /app) com TorBox falso', { skip }, async () => {
+  const CHAVE = 'abcdef12-3456-7890-abcd-ef1234567890';
+  const agora = Date.now();
+  const iso = (ms) => new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z');
+  const arquivo = (id, name, size) => ({ id, name, short_name: name.split('/').pop(), size });
+  const torrents = [];
+  for (let i = 0; i < 250; i++) torrents.push({ id: 5000 + i, name: `Jogo ${i} PPSA0${1000 + i}`, size: (i + 1) * 1e9, download_state: 'cached', download_finished: true, download_present: true,
+    progress: 1, created_at: iso(agora - i * 60000), files: [arquivo(0, `Jogo ${i}/jogo${i}.exfat`, 5e8), arquivo(1, `Jogo ${i}/leia.txt`, 100)] });
+  torrents[10] = { ...torrents[10], name: 'Quebrado Erro', download_state: 'error', download_finished: false, download_present: false, progress: 0.1 };
+  torrents[11] = { ...torrents[11], name: 'Parado Sem Fontes', download_state: 'stalled (no seeds)', download_finished: false, download_present: false, progress: 0.2 };
+  torrents[12] = { ...torrents[12], name: 'Esquecido Antigo', download_state: 'metaDL', download_finished: false, download_present: false, progress: 0, created_at: iso(agora - 2 * 86400000) };
+  torrents[13] = { ...torrents[13], name: 'Baixando Agora', download_state: 'downloading', download_finished: false, download_present: false, progress: 0.42, created_at: iso(agora - 600000) };
+  const webdl = [0, 1, 2].map((i) => ({ id: 7000 + i, name: `Web ${i}.zip`, size: 2e9, download_state: 'completed', download_finished: true, download_present: true, progress: 1,
+    created_at: iso(agora - 30000 - i), files: [arquivo(0, `Web ${i}.zip`, 2e9)] }));
+  const tb = { modo: 'cheia', chamadas: 0, limitar: 0 };
+  const responder = (res, status, corpo) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(corpo)); };
+  const servidor = http.createServer((req, res) => {
+    tb.chamadas++;
+    const u = new URL(req.url, 'http://x');
+    if (req.headers.authorization !== `Bearer ${CHAVE}`) return responder(res, 403, { success: false, error: 'BAD_TOKEN' });
+    if (tb.limitar > 0) { tb.limitar--; return responder(res, 429, { success: false }); }
+    const lista = u.pathname.includes('/torrents/') ? torrents : webdl;
+    if (!u.pathname.endsWith('/mylist') || tb.modo === 'vazia') return responder(res, 404, { success: false, error: 'ITEM_NOT_FOUND' });
+    if (u.searchParams.get('id')) {
+      const it = lista.find((x) => String(x.id) === u.searchParams.get('id'));
+      return it ? responder(res, 200, { success: true, data: it }) : responder(res, 404, { success: false, error: 'ITEM_NOT_FOUND' });
+    }
+    const offset = Number(u.searchParams.get('offset') || 0), limit = Number(u.searchParams.get('limit') || 1000);
+    const pagina = lista.slice(offset, offset + limit);
+    if (!pagina.length && offset === 0) return responder(res, 404, { success: false, error: 'ITEM_NOT_FOUND' });
+    return responder(res, 200, { success: true, data: pagina });
+  });
+  const portaTb = await freePort();
+  await new Promise((resolve) => servidor.listen(portaTb, '127.0.0.1', resolve));
+  const base = path.join(dir, 'tbx');
+  mkdirSync(base, { recursive: true });
+  const chaves = path.join(base, 'debrid.json');
+  const p = await startPayload({ env: { BGDL_KEYFILE: chaves, BGDL_TORBOX_BASE: `http://127.0.0.1:${portaTb}/v1/api`, BGDL_TB_PACE_MS: '0', BGDL_TB_RATE_WAIT_MS: '300',
+    BGDL_TL_GAP_S: '0', BGDL_TEST_LOCAL: '1', BGDL_APP_SILENCE_MS: '600' } });
+  try {
+    const pedir = async (rota, opcoes) => { const r = await p.raw(rota, opcoes); let data = {}; try { data = JSON.parse(r.text); } catch {} return { status: r.status, data }; };
+    // le ate o payload terminar a leitura da conta (503 loading enquanto le)
+    const lista = async (q = '', atualizar = true) => {
+      let r = await pedir(`/api/app/torbox?${q}${atualizar ? '&refresh=1' : ''}`);
+      for (const fim = Date.now() + 15000; (r.status === 503 && r.data.error === 'loading') || r.data.loading; ) {
+        if (Date.now() > fim) throw new Error('a leitura da conta nao terminou');
+        await wait(100);
+        r = await pedir(`/api/app/torbox?${q}`);
+      }
+      return r;
+    };
+    let r = await lista();
+    assert.deepEqual([r.status, r.data.error], [409, 'no-key'], 'sem chave');
+    writeFileSync(chaves, JSON.stringify({ torbox: { key: 'chave-errada-chave-errada-1234' } }));
+    r = await lista();
+    assert.deepEqual([r.status, r.data.error], [409, 'bad-key'], 'chave recusada');
+    writeFileSync(chaves, JSON.stringify({ torbox: { key: CHAVE } }));
+    tb.modo = 'vazia';
+    r = await lista();
+    assert.deepEqual([r.status, r.data.total, r.data.items.length], [200, 0, 0], 'conta vazia');
+    tb.modo = 'cheia';
+    const antes = tb.chamadas;
+    r = await lista('limit=40');
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.deepEqual([r.data.total, r.data.count, r.data.items.length], [253, 253, 40]);
+    assert.ok(tb.chamadas - antes >= 4, `paginas do TorBox: ${tb.chamadas - antes}`);
+    assert.deepEqual(r.data.items.slice(0, 4).map((x) => x.id), ['5000', '7000', '7001', '7002'], 'mais novos primeiro (torrents e web downloads juntos)');
+    const pag = (await lista('offset=40&limit=40', false)).data, cem = (await lista('limit=100', false)).data;
+    assert.deepEqual([pag.offset, pag.items.length], [40, 40]);
+    assert.deepEqual(pag.items.map((x) => x.id), cem.items.slice(40, 80).map((x) => x.id), 'segunda pagina');
+    const busca = (await lista(`q=${encodeURIComponent('ppsa0112')}&limit=100`, false)).data;
+    assert.ok(busca.items.every((x) => /PPSA0112/.test(x.name)) && busca.count === 10, `busca: ${busca.count}`);
+    const web = (await lista('kind=webdl', false)).data;
+    assert.deepEqual([web.count, web.items.every((x) => x.kind === 'webdl')], [3, true], 'so web downloads');
+    assert.ok(!JSON.stringify(r.data).includes(CHAVE), 'a chave nunca vai a pagina');
+    // o que o TorBox nao conseguiu
+    const achar = async (nome) => (await lista(`q=${encodeURIComponent(nome)}`, false)).data.items[0];
+    const erro = await achar('Quebrado Erro'), parado = await achar('Parado Sem Fontes'), velho = await achar('Esquecido Antigo'), indo = await achar('Baixando Agora');
+    assert.deepEqual([erro.failed, erro.why, erro.ready], [true, 'error', false]);
+    assert.deepEqual([parado.failed, parado.why], [true, 'stalled']);
+    assert.deepEqual([velho.failed, velho.why], [true, 'timeout'], '6 h sem nada = o TorBox nao conseguiu');
+    assert.deepEqual([indo.failed, indo.ready, indo.progress], [false, false, 0.42]);
+    // 429: a lista guardada continua, com o aviso
+    tb.limitar = 1;
+    r = await lista('limit=5');
+    assert.deepEqual([r.status, r.data.error, r.data.total], [200, 'rate', 253], JSON.stringify(r.data).slice(0, 300));
+    assert.ok(r.data.waitS >= 1);
+    await wait(400);
+    // arquivos de um item
+    const ficha = await pedir('/api/app/torbox/item?kind=torrent&id=5003');
+    assert.equal(ficha.status, 200, JSON.stringify(ficha.data));
+    assert.deepEqual(ficha.data.files.map((f) => [f.id, f.name]), [['0', 'Jogo 3/jogo3.exfat'], ['1', 'Jogo 3/leia.txt']]);
+    assert.equal((await pedir('/api/app/torbox/item?kind=torrent&id=1')).status, 404);
+    assert.equal((await pedir('/api/app/torbox/item?kind=usenet&id=1')).status, 400);
+    // Baixar
+    const add = (corpo) => pedir('/api/app/torbox/add', { method: 'POST', body: corpo });
+    assert.deepEqual((await add({ kind: 'torrent', id: '5013', fileId: '0', name: 'x.exfat' })).data.error, 'not-ready');
+    const recusa = await add({ kind: 'torrent', id: '5011', fileId: '0', name: 'x.exfat' });
+    assert.deepEqual([recusa.status, recusa.data.error, recusa.data.why], [409, 'failed', 'stalled']);
+    assert.equal((await add({ kind: 'webdl', id: '7000', whole: true })).data.error, 'file', 'web download nao vira zip');
+    const ok = await add({ kind: 'torrent', id: '5003', fileId: '0', name: 'Jogo 3/jogo3.exfat', size: 5e8 });
+    assert.equal(ok.status, 200, JSON.stringify(ok.data));
+    assert.equal((await add({ kind: 'torrent', id: '5003', fileId: '0', name: 'Jogo 3/jogo3.exfat' })).data.already, true);
+    const tudo = await add({ kind: 'torrent', id: '5004', whole: true });
+    assert.equal(tudo.status, 200);
+    const jobs = JSON.parse((await p.local('/jobs')).text).jobs;
+    const pedido = jobs.find((j) => j.id === ok.data.id);
+    assert.equal(pedido.state, 'waiting-app');
+    assert.deepEqual([pedido.library.via, pedido.library.item.kind, pedido.library.item.id, pedido.library.fileId, pedido.library.file, pedido.library.code, pedido.library.platform],
+      ['account', 'torrent', '5003', '0', 'Jogo 3/jogo3.exfat', 'PPSA01003', 'ps5']);
+    const inteiro = jobs.find((j) => j.id === tudo.data.id);
+    assert.deepEqual([inteiro.library.whole, inteiro.library.fileId, inteiro.total], [true, '', 5e9]);
+    assert.equal((await achar('PPSA01003')).queued, true, 'a lista marca o que ja foi pedido');
+  } finally {
+    await p.stop();
+    servidor.close();
+  }
 });

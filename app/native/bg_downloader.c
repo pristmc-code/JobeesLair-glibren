@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.16"
+#define BG_VERSION "1.37.17"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -7287,6 +7287,7 @@ static void auto_after_download(Job* j) {
 #include "bg_capa.c"  // .56: o proxy de capas da /app (navegador do PS5: jogo instalado, cache, rede e DoH)
 #include "bg_covers_bank.c" // banco de capas pelo celular (JobeControle): /api/capas/*, /app/capa?u= (TV)
 #include "bg_homebrew.c" // glibren.70: a aba Homebrew da /app (/api/homebrew, /api/homebrew/add)
+#include "bg_tblib.c"   // glibren.73 (Fase 6): a Biblioteca TorBox da /app (/api/app/torbox*)
 
 // .69: POST /api/finished/clear (monitor_allowed): "Limpar concluidos" da secao Finalizados (pagina do celular e /app).
 // So tira da lista os downloads concluidos parados e as conversoes prontas; nenhum arquivo e apagado. {ok, removidos}
@@ -7352,6 +7353,7 @@ static void monitor_route(int fd, Request* r, uint32_t ip) {
   if (pair_monitor_route(fd, r)) return; // pareamento por aparelho: /api/pair* (bg_pair.c)
   if (store_route(fd, r, query)) return; // glibren (item 2): /api/store
   if (homebrew_route(fd, r, query)) return; // glibren.70: /api/homebrew (a aba Homebrew da /app)
+  if (tblib_route(fd, r, query)) return; // glibren.73 (Fase 6): /api/app/torbox (a Biblioteca TorBox da /app)
   if (diag_monitor_route(fd, r)) return; // glibren.44: /api/diag (chave do GitHub, enviar, .zip)
   if (jobe_monitor_route(fd, r)) return; // glibren.44: /api/jobe (versao e pedido de atualizacao)
   if (self_monitor_route(fd, r)) return; // glibren.49: /api/payload (versao do payload, atualizar, voltar ao embutido)

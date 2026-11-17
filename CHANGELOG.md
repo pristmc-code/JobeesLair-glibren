@@ -6,6 +6,16 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.73** (fork): the TorBox Library works in the full-screen store (/app). Download payload 1.37.17.
+  - The download payload reads the TorBox account (torrents and web downloads) itself, keeps only a short summary of
+    each item and hands the page 40 at a time, with search, "Refresh" and "Show more". An item's files are read only
+    when you open it. "Download" (one file, or the whole torrent as a .zip) becomes the same request as the phone's
+    TorBox Library: with Jobee'sLair open it joins its queue; with it closed the payload downloads it (default drive and
+    the conversion chosen in Settings). The TorBox key stays on the PS5 and never reaches the page or the log.
+  - When TorBox cannot get an item (error, stalled with no sources, or nothing downloaded in 6 hours), the page says why
+    and Download is refused with that reason instead of waiting forever. A TorBox "slow down" (429) keeps the last list
+    with a notice.
+  - Usenet is not listed (Jobe does not download usenet yet) and the page says so. Texts in the 14 languages.
 - **glibren.72** (fork): the full-screen store (/app) reloads by itself when the download payload changes. Download payload 1.37.16.
   - The page knows the payload version that served it (the payload writes it into the page) and `/api/status` now
     carries the current version. The store asks every 60 s (and when the tab comes back; the Downloads list already asks

@@ -77,14 +77,32 @@ function capaSvg(i) {
 const tamanhoDe = (g) => (g.sizeGb <= 10 ? 'small' : g.sizeGb <= 50 ? 'medium' : 'large');
 
 /** Sobe o servidor; devolve { porta, url, contadores, close }. `atraso`: ms antes de cada resposta da API; `capas: false` = jogos sem capa. */
+/** glibren.73 (Fase 6): a conta TorBox falsa (como GET /api/app/torbox do payload): nomes longos, um item que falhou,
+ * um parado e um ainda baixando, torrents com varios arquivos e web downloads. */
+export function torboxFalso(n = 95) {
+  const itens = [];
+  for (let i = 0; i < n; i++) {
+    const webdl = i % 4 === 3;
+    const nome = i % 6 === 0 ? `Jogo de exemplo com um nome bem comprido para conferir a quebra de linha no cartão ${i} PPSA0${String(1000 + i)}` : `Jogo ${i} PPSA0${String(1000 + i)}`;
+    const falhou = i === 2 ? 'error' : i === 5 ? 'stalled' : '';
+    const pronto = !falhou && i !== 7;
+    const arquivos = webdl ? 1 : 1 + (i % 5);
+    itens.push({ kind: webdl ? 'webdl' : 'torrent', id: String(9000 + i), name: nome, state: falhou ? (falhou === 'error' ? 'error' : 'stalled (no seeds)') : pronto ? 'cached' : 'downloading',
+      why: falhou, size: (3 + i) * 2 ** 30, progress: pronto ? 1 : i === 7 ? 0.42 : 0, files: arquivos, ready: pronto, failed: Boolean(falhou), added: 1790000000 - i * 3600, queued: false,
+      lista: Array.from({ length: arquivos }, (_, k) => ({ id: String(k), name: k === 0 ? `${nome}.exfat` : `extras/parte_${k}_com_um_nome_comprido_de_arquivo.bin`, size: (k + 1) * 2 ** 28 })) });
+  }
+  return itens;
+}
+
 export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = true } = {}) {
   const lista = jogosFalsos(jogos);
   if (!capas) for (const g of lista) g.cover = '';
-  const contadores = { store: 0, capas: 0, fichas: 0, status: 0, add: 0, ultimoAdd: null, homebrew: 0, homebrewAdd: 0, ultimoHomebrew: null, app: 0 };
+  const contadores = { torbox: 0, torboxAdd: 0, ultimoTorbox: null, store: 0, capas: 0, fichas: 0, status: 0, add: 0, ultimoAdd: null, homebrew: 0, homebrewAdd: 0, ultimoHomebrew: null, app: 0 };
   // glibren.72: a versao do payload falso: "pagina" = a que vai no lugar de __BG_VERSAO__ ao servir /app (como bg_app.c);
   // "payload" = a do /api/status. Diferentes = payload trocado com a pagina aberta (ou uma pagina velha guardada).
   const versao = { pagina: '1.0.0-falsa', payload: '1.0.0-falsa' };
   const homebrews = homebrewsFalsos();
+  const torbox = torboxFalso();
   const refFalsa = (id, i) => `ref${String(id).toLowerCase()}${i}`.padEnd(16, '0').slice(0, 16);
   const jobs = [
     { id: 'j1', name: lista[0].title, state: 'downloading', via: 'TorBox', format: 'exfat', platform: 'ps5', code: lista[0].code, written: 31.6 * 2 ** 30, total: 48.2 * 2 ** 30, bytesPerSecond: 38.5 * 2 ** 20 },
@@ -208,6 +226,29 @@ export async function apiFalsa({ jogos = 2639, porta = 0, atraso = 15, capas = t
       if (f.queued) return json(res, 200, { ok: true, already: true, id: 'h9' });
       f.queued = true;
       return json(res, 200, { ok: true, id: 'h9', via: 'payload', kind: f.kind, where: f.kind === 'image' ? 'homebrew' : f.kind === 'pkg' ? 'packages' : 'files' });
+    }
+    // glibren.73 (Fase 6): a Biblioteca TorBox (GET /api/app/torbox, /item; POST /add) - tudo com credencial, como o payload
+    if (p.startsWith('/api/app/torbox')) {
+      if (!sessaoOk(req)) return json(res, 401, { error: 'pin' });
+      const semLista = ({ kind, id, name, state, why, size, progress, files, ready, failed, added, queued }) => ({ kind, id, name, state, why, size, progress, files, ready, failed, added, queued });
+      if (p === '/api/app/torbox' && req.method === 'GET') {
+        contadores.torbox++;
+        const palavras = (q.get('q') || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+        const achados = torbox.filter((it) => palavras.every((w) => it.name.toLowerCase().includes(w)));
+        const offset = Math.max(0, Number(q.get('offset')) || 0), limit = Math.min(100, Math.max(1, Number(q.get('limit')) || 40));
+        return json(res, 200, { ok: true, at: 1790000000, loading: false, total: torbox.length, count: achados.length, offset, limit, truncated: false, items: achados.slice(offset, offset + limit).map(semLista) });
+      }
+      const it = torbox.find((x) => x.kind === (q.get('kind') || body.kind) && x.id === String(q.get('id') || body.id));
+      if (p === '/api/app/torbox/item' && req.method === 'GET') return it ? json(res, 200, { ok: true, item: semLista(it), files: it.lista, more: 0 }) : json(res, 404, { error: 'not-found' });
+      if (p === '/api/app/torbox/add' && req.method === 'POST') {
+        contadores.torboxAdd++;
+        contadores.ultimoTorbox = body;
+        if (!it) return json(res, 400, { error: 'id' });
+        if (!it.ready) return json(res, 409, { error: it.failed ? 'failed' : 'not-ready', why: it.why });
+        if (it.queued) return json(res, 200, { ok: true, already: true, id: 'b9' });
+        it.queued = true;
+        return json(res, 200, { ok: true, id: 'b9', appOpen: false });
+      }
     }
     // .69: o espaco livre dos discos e "Limpar concluidos"
     if (p === '/api/discos' && req.method === 'GET') {
