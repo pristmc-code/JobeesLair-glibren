@@ -6,6 +6,12 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.75** (fork): only the phone app changes. `JobeControle.apk` 0.4-teste adds a "Game versions" screen; the
+  Jobee'sLair app and the download payload (1.37.18) are the same as in glibren.74.
+  - The phone asks glibren (0.9.37+, port 8765, paired with a code on the TV) for the games and the version address of
+    each game (PS5 and PS4), asks Sony's update server for the newest version and the firmware it needs (Sony's own root
+    certificate pinned, only for those hosts), and sends the results back to glibren, which shows them in its list. The
+    PS5 never talks to Sony.
 - **glibren.74** (fork): a downloaded disk image of another format than the one chosen in Settings is converted too, and
   the Files tab converts images in homebrew and .pkg files. Download payload 1.37.18.
   - With "Convert after downloading" on, a PS5 .exfat/.ffpkg/.ffpfs/.ffpfsc whose extension is not the chosen format's
