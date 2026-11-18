@@ -305,3 +305,75 @@ test('glibren.71: compactado + .ffpkg: o payload extrai em BACKUP/_temp, o Dump 
   assert.ok(!existsSync(path.join(base, `disk/BACKUP/_temp/${answer.data.id}`)), 'a pasta extraida sai depois do Ok');
   await stop(child);
 });
+
+
+test('glibren.74: imagem (kind "image") vira outro formato SEMPRE pelo Dump Forge (.exfat e pasta tambem); a mesma extensao e recusada; o original fica', { skip }, async () => {
+  const base = await workspace();
+  const port = await freePort();
+  const forge = fakeForge(port);
+  const child = start(base, port);
+  await up(base);
+  const root = path.join(base, 'disk');
+  const backup = path.join(root, 'BACKUP/Jogo Imagem');
+  mkdirSync(backup, { recursive: true });
+  const exfat = path.join(backup, 'PPSA04444.exfat');
+  writeFileSync(exfat, randomBytes(8192));
+  const ffpkg = path.join(backup, 'PPSA05555.ffpkg');
+  writeFileSync(ffpkg, randomBytes(8192));
+  const exfat2 = path.join(backup, 'PPSA04444 copia.exfat'); // a mesma fonte ja pronta so seria acompanhada (attached)
+  writeFileSync(exfat2, randomBytes(8192));
+  for (const [n, source, format, output, target] of [
+    [1, exfat, 'ffpkg', 'homebrew/PPSA04444.ffpkg', 'ffpkg'],
+    [2, ffpkg, 'exfat', 'homebrew/PPSA05555.exfat', 'exfat'],
+    [3, exfat2, 'pasta', 'homebrew/PPSA04444', 'folder'],
+  ]) {
+    const made = await call(base, 'POST', '/convert', { key: `img-${n}`, name: 'Jogo Imagem', label: 'PPSA04444', kind: 'image', source, root, output: path.join(root, output), format });
+    assert.equal(made.status, 201, JSON.stringify(made.data));
+    const done = await until(base, made.data.id, ['done', 'failed']);
+    assert.equal(done.state, 'done', done.error);
+    const sent = forge.requests.at(-1);
+    assert.deepEqual([sent.source, sent.output, sent.format], [source, path.join(root, output), target]);
+    assert.equal(sent.delete_source, undefined);
+    assert.ok(existsSync(source), 'o original nunca e tocado pelo payload');
+  }
+  assert.equal(forge.requests.length, 3, 'as tres pelo Dump Forge');
+  const same = await call(base, 'POST', '/convert', { key: 'img-same', name: 'X', kind: 'image', source: exfat, root, output: path.join(root, 'homebrew/PPSA04444-2.exfat'), format: 'exfat_zstd' });
+  assert.equal(same.status, 400);
+  assert.match(same.data.error, /already \.exfat/);
+  const notImage = await call(base, 'POST', '/convert', { key: 'img-bad', name: 'X', kind: 'image', source: path.join(backup, 'x.zip'), root, output: path.join(root, 'homebrew/X.ffpkg'), format: 'ffpkg' });
+  assert.equal(notImage.status, 400);
+  await stop(child);
+});
+
+test('glibren.74: imagem no BACKUP (POST /backup/convert): converte para o formato das Configuracoes; com a mesma extensao, nada a converter', { skip }, async () => {
+  const base = await workspace();
+  const port = await freePort();
+  const forge = fakeForge(port);
+  const child = start(base, port);
+  await up(base);
+  const root = path.join(base, 'disk');
+  const backup = path.join(root, 'BACKUP/Jogo Seis');
+  mkdirSync(backup, { recursive: true });
+  writeFileSync(path.join(backup, '.jobe-backup.json'), JSON.stringify({ titleId: 'PPSA06666', platform: 'ps5', format: 'exfat', source: 'glibren' }));
+  writeFileSync(path.join(backup, 'PPSA06666.exfat'), randomBytes(8192));
+  assert.equal((await call(base, 'POST', '/config', { convertFormat: 'exfat' })).status, 200);
+  const nothing = await call(base, 'POST', '/backup/convert', { root, name: 'Jogo Seis' });
+  assert.notEqual(nothing.status, 200, JSON.stringify(nothing.data));
+  assert.equal(forge.requests.length, 0);
+  assert.equal((await call(base, 'POST', '/config', { convertFormat: 'ffpfsc' })).status, 200);
+  const asked = await call(base, 'POST', '/backup/convert', { root, name: 'Jogo Seis' });
+  assert.equal(asked.status, 200, JSON.stringify(asked.data));
+  const all = (await call(base, 'GET', '/convert')).data.conversions;
+  const conv = all.at(-1);
+  assert.equal(conv.kind, 'image');
+  const done = await until(base, conv.id, ['done', 'failed']);
+  assert.equal(done.state, 'done', done.error);
+  assert.equal(forge.requests[0].format, 'ffpfsc');
+  assert.equal(forge.requests[0].output, path.join(root, 'homebrew/PPSA06666.ffpfsc'));
+  assert.ok(existsSync(path.join(backup, 'PPSA06666.exfat')), 'o original fica no BACKUP');
+  // A lista do BACKUP aceita o marcador com source "glibren" (o da outra ferramenta).
+  const list = await call(base, 'GET', '/backup');
+  const game = list.data.games.find((item) => item.name === 'Jogo Seis');
+  assert.equal(game.code, 'PPSA06666');
+  await stop(child);
+});

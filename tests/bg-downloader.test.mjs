@@ -2003,21 +2003,29 @@ test('glibren.61: a chave do TorBox fica gravada no PS5 (debrid-keys.json 0600),
   }
 });
 
-test('glibren.18: auto_plan (payload) = destino do app (download-formats + destinationFor + stagedPath) nos mesmos casos', { skip }, async () => {
+test('glibren.18/.74: auto_plan (payload) = destino do app (download-formats + destinationFor + stagedPath) nos mesmos casos, com o formato escolhido', { skip }, async () => {
   const base = workspace();
   const child = start(base);
   const cases = [];
   for (const convert of [true, false]) {
     for (const [name, title, code] of [['Jogo.exfat', 'Jogo', 'PPSA01234'], ['PPSA01234 Jogo.rar', 'Jogo: Edição <Especial>', 'PPSA01234'], ['Jogo.7z', 'Jogo', ''], ['Jogo.pkg', 'Jogo PS5', 'PPSA01234'],
       ['Jogo.pkg', 'Jogo PS4', 'CUSA01234'], ['CUSA09999 Jogo.fpkg', 'Sem Codigo', ''], ['Jogo.ffpkg', 'Jogo', 'PPSA01234'], ['Jogo.tar', '  .Jogo. ', 'PPSA01234'], ['Jogo.binary', 'Jogo', 'PPSA01234'], ['Jogo.zip', 'Jogo', 'CUSA01234']]) {
-      cases.push({ root: '/mnt/ext0', name, title, code, convert });
+      cases.push({ root: '/mnt/ext0', name, title, code, convert, format: 'exfat' });
+    }
+  }
+  // glibren.74: a imagem de outra extensao que a do formato escolhido vai para o BACKUP e converte; a mesma fica.
+  for (const convert of [true, false]) {
+    for (const [name, title, code, format] of [['Jogo.exfat', 'Jogo', 'PPSA01234', 'ffpkg'], ['Jogo.ffpkg', 'Jogo', 'PPSA01234', 'exfat'], ['Jogo.ffpfsc', 'Jogo', '', 'ffpfs'],
+      ['Jogo.ffpfs', 'Jogo', 'PPSA01234', 'ffpfsc'], ['Jogo.exfat', 'Jogo', 'PPSA01234', 'exfat_zstd'], ['Jogo.exfat', 'Jogo', 'PPSA01234', 'pasta'], ['Jogo.exfat', 'Jogo PS4', 'CUSA01234', 'ffpkg'],
+      ['Jogo.ffpkg', 'Jogo', 'PPSA01234', 'ffpkg_zstd'], ['Jogo.rar', 'Jogo', 'PPSA01234', 'ffpkg'], ['Jogo.exfat', 'Jogo', 'PPSA01234', 'formato-errado']]) {
+      cases.push({ root: '/mnt/ext0', name, title, code, convert, format });
     }
   }
   try {
     await up(base);
     const payload = [];
     for (const c of cases) {
-      const q = new URLSearchParams({ root: c.root, name: c.name, title: c.title, code: c.code, convert: c.convert ? '1' : '0' });
+      const q = new URLSearchParams({ root: c.root, name: c.name, title: c.title, code: c.code, convert: c.convert ? '1' : '0', format: c.format });
       const { status, data } = await call(base, 'GET', `/auto/plan?${q}`);
       assert.equal(status, 200, JSON.stringify(c));
       payload.push({ destination: data.destination, publishTo: data.publishTo, convert: data.convert });
@@ -2034,8 +2042,8 @@ test('glibren.18: auto_plan (payload) = destino do app (download-formats + desti
       'const out = cases.map((c) => {',
       '  const release = { filename: c.name, format: formatFromName(c.name) || undefined };',
       "  const game = { id: c.code || 'torbox-x', titleId: c.code || undefined, title: c.title };",
-      "  const plan = destinationFor({ on: c.convert, role: 'game', artifact: DownloadFormats.artifact(release, c.root), release, root: c.root, title: game.title, titleId: game.titleId || game.id, game, taken: () => false });",
-      "  const image = plan.artifact.nextAction === 'shadowmount';",
+      "  const plan = destinationFor({ on: c.convert, role: 'game', artifact: DownloadFormats.artifact(release, c.root), release, root: c.root, title: game.title, titleId: game.titleId || game.id, game, taken: () => false, format: c.format });",
+      "  const image = plan.artifact.nextAction === 'shadowmount' && !plan.artifact.inBackup;",
       "  const name = plan.artifact.destination.slice(plan.artifact.destination.lastIndexOf('/') + 1);",
       "  return { destination: image ? c.root + '/downloads/images/' + name : plan.artifact.destination, publishTo: image ? plan.artifact.destination : '', convert: plan.convert };",
       '});',

@@ -78,6 +78,7 @@
 > saves where it was; the new one carries on). Downloads gets a **BACKUP folder** sheet: the originals the payload keeps
 > in <drive>/BACKUP with what became of each, Convert / Convert all, Delete and the payload log, which only the phone
 > page offered before; conversions being unpacked first show in Downloads too.
+> **glibren.74**: Images of another format are converted too (download and Files tab), with the original kept in BACKUP (download payload 1.37.18).
 > **glibren.73**: TorBox Library in the full-screen store (/app): account list, search, files and Download through the payload (download payload 1.37.17).
 > **glibren.72**: The full-screen store (/app) reloads by itself when the download payload is updated; built-in tube-service 0.2.5 (download payload 1.37.16).
 > **glibren.71**: Choose the conversion format after a download: .exfat or, through ps5-dump-forge, .ffpkg, .ffpfs, .ffpfsc, .pkg, images with zstd packs and folders with zstd/LZ4 packs (download payload 1.37.15).

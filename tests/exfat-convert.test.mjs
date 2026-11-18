@@ -774,3 +774,150 @@ test('glibren.71: conversao desligada: o compactado continua sendo extraido (e p
   assert.equal(conv.requests.length, 0);
   assert.equal(archives.started.length, 1, 'extraido');
 });
+
+
+// ---- glibren.74: imagem de outro formato converte (download e acao manual da aba Arquivos) ----
+test('glibren.74: destino da imagem: outra extensao que a do formato escolhido vai para o BACKUP e converte; a mesma, PS4 ou sem formato ficam como antes', () => {
+  const root = '/mnt/usb0';
+  const artifact = (name) => DownloadFormats.artifact({ filename: name }, root);
+  const plan = (name, format, game = ps5) => convert.destinationFor({ on: true, role: 'game', artifact: artifact(name), release: release(name), root, title: game.title, titleId: game.titleId, format });
+  const moved = plan('g.exfat', 'ffpkg');
+  assert.deepEqual([moved.artifact.destination, moved.artifact.inBackup, moved.convert, moved.backupDir], ['/mnt/usb0/BACKUP/Test Game/g.exfat', true, true, '/mnt/usb0/BACKUP/Test Game']);
+  assert.equal(plan('g.ffpfsc', 'exfat').convert, true);
+  assert.equal(plan('g.exfat', 'pasta').convert, true, 'uma pasta tambem e outro formato');
+  for (const [name, format] of [['g.ffpkg', 'ffpkg'], ['g.exfat', 'exfat'], ['g.exfat', 'exfat_zstd'], ['g.ffpfs', 'ffpfs_zstd'], ['g.exfat', null], ['g.exfat', 'iso']]) {
+    assert.deepEqual([plan(name, format).artifact.destination, plan(name, format).convert], [`/mnt/usb0/homebrew/${name}`, false], `${name} ${format}`);
+  }
+  assert.equal(plan('o.exfat', 'ffpkg', ps4).convert, false, 'PS4 nunca');
+  assert.equal(convert.isJobeImage('/data/homebrew/JobeesLair.exfat'), true);
+  assert.equal(convert.isJobeImage('/data/homebrew/x.exfat', 'PPSA99471'), true);
+  assert.equal(convert.isJobeImage('/data/homebrew/PPSA01234.exfat', 'PPSA01234'), false);
+});
+
+test('glibren.74: imagem .exfat baixada com o formato .ffpkg: baixa direto no BACKUP (sem publishTo), vira .ffpkg pelo payload e o original fica; "Usar sem converter" a leva para homebrew/', async () => {
+  const fs = memoryFs();
+  const downloads = engine(fs);
+  const conv = converter(fs);
+  const queue = queueWith({ fs, downloads, conv, extra: { convertFormat: () => 'ffpkg' } });
+  const id = queue.enqueue(ps5, release('PPSA01234-game.exfat'), '/data');
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.equal(downloads.requests[0].destination, '/data/BACKUP/Test Game/PPSA01234-game.exfat');
+  assert.equal(downloads.requests[0].background.publishTo, '', 'o payload nao a publica em homebrew/');
+  assert.deepEqual([conv.requests[0].kind, conv.requests[0].source, conv.requests[0].output, conv.requests[0].format], ['image', '/data/BACKUP/Test Game/PPSA01234-game.exfat', '/data/homebrew/PPSA01234.ffpkg', 'ffpkg']);
+  assert.equal(job.artifact.destination, '/data/homebrew/PPSA01234.ffpkg');
+  assert.ok(fs.exists('/data/BACKUP/Test Game/PPSA01234-game.exfat'), 'o original fica no BACKUP');
+  assert.ok(!fs.exists('/data/homebrew/PPSA01234-game.exfat'));
+  assert.equal(JSON.parse(fs.readFile('/data/BACKUP/Test Game/.jobe-backup.json')).titleId, 'PPSA01234');
+  // Mesmo formato: fica como antes (homebrew/), sem conversao.
+  const same = queueWith({ fs: memoryFs(), conv: converter(fs), extra: { convertFormat: () => 'exfat' } });
+  const id2 = same.enqueue(ps5, release('PPSA01234-game.exfat'), '/data');
+  const job2 = await until(same, id2, settled);
+  assert.deepEqual([job2.state, job2.artifact.destination, job2.converted], ['downloaded', '/data/homebrew/PPSA01234-game.exfat', undefined]);
+  // Falha: nada sai do lugar; "Usar sem converter" leva a imagem para homebrew/ e a pasta do BACKUP (so o marcador) sai.
+  const fs3 = memoryFs();
+  const failing = queueWith({ fs: fs3, conv: converter(fs3, () => ({ error: 'forge: preflight failed' })), extra: { convertFormat: () => 'ffpfsc' } });
+  const id3 = failing.enqueue(ps5, release('PPSA01234-game.ffpkg'), '/data');
+  let job3 = await until(failing, id3, settled);
+  assert.equal(job3.state, 'failed');
+  assert.ok(fs3.exists('/data/BACKUP/Test Game/PPSA01234-game.ffpkg'), 'a falha nao mexe no original');
+  await failing.skipConversion(id3);
+  job3 = failing.snapshot().find((item) => item.id === id3);
+  assert.deepEqual([job3.state, job3.artifact.destination, job3.artifact.inBackup], ['downloaded', '/data/homebrew/PPSA01234-game.ffpkg', undefined]);
+  assert.ok(fs3.exists('/data/homebrew/PPSA01234-game.ffpkg'));
+  assert.ok(!fs3.exists('/data/BACKUP/Test Game'));
+});
+
+// Um ShadowMount+ falso: `mounted` (a imagem montada ou nao) e o que ele faz no games/unmount ("ok" solta, "busy" recusa).
+function fakeSmp(fs, image, { unmount = 'ok' } = {}) {
+  const state = { mounted: true, calls: [] };
+  fs.file('/mnt/sandbox/m1/sce_sys/param.json', 0, '{"titleId":"PPSA07777"}');
+  const reply = (status, data) => ({ ok: status < 300, status, json: async () => data });
+  return {
+    state,
+    http: {
+      async request(url, options = {}) {
+        const route = String(url).replace(/^.*\/api\/v1\//, '');
+        state.calls.push(route);
+        if (route === 'images') return reply(200, { images: [{ path: image, mounted: state.mounted, mount_point: '/mnt/sandbox/m1' }] });
+        if (route === 'games/unmount') {
+          if (unmount === 'busy') return reply(409, { error: 'game is active', status: 16 });
+          state.mounted = false;
+          state.unmounted = JSON.parse(options.body || '{}').title_id;
+          return reply(200, {});
+        }
+        return reply(200, {});
+      },
+    },
+  };
+}
+
+test('glibren.74: aba Arquivos, "Converter" numa imagem de homebrew/: converte para o formato escolhido, solta a imagem montada, move o original para o BACKUP e pede varredura; recusas', async () => {
+  const fs = memoryFs();
+  const image = '/data/homebrew/PPSA07777.exfat';
+  fs.file(image, 8000);
+  const smp = fakeSmp(fs, image);
+  const conv = converter(fs);
+  let format = 'ffpkg';
+  const queue = queueWith({ fs, conv, platform: 'ps5', http: smp.http, extra: { convertFormat: () => format } });
+  // A propria Jobee'sLair, PS4, a mesma extensao, fora de homebrew/: recusados, nada muda.
+  fs.file('/data/homebrew/JobeesLair.exfat', 9000);
+  assert.throws(() => queue.convertFile('/data/homebrew/JobeesLair.exfat', '/data'), /Jobee'sLair itself/);
+  fs.file('/data/homebrew/CUSA01234.exfat', 9000);
+  assert.throws(() => queue.convertFile('/data/homebrew/CUSA01234.exfat', '/data'), /Only PS5 games/);
+  fs.file('/data/downloads/archives/x.exfat', 9000);
+  assert.throws(() => queue.convertFile('/data/downloads/archives/x.exfat', '/data'), /Only an image in homebrew/);
+  format = 'exfat';
+  assert.throws(() => queue.convertFile(image, '/data'), /already in the chosen format/);
+  format = 'ffpkg';
+  const id = queue.convertFile(image, '/data', { title: 'Jogo Sete' });
+  assert.throws(() => queue.convertFile(image, '/data'), /already being converted/);
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.deepEqual([conv.requests[0].kind, conv.requests[0].source, conv.requests[0].output, conv.requests[0].format], ['image', image, '/data/homebrew/PPSA07777.ffpkg', 'ffpkg']);
+  assert.equal(smp.state.unmounted, 'PPSA07777', 'a imagem montada foi solta antes de mover');
+  assert.ok(!fs.exists(image));
+  assert.ok(fs.exists('/data/BACKUP/Jogo Sete/PPSA07777.exfat'), 'o original foi para o BACKUP');
+  assert.deepEqual(JSON.parse(fs.readFile('/data/BACKUP/Jogo Sete/.jobe-backup.json')), { titleId: 'PPSA07777', platform: 'ps5', format: 'exfat', source: '' });
+  assert.ok(smp.state.calls.includes('scan'), 'varredura pedida');
+  assert.ok(fs.exists('/data/homebrew/JobeesLair.exfat'), 'a Jobe nunca e tocada');
+});
+
+test('glibren.74: aba Arquivos: o ShadowMount+ nao solta a imagem: ela fica e o card diz; falha ou cancelamento nao mexem no original; .pkg converte e vai para o BACKUP', async () => {
+  const fs = memoryFs();
+  const image = '/data/homebrew/PPSA07777.ffpfs';
+  fs.file(image, 8000);
+  const smp = fakeSmp(fs, image, { unmount: 'busy' });
+  const conv = converter(fs);
+  const queue = queueWith({ fs, conv, platform: 'ps5', http: smp.http, extra: { convertFormat: () => 'exfat' } });
+  const id = queue.convertFile(image, '/data');
+  const job = await until(queue, id, settled);
+  assert.equal(job.state, 'downloaded', job.error);
+  assert.ok(fs.exists(image), 'montada e nao solta: fica');
+  assert.ok(!fs.exists('/data/BACKUP'));
+  assert.match(job.message, /ShadowMount\+ did not let go/);
+  // Falha: o original fica e o item some ("Usar sem converter" volta como estava).
+  const fs2 = memoryFs();
+  const other = '/data/homebrew/PPSA08888.exfat';
+  fs2.file(other, 8000);
+  const q2 = queueWith({ fs: fs2, conv: converter(fs2, () => ({ error: 'forge: bad image' })), extra: { convertFormat: () => 'ffpkg' } });
+  const id2 = q2.convertFile(other, '/data');
+  const failed = await until(q2, id2, settled);
+  assert.equal(failed.state, 'failed');
+  assert.ok(fs2.exists(other));
+  await q2.skipConversion(id2);
+  assert.ok(!q2.snapshot().some((item) => item.id === id2));
+  assert.ok(fs2.exists(other) && !fs2.exists('/data/BACKUP'));
+  // .pkg de downloads/packages: vira o formato escolhido e o pacote vai para o BACKUP.
+  const pkg = '/data/downloads/packages/PPSA09999-game.pkg';
+  fs2.file(pkg, 8000);
+  const q3 = queueWith({ fs: fs2, conv: converter(fs2), extra: { convertFormat: () => 'ffpkg' } });
+  const id3 = q3.convertFile(pkg, '/data', { title: 'Jogo Nove' });
+  const done = await until(q3, id3, settled);
+  assert.equal(done.state, 'downloaded', done.error);
+  assert.ok(fs2.exists('/data/homebrew/PPSA09999.ffpkg'));
+  assert.ok(fs2.exists('/data/BACKUP/Jogo Nove/PPSA09999-game.pkg') && !fs2.exists(pkg));
+  const q4 = queueWith({ fs: fs2, conv: converter(fs2), extra: { convertFormat: () => 'pkg' } });
+  fs2.file('/data/downloads/packages/PPSA01111.pkg', 8000);
+  assert.throws(() => q4.convertFile('/data/downloads/packages/PPSA01111.pkg', '/data'), /already in the chosen format/);
+});

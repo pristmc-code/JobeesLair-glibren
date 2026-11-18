@@ -1050,7 +1050,7 @@ static void store_add(int fd, Request* r) {
   int planned = 0;
   if (link && root[0] && app_away()) {
     auto_safe_name(link->filename, name, sizeof name);
-    planned = auto_plan(root, name, g.title, g.code, convert, &plan);
+    planned = auto_plan(root, name, g.title, g.code, convert, &plan, NULL);
     struct stat st;
     if (planned && (!stat(plan.destination, &st) || (plan.publish[0] && !stat(plan.publish, &st)))) {
       free(d);

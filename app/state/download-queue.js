@@ -35,7 +35,7 @@ import { hostOf } from './download-tuning.js';
 import { DEFAULT_TUNING, rangeFor, tuningFor } from './download-tuning.js';
 import { mirrorsFor } from './download-mirrors.js';
 import { FORMAT_EXT, levelsFor } from './convert-options.js';
-import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, platformOf, PS4_FOLDER, writeBackupMarker } from './exfat-convert.js';
+import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, imageConverts, imageFormatOf, isJobeImage, platformOf, PS4_FOLDER, writeBackupMarker } from './exfat-convert.js';
 
   var ACTIVE = ["resolving", "connecting", "downloading", "verifying", "extracting", "installing", "pausing"];
   var BUSY = ["queued", ...ACTIVE];
@@ -875,7 +875,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         destination,
         storageRoot: job2.root,
         // glibren.8: key = o item da fila, para o payload aplicar as conexoes escolhidas no celular para ele.
-        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: release, key: job2.id, ...debrid && job2.linkAt ? { linkAt: job2.linkAt } : {}, ...systemOf(job2) }
+        background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" && !job2.artifact.inBackup ? job2.artifact.destination : "", source: release, key: job2.id, ...debrid && job2.linkAt ? { linkAt: job2.linkAt } : {}, ...systemOf(job2) }
       };
     }
     // Agendada (e nao na hora): change() roda tambem enquanto a fila ainda esta sendo montada, e varias mudancas
@@ -1039,7 +1039,9 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
     } : formats.artifact(release, root2);
     // Where a download is written. ShadowMount scans homebrew/ and mounts what it finds there, so an image
     // downloads to downloads/images/ and moves into homebrew/ only once it passed its check (publishImage).
-    const stagedPath = (artifact2, root2) => artifact2.nextAction === "shadowmount" ? `${root2}/downloads/images/${baseName(artifact2.destination)}` : artifact2.destination;
+    // glibren.74: an image that downloads into BACKUP to be converted (exfat-convert.js destinationFor, inBackup) is not
+    // staged: ShadowMount never looks there.
+    const stagedPath = (artifact2, root2) => artifact2.nextAction === "shadowmount" && !artifact2.inBackup ? `${root2}/downloads/images/${baseName(artifact2.destination)}` : artifact2.destination;
     // Moves a checked image from downloads/images/ into homebrew/, where ShadowMount finds it.
     // 0.5.4: where the images an archive held go: straight into homebrew/, beside the downloaded ones. ShadowMount's
     // default scan (scan_depth=1) lists the files of homebrew/ itself and takes its folders only as game folders, so
@@ -1307,7 +1309,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         lane.transferring = true;
         // glibren-bg: `background` diz ao payload de segundo plano o nome, onde a imagem pronta mora e a fonte (background-downloads.js);
         // com mirrors o download fica no motor do app (background-downloads.js eligible).
-        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes, job2), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" ? job2.artifact.destination : "", source: job2.release, key: job2.id, ...systemOf(job2) } });
+        task = downloads.enqueue({ ...job2.options, rejectHtml: true, mirrors: mirrorLinks(job2, job2.release, job2.options, job2.fallbacks), ...transferTuning(job2, job2.options.url, job2.downloadDestination, DEFAULT_TUNING.rangeBytes, job2), adaptive: true, destination: job2.downloadDestination, storageRoot: job2.root, recoverCompleted: true, background: { title: job2.title, publishTo: job2.artifact.nextAction === "shadowmount" && job2.role !== "backport" && !job2.artifact.inBackup ? job2.artifact.destination : "", source: job2.release, key: job2.id, ...systemOf(job2) } });
         lane.task = task;
         // Most catalog releases do not say their size, so the check above had nothing to go on: once the
         // server does, the rest is checked against the drive once, before it fills (the partial file counts
@@ -1382,6 +1384,8 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         if (job2.artifact.nextAction === "shadowmount" && job2.role === "backport") {
           job2.artifact.nextAction = "downloaded";
           job2.message = t("downloads.backport.image");
+        } else if (job2.artifact.nextAction === "shadowmount" && job2.artifact.inBackup && job2.convertPlanned && !job2.noConvert) {
+          // glibren.74: an image of another format than the one chosen stays in BACKUP and is converted below.
         } else if (job2.artifact.nextAction === "shadowmount") {
           publishImage(job2);
           job2.artifact.images = [job2.artifact.destination];
@@ -1402,6 +1406,11 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         }
         if (job2.convertPlanned && !job2.noConvert && job2.state === "installer-required") {
           queueConversion(job2, { kind: "pkg", source: job2.downloadDestination });
+          return;
+        }
+        // glibren.74: an image of another format (downloaded into BACKUP) becomes the chosen one through the Dump Forge.
+        if (job2.convertPlanned && !job2.noConvert && job2.artifact.inBackup && job2.artifact.nextAction === "shadowmount") {
+          queueConversion(job2, { kind: "image", source: job2.downloadDestination });
           return;
         }
         // Its extraction waits its turn in the extraction lane; the next download starts meanwhile.
@@ -2416,7 +2425,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
     // (the Files tab) never becomes "just a folder" (it already is one): .exfat then.
     function formatFor(job2) {
       const chosen = String(convertFormat() || "exfat");
-      return job2.manual && chosen === "pasta" ? "exfat" : chosen;
+      return job2.manual?.folder && chosen === "pasta" ? "exfat" : chosen;
     }
     function queueConversion(job2, spec) {
       const owned2 = (path) => jobs.some((other) => other !== job2 && [other.artifact?.destination, other.convert?.output].includes(path));
@@ -2546,7 +2555,8 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       job2.written = job2.total = size;
       job2.bytesPerSecond = 0;
       job2.message = format === "exfat" ? t("downloads.convert.done") : t("downloads.convert.doneAs", { format: t(`settings.convertFormat.${format}`) });
-      if (job2.manual) manualFolderDone(job2);
+      if (job2.manual?.file) await manualFileDone(job2);
+      else if (job2.manual) manualFolderDone(job2);
       console.log(`[download-queue] ${job2.id}: converted to ${output} (${size} bytes); the original stays in ${job2.backupDir ?? "its folder"}`);
       notifications.show(t("downloads.notice.complete"), job2.title);
       // ShadowMount+ is asked to scan now (the payload asks too), so the game shows without waiting for its next scan.
@@ -2600,6 +2610,32 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         change();
         return;
       }
+      // glibren.74: an image downloaded into BACKUP to be converted goes into homebrew/ as it came.
+      if (spec.kind === "image") {
+        const [{ to }] = imageTargets(job2, [spec.source]);
+        fs.mkdir(`${job2.root}/homebrew`, { recursive: true });
+        fs.rename(spec.source, to);
+        if (fs.exists(`${spec.source}.complete`)) fs.rename(`${spec.source}.complete`, `${to}.complete`);
+        const { inBackup: _inBackup, ...artifact2 } = job2.artifact;
+        job2.artifact = { ...artifact2, directory: `${job2.root}/homebrew`, destination: to, images: [to], nextAction: "shadowmount" };
+        job2.downloadDestination = to;
+        job2.payload = [{ path: to, size: fs.stat(to)?.size ?? 0 }];
+        delete job2.convertPlanned;
+        job2.state = "downloaded";
+        job2.message = "";
+        try {
+          if (job2.backupDir && fs.exists(job2.backupDir) && fs.readDir(job2.backupDir).every((entry2) => entry2.name.startsWith("."))) {
+            await fs.removeAsync(job2.backupDir);
+            delete job2.backupDir;
+          }
+        } catch (error2) {
+          console.log(`[download-queue] ${job2.id}: BACKUP folder left: ${error2.message}`);
+        }
+        console.log(`[download-queue] ${job2.id}: used without converting: ${spec.source} moved to ${to}`);
+        change();
+        if (platform === "ps5") shadowRequest2("scan", { reset_attempts: false }).catch((error2) => console.log(`[download-queue] ShadowMount scan not asked: ${error2.message}`));
+        return;
+      }
       job2.packages = [spec.source];
       job2.state = "installer-required";
       job2.message = t("downloads.convert.asPackage");
@@ -2646,6 +2682,102 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
       console.log(`[download-queue] ${job2.id}: the folder stays as it was (not converted)`);
       // glibren.42 (R2-5): change(), not save() + emit2(): the payload is sent the list without it as well.
       change();
+    }
+    // ---- glibren.74: "Convert" on an image in homebrew/ (.exfat/.ffpkg/.ffpfs/.ffpfsc) or a .pkg (the Files tab) ----
+    // To the format chosen in Settings, by the payload (kind "image" through the Dump Forge, or "pkg"). The original is not
+    // touched until the conversion checks out (manualFileDone): then an image ShadowMount+ has mounted is let go first
+    // (games/unmount; Jobee'sLair is the running app, so the game itself is never open), moved to <drive>/BACKUP/<game>/
+    // with its .jobe-backup.json, and a scan is asked. Mounted and not let go: it stays where it is and the card says so.
+    // Failed or cancelled: nothing moves. Jobee'sLair's own image (JobeesLair.exfat, PPSA99471) is never offered.
+    function convertFile(file, root2, { title = "", titleId = "" } = {}) {
+      const path = String(file || "");
+      const name = baseName(path);
+      const image = imageFormatOf(name);
+      const pkg = /\.f?pkg$/i.test(name);
+      const homebrew = `${root2}/homebrew/`, packages = `${root2}/downloads/packages/`;
+      const inside = path.startsWith(homebrew) && !path.slice(homebrew.length).includes("/") || pkg && path.startsWith(packages) && !path.slice(packages.length).includes("/");
+      if (!root2 || !inside || path.split("/").some((part) => part === ".." || part === ".") || !(image || pkg) || !fs.exists(path) || fs.stat(path)?.isDirectory) throw new Error(t("files.convert.notFile"));
+      const code = String(/^(PPSA|CUSA)\d{5}$/i.test(String(titleId)) ? titleId : /\b(PPSA|CUSA)\d{5}/i.exec(name)?.[0] ?? "").toUpperCase();
+      if (isJobeImage(path, code)) throw new Error(t("files.convert.jobe"));
+      if (code.startsWith("CUSA")) throw new Error(t("files.convert.notPs5"));
+      const format = String(convertFormat() || "exfat");
+      if (image ? !imageConverts(image, format) : format === "pkg") throw new Error(t("files.convert.sameFormat", { format: t(`settings.convertFormat.${format}`) }));
+      if (jobs.some((job2) => job2.manual?.file === path || job2.state === "converting" && [job2.convert?.source, ...job2.convert?.sources ?? []].includes(path))) throw new Error(t("files.convert.alreadyFile"));
+      const owner = jobs.find((job2) => [job2.artifact?.destination, job2.publishTo, job2.output, job2.downloadDestination, ...job2.artifact?.images ?? []].includes(path));
+      if (owner && !COMPLETE.includes(owner.state)) throw new Error(t("files.convert.busy"));
+      let job2 = owner;
+      if (job2) {
+        const { state, artifact, payload, message, error, written, total, output, publishTo, cleared } = job2;
+        job2.manual = { file: path, previous: { state, artifact, payload, message, error, written, total, output, publishTo, cleared } };
+        delete job2.cleared;
+      } else {
+        const id = code || name.replace(/\.[^.]*$/, "").replace(/[^a-z0-9_.-]/gi, "_").slice(0, 60) || "file";
+        job2 = { id: `${id}/file-${Date.now().toString(36)}`, gameId: id, titleId: code || id, title: String(title || name).slice(0, 200), role: "game", release: { id: `file-${name}`, provider: "file", filename: name }, requestedId: "", fallbacks: [], root: root2, artifact: { format: image || "pkg", directory: `${root2}/homebrew`, destination: path, nextAction: "shadowmount" }, state: "converting", written: 0, total: null, error: "", manual: { file: path, previous: null } };
+        job2.rootIdentity = storageIdentity(job2);
+        jobs.push(job2);
+      }
+      console.log(`[download-queue] ${job2.id}: ${path} converts to ${format} by hand`);
+      queueConversion(job2, { kind: image ? "image" : "pkg", source: path });
+      // A job of its own names its output, not the original (which no delete of the job may take).
+      if (!owner) job2.artifact = { ...job2.artifact, destination: job2.convert.output };
+      change();
+      return job2.id;
+    }
+    async function manualFileDone(job2) {
+      const file = job2.manual.file;
+      delete job2.manual;
+      const log2 = (line) => console.log(`[download-queue] ${job2.id}: ${line}`);
+      if (!fs.exists(file) || file.startsWith(`${job2.root}/${BACKUP_FOLDER}/`)) return;
+      const kept = (why) => {
+        log2(`the original ${file} stays where it is: ${why}`);
+        job2.message = `${job2.message} ${t("downloads.convert.fileKept", { path: file })}`;
+      };
+      const image = imageFormatOf(file);
+      if (image && platform === "ps5") {
+        let mounted;
+        try {
+          mounted = await mountedImages(shadowRequest2, [file], job2.root);
+        } catch (error2) {
+          kept(`ShadowMount could not say whether it is mounted (${error2.message})`);
+          return;
+        }
+        if (mounted?.length) {
+          if (mounted.some((item) => item.uncertain)) {
+            kept("ShadowMount may have it mounted");
+            return;
+          }
+          const titles = new Set(mounted.map((item) => mountedTitle(item)).filter(Boolean));
+          if (!titles.size && /^PPSA\d{5}$/.test(String(job2.titleId))) titles.add(job2.titleId);
+          // Never Jobee'sLair's own title (the app running now).
+          titles.delete("PPSA99471");
+          for (const title of titles) {
+            await shadowRequest2("games/unmount", { title_id: title }).then(() => log2(`unmounted ${title}`), (error2) => log2(`unmount of ${title} failed: ${error2.message}`));
+          }
+          for (let attempt = 0; mounted?.length && attempt < 5; attempt++) {
+            await wait(1e3);
+            mounted = await mountedImages(shadowRequest2, [file], job2.root).catch(() => mounted);
+          }
+          if (mounted?.length) {
+            log2(`still mounted: ${file}`);
+            job2.message = `${job2.message} ${t("downloads.convert.mountedKept", { path: file })}`;
+            return;
+          }
+        }
+      }
+      const fresh = !(job2.backupDir && fs.exists(job2.backupDir));
+      const dir = fresh ? backupFolder(job2.root, job2.title || job2.titleId, (path) => fs.exists(path) || jobs.some((other) => other.backupDir === path)) : job2.backupDir;
+      let to = `${dir}/${baseName(file)}`;
+      for (let n = 2; fs.exists(to) && n < 100; n++) to = `${dir}/${baseName(file).replace(/(\.[^.]*)?$/, ` (${n})$1`)}`;
+      try {
+        fs.mkdir(dir, { recursive: true });
+        fs.rename(file, to);
+        if (fs.exists(`${file}.complete`)) fs.rename(`${file}.complete`, `${to}.complete`);
+        job2.backupDir = dir;
+        if (fresh) writeBackupMarker(fs, dir, { titleId: /^PPSA\d{5}$/.test(String(job2.titleId)) ? job2.titleId : "", platform: "ps5", format: image || "pkg", source: "" });
+        log2(`the original ${file} moved to ${to}`);
+      } catch (error2) {
+        kept(error2.message);
+      }
     }
     function convertFolder(folder, root2, { title = "", titleId = "" } = {}) {
       const path = String(folder || "").replace(/\/+$/, "");
@@ -3538,7 +3670,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
         // acompanha o job dele em vez de baixar de novo.
         const baseArtifact = artifactFor(release, root2);
         const partialIn = (path) => fs.exists(`${path}/${baseName(baseArtifact.destination)}.part`);
-        const plan = destinationFor({ on: convertExfat(), role: roleOf(release), artifact: baseArtifact, release, root: root2, title: game.title, titleId: game.titleId || game.id, game, taken: (path) => fs.exists(path) && !partialIn(path) || jobs.some((job2) => job2.backupDir === path) });
+        const plan = destinationFor({ on: convertExfat(), role: roleOf(release), artifact: baseArtifact, release, root: root2, title: game.title, titleId: game.titleId || game.id, game, taken: (path) => fs.exists(path) && !partialIn(path) || jobs.some((job2) => job2.backupDir === path), format: String(convertFormat() || "exfat") });
         const artifact2 = plan.artifact;
         if (fs.exists(artifact2.destination)) throw new Error("Destination already exists. Choose another release or inspect the existing file.");
         if (jobs.some((job2) => job2.artifact.destination === artifact2.destination)) throw new Error("Another queued release owns this filename.");
@@ -3690,6 +3822,7 @@ import { BACKUP as BACKUP_FOLDER, backupFolder, destinationFor, errorCode, error
        * <root>/BACKUP/<game>/. Shown on the Downloads screen like any conversion. Returns the job's id.
        */
       convertFolder,
+      convertFile,
       /** glibren.12: whether a conversion still reads something under `path` (a BACKUP folder about to be deleted). */
       readsFrom(path) {
         return jobs.some((job2) => job2.state === "converting" && [job2.convert?.source, ...job2.convert?.sources ?? []].some((item) => item && (item === path || item.startsWith(`${path}/`))));

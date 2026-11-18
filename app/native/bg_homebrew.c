@@ -413,7 +413,7 @@ static void hb_add(int fd, Request* r) {
   pthread_mutex_unlock(&g_lock);
   auto_safe_name(f.name, name, sizeof name);
   AutoPlan plan;
-  const int planned = root[0] && auto_plan(root, name, a.name, "", 0, &plan);
+  const int planned = root[0] && auto_plan(root, name, a.name, "", 0, &plan, NULL);
   pthread_mutex_lock(&g_lock);
   Job* same = st_request_locked(sid);
   if (same && (!strcmp(same->state, "failed") || !strcmp(same->state, "cancelled")) && !same->running) { remove_job_locked(same); same = NULL; }

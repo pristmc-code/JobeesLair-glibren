@@ -37,6 +37,10 @@
 // Dump Forge fora do ar: a conversao fica "waiting" (error "forge-missing: ...") e tenta de novo a cada
 // BGDL_FORGE_RETRY_MS (10 s); 429 (fila cheia dele) = "forge-busy: ...". O job dele fica em forgeJob/forgeInstance
 // (conversions.json): o payload reiniciado acompanha o mesmo job em vez de comecar outro.
+// glibren.74 (payload 1.37.18): kind "image" = uma imagem pronta (.exfat/.ffpkg/.ffpfs/.ffpfsc) que vira o formato
+// escolhido SEMPRE pelo Dump Forge (ele aceita essas origens; o nosso exfat_writer nao le imagem), inclusive para .exfat e
+// "pasta". A mesma extensao de origem e saida e recusada. O original nunca e tocado aqui: no download ele ja esta no
+// BACKUP; na conversao manual da aba Arquivos o app o move depois do Ok (download-queue.js manualFileDone).
 #include <archive.h>
 #include <archive_entry.h>
 #include <dirent.h>
@@ -62,7 +66,7 @@ static const char* base_name(const char* path);
 
 typedef struct {
   char id[24], key[128], name[256];
-  char kind[8];           // "dir" | "pkg" | "archive"
+  char kind[8];           // "dir" | "pkg" | "archive" | "image" (glibren.74)
   char sources[ARC_MAX_VOLUMES][1024]; // "archive": os volumes, o primeiro primeiro (source = o primeiro)
   int nsources;
   char passwords[ARC_MAX_PASSWORDS][128]; // "archive": as senhas a tentar (as publicas dos sites, como no app)
@@ -380,13 +384,14 @@ static const char* conv_ext(const char* format) {
   if (!strcmp(format, "pkg")) return ".pkg";
   return ""; // pasta, pasta_zstd, pasta_lz4
 }
+static int conv_image_name(const char* name); // glibren.74 (abaixo)
 static int conv_is_exfat(const Conv* c) { return !c->format[0] || !strcmp(c->format, "exfat"); }
 // Os caminhos de uma conversao: tudo absoluto e no mesmo disco (root); a imagem em <root>/homebrew/<nome>.exfat; a
 // pasta de trabalho (apagada no fim) so dentro de <root>/downloads/, e a fonte "dir" dentro dela quando houver.
 static int conv_validate(Conv* c, char* error, size_t cap) {
   char homebrew[1100], downloads[1100];
   if (!c->key[0] || !queue_key_ok(c->key)) { snprintf(error, cap, "key"); return 0; }
-  if (strcmp(c->kind, "dir") && strcmp(c->kind, "pkg") && strcmp(c->kind, "archive")) { snprintf(error, cap, "kind must be dir, pkg or archive"); return 0; }
+  if (strcmp(c->kind, "dir") && strcmp(c->kind, "pkg") && strcmp(c->kind, "archive") && strcmp(c->kind, "image")) { snprintf(error, cap, "kind must be dir, pkg, archive or image"); return 0; }
   if (!c->format[0]) snprintf(c->format, sizeof c->format, "exfat"); // glibren.71: um pedido antigo e .exfat
   if (!c->level[0]) snprintf(c->level, sizeof c->level, "padrao");
   if (!CONV_FORMAT_OK(c->format)) { snprintf(error, cap, "format must be one of exfat, ffpkg, ffpfs, ffpfsc, pkg, exfat_zstd, ffpkg_zstd, ffpfs_zstd, ffpfsc_zstd, pasta, pasta_zstd, pasta_lz4"); return 0; }
@@ -412,6 +417,15 @@ static int conv_validate(Conv* c, char* error, size_t cap) {
     snprintf(error, cap, "output must be <root>/homebrew/<name>%s", ext_len ? ext : " (a folder)"); return 0;
   }
   if (!conv_inside(c->source, c->root)) { snprintf(error, cap, "source must be on the same drive (root)"); return 0; }
+  // glibren.74: uma imagem so com a extensao de uma imagem, e para outra extensao (a mesma = nada a fazer).
+  if (!strcmp(c->kind, "image")) {
+    if (!conv_image_name(c->source)) { snprintf(error, cap, "image must be .exfat, .ffpkg, .ffpfs or .ffpfsc"); return 0; }
+    const size_t sn = strlen(c->source);
+    if (ext_len && sn > ext_len && !strcasecmp(c->source + sn - ext_len, ext) && !(!strcmp(ext, ".ffpfs") && sn > 7 && !strcasecmp(c->source + sn - 7, ".ffpfsc"))) {
+      snprintf(error, cap, "image is already %s", ext); return 0;
+    }
+    if (!strcmp(c->source, c->output)) { snprintf(error, cap, "output must not be the source"); return 0; }
+  }
   // glibren.41 (J1): a pasta de trabalho tambem pode ser a da extracao (<root>/BACKUP/_temp/<id>, conv_extract_in_place):
   // antes uma conversao que ja tinha extraido era descartada ao reiniciar e a pasta extraida ficava no disco para sempre.
   char temp[1100];
@@ -841,7 +855,7 @@ static long long arc_read(void* ctx, const exw_entry* e, uint64_t offset, void* 
 static void conv_forge_run(Conv* c); // glibren.71 (abaixo)
 static void conv_run(Conv* c) {
   // glibren.71: outro formato que nao o .exfat: um compactado e extraido antes (a pasta e a fonte); o resto vai direto.
-  if (!conv_is_exfat(c)) {
+  if (!conv_is_exfat(c) || !strcmp(c->kind, "image")) { // glibren.74: a imagem sempre pelo Dump Forge
     if (!strcmp(c->kind, "archive") && !c->cancel && !g_stop) {
       logk_("conversao %s: %s pede a pasta extraida; o payload extrai antes", c->id, c->format);
       pthread_mutex_lock(&g_conv_lock);
@@ -2125,7 +2139,8 @@ static void auto_output(const char* root, const char* code, const char* fallback
 }
 
 // Converte o que esta em <root>/BACKUP/<name>: o .pkg de PS5 (o maior), senao o compactado (os volumes juntos, o
-// primeiro primeiro). -> 1 pedida (ou ja pedida), 0 nada para converter, -1 jogo de PS4, -2 ja convertido.
+// primeiro primeiro), senao (glibren.74) a maior imagem cuja extensao nao e a do formato escolhido (kind "image").
+// -> 1 pedida (ou ja pedida), 0 nada para converter, -1 jogo de PS4, -2 ja convertido.
 // glibren.25: `out` (pode ser NULL), como em conv_add_auto.
 // glibren.25: `where` (pode ser NULL) recebe o .exfat achado quando da -2.
 static int backup_convert(const char* root, const char* name, const char* key, ConvAdded* out, char* where, size_t where_cap) {
@@ -2138,8 +2153,9 @@ static int backup_convert(const char* root, const char* name, const char* key, C
   if (converted[0]) return -2;
   DIR* d = opendir(dir);
   if (!d) return 0;
-  char pkg[300] = "", archives[ARC_MAX_VOLUMES * 2][256];
-  uint64_t pkg_size = 0;
+  char pkg[300] = "", image[300] = "", archives[ARC_MAX_VOLUMES * 2][256];
+  uint64_t pkg_size = 0, image_size = 0;
+  const char* want = conv_ext(g_conv_format);
   int count = 0;
   for (struct dirent* it; (it = readdir(d));) {
     if (it->d_name[0] == '.' || strlen(it->d_name) >= 256) continue;
@@ -2150,6 +2166,12 @@ static int backup_convert(const char* root, const char* name, const char* key, C
     if (arc_ends(it->d_name, ".part") || arc_ends(it->d_name, ".resume")) continue; // ainda baixando
     if ((arc_ends(it->d_name, ".pkg") || arc_ends(it->d_name, ".fpkg")) && (uint64_t)st.st_size > pkg_size) { copy_text(pkg, sizeof pkg, it->d_name); pkg_size = (uint64_t)st.st_size; }
     else if (auto_archive_name(it->d_name) && count < ARC_MAX_VOLUMES * 2) copy_text(archives[count++], sizeof archives[0], it->d_name);
+    else if (conv_image_name(it->d_name) && (uint64_t)st.st_size > image_size) {
+      // glibren.74: a mesma extensao do formato escolhido nao conta (ja esta nele).
+      const size_t n = strlen(it->d_name), w = strlen(want);
+      const int same = w && n > w && !strcasecmp(it->d_name + n - w, want) && !(!strcmp(want, ".ffpfs") && arc_ends(it->d_name, ".ffpfsc"));
+      if (!same) { copy_text(image, sizeof image, it->d_name); image_size = (uint64_t)st.st_size; }
+    }
   }
   closedir(d);
   char output[1100], label[32], sources[ARC_MAX_VOLUMES][900];
@@ -2163,16 +2185,19 @@ static int backup_convert(const char* root, const char* name, const char* key, C
     // Um ".rar" que nao e ".partN.rar" vem antes dos ".r00" (o primeiro volume do jeito antigo).
     for (int i = 0; i < count; ++i) if (arc_ends(archives[i], ".rar") && !strstr(archives[i], ".part")) { char first[256]; memcpy(first, archives[i], sizeof first); memmove(archives[1], archives[0], sizeof archives[0] * (size_t)i); memcpy(archives[0], first, sizeof first); break; }
     for (int i = 0; i < count && n < ARC_MAX_VOLUMES; ++i) { snprintf(sources[n], sizeof sources[n], "%.600s/%.255s", dir, archives[i]); list[n] = sources[n]; ++n; }
+  } else if (image[0]) {
+    snprintf(sources[0], sizeof sources[0], "%.600s/%.255s", dir, image);
+    list[n++] = sources[0];
   } else {
     return 0;
   }
   char homebrew[600];
   snprintf(homebrew, sizeof homebrew, "%.580s/homebrew", root);
   mkdir_p(homebrew);
-  auto_output(root, info.code, pkg[0] ? pkg : archives[0], output, sizeof output, label, sizeof label);
+  auto_output(root, info.code, pkg[0] ? pkg : count ? archives[0] : image, output, sizeof output, label, sizeof label);
   char conv_key[128];
   snprintf(conv_key, sizeof conv_key, "%.120s", key);
-  return conv_add_auto(conv_key, name, pkg[0] ? "pkg" : "archive", list, n, output, root, label, NULL, out) ? 1 : 0;
+  return conv_add_auto(conv_key, name, pkg[0] ? "pkg" : count ? "archive" : "image", list, n, output, root, label, NULL, out) ? 1 : 0;
 }
 
 // A pasta do jogo de PS5 dentro do que foi extraido (a que tem sce_sys/param.json), ate 4 niveis; e um .pkg achado.

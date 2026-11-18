@@ -3,6 +3,9 @@
 // Decisoes (do jogador): o criador de .exfat e o da propria Jobee'sLair (payload bg-downloader.elf, bg_convert.c); o
 // original fica em <disco>/BACKUP/<jogo>/ ate o jogador apagar (Configuracoes > Downloads e a pagina do celular); vale
 // para tudo de PS5: RAR/7z/zip, pasta e .pkg. O que ja monta no ShadowMount+ (.exfat/.ffpkg/.ffpfs/.ffpfsc) fica como veio.
+// glibren.74: a imagem so fica como veio quando ja tem a extensao do formato escolhido (imageConverts); com outro formato
+// ela baixa no BACKUP como um compactado e vira o formato escolhido pelo Dump Forge (kind "image" em bg_convert.c). O
+// .exfat continua .exfat com "exfat_zstd" (a extensao e a mesma: nao se recompacta uma imagem que pode ja ter packs).
 // PS4: nada e convertido. O .pkg de PS4 vai para <disco>/PS4/ e e instalado como antes (Packages.install); compactado de
 // PS4 baixa no BACKUP, e extraido, e o .pkg de dentro vai para PS4/.
 //
@@ -64,6 +67,24 @@ import { FORMAT_EXT } from './convert-options.js';
   }
   var ARCHIVE_FORMATS = ["rar", "7z", "zip", "tar", "tar.gz", "tgz", "tar.bz2", "tar.xz", "tar.zst"];
   var IMAGE_FORMATS = ["exfat", "ffpkg", "ffpfs", "ffpfsc"];
+  // glibren.74: o formato de imagem pela extensao do nome ("" = nao e imagem), como o payload (auto_plan).
+  function imageFormatOf(name) {
+    const lower = String(name || "").toLowerCase();
+    return IMAGE_FORMATS.find((format) => lower.endsWith(`.${format}`)) ?? "";
+  }
+  // glibren.74: se uma imagem `imageFormat` vira outra coisa no formato escolhido `format` (extensao diferente; uma pasta
+  // tambem conta). Formato desconhecido: nao.
+  function imageConverts(imageFormat, format = "exfat") {
+    const ext = FORMAT_EXT[format];
+    return Boolean(imageFormat) && ext !== void 0 && ext !== `.${imageFormat}`;
+  }
+  // glibren.74: a propria Jobee'sLair (homebrew/JobeesLair.exfat, PPSA99471, montada pelo ShadowMount+) nunca e
+  // convertida nem movida.
+  var JOBE_TITLE = "PPSA99471";
+  function isJobeImage(path, titleId = "") {
+    const name = String(path || "").slice(String(path || "").lastIndexOf("/") + 1);
+    return /^jobeeslair\b/i.test(name) || /PPSA99471/i.test(name) || String(titleId).toUpperCase() === JOBE_TITLE;
+  }
   // O que o download e: "archive", "pkg", "image" ou "other" (pelo artefato que o motor calculou).
   function kindOf(artifact, release) {
     if (release?.parts) return "archive";
@@ -92,8 +113,10 @@ import { FORMAT_EXT } from './convert-options.js';
    * Para onde vai um download novo e o que acontece depois. `artifact` e o que o motor calculou (formats.artifact ou o
    * de um conjunto em partes). Devolve { artifact, convert, backupDir, platform, kind }: `convert` = vira .exfat no fim;
    * `backupDir` = a pasta do BACKUP onde o original e baixado (ou null).
+   * glibren.74: `format` = o formato escolhido (convert-options.js): uma imagem de PS5 de outra extensao baixa direto no
+   * BACKUP (artifact.inBackup, sem passar por downloads/images) e vira esse formato.
    */
-  function destinationFor({ on, role = "game", artifact, release, root, title = "", titleId = "", game = null, taken = () => false }) {
+  function destinationFor({ on, role = "game", artifact, release, root, title = "", titleId = "", game = null, taken = () => false, format = null }) {
     const platform = platformOf({ titleId, release, game });
     const kind = kindOf(artifact, release);
     const plain = { artifact, convert: false, backupDir: null, platform, kind };
@@ -101,6 +124,11 @@ import { FORMAT_EXT } from './convert-options.js';
     if (kind === "pkg" && platform === "ps4") {
       const directory = `${root}/${PS4_FOLDER}`;
       return { ...plain, artifact: { ...artifact, directory, destination: `${directory}/${baseName(artifact.destination)}` } };
+    }
+    if (kind === "image") {
+      if (platform !== "ps5" || !imageConverts(imageFormatOf(artifact?.destination), format)) return plain;
+      const backupDir = backupFolder(root, title || titleId, taken);
+      return { ...plain, artifact: { ...artifact, directory: backupDir, destination: `${backupDir}/${baseName(artifact.destination)}`, inBackup: true }, convert: true, backupDir };
     }
     if (kind !== "archive" && !(kind === "pkg" && platform === "ps5")) return plain;
     const backupDir = backupFolder(root, title || titleId, taken);
@@ -239,4 +267,4 @@ import { FORMAT_EXT } from './convert-options.js';
     return path;
   }
 
-export { BACKUP, PS4_FOLDER, backupDetails, backupFolder, writeBackupMarker, convertToExfatOn, deleteBackup, destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, kindOf, listBackup, onConvertToExfat, platformOf, safeFolderName, setConvertToExfat, useConvertToExfat };
+export { BACKUP, IMAGE_FORMATS, JOBE_TITLE, PS4_FOLDER, backupDetails, imageConverts, imageFormatOf, isJobeImage, backupFolder, writeBackupMarker, convertToExfatOn, deleteBackup, destinationFor, errorCode, errorDetail, exfatLabel, exfatOutput, kindOf, listBackup, onConvertToExfat, platformOf, safeFolderName, setConvertToExfat, useConvertToExfat };

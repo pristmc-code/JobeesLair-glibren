@@ -108,7 +108,7 @@
 // glibren.49 (Fase 2): a versao do payload publicado a parte (tag bg-downloader-<versao>, bg_self.c). O meio e o BG_API;
 // o fim sobe a cada correcao sem rota nova. Suba junto com BG_EMBEDDED_VERSION em app/state/background-downloads.js.
 #ifndef BG_VERSION
-#define BG_VERSION "1.37.17"
+#define BG_VERSION "1.37.18"
 #endif
 // glibren.13: versao do protocolo com o app ("api" no /health). O app troca um payload com api menor (um de versao
 // anterior que ficou rodando depois da atualizacao) pelo dele. Suba junto com PAYLOAD_API em
@@ -6988,6 +6988,8 @@ static int auto_resolve(const AutoReq* q, const char* key, AutoSource* out, char
 // app: ps5-react/runtime/js/download-formats.js downloadArtifact (pasta pelo tipo), app/state/exfat-convert.js
 // destinationFor/backupFolder/safeFolderName/platformOf/kindOf e download-queue.js stagedPath (imagem baixa em
 // downloads/images e vai para homebrew). Mudou la, mude aqui (o teste "auto_plan = app" acusa).
+// glibren.74: com a conversao ligada, uma imagem de PS5 cuja extensao nao e a do formato escolhido (`format`; NULL = o
+// das Configuracoes, g_conv_format) baixa direto em BACKUP/<jogo>/ e e convertida (imageConverts em exfat-convert.js).
 typedef struct { char destination[1500], publish[1500], format[16]; int convert, image, pkg, archive, ps4; } AutoPlan;
 static const char* const AUTO_IMAGES[] = {"ffpkg", "exfat", "ffpfs", "ffpfsc"};
 static const char* const AUTO_ARCHIVES[] = {"zip", "rar", "7z", "tar", "tar.gz", "tgz", "tar.bz2", "tar.xz", "tar.zst"};
@@ -7043,8 +7045,15 @@ static int auto_code_in(const char* text, const char* prefix) {
   return 0;
 }
 // Para onde vai: `name` o nome do arquivo (ja limpo), `title` o titulo do jogo, `code` o PPSA/CUSA. 1 = ok.
-static int auto_plan(const char* root, const char* name, const char* title, const char* code, int convert, AutoPlan* plan) {
+static int auto_plan(const char* root, const char* name, const char* title, const char* code, int convert, AutoPlan* plan, const char* format) {
   memset(plan, 0, sizeof *plan);
+  char chosen[16];
+  if (format) copy_text(chosen, sizeof chosen, format);
+  else {
+    pthread_mutex_lock(&g_lock);
+    copy_text(chosen, sizeof chosen, g_conv_format);
+    pthread_mutex_unlock(&g_lock);
+  }
   if (!safe_path(root) || !name[0] || strlen(name) > 220) return 0;
   // O tipo pela extensao (o formato da lista e a extensao: o app manda formatFromName(nome)).
   const char* type = "binary";
@@ -7062,7 +7071,14 @@ static int auto_plan(const char* root, const char* name, const char* title, cons
     snprintf(plan->destination, sizeof plan->destination, "%s/PS4/%s", root, name);
     return 1;
   }
-  if (convert && (plan->archive || (plan->pkg && !plan->ps4))) {
+  // glibren.74: a imagem de outra extensao que a do formato escolhido (um formato desconhecido nao converte nada).
+  int image_converts = 0;
+  if (plan->image && !plan->ps4 && CONV_FORMAT_OK(chosen)) {
+    char ext[16];
+    snprintf(ext, sizeof ext, ".%s", type);
+    image_converts = strcmp(conv_ext(chosen), ext) != 0;
+  }
+  if (convert && (plan->archive || (plan->pkg && !plan->ps4) || image_converts)) {
     char folder[256], base[1100], dir[1200];
     auto_folder_name(title[0] ? title : code, folder, sizeof folder);
     snprintf(base, sizeof base, "%s/BACKUP/%s", root, folder);
@@ -7091,7 +7107,7 @@ static int auto_plan(const char* root, const char* name, const char* title, cons
 // GET /auto/plan?root=&name=&title=&code=&convert=1 (API local, com o token): o destino que auto_plan da, para o teste
 // que o compara com o do app.
 static void auto_plan_route(int fd, const char* query) {
-  char root[600] = "", name[300] = "", title[300] = "", code[32] = "", convert[8] = "";
+  char root[600] = "", name[300] = "", title[300] = "", code[32] = "", convert[8] = "", format[24] = "";
   for (const char* p = query ? query : ""; *p;) {
     const size_t n = strcspn(p, "&");
     if (n > 5 && !strncmp(p, "root=", 5)) url_decode(p + 5, n - 5, root, sizeof root);
@@ -7099,13 +7115,14 @@ static void auto_plan_route(int fd, const char* query) {
     else if (n > 6 && !strncmp(p, "title=", 6)) url_decode(p + 6, n - 6, title, sizeof title);
     else if (n > 5 && !strncmp(p, "code=", 5)) url_decode(p + 5, n - 5, code, sizeof code);
     else if (n > 8 && !strncmp(p, "convert=", 8)) url_decode(p + 8, n - 8, convert, sizeof convert);
+    else if (n > 7 && !strncmp(p, "format=", 7)) url_decode(p + 7, n - 7, format, sizeof format); // glibren.74
     p += n;
     if (*p == '&') ++p;
   }
   char safe[256];
   auto_safe_name(name, safe, sizeof safe);
   AutoPlan plan;
-  if (!auto_plan(root, safe, title, code, !strcmp(convert, "1"), &plan)) { respond_error(fd, 400, "plan"); return; }
+  if (!auto_plan(root, safe, title, code, !strcmp(convert, "1"), &plan, format[0] ? format : NULL)) { respond_error(fd, 400, "plan"); return; }
   Buf b = {0};
   buf_str(&b, "{\"destination\":"); buf_json(&b, plan.destination);
   buf_str(&b, ",\"publishTo\":"); buf_json(&b, plan.publish);
@@ -7178,7 +7195,7 @@ static void* auto_loop(void* arg) {
     AutoPlan plan;
     struct stat st;
     char note[16] = "", why[400] = "";
-    if (!auto_plan(root, name, q.name, q.code, convert, &plan)) {
+    if (!auto_plan(root, name, q.name, q.code, convert, &plan, NULL)) {
       snprintf(note, sizeof note, "torbox");
       snprintf(why, sizeof why, "no place for the file on the drive");
     } else if (!stat(plan.destination, &st) || (plan.publish[0] && !stat(plan.publish, &st))) {

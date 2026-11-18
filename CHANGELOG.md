@@ -6,6 +6,16 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.74** (fork): a downloaded disk image of another format than the one chosen in Settings is converted too, and
+  the Files tab converts images in homebrew and .pkg files. Download payload 1.37.18.
+  - With "Convert after downloading" on, a PS5 .exfat/.ffpkg/.ffpfs/.ffpfsc whose extension is not the chosen format's
+    downloads straight into `<drive>/BACKUP/<game>/` (with its `.jobe-backup.json`) and becomes the chosen format through
+    the Dump Forge; the original stays in BACKUP. Same extension: it goes to homebrew as before. The payload follows the
+    same rule with the app closed (auto_plan, "Convert now" in the BACKUP list).
+  - Files tab: "Convert" (cross) on an image in homebrew and (triangle) on a .pkg, to the format chosen in Settings. Only
+    after the conversion checks out, an image ShadowMount+ has mounted is let go (games/unmount), the original moves to
+    BACKUP and a scan is asked; if it is not let go, it stays and the card says so. Failure or cancel touch nothing.
+    Jobee'sLair's own image is never offered. Texts in the 14 languages.
 - **glibren.73** (fork): the TorBox Library works in the full-screen store (/app). Download payload 1.37.17.
   - The download payload reads the TorBox account (torrents and web downloads) itself, keeps only a short summary of
     each item and hands the page 40 at a time, with search, "Refresh" and "Show more". An item's files are read only

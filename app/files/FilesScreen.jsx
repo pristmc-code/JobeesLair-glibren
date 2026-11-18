@@ -11,6 +11,8 @@ import { useFiles } from './useFiles.js';
 import { useT } from '../i18n/index.js';
 import { driveName } from '../state/downloads.js';
 import { refreshDrives, useDrives } from '../state/drives.js';
+import { useConvertOptions } from '../state/convert-options.js';
+import { imageConverts, imageFormatOf, isJobeImage } from '../state/exfat-convert.js';
 import { useNavActions } from '../state/nav.jsx';
 import { formatBytes } from '../state/size.js';
 import { ButtonHints } from '../ui/ButtonHints.jsx';
@@ -28,6 +30,19 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
   // glibren.17: a PS5 game folder converts to .exfat with cross.
   var FOLDER_HINTS = [{ button: "cross", label: "hints.convertExfat" }, { button: "square", label: "hints.delete" }, HINT.back];
   var ARMED_HINTS = [{ button: "square", label: "hints.confirmDelete" }, HINT.back];
+  // glibren.74: an image in homebrew/ converts with cross; a .pkg with triangle (cross still installs it).
+  var IMAGE_HINTS = [{ button: "cross", label: "hints.convert" }, { button: "square", label: "hints.delete" }, HINT.back];
+  var PACKAGE_CONVERT_HINTS = [{ button: "cross", label: "hints.install" }, { button: "triangle", label: "hints.convert" }, { button: "square", label: "hints.delete" }, HINT.back];
+  // glibren.74: what "Convert" does with a file of the Files tab: "image", "package" or null (not offered: PS4, another
+  // folder, the format chosen is already its own, or Jobee'sLair's own image).
+  function convertibleAs(file, root2, format) {
+    if (!file || file.isDirectory || file.platform === "ps4" || isJobeImage(file.path, file.titleId ?? "")) return null;
+    const rest = (base) => file.path.startsWith(base) && !file.path.slice(base.length).includes("/");
+    const image = imageFormatOf(file.name);
+    if (image) return rest(`${root2}/homebrew/`) && imageConverts(image, format) ? "image" : null;
+    if (isPackage(file.name)) return format !== "pkg" && (rest(`${root2}/downloads/packages/`) || rest(`${root2}/homebrew/`)) ? "package" : null;
+    return null;
+  }
   var fileKey = (path) => `files:${path}`;
   function RailFace({ icon, label, detail: detail2, current }) {
     const focused = useIsFocused();
@@ -73,7 +88,8 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
     const [kind, setKind] = (0, useState)("all");
     // 0.5.3: the first drive when the chosen one is gone (a USB drive unplugged while the page was open).
     const root2 = roots[drive] ?? roots[0];
-    const { files, installing, install, convert, remove, shadowMount } = useFiles(root2);
+    const { files, installing, install, convert, convertFile, remove, shadowMount } = useFiles(root2);
+    const chosenFormat = useConvertOptions().convertFormat; // glibren.74
     const sums = (0, useMemo)(() => totals(files), [files]);
     const shown = kind === "all" ? files : files.filter((file) => file.kind === kind);
     // Free space from the cache; a change to the files (an install, a delete) asks for a fresh reading.
@@ -95,6 +111,11 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
       if (armed && armed !== file.path) setArmed(null);
     };
     const onAction = (action) => {
+      // glibren.74: triangle converts a .pkg.
+      if (action === "triangle" && focused && convertibleAs(focused, root2, chosenFormat) === "package") {
+        startConvertFile(focused);
+        return true;
+      }
       if (action !== "square" || !focused) return false;
       if (armed !== focused.path) {
         setArmed(focused.path);
@@ -125,7 +146,18 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
         setNotice(error2.message || t2("files.convert.failed"));
       }
     };
-    const hints = !focused ? RAIL_HINTS : armed === focused.path ? ARMED_HINTS : isPackage(focused.name) ? PACKAGE_HINTS : focused.ps5Folder ? FOLDER_HINTS : FILE_HINTS;
+    // glibren.74: an image in homebrew/ or a .pkg to the format chosen in Settings; its progress shows on Downloads.
+    const startConvertFile = (file) => {
+      setArmed(null);
+      try {
+        convertFile(file);
+        setNotice(t2("files.convert.startedFile", { name: file.game?.title ?? file.name, format: t2(`settings.convertFormat.${chosenFormat}`) }));
+      } catch (error2) {
+        setNotice(error2.message || t2("files.convert.failed"));
+      }
+    };
+    const focusedAs = focused ? convertibleAs(focused, root2, chosenFormat) : null;
+    const hints = !focused ? RAIL_HINTS : armed === focused.path ? ARMED_HINTS : isPackage(focused.name) ? focusedAs === "package" ? PACKAGE_CONVERT_HINTS : PACKAGE_HINTS : focused.ps5Folder ? FOLDER_HINTS : focusedAs === "image" ? IMAGE_HINTS : FILE_HINTS;
     const free = usage ? t2("files.free", { free: formatBytes(usage.free), total: formatBytes(usage.total) }) : "";
     return /* @__PURE__ */ (0, jsx)(FocusScope, { autoFocus: true, onBack: back2, onAction, children: /* @__PURE__ */ (0, jsxs)(View, { style: { flex: 1 }, children: [
       /* @__PURE__ */ (0, jsxs)(View, { style: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", paddingHorizontal: 48, paddingTop: 48, paddingBottom: 36 }, children: [
@@ -189,7 +221,7 @@ import { FocusScope, ScrollView, Text, View, useIsFocused } from '@ps5-react/cor
                 installing: installing?.path === file.path ? installing : null,
                 shadowMount,
                 onFocus: () => focusFile(file),
-                onPress: isPackage(file.name) ? () => install(file) : file.ps5Folder ? () => convertFolder(file) : void 0
+                onPress: isPackage(file.name) ? () => install(file) : file.ps5Folder ? () => convertFolder(file) : convertibleAs(file, root2, chosenFormat) === "image" ? () => startConvertFile(file) : void 0
               },
               file.path
             )

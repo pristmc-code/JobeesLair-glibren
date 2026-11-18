@@ -217,6 +217,15 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
         rescan();
       }
     };
+    // glibren.74: "Convert" on an image in homebrew/ or a .pkg: to the format chosen in Settings; the original goes to
+    // <drive>/BACKUP/<game>/ once the conversion checks out (download-queue.js convertFile). Throws with the reason.
+    const convertFile = (file) => {
+      try {
+        return downloadQueue().convertFile(file.path, root2, { title: file.game?.title ?? "", titleId: file.titleId ?? "" });
+      } finally {
+        rescan();
+      }
+    };
     const remove = async (file) => {
       try {
         return await deleteFile(file, root2);
@@ -224,7 +233,7 @@ import { FileSystem, Http, Packages, Platform } from '@ps5-react/core';
         rescan();
       }
     };
-    return { files, installing, install, convert, remove, rescan, shadowMount };
+    return { files, installing, install, convert, convertFile, remove, rescan, shadowMount };
   }
 
 export { deleteFile, installedTitles, moveFile, useFiles };
