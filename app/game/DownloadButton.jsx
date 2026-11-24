@@ -9,7 +9,7 @@ import { WAITING, shownState } from '../downloads/labels.js';
 import { Choice, ReadyPick, TextAction } from './Choice.jsx';
 import { DISABLED, DownloadLabel, statusLine } from './DownloadLabel.jsx';
 import { MoreOptions, ProblemNote } from './DownloadProblem.jsx';
-import { canDownload, spaceAdvice, spaceNeeded } from './releases.js';
+import { canDownload, spaceAdvice, spaceNeeded, withQueued } from './releases.js';
 import { captureStanding, describeSource, fallbacks, isBackport, isCdnProvider, isDlc, labelFirmware, preferredRelease, runsHere, sourceOrder } from './sources.js';
 import { useDownload } from './useDownload.js';
 import { useFreeSpace } from './useFreeSpace.js';
@@ -55,7 +55,9 @@ import { colors, radius } from '../ui/colors.js';
     const t2 = useT();
     // The game's sources with what is known of their links (state/links.js): a dead one is unavailable,
     // one that does not answer ranks after those that do.
-    const releases = useHealthyReleases(game.releases || []);
+    // glibren.76: so os links dos catalogos mostrados, mais o de um download deste jogo que ja esta na fila (releases.js).
+    const listed = (0, useMemo)(() => withQueued(game), [game.releases]);
+    const releases = useHealthyReleases(listed);
     // The source a download of this game already has (one through TorBox is its source's id + "~torbox",
     // state/debrid.js), else the preferred one.
     const [initial] = (0, useState)(() => {
@@ -289,7 +291,7 @@ import { colors, radius } from '../ui/colors.js';
       kind: "source",
       title: game.title,
       // The catalog's own: the picker applies link health itself, so a check run from it shows as it goes.
-      releases: game.releases || [],
+      releases: listed,
       selected,
       submit: (index) => pick2(index),
       // A TorBox button on each source TorBox can take, once its API key is set (state/debrid.js).
@@ -299,7 +301,7 @@ import { colors, radius } from '../ui/colors.js';
       current: game.id,
       onEdition: (id) => openEdition(id),
       // Every link asked again, the dead ones too.
-      checkLinks: () => checkLinksNow(game.id, game.releases || [])
+      checkLinks: () => checkLinksNow(game.id, listed)
     });
     // 0.5.1: up to three other sources that run on this console (a dump or image, release-sets.js
     // compatible1360; a PS5 fake package too at 11.60 or lower), in view under the chosen one so nobody has to

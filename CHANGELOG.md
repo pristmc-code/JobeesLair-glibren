@@ -6,6 +6,16 @@ SHA-256 checksums.
 
 ## Unreleased
 
+- **glibren.76** (fork): a catalog hidden in Settings > Catalog feeds ("Show in store") now hides its links too. Before,
+  hiding a catalog only took out the games that came from hidden catalogs alone: a game also listed by a shown catalog
+  (the Orbit Store list, say) still offered every link of every catalog, the hidden ones included.
+  - The game page, the list of sources, the phone (companion and the payload's /app store) and the TorBox library show
+    only the links of the catalogs that are shown, both when the app builds the store and when the download payload
+    builds it (Phase 3/4). A feed link is known by its id (`feed-<feed key>-...`); the bundled ones by not having it.
+  - Downloads already in the queue keep working: the queue still reads every link (`game.allReleases`), and the game
+    page keeps the link of a download that is already queued for that game.
+  - Download payload 1.37.19 (same API 37): the game page and the phone store leave out the hidden catalogs' links, and
+    the phone store's "downloads by itself" mark counts only the shown ones.
 - **glibren.75** (fork): only the phone app changes. `JobeControle.apk` 0.4-teste adds a "Game versions" screen; the
   Jobee'sLair app and the download payload (1.37.18) are the same as in glibren.74.
   - The phone asks glibren (0.9.37+, port 8765, paired with a code on the TV) for the games and the version address of

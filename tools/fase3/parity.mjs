@@ -3,11 +3,12 @@
 //      maquina (WSL: /root/forks/qjs-peak e o esbuild do tube-service); senao, a copia gravada em
 //      tests/fixtures/fase3/reference.json.gz (refeita com --update; uma copia diferente da gerada agora vira um aviso).
 //   2. O payload de verdade (app/native/bg_downloader.c compilado para o PC) com o catalogo embutido do repositorio e os
-//      feeds do fixture, nas variantes ps5, low (firmware 9.60), ps4 e hidden (a lista Pegasus escondida).
+//      feeds do fixture, nas variantes ps5, low (firmware 9.60), ps4, hidden (a lista Pegasus escondida) e orbit (glibren.76:
+//      so a lista Orbit mostrada; os links dos outros catalogos saem das fichas).
 //   3. Confere: as opcoes dos filtros, os campos de cada jogo, a grade de cada consulta (todas as paginas), as contagens
 //      dos filtros, a busca da tela Procurar, as fileiras da pagina inicial, as fichas (links como game.releases, a ordem
 //      da Jobe, edicoes e relacionados), o "solo" da loja do celular, as fontes e os codigos conhecidos da lista Orbit.
-// Run (WSL): node tools/fase3/parity.mjs [--update] [--variants ps5,low,ps4,hidden] [--binary <bgdl>] [--keep]
+// Run (WSL): node tools/fase3/parity.mjs [--update] [--variants ps5,low,ps4,hidden,orbit] [--binary <bgdl>] [--keep]
 import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
@@ -88,7 +89,7 @@ export async function startPayload(binary, work, variant, ports) {
     writeFileSync(path.join(orbitDir, 'orbit-store-status.json'), JSON.stringify({ enabled: false, conv: 3, known: 50, lastOk: 1763000000, lastTry: 1763000000, revision: 96 }));
   }
   writeFileSync(path.join(cat, 'config.json'), JSON.stringify({ app: '0.5.5-fixture', feeds: [WEB, PKG, LOCAL], mirrors: [{ url: WEB, list: ['https://mirror2.example/fase3.json'] }],
-    orbit: { on: orbit, id: ORBIT }, hidden: variant === 'hidden' ? [PKG] : [], ps4: variant === 'ps4', firmware: variant === 'low' ? '9.60' : '12.00' }));
+    orbit: { on: orbit, id: ORBIT }, hidden: variant === 'hidden' ? [PKG] : variant === 'orbit' ? ['bundled', LIVE, WEB, PKG, LOCAL] : [], ps4: variant === 'ps4', firmware: variant === 'low' ? '9.60' : '12.00' }));
   const [api, monitor] = ports ? [await ports(), await ports()] : [await freeLocalPort(), await freeLocalPort()];
   const child = spawn(binary, [], { env: { ...process.env, BGDL_DIR: path.join(base, 'state'), BGDL_PORT: String(api), BGDL_MONITOR_PORT: String(monitor), BGDL_ORBIT_DIR: orbitDir,
     BGDL_STORE_DIR: path.join(base, 'store'), BGDL_LIBRARY: path.join(base, 'none.json'), BGDL_NOTIFY_FILE: path.join(base, 'notify.txt'), BGDL_LOCAL_PREFIX: path.join(base, 'root'),
@@ -197,9 +198,16 @@ async function compare(ref, p, variant) {
   }
   // as fichas
   let fichasSame = 0;
+  // glibren.76: de que catalogo vem cada link das fichas ("bundled" ou a chave do feed no id "feed-<chave>-...") e, dos
+  // jogos que a Orbit e o embutido listam (ref.orbitBoth), quantos tem links
+  const linkSources = new Set();
+  let bothWithLinks = 0;
+  const originOf = (release) => /^feed-([0-9a-f]+)-/.exec((release.parts ? release.parts[0].sources[0] : release).id ?? '')?.[1] ?? 'bundled';
   for (const ficha of ref.fichas ?? []) {
     const { status, data } = await get(`/api/catalog/game?id=${ficha.id}`);
     if (status !== 200) { say(`ficha ${ficha.id}: HTTP ${status}`); continue; }
+    for (const release of data.releases ?? []) linkSources.add(originOf(release));
+    if (ref.orbitBoth?.includes(ficha.id) && data.releases?.length) bothWithLinks++;
     let ok = true;
     if (canonical(data.releases) !== canonical(ficha.releases)) {
       ok = false;
@@ -241,11 +249,12 @@ async function compare(ref, p, variant) {
   return {
     problems,
     summary: { consultas: `${same}/${ref.results.length}`, contagens: `${countsSame}/${ref.counts.length}`, busca: `${searchSame}/${(ref.search ?? []).length}`,
-      inicio: `${homeSame}/${(ref.home ?? []).length}`, fichas: `${fichasSame}/${(ref.fichas ?? []).length}`, solo: `${soloSame}/${soloTotal}`, listados: every.length },
+      inicio: `${homeSame}/${(ref.home ?? []).length}`, fichas: `${fichasSame}/${(ref.fichas ?? []).length}`, solo: `${soloSame}/${soloTotal}`, listados: every.length,
+      fontesDosLinks: [...linkSources].sort(), orbitEEmbutido: `${bothWithLinks}/${(ref.orbitBoth ?? []).length}`, orbitTinhaEmbutido: ref.orbitHadBundled ?? 0 },
   };
 }
 
-export async function runParity({ binary, variants = ['ps5', 'low', 'ps4', 'hidden'], update = false, keep = false, ports } = {}) {
+export async function runParity({ binary, variants = ['ps5', 'low', 'ps4', 'hidden', 'orbit'], update = false, keep = false, ports } = {}) {
   const work = mkdtempSync(path.join(os.tmpdir(), 'jl-fase3-'));
   try {
     let refs = await makeReference(work, variants);

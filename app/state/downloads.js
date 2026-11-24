@@ -113,7 +113,11 @@ import { Archives, BrowserCapture, DeviceInfo, DownloadFormats, Downloads, FileS
     onCapture: recordCapture,
     sources: createSourceResolver({ http: Http, debrid: debridResolver }),
     packages: Packages,
-    releasesOf: (id) => getGame(id)?.releases || [],
+    // glibren.76: todos os links (game.allReleases), tambem os de um catalogo escondido depois: o job que ja existe acha o dele.
+    releasesOf: (id) => {
+      const game = getGame(id);
+      return game?.allReleases || game?.releases || [];
+    },
     firmware: () => deviceFacts().firmware,
     playtime,
     autoContinue: autoContinueParts,

@@ -4,7 +4,8 @@
 // com o codigo do app no qjs 0.15 (ou, sem o qjs, com a referencia gravada em reference.json.gz): as opcoes dos filtros,
 // os campos de cada jogo, a grade de 36 consultas (todas as paginas), as contagens dos filtros, a busca da tela Procurar,
 // as fileiras da pagina inicial, 60 fichas (links, ordem, edicoes, relacionados), o "solo" da loja do celular, as fontes
-// e os codigos conhecidos da lista Orbit; nas variantes ps5, firmware 9.60, PS4 e com uma lista escondida. A segunda
+// e os codigos conhecidos da lista Orbit; nas variantes ps5, firmware 9.60, PS4, com uma lista escondida e (glibren.76) so
+// com a lista Orbit mostrada (as fichas so com os links dela, no app e no payload). A segunda
 // rodada usa o payload com ASan + UBSan. Run: node --import ./tests/stub-loader.mjs --test tests/fase3-nucleo.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,8 +23,9 @@ const skip = !compiler ? 'no C compiler' : false;
 const asan = compiler && spawnSync(compiler, ['-fsanitize=address', '-x', 'c', '-o', '/dev/null', '-'], { input: 'int main(void){return 0;}' }).status === 0;
 const ports = freePortFrom(9); // Fase 3: bloco de portas so deste arquivo (tests/free-port.mjs)
 const { runParity } = await import('../tools/fase3/parity.mjs');
+const ORBIT_KEY = (() => { const value = '/data/JobeesLair/orbit/orbit-store.json'; let a = 2166136261, b = 5381; for (let i = 0; i < value.length; i++) { a = Math.imul(a ^ value.charCodeAt(i), 16777619); b = Math.imul(b, 33) ^ value.charCodeAt(i); } return `${(a >>> 0).toString(16)}${(b >>> 0).toString(16)}`; })();
 
-test('paridade app x payload no fixture (ps5, firmware 9.60, PS4, lista escondida)', { skip, timeout: 900000 }, async () => {
+test('paridade app x payload no fixture (ps5, firmware 9.60, PS4, lista escondida, so a Orbit)', { skip, timeout: 900000 }, async () => {
   const result = await runParity({ ports });
   assert.deepEqual(result.problems, [], 'nenhuma diferenca');
   const ps5 = result.variantes.ps5;
@@ -31,6 +33,16 @@ test('paridade app x payload no fixture (ps5, firmware 9.60, PS4, lista escondid
   assert.ok(total >= 30 && same === total, `consultas ${ps5.consultas}`);
   assert.equal(ps5.fichas, '60/60');
   for (const [name, variant] of Object.entries(result.variantes)) assert.ok(variant.listados > 0, name);
+  // glibren.76: so a Orbit mostrada: as fichas (iguais no app e no payload, acima) so tem links da Orbit, e os jogos que
+  // a Orbit e o embutido listam continuam com links (os da Orbit); com tudo mostrado, as fichas tem links do embutido.
+  const orbit = result.variantes.orbit;
+  assert.deepEqual(orbit.fontesDosLinks, [ORBIT_KEY], `fontes dos links: ${orbit.fontesDosLinks}`);
+  const [withLinks, both] = orbit.orbitEEmbutido.split('/').map(Number);
+  assert.ok(both > 0 && withLinks === both, `jogos da Orbit e do embutido com links: ${orbit.orbitEEmbutido}`);
+  const [fichasSame, fichasTotal] = orbit.fichas.split('/').map(Number);
+  assert.ok(fichasSame === fichasTotal && fichasTotal > both, `fichas ${orbit.fichas}`);
+  assert.ok(orbit.orbitTinhaEmbutido > 0, 'jogos da Orbit e do embutido que tinham links do embutido (game.allReleases)');
+  assert.ok(ps5.fontesDosLinks.includes('bundled') && ps5.fontesDosLinks.length > 1, `fontes com tudo mostrado: ${ps5.fontesDosLinks}`);
   if (result.warnings.length) console.log(result.warnings.join('\n'));
 });
 

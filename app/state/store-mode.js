@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { games } from '../data/catalog-index.js';
-import { allListed, catalogSources, editionsOf, ensureLocalCatalog, isRemoteCatalog, onLocalCatalog, refreshDerived, sourcesOfGame, whenCatalogReady } from './catalog.js';
+import { allListed, catalogSources, editionsOf, ensureLocalCatalog, isRemoteCatalog, onLocalCatalog, refreshDerived, setHiddenReleaseSources, sourcesOfGame, whenCatalogReady } from './catalog.js';
 import { DATA_DIR } from './data-dir.js';
 import { loadList, saveList } from './saved.js';
 import { libraryPaths, readConfirmedIds } from './torbox-library.js';
@@ -31,6 +31,8 @@ import { FileSystem, Platform } from '@ps5-react/core';
     if (Array.isArray(saved)) for (const id of saved) if (typeof id === "string") hidden.add(id);
   } catch {
   }
+  // glibren.76: os links dos catalogos escondidos saem de game.releases (state/catalog.js le este mesmo conjunto, vivo).
+  setHiddenReleaseSources(hidden);
   /** Os jogos listados dos catálogos que a loja mostra. */
   var shownListed = () => hidden.size ? allListed.filter((game) => sourcesOfGame(game).some((source) => !hidden.has(source))) : allListed;
   var sourceShown = (id) => !hidden.has(id);

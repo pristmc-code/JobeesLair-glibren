@@ -175,6 +175,8 @@ static void ct_merge(CtFeedVisit* v, CtRawGame* raw, CtRel* rels, int nrels, con
   }
   ct_free(providers.v);
   if (!(known->sources & bit)) { known->sources |= bit; c->feeds[m->feed].count++; }
+  // glibren.76: os links de um feed escondido contam nos formatos (como no app), mas nao no solo (so os mostrados)
+  if (c->hidden & bit) for (int i = 0; i < nrels; ++i) rels[i].hidden = 1;
   // os links somam no jogo (feedReleases): os formatos saem de todos eles juntos
   if (known->nrels + nrels > known->caprels) { known->caprels = known->nrels + nrels; known->rels = ct_realloc(known->rels, sizeof *known->rels * (size_t)known->caprels); }
   for (int i = 0; i < nrels; ++i) { known->rels[known->nrels++] = rels[i]; memset(&rels[i], 0, sizeof rels[i]); }
@@ -311,6 +313,14 @@ static Catalog* ct_build(const CtInputs* in, char* error, size_t cap) {
     g->entry = i;
     if (!g->from_feed && g->cover) { char* sized = ct_cover_size(g->cover, c->cover_width); ct_free(g->cover); g->cover = sized; }
     const uint16_t fed = g->nrels ? ct_kinds_of(g->rels, g->nrels, &g->feed_solo) : 0;
+    if (g->feed_solo && (c->hidden & ~1ull)) { // glibren.76: o solo so dos links dos feeds mostrados (os da ficha)
+      CtRel* shown_rels = ct_malloc(sizeof *shown_rels * ((size_t)g->nrels + 1));
+      int ns = 0;
+      for (int r = 0; r < g->nrels; ++r) if (!g->rels[r].hidden) shown_rels[ns++] = g->rels[r]; // copia rasa: so leitura
+      g->feed_solo = 0;
+      if (ns) ct_kinds_of(shown_rels, ns, &g->feed_solo);
+      ct_free(shown_rels);
+    }
     g->formats = fed ? (uint16_t)(g->bundled_formats | fed) : g->bundled_formats;
     if (c->ps4) g->formats &= (uint16_t)(1u << 6);
     for (int r = 0; r < g->nrels; ++r) ct_rel_free(&g->rels[r]);

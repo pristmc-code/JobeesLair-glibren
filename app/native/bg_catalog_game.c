@@ -98,14 +98,14 @@ static int ct_art_item(JP* j, void* ctx) {
   return jp_object(j, ct_art_obj, r->d);
 }
 // O jogo `want` nos feeds: os links (somados na ordem dos feeds) e, do feed da pagina, a pagina e a arte.
-typedef struct { const char* want; CtDetail* d; int page; int found; } CtFind;
+typedef struct { const char* want; CtDetail* d; int page; int found; int hide; } CtFind; // glibren.76: hide = feed escondido (so a pagina)
 static void ct_find_fn(CtFeedVisit* v, CtRawGame* raw, CtRel* rels, int nrels, const int* magnets, char (*hosts)[256]) {
   (void)magnets; (void)hosts;
   CtFind* f = v->ctx;
   if (strcmp(raw->id, f->want)) return;
   f->found = 1;
   v->stop = 1;
-  for (int i = 0; i < nrels; ++i) { CtRel* r = ct_rels_push(&f->d->rels); *r = rels[i]; memset(&rels[i], 0, sizeof rels[i]); }
+  if (!f->hide) for (int i = 0; i < nrels; ++i) { CtRel* r = ct_rels_push(&f->d->rels); *r = rels[i]; memset(&rels[i], 0, sizeof rels[i]); }
   if (!f->page) return;
   CtDetail* d = f->d;
   d->page_found = 1;
@@ -131,10 +131,12 @@ static void ct_find_fn(CtFeedVisit* v, CtRawGame* raw, CtRel* rels, int nrels, c
   for (int i = 0; i < raw->fallbacks.n && d->fallbacks.n < 4; ++i) if (ct_https_ok(raw->fallbacks.v[i])) ct_strlist_push(&d->fallbacks, ct_cover_size(raw->fallbacks.v[i], 440));
 }
 // Le tudo da ficha de `g`. Os arquivos dos feeds sao lidos de novo (um por vez, so os que listam o jogo).
+// glibren.76: catalogo escondido (c->hidden) esconde tambem os links dele: sem os do embutido e sem os de um feed
+// escondido (dele so a pagina, quando e o feed da pagina do jogo). Como o app (state/catalog.js game.releases).
 static void ct_detail(const Catalog* c, const CtGame* g, CtDetail* d, const char* const* feed_paths) {
   memset(d, 0, sizeof *d);
   size_t len = 0;
-  char* text = ct_pack_item(c->bundled_dir, "releases", g->id, &len);
+  char* text = c->hidden & 1 ? NULL : ct_pack_item(c->bundled_dir, "releases", g->id, &len);
   if (text) {
     if (ct_jlx_decode(text, &len)) { JP jp = {text, text + len, 0}; if (!jp_array(&jp, ct_rel_item, &d->rels)) ct_rels_free(&d->rels); }
     free(text);
@@ -154,11 +156,13 @@ static void ct_detail(const Catalog* c, const CtGame* g, CtDetail* d, const char
   }
   for (int f = 0; f < c->nfeeds; ++f) {
     if (!(g->sources & (2ull << f)) || !feed_paths[f]) continue;
+    const int hide = (c->hidden & (2ull << f)) != 0, page = g->from_feed && g->page_feed == f;
+    if (hide && !page) continue;
     size_t size = 0;
     char* feed = ct_read_file(feed_paths[f], &size, 16u << 20);
     if (!feed) continue;
     if (ct_jlx_decode(feed, &size)) {
-      CtFind find = {g->id, d, g->from_feed && g->page_feed == f, 0};
+      CtFind find = {g->id, d, page, 0, hide};
       CtFeedVisit v;
       memset(&v, 0, sizeof v);
       v.c = (Catalog*)c; v.fn = ct_find_fn; v.ctx = &find; v.url = c->feeds[f].url;
@@ -191,7 +195,7 @@ static void ct_art_only(const Catalog* c, const CtGame* g, CtDetail* d, int summ
     char* feed = ct_read_file(c->feeds[g->page_feed].path, &size, 16u << 20);
     if (feed) {
       if (ct_jlx_decode(feed, &size)) {
-        CtFind find = {g->id, d, 1, 0};
+        CtFind find = {g->id, d, 1, 0, 0};
         CtFeedVisit v;
         memset(&v, 0, sizeof v);
         v.c = (Catalog*)c; v.fn = ct_find_fn; v.ctx = &find; v.url = c->feeds[g->page_feed].url;
@@ -426,6 +430,12 @@ static const char* ct_summary_of(const CtDetail* d) {
 typedef struct { char id[16]; uint64_t off; uint32_t len; } CtPackAt;
 static int ct_pack_at_cmp(const void* a, const void* b) { return strcmp(((const CtPackAt*)a)->id, ((const CtPackAt*)b)->id); }
 static void ct_solo_bundled(Catalog* c) {
+  // glibren.76: o embutido escondido nao da links (ct_detail): o solo fica o dos feeds mostrados.
+  if (c->hidden & 1) {
+    for (int i = 0; i < c->count; ++i) if (__atomic_load_n(&c->solo[i], __ATOMIC_RELAXED) != 1) __atomic_store_n(&c->solo[i], (uint8_t)0, __ATOMIC_RELAXED);
+    __atomic_store_n(&c->solo_done, 1, __ATOMIC_RELAXED);
+    return;
+  }
   char path[800];
   snprintf(path, sizeof path, "%s/packs/releases.idx", c->bundled_dir);
   size_t size = 0;

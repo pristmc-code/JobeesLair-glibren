@@ -472,6 +472,7 @@ typedef struct CtRel {
   char *id, *format, *filename, *url, *browser, *version, *category, *provider, *source, *flow, *label, *record, *volume, *password, *unavailable,
       *platform, *health, *sha256;
   double size; uint8_t has_size, requires_browser, patch, object;
+  uint8_t hidden; // glibren.76: de um feed escondido (so na montagem: o solo conta so os links mostrados)
 } CtRel;
 #define CT_REL_FIELDS 18
 static char** ct_rel_slot(CtRel* r, int i) { return &(&r->id)[i]; }

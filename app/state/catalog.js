@@ -26,7 +26,7 @@ import { createPageCache } from './page-cache.js';
 import { feedRatings, feedSnapshotParts, loadFeedGamesSteps, restoreFeedStates, takeFeedStates } from './feeds.js';
 import { bucketReader, readSnapshotSteps, snapshotKey, writeSnapshotSteps } from './feed-snapshot.js';
 import { ORBIT_FEED, setOrbitKnown } from './orbit-feed.js';
-import { pageSummary } from './feed-format.js';
+import { pageSummary, stableKey } from './feed-format.js';
 import { ratings as bundledRatings } from '../data/ratings.js';
 import { createReleaseCache } from './release-cache.js';
 import { createDataPack } from './data-pack.js';
@@ -92,10 +92,51 @@ import { memorySample } from './memory-meter.js';
       return NO_PAGE;
     }
   };
+  // glibren.76: catalogo escondido (Configuracoes > Feeds, "Mostrar na loja"; state/store-mode.js) esconde tambem os LINKS
+  // dele: game.releases (a ficha, a lista de fontes, o celular, a Biblioteca TorBox) so tem os dos catalogos mostrados.
+  // Um link de feed tem o id "feed-<stableKey(endereco do feed)>-..." (state/feed-format.js); os do embutido nao comecam
+  // assim. O filtro vem antes dos conjuntos em partes (como o payload, bg_catalog_game.c ct_detail). game.allReleases
+  // continua com todos: a fila de downloads (state/downloads.js releasesOf) nunca perde o link de um job que ja existe.
+  var hiddenSet = null;
+  var hiddenSeen = "";
+  var hiddenKeys = /* @__PURE__ */ new Set();
+  var hiddenBundled = false;
+  /** glibren.76: o conjunto (vivo) dos catalogos escondidos, de state/store-mode.js (que importa este modulo). */
+  var setHiddenReleaseSources = (set) => {
+    hiddenSet = set;
+  };
+  var FEED_ID = /^feed-([0-9a-f]+)-/;
+  var releaseShown = (release) => {
+    const key = FEED_ID.exec(release?.id ?? "")?.[1];
+    return key ? !hiddenKeys.has(key) : !hiddenBundled;
+  };
+  // A lista mudou desde a ultima vez: as chaves de novo e os links filtrados guardados saem.
+  var hidingReleases = () => {
+    if (!hiddenSet?.size) return false;
+    const seen = [...hiddenSet].join("\n");
+    if (seen !== hiddenSeen) {
+      hiddenSeen = seen;
+      hiddenBundled = hiddenSet.has(BUNDLED);
+      hiddenKeys = new Set([...hiddenSet].filter((id) => id !== BUNDLED).map((id) => stableKey(id)));
+      shownReleaseCache.clear();
+    }
+    return true;
+  };
+  var shownReleaseCache = createReleaseCache((path) => hiddenBundled ? "[]" : readJlx(packItem(releasePack, path)));
   var Entry = {
     get releases() {
       try {
         // glibren (item 2): os links de feed vem do disco (state/feed-snapshot.js) so quando o jogo nao esta guardado.
+        const id = this.id;
+        if (hidingReleases()) return shownReleaseCache(dataFile("releases", id), () => feedReleasesOf(id).filter(releaseShown));
+        return releaseCache(dataFile("releases", id), () => feedReleasesOf(id));
+      } catch {
+        return [];
+      }
+    },
+    // glibren.76: todos os links, tambem os dos catalogos escondidos (so a fila de downloads le estes).
+    get allReleases() {
+      try {
         const id = this.id;
         return releaseCache(dataFile("releases", id), () => feedReleasesOf(id));
       } catch {
@@ -769,4 +810,4 @@ import { memorySample } from './memory-meter.js';
     if (!held) startCatalogBuild();
   }, 0);
 
-export { ensureLocalCatalog, setLocalDisabler, filterList, holdCatalogBuild, isLocalCatalogBuilt, isRemoteCatalog, listCounts, onLocalCatalog, setRemoteLookup, startCatalogBuild, openRemoteStore, BUNDLED, catalogBuildStats, catalogReady, hurryCatalog, isCatalogReady, whenCatalogReady, allListed, catalogEntries, catalogSources, sourcesOfGame, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };
+export { setHiddenReleaseSources, ensureLocalCatalog, setLocalDisabler, filterList, holdCatalogBuild, isLocalCatalogBuilt, isRemoteCatalog, listCounts, onLocalCatalog, setRemoteLookup, startCatalogBuild, openRemoteStore, BUNDLED, catalogBuildStats, catalogReady, hurryCatalog, isCatalogReady, whenCatalogReady, allListed, catalogEntries, catalogSources, sourcesOfGame, refreshDerived, CDN_HOST, FACETS, NO_FILTERS, SORTS, activeCount, bundledIndex, editionsOf, facetCounts, facetLabel, facetTitle, featureLabel, filterGames, formatDate3, fromArchive, genreLabel, genres, getGame, listedId, onCdn, oneEach, optionLabel, otherThan, ratingScore, readyHere, readyLabel, relatedGames, sortGames, sortLabel, summaryOf, toggleValue, topRated, warmCovers };

@@ -10,7 +10,7 @@ import { releaseSets, withReleaseTypes } from './release-sets.js';
   var KEPT2 = 6;
   function createReleaseCache(read) {
     const games2 = /* @__PURE__ */ new Map();
-    return (file, extra = []) => {
+    const cache = (file, extra = []) => {
       if (!/^data\/releases\/[a-z0-9%_-]+\.json$/i.test(file)) throw new Error("Invalid release data path.");
       let releases = games2.get(file);
       if (!releases) {
@@ -32,6 +32,9 @@ import { releaseSets, withReleaseTypes } from './release-sets.js';
       games2.set(file, releases);
       return releases;
     };
+    // glibren.76: esquece o que guardou (state/catalog.js: os links filtrados quando um catalogo e escondido ou mostrado).
+    cache.clear = () => games2.clear();
+    return cache;
   }
 
 export { createReleaseCache };

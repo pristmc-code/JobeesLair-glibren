@@ -4,7 +4,8 @@
 // Dois passos, cada um num processo (o catalogo e montado quando o modulo carrega):
 //   prep <fs> <app/> <fixture/> <variante>        baixa os feeds do fixture (um Http de mentira) e grava os caches do app
 //   ref  <fs> <app/> <fixture/> <variante> <saida> monta a loja e grava o que o payload tem de dar igual
-// Variantes: ps5 (tudo), low (firmware 9.60), ps4 (o app do PS4), hidden (a lista Pegasus escondida da loja).
+// Variantes: ps5 (tudo), low (firmware 9.60), ps4 (o app do PS4), hidden (a lista Pegasus escondida da loja), orbit
+// (glibren.76: so a lista Orbit mostrada; os outros catalogos escondidos levam os links deles das fichas).
 import * as std from 'qjs:std';
 import * as os from 'qjs:os';
 
@@ -59,6 +60,9 @@ const { games, hasArt } = index;
 const { FACETS, NO_FILTERS, activeCount, filterGames, facetCounts, oneEach, otherThan, sortGames, topRated, readyHere, fromArchive, ratingScore, onCdn,
   relatedGames, editionsOf, getGame, catalogEntries, catalogSources } = catalog;
 if (variant === 'hidden') storeMode.setSourceShown(PKG, false);
+// glibren.76: so a Orbit na loja (o caso do usuario): o embutido, o ao vivo e os feeds do jogador escondidos.
+const { ORBIT_FEED } = await import('../../app/state/orbit-feed.js');
+if (variant === 'orbit') for (const { id } of catalog.catalogSources()) if (id !== ORBIT_FEED) storeMode.setSourceShown(id, false);
 
 const facetValues = () => Object.fromEntries(FACETS.map((facet) => [facet.key, facet.options.map((option) => option.value)]));
 const resolve = (values, key, value) => value === '@first' ? values[key][0] : value === '@second' ? values[key][1] : value;
@@ -142,6 +146,27 @@ if (!small) {
   });
   out.solo = Object.fromEntries(games.map((game) => { let solo = false; try { solo = game.releases.some(soloLink); } catch {} return [game.id, solo]; }));
   out.known = orbitKnownIds() ?? [];
+}
+// glibren.76: as fichas com a Orbit sozinha: jogos que a Orbit e o embutido (ou outro feed) listam, uns so da Orbit e uns
+// de catalogos escondidos (sem link nenhum); o solo da loja do celular tambem sai so dos links mostrados.
+if (variant === 'orbit') {
+  const entries = catalogEntries();
+  const pick = (test, max) => entries.filter(({ sources }) => test(sources)).slice(0, max).map(({ game }) => game.id);
+  const both = pick((from) => from.includes(ORBIT_FEED) && from.includes('bundled'), 25);
+  const others = pick((from) => from.includes(ORBIT_FEED) && from.some((id) => id !== ORBIT_FEED && id !== 'bundled'), 10);
+  const alone = pick((from) => from.length === 1 && from[0] === ORBIT_FEED, 8);
+  const hidden = pick((from) => !from.includes(ORBIT_FEED), 8);
+  const ids = [...new Set([...both, ...others, ...alone, ...hidden])].filter((id) => getGame(id));
+  out.fichas = ids.map((id) => {
+    const game = getGame(id);
+    const releases = JSON.parse(JSON.stringify(game.releases));
+    return { id, releases, order: sourceOrder(game.releases), editions: editionsOf(game).map((edition) => edition.id), related: relatedGames(game).map((other) => other.id) };
+  });
+  out.solo = Object.fromEntries(games.map((game) => { let solo = false; try { solo = game.releases.some(soloLink); } catch {} return [game.id, solo]; }));
+  out.orbitBoth = both;
+  // quantos deles tinham links do embutido (game.allReleases: todos, tambem os escondidos)
+  const bundledLink = (release) => !/^feed-/.test((release.parts ? release.parts[0].sources[0] : release).id ?? '');
+  out.orbitHadBundled = both.filter((id) => (getGame(id)?.allReleases ?? []).some(bundledLink)).length;
 }
 const file = std.open(outFile, 'w');
 file.puts(JSON.stringify(out));
